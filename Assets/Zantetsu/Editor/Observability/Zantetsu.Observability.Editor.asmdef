@@ -1,0 +1,19 @@
+{
+    "name": "Zantetsu.Observability.Editor",
+    "rootNamespace": "Zantetsu.Observability.Editor",
+    "references": [
+        "Zantetsu.Trace",
+        "Zantetsu.Observability"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
