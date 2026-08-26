@@ -62,5 +62,36 @@ namespace Zantetsu.Core.Input
             MinimumDisplacement = minimumDisplacement;
             MinimumEdgeLeadScore = minimumEdgeLeadScore;
         }
+
+        internal static bool IsValid(in BladeEdgeGateSettings settings)
+        {
+            if (double.IsNaN(settings.MinimumWindowSeconds) || double.IsInfinity(settings.MinimumWindowSeconds)
+                || double.IsNaN(settings.MaximumWindowSeconds) || double.IsInfinity(settings.MaximumWindowSeconds))
+            {
+                return false;
+            }
+
+            if (!(settings.MinimumWindowSeconds > 0.0) || !(settings.MaximumWindowSeconds >= settings.MinimumWindowSeconds))
+            {
+                return false;
+            }
+
+            if (!float.IsFinite(settings.MinimumSpeed) || settings.MinimumSpeed < 0f)
+            {
+                return false;
+            }
+
+            if (!float.IsFinite(settings.MinimumDisplacement) || settings.MinimumDisplacement < 0f)
+            {
+                return false;
+            }
+
+            if (!float.IsFinite(settings.MinimumEdgeLeadScore) || settings.MinimumEdgeLeadScore < -1f || settings.MinimumEdgeLeadScore > 1f)
+            {
+                return false;
+            }
+
+            return true;
+        }
     }
 }
