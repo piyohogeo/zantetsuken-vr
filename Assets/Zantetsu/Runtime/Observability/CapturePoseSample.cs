@@ -30,6 +30,9 @@ namespace Zantetsu.Observability
         /// <summary>Minimum accepted squared rotation magnitude (1e-12).</summary>
         private const double MinSquaredMagnitude = 1e-12;
 
+        /// <summary>Maximum accepted deviation of the squared magnitude from 1.0 for a canonical unit quaternion (1e-4).</summary>
+        private const double UnitSquaredMagnitudeTolerance = 1e-4;
+
         public bool IsAvailable { get; }
 
         public Pose Pose { get; }
@@ -85,6 +88,51 @@ namespace Zantetsu.Observability
 
             IsAvailable = true;
             Pose = new Pose(position, normalized);
+        }
+
+        /// <summary>
+        /// Restores an already-normalized unit quaternion from canonical JSON
+        /// without re-normalizing it, so the serialized float values round-trip
+        /// byte-for-byte. The position and rotation must be finite, and the
+        /// rotation must already be a unit quaternion.
+        /// </summary>
+        internal static CapturePoseSample RestoreCanonical(Vector3 position, Quaternion normalizedRotation)
+        {
+            if (!IsFinite(position))
+            {
+                throw new ArgumentException("Position components must all be finite.", nameof(position));
+            }
+
+            if (!IsFinite(normalizedRotation))
+            {
+                throw new ArgumentException("Rotation components must all be finite.", nameof(normalizedRotation));
+            }
+
+            double squaredMagnitude =
+                (double)normalizedRotation.x * normalizedRotation.x +
+                (double)normalizedRotation.y * normalizedRotation.y +
+                (double)normalizedRotation.z * normalizedRotation.z +
+                (double)normalizedRotation.w * normalizedRotation.w;
+
+            double deviation = squaredMagnitude - 1.0;
+            if (deviation < 0.0)
+            {
+                deviation = -deviation;
+            }
+
+            if (double.IsNaN(squaredMagnitude) || double.IsInfinity(squaredMagnitude) || deviation > UnitSquaredMagnitudeTolerance)
+            {
+                throw new ArgumentException("Rotation must be a unit quaternion.", nameof(normalizedRotation));
+            }
+
+            return new CapturePoseSample(position, normalizedRotation, true);
+        }
+
+        // The bool distinguishes this private constructor from the public one.
+        private CapturePoseSample(Vector3 position, Quaternion rotation, bool restoreCanonical)
+        {
+            IsAvailable = true;
+            Pose = new Pose(position, rotation);
         }
 
         private static bool IsFinite(Vector3 value)

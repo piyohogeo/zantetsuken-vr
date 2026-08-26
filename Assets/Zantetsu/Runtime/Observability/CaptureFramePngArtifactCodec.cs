@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using UnityEngine;
 
 namespace Zantetsu.Observability
 {
@@ -20,6 +21,7 @@ namespace Zantetsu.Observability
         public const int MaximumCanonicalByteCount = 65536;
 
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
+        private static readonly UTF8Encoding Utf8Strict = new UTF8Encoding(false, true);
 
         /// <summary>
         /// Serializes the artifact into its canonical UTF-8 JSON byte sequence.
@@ -158,6 +160,367 @@ namespace Zantetsu.Observability
             return ToLowerHex(hash);
         }
 
+        /// <summary>
+        /// Parses canonical UTF-8 JSON and restores a
+        /// <see cref="CaptureFramePngArtifact"/>, validating every value against
+        /// the provided run manifest and the strict canonical byte form.
+        /// </summary>
+        /// <remarks>
+        /// The run manifest is the source of truth for test run, build, scene,
+        /// random seed, and manifest content hash; JSON whose run fields do not
+        /// match is rejected. The PNG destination path is rebuilt from the
+        /// validated directory and the JSON basename only, so absolute paths and
+        /// path traversal are rejected. No PNG, sidecar, or hash is read; the
+        /// result only reconstructs the save-time record.
+        /// </remarks>
+        public static CaptureFramePngArtifact DeserializeCanonical(
+            byte[] utf8Json,
+            TraceRunManifest runManifest,
+            string pngDirectory)
+        {
+            if (utf8Json == null)
+            {
+                throw new ArgumentNullException(nameof(utf8Json));
+            }
+
+            if (runManifest == null)
+            {
+                throw new ArgumentNullException(nameof(runManifest));
+            }
+
+            if (pngDirectory == null)
+            {
+                throw new ArgumentNullException(nameof(pngDirectory));
+            }
+
+            if (utf8Json.Length == 0)
+            {
+                throw new InvalidDataException("Canonical JSON must not be empty.");
+            }
+
+            if (utf8Json.Length > MaximumCanonicalByteCount)
+            {
+                throw new InvalidDataException("Canonical JSON exceeds the maximum allowed byte count.");
+            }
+
+            if (HasUtf8Bom(utf8Json))
+            {
+                throw new InvalidDataException("Canonical JSON must not have a UTF-8 BOM.");
+            }
+
+            string normalizedDirectory = NormalizePngDirectory(pngDirectory);
+
+            string json;
+            try
+            {
+                json = Utf8Strict.GetString(utf8Json);
+            }
+            catch (DecoderFallbackException ex)
+            {
+                throw new InvalidDataException("Canonical JSON is not valid UTF-8.", ex);
+            }
+
+            ArtifactRootDto dto;
+            try
+            {
+                dto = JsonUtility.FromJson<ArtifactRootDto>(json);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidDataException("Canonical JSON is malformed.", ex);
+            }
+
+            if (dto == null)
+            {
+                throw new InvalidDataException("Canonical JSON root must be an object.");
+            }
+
+            if (dto.schemaVersion != CurrentSchemaVersion)
+            {
+                throw new InvalidDataException("Unsupported artifact schema version.");
+            }
+
+            ValidateRunManifestMatch(dto, runManifest);
+
+            CaptureFramePngArtifact artifact = BuildArtifact(dto, runManifest, normalizedDirectory);
+
+            byte[] canonical;
+            try
+            {
+                canonical = SerializeCanonical(artifact);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidDataException("Decoded artifact cannot be represented within the canonical size limit.", ex);
+            }
+
+            if (!BytesEqual(canonical, utf8Json))
+            {
+                throw new InvalidDataException("Canonical JSON is not in canonical form.");
+            }
+
+            return artifact;
+        }
+
+        private static string NormalizePngDirectory(string pngDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(pngDirectory))
+            {
+                throw new ArgumentException("PNG directory must not be empty or whitespace.", nameof(pngDirectory));
+            }
+
+            if (!Path.IsPathFullyQualified(pngDirectory))
+            {
+                throw new ArgumentException("PNG directory must be fully qualified.", nameof(pngDirectory));
+            }
+
+            string fullPath = Path.GetFullPath(pngDirectory);
+            string root = Path.GetPathRoot(fullPath);
+
+            int end = fullPath.Length;
+            while (end > 0 && IsDirectorySeparator(fullPath[end - 1]))
+            {
+                end--;
+            }
+
+            if (end == fullPath.Length)
+            {
+                return fullPath;
+            }
+
+            string trimmed = fullPath.Substring(0, end);
+            if (root != null && root.Length > 0 && IsDirectorySeparator(root[root.Length - 1])
+                && string.Equals(trimmed, root.Substring(0, root.Length - 1), StringComparison.OrdinalIgnoreCase))
+            {
+                return root;
+            }
+
+            return trimmed;
+        }
+
+        private static bool IsDirectorySeparator(char c)
+        {
+            return c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
+        }
+
+        private static void ValidateRunManifestMatch(ArtifactRootDto dto, TraceRunManifest runManifest)
+        {
+            if (dto.testRunId != runManifest.TestRunId)
+            {
+                throw new InvalidDataException("Test run ID does not match the run manifest.");
+            }
+
+            if (!string.Equals(dto.buildId, runManifest.BuildId, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Build ID does not match the run manifest.");
+            }
+
+            if (!string.Equals(dto.sceneId, runManifest.SceneId, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Scene ID does not match the run manifest.");
+            }
+
+            if (dto.randomSeed != runManifest.RandomSeed)
+            {
+                throw new InvalidDataException("Random seed does not match the run manifest.");
+            }
+
+            string computedHash = TraceRunManifestCodec.ComputeContentSha256(runManifest);
+            if (!string.Equals(dto.runManifestContentSha256, computedHash, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Run manifest content hash does not match the run manifest.");
+            }
+        }
+
+        private static CaptureFramePngArtifact BuildArtifact(ArtifactRootDto dto, TraceRunManifest runManifest, string normalizedDirectory)
+        {
+            try
+            {
+                CaptureRunReference run = new CaptureRunReference(runManifest, dto.testCaseId, dto.captureProfileId, dto.runManifestContentSha256);
+
+                if (dto.objectGeneration < 0 || dto.objectGeneration > uint.MaxValue)
+                {
+                    throw new ArgumentException("Object generation is out of range.", nameof(dto.objectGeneration));
+                }
+
+                CaptureFrameTraceContext traceContext = new CaptureFrameTraceContext(
+                    dto.timestamp,
+                    dto.unityFrameId,
+                    dto.fixedStepId,
+                    dto.threadId,
+                    dto.captureFrameId,
+                    dto.openXRFrameId,
+                    dto.testRunId,
+                    dto.slashId,
+                    dto.frontEdgeId,
+                    dto.objectId,
+                    (uint)dto.objectGeneration,
+                    dto.taskId);
+
+                CaptureImageRect imageRect = BuildImageRect(dto.imageRect);
+
+                if (dto.pixelLayout == null)
+                {
+                    throw new InvalidDataException("Canonical JSON is missing the pixel layout.");
+                }
+
+                CaptureFrameRequest request = new CaptureFrameRequest(
+                    traceContext,
+                    (CaptureSource)dto.captureSource,
+                    (CaptureEye)dto.eye,
+                    imageRect,
+                    dto.arrayIndex,
+                    (CapturePixelFormat)dto.pixelLayout.format);
+
+                CaptureFrameTiming timing = BuildTiming(dto.timing);
+
+                CapturePoseSample head = BuildPose(dto.headPose);
+                CapturePoseSample left = BuildPose(dto.leftControllerPose);
+                CapturePoseSample right = BuildPose(dto.rightControllerPose);
+
+                CaptureFrameRecord record = new CaptureFrameRecord(run, request, timing, head, left, right, dto.commitPathId);
+
+                string destinationPath = BuildPngPath(normalizedDirectory, dto.pngFileName);
+                CaptureFramePngSaveReceipt receipt = new CaptureFramePngSaveReceipt(destinationPath, dto.pngByteCount, dto.pngContentSha256);
+
+                return new CaptureFramePngArtifact(record, request, receipt);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidDataException("Canonical JSON contains invalid values.", ex);
+            }
+        }
+
+        private static CaptureImageRect BuildImageRect(ArtifactImageRectDto dto)
+        {
+            if (dto == null)
+            {
+                throw new InvalidDataException("Canonical JSON is missing the image rect.");
+            }
+
+            return new CaptureImageRect(dto.x, dto.y, dto.width, dto.height);
+        }
+
+        private static CaptureFrameTiming BuildTiming(ArtifactTimingDto dto)
+        {
+            if (dto == null)
+            {
+                throw new InvalidDataException("Canonical JSON is missing the timing.");
+            }
+
+            return new CaptureFrameTiming(
+                dto.predictedDisplayTimeSeconds,
+                dto.predictedDisplayPeriodSeconds,
+                dto.shouldRender,
+                dto.appGpuTimeMilliseconds,
+                dto.compositorGpuTimeMilliseconds,
+                dto.droppedFrameCount);
+        }
+
+        private static CapturePoseSample BuildPose(ArtifactPoseDto dto)
+        {
+            if (dto == null)
+            {
+                throw new InvalidDataException("Canonical JSON is missing a pose.");
+            }
+
+            if (dto.position == null || dto.rotation == null)
+            {
+                throw new InvalidDataException("Canonical JSON pose must include position and rotation.");
+            }
+
+            if (!dto.available)
+            {
+                if (dto.position.x != 0f || dto.position.y != 0f || dto.position.z != 0f
+                    || dto.rotation.x != 0f || dto.rotation.y != 0f || dto.rotation.z != 0f || dto.rotation.w != 0f)
+                {
+                    throw new InvalidDataException("Unavailable pose must use canonical default values.");
+                }
+
+                return CapturePoseSample.Unavailable;
+            }
+
+            return CapturePoseSample.RestoreCanonical(
+                new Vector3(dto.position.x, dto.position.y, dto.position.z),
+                new Quaternion(dto.rotation.x, dto.rotation.y, dto.rotation.z, dto.rotation.w));
+        }
+
+        private static string BuildPngPath(string normalizedDirectory, string pngFileName)
+        {
+            if (string.IsNullOrWhiteSpace(pngFileName))
+            {
+                throw new InvalidDataException("PNG file name must not be empty or whitespace.");
+            }
+
+            if (Path.IsPathRooted(pngFileName))
+            {
+                throw new InvalidDataException("PNG file name must be a basename.");
+            }
+
+            if (pngFileName.IndexOf('/') >= 0 || pngFileName.IndexOf('\\') >= 0)
+            {
+                throw new InvalidDataException("PNG file name must not contain directory separators.");
+            }
+
+            if (pngFileName == "." || pngFileName == "..")
+            {
+                throw new InvalidDataException("PNG file name must not be a relative directory reference.");
+            }
+
+            if (Path.GetFileName(pngFileName) != pngFileName)
+            {
+                throw new InvalidDataException("PNG file name must be a basename.");
+            }
+
+            if (!string.Equals(Path.GetExtension(pngFileName), ".png", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("PNG file name must end with '.png'.");
+            }
+
+            char[] invalidChars = Path.GetInvalidFileNameChars();
+            for (int i = 0; i < pngFileName.Length; i++)
+            {
+                for (int j = 0; j < invalidChars.Length; j++)
+                {
+                    if (pngFileName[i] == invalidChars[j])
+                    {
+                        throw new InvalidDataException("PNG file name contains invalid path characters.");
+                    }
+                }
+            }
+
+            string fullPath = Path.GetFullPath(Path.Combine(normalizedDirectory, pngFileName));
+            if (!string.Equals(Path.GetDirectoryName(fullPath), normalizedDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("PNG file name escapes the destination directory.");
+            }
+
+            return fullPath;
+        }
+
+        private static bool HasUtf8Bom(byte[] bytes)
+        {
+            return bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+        }
+
+        private static bool BytesEqual(byte[] a, byte[] b)
+        {
+            if (a.Length != b.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (a[i] != b[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static void AppendTiming(StringBuilder sb, CaptureFrameTiming timing)
         {
             sb.Append(",\"timing\":{\"predictedDisplayTimeSeconds\":");
@@ -279,5 +642,98 @@ namespace Zantetsu.Observability
 
             return new string(chars);
         }
+    }
+
+    [Serializable]
+    internal sealed class ArtifactVector3Dto
+    {
+        public float x;
+        public float y;
+        public float z;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactQuaternionDto
+    {
+        public float x;
+        public float y;
+        public float z;
+        public float w;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactPoseDto
+    {
+        public bool available;
+        public ArtifactVector3Dto position;
+        public ArtifactQuaternionDto rotation;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactImageRectDto
+    {
+        public int x;
+        public int y;
+        public int width;
+        public int height;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactPixelLayoutDto
+    {
+        public int format;
+        public int width;
+        public int height;
+        public int bytesPerPixel;
+        public int rowStrideBytes;
+        public int byteCount;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactTimingDto
+    {
+        public double predictedDisplayTimeSeconds;
+        public double predictedDisplayPeriodSeconds;
+        public bool shouldRender;
+        public double appGpuTimeMilliseconds;
+        public double compositorGpuTimeMilliseconds;
+        public long droppedFrameCount;
+    }
+
+    [Serializable]
+    internal sealed class ArtifactRootDto
+    {
+        public int schemaVersion;
+        public long captureFrameId;
+        public long unityFrameId;
+        public long openXRFrameId;
+        public long timestamp;
+        public long fixedStepId;
+        public int threadId;
+        public long testRunId;
+        public long testCaseId;
+        public string buildId;
+        public string sceneId;
+        public long randomSeed;
+        public long slashId;
+        public long frontEdgeId;
+        public long objectId;
+        public long objectGeneration;
+        public long taskId;
+        public int commitPathId;
+        public int captureSource;
+        public int eye;
+        public ArtifactImageRectDto imageRect;
+        public int arrayIndex;
+        public ArtifactPixelLayoutDto pixelLayout;
+        public ArtifactTimingDto timing;
+        public ArtifactPoseDto headPose;
+        public ArtifactPoseDto leftControllerPose;
+        public ArtifactPoseDto rightControllerPose;
+        public int captureProfileId;
+        public string runManifestContentSha256;
+        public string pngFileName;
+        public int pngByteCount;
+        public string pngContentSha256;
     }
 }
