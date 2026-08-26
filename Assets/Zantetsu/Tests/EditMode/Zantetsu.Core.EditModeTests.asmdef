@@ -1,0 +1,13 @@
+{
+    "name": "Zantetsu.Core.EditModeTests",
+    "rootNamespace": "Zantetsu.Core.Tests",
+    "references": [
+        "Zantetsu.Core"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}
