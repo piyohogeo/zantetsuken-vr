@@ -13,6 +13,9 @@ namespace Zantetsu.Observability
         RequestQueueFull = 1,
 
         /// <summary>The GPU readback completed with an error.</summary>
-        ReadbackFailed = 2
+        ReadbackFailed = 2,
+
+        /// <summary>The encoded PNG queue was full.</summary>
+        EncodedPngQueueFull = 3
     }
 }

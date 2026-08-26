@@ -47,7 +47,9 @@ namespace Zantetsu.Observability
 
         public void RecordDropped(in CaptureFrameTraceContext context, CaptureFrameDropReason reason)
         {
-            if (reason != CaptureFrameDropReason.RequestQueueFull && reason != CaptureFrameDropReason.ReadbackFailed)
+            if (reason != CaptureFrameDropReason.RequestQueueFull
+                && reason != CaptureFrameDropReason.ReadbackFailed
+                && reason != CaptureFrameDropReason.EncodedPngQueueFull)
             {
                 throw new ArgumentOutOfRangeException(nameof(reason), reason, "Reason must be a defined non-None value.");
             }

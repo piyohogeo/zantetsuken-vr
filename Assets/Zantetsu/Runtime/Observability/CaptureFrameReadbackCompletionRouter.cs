@@ -153,5 +153,68 @@ namespace Zantetsu.Observability
             encoded = default;
             return CaptureFramePngCollectStatus.Encoded;
         }
+
+        /// <summary>
+        /// Collects a completed readback, encodes it as PNG, and enqueues the
+        /// result into <paramref name="queue"/>. On queue-full the generated
+        /// PNG is dropped and a <c>CaptureFrameDropped</c> event is recorded.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Main-thread only. Does not own or dispose the queue, dispatcher,
+        /// observer, logger, or pool.
+        /// </para>
+        /// <para>
+        /// On <see cref="CaptureFramePngQueueStatus.Queued"/> the queue owns the
+        /// PNG. On <see cref="CaptureFramePngQueueStatus.None"/> and
+        /// <see cref="CaptureFramePngQueueStatus.Dropped"/> no PNG is exposed to
+        /// the caller. On queue-full the generated PNG is disposed and a drop
+        /// trace is recorded. No file I/O is performed.
+        /// </para>
+        /// </remarks>
+        public CaptureFramePngQueueStatus TryCollectEncodeAndEnqueue(CaptureFramePngQueue queue)
+        {
+            if (queue == null)
+            {
+                throw new ArgumentNullException(nameof(queue));
+            }
+
+            if (!queue.IsCreated)
+            {
+                throw new ObjectDisposedException(nameof(CaptureFramePngQueue));
+            }
+
+            CaptureFramePngCollectStatus status = TryCollectAndEncodePng(out CaptureFrameRequest frameRequest, out NativeArray<byte> pngBytes);
+
+            if (status == CaptureFramePngCollectStatus.None)
+            {
+                return CaptureFramePngQueueStatus.None;
+            }
+
+            if (status == CaptureFramePngCollectStatus.Dropped)
+            {
+                return CaptureFramePngQueueStatus.Dropped;
+            }
+
+            bool transferred = false;
+            try
+            {
+                if (queue.TryEnqueue(frameRequest, pngBytes))
+                {
+                    transferred = true;
+                    return CaptureFramePngQueueStatus.Queued;
+                }
+
+                _observer.RecordDropped(frameRequest.TraceContext, CaptureFrameDropReason.EncodedPngQueueFull);
+                return CaptureFramePngQueueStatus.Dropped;
+            }
+            finally
+            {
+                if (!transferred && pngBytes.IsCreated)
+                {
+                    pngBytes.Dispose();
+                }
+            }
+        }
     }
 }
