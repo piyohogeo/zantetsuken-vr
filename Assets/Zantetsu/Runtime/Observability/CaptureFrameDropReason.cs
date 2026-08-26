@@ -10,6 +10,9 @@ namespace Zantetsu.Observability
         None = 0,
 
         /// <summary>The capture frame request queue was full.</summary>
-        RequestQueueFull = 1
+        RequestQueueFull = 1,
+
+        /// <summary>The GPU readback completed with an error.</summary>
+        ReadbackFailed = 2
     }
 }

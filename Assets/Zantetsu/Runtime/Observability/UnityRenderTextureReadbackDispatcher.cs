@@ -43,6 +43,13 @@ namespace Zantetsu.Observability
         private int _activeCount;
         private bool _disposed;
 
+        /// <summary>
+        /// Test-only seam: when set, the next collected result reports an
+        /// error. Intended exclusively for EditMode tests that exercise error
+        /// handling without inducing a real GPU error.
+        /// </summary>
+        private bool _forceNextError;
+
         public UnityRenderTextureReadbackDispatcher(CaptureFrameReadbackBufferPool bufferPool)
         {
             if (bufferPool == null)
@@ -183,13 +190,15 @@ namespace Zantetsu.Observability
                 if (_active[i] && !_delivered[i] && _requests[i].done)
                 {
                     _delivered[i] = true;
-                    _hasError[i] = _requests[i].hasError;
+                    bool hasError = _forceNextError || _requests[i].hasError;
+                    _forceNextError = false;
+                    _hasError[i] = hasError;
                     result = new CaptureFrameReadbackResult(
                         _token,
                         _operationIds[i],
                         _frameRequests[i],
                         _slots[i],
-                        _requests[i].hasError);
+                        hasError);
                     return true;
                 }
             }
