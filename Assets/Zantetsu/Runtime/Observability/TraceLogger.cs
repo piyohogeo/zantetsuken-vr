@@ -1,6 +1,5 @@
 using System;
 using Unity.Collections;
-using Unity.Profiling;
 using Zantetsu.Trace;
 
 namespace Zantetsu.Observability
@@ -19,8 +18,6 @@ namespace Zantetsu.Observability
     /// </remarks>
     public sealed class TraceLogger : IDisposable
     {
-        private static readonly ProfilerMarker DrainMarker = new ProfilerMarker("Zantetsu.Trace.Drain");
-
         private NativeQueue<TraceEvent> _queue;
         private readonly TraceRingBuffer _history;
         private bool _disposed;
@@ -110,7 +107,7 @@ namespace Zantetsu.Observability
         public int Drain()
         {
             ThrowIfDisposed();
-            using (DrainMarker.Auto())
+            using (ZantetsuProfilerMarkers.TraceDrain.Auto())
             {
                 int drained = 0;
                 while (_queue.TryDequeue(out TraceEvent traceEvent))
