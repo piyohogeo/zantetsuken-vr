@@ -2,7 +2,8 @@
     "name": "Zantetsu.Core.EditModeTests",
     "rootNamespace": "Zantetsu.Core.Tests",
     "references": [
-        "Zantetsu.Core"
+        "Zantetsu.Core",
+        "Zantetsu.Trace"
     ],
     "includePlatforms": [
         "Editor"
