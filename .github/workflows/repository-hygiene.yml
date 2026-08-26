@@ -1,0 +1,23 @@
+name: Repository hygiene
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify public repository hygiene
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run repository hygiene checks
+        shell: pwsh
+        run: ./Tools/Verify-PublicRepository.ps1
