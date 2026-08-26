@@ -49,7 +49,8 @@ namespace Zantetsu.Observability
         {
             if (reason != CaptureFrameDropReason.RequestQueueFull
                 && reason != CaptureFrameDropReason.ReadbackFailed
-                && reason != CaptureFrameDropReason.EncodedPngQueueFull)
+                && reason != CaptureFrameDropReason.EncodedPngQueueFull
+                && reason != CaptureFrameDropReason.FrameRecordRegistryFull)
             {
                 throw new ArgumentOutOfRangeException(nameof(reason), reason, "Reason must be a defined non-None value.");
             }

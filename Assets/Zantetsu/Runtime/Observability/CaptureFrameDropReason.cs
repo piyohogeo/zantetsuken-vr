@@ -16,6 +16,9 @@ namespace Zantetsu.Observability
         ReadbackFailed = 2,
 
         /// <summary>The encoded PNG queue was full.</summary>
-        EncodedPngQueueFull = 3
+        EncodedPngQueueFull = 3,
+
+        /// <summary>The capture frame record registry was full.</summary>
+        FrameRecordRegistryFull = 4
     }
 }
