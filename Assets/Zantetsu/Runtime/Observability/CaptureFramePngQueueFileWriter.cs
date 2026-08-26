@@ -41,8 +41,29 @@ namespace Zantetsu.Observability
             _fileStore = fileStore;
         }
 
-        public CaptureFramePngSaveStatus TrySaveNext(CaptureFramePngQueue queue, string destinationPath)
+        /// <summary>
+        /// Saves the FIFO head and returns, only on success, the dequeued
+        /// request and the immutable save receipt. The receipt is used exactly
+        /// as produced by the file store: its destination path, byte count, and
+        /// content SHA-256 are not re-read or re-hashed.
+        /// </summary>
+        /// <remarks>
+        /// On an empty queue this returns <see cref="CaptureFramePngSaveStatus.None"/>
+        /// with <paramref name="frameRequest"/> left at default and
+        /// <paramref name="receipt"/> left null, without validating the
+        /// destination path. A failed save rethrows without dequeuing and leaves
+        /// both out arguments untouched. On success the dequeued PNG is disposed
+        /// by this writer before the out arguments are published.
+        /// </remarks>
+        public CaptureFramePngSaveStatus TrySaveNext(
+            CaptureFramePngQueue queue,
+            string destinationPath,
+            out CaptureFrameRequest frameRequest,
+            out CaptureFramePngSaveReceipt receipt)
         {
+            frameRequest = default;
+            receipt = null;
+
             if (queue == null)
             {
                 throw new ArgumentNullException(nameof(queue));
@@ -53,12 +74,12 @@ namespace Zantetsu.Observability
                 throw new ObjectDisposedException(nameof(CaptureFramePngQueue));
             }
 
-            if (!queue.TryPeek(out CaptureFrameRequest frameRequest, out NativeArray<byte> peekedPng))
+            if (!queue.TryPeek(out CaptureFrameRequest peekedRequest, out NativeArray<byte> peekedPng))
             {
                 return CaptureFramePngSaveStatus.None;
             }
 
-            _fileStore.SaveAtomic(destinationPath, peekedPng);
+            CaptureFramePngSaveReceipt savedReceipt = _fileStore.SaveAtomicWithReceipt(destinationPath, peekedPng);
 
             if (!queue.TryDequeue(out CaptureFrameRequest dequeuedRequest, out NativeArray<byte> dequeuedPng))
             {
@@ -67,7 +88,7 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (!frameRequest.IdenticalTo(dequeuedRequest))
+                if (!peekedRequest.IdenticalTo(dequeuedRequest))
                 {
                     throw new InvalidOperationException("Queue head changed between peek and dequeue.");
                 }
@@ -85,7 +106,14 @@ namespace Zantetsu.Observability
                 }
             }
 
+            frameRequest = dequeuedRequest;
+            receipt = savedReceipt;
             return CaptureFramePngSaveStatus.Saved;
+        }
+
+        public CaptureFramePngSaveStatus TrySaveNext(CaptureFramePngQueue queue, string destinationPath)
+        {
+            return TrySaveNext(queue, destinationPath, out _, out _);
         }
     }
 }
