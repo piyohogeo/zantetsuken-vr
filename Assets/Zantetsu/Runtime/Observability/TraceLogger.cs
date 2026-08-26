@@ -121,6 +121,43 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Drains every queued event into the history ring buffer while also
+        /// writing, in drain order, up to <paramref name="maximumCapturedCount"/>
+        /// of those events into <paramref name="capture"/>. Returns the total
+        /// number of events drained from the queue; <paramref name="capturedCount"/>
+        /// reports how many were duplicated into the capture.
+        /// </summary>
+        internal int Drain(TraceRingBuffer capture, int maximumCapturedCount, out int capturedCount)
+        {
+            ThrowIfDisposed();
+
+            if (capture == null)
+            {
+                throw new ArgumentNullException(nameof(capture));
+            }
+
+            using (ZantetsuProfilerMarkers.TraceDrain.Auto())
+            {
+                int drained = 0;
+                int captured = 0;
+                while (_queue.TryDequeue(out TraceEvent traceEvent))
+                {
+                    _history.Write(traceEvent);
+                    drained++;
+
+                    if (captured < maximumCapturedCount)
+                    {
+                        capture.Write(traceEvent);
+                        captured++;
+                    }
+                }
+
+                capturedCount = captured;
+                return drained;
+            }
+        }
+
+        /// <summary>
         /// Returns the history event at the given chronological index, where 0
         /// is the oldest stored event.
         /// </summary>

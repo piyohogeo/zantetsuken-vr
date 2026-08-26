@@ -1,0 +1,189 @@
+using System;
+using Zantetsu.Trace;
+
+namespace Zantetsu.Observability
+{
+    /// <summary>
+    /// Protects the recent trace history of a <see cref="TraceLogger"/> when an
+    /// anomaly is detected, without owning or disposing the logger.
+    /// </summary>
+    /// <remarks>
+    /// The recorder does not own the logger and never disposes it. Capture
+    /// storage is allocated once in the constructor and reused across trigger
+    /// and reset cycles; no per-drain allocation, LINQ, or string formatting is
+    /// performed. Events enqueued in parallel have no guaranteed order, but the
+    /// capture preserves their drain order.
+    /// </remarks>
+    public sealed class TraceFlightRecorder
+    {
+        private readonly TraceLogger _logger;
+        private readonly int _postRollCapacity;
+        private readonly TraceRingBuffer _capture;
+
+        private TraceFlightRecorderState _state = TraceFlightRecorderState.Armed;
+        private int _triggerHistoryCount;
+        private int _capturedPostRollCount;
+        private bool _wasHistoryOverwrittenAtTrigger;
+
+        public TraceFlightRecorder(TraceLogger logger, int postRollCapacity)
+        {
+            if (logger == null)
+            {
+                throw new ArgumentNullException(nameof(logger));
+            }
+
+            if (postRollCapacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(postRollCapacity), postRollCapacity, "Post-roll capacity must not be negative.");
+            }
+
+            int historyCapacity = logger.HistoryCapacity;
+            long total = (long)historyCapacity + (long)postRollCapacity;
+            if (total > int.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(nameof(postRollCapacity), postRollCapacity, "Combined capture capacity exceeds the maximum supported size.");
+            }
+
+            _logger = logger;
+            _postRollCapacity = postRollCapacity;
+            _capture = new TraceRingBuffer((int)total);
+        }
+
+        public TraceFlightRecorderState State => _state;
+
+        public int PostRollCapacity => _postRollCapacity;
+
+        /// <summary>Number of pre-trigger history events captured at trigger time.</summary>
+        public int TriggerHistoryCount => _triggerHistoryCount;
+
+        /// <summary>Number of post-roll events duplicated into the capture so far.</summary>
+        public int CapturedPostRollCount => _capturedPostRollCount;
+
+        /// <summary>Total number of captured events (pre-trigger + post-roll).</summary>
+        public int CapturedCount => _capture.Count;
+
+        /// <summary>Whether the logger history had already overwritten events at trigger time.</summary>
+        public bool WasHistoryOverwrittenAtTrigger => _wasHistoryOverwrittenAtTrigger;
+
+        /// <summary>
+        /// Drains the logger according to the current state. In Armed and Frozen
+        /// states this drains normally; while CapturingPostRoll it also
+        /// duplicates up to the remaining post-roll slots into the capture.
+        /// </summary>
+        public int Drain()
+        {
+            switch (_state)
+            {
+                case TraceFlightRecorderState.CapturingPostRoll:
+                    return DrainCapturingPostRoll();
+
+                case TraceFlightRecorderState.Armed:
+                case TraceFlightRecorderState.Frozen:
+                default:
+                    return _logger.Drain();
+            }
+        }
+
+        /// <summary>
+        /// Snapshots the current logger history into the capture and advances
+        /// the state. Returns false, leaving the capture unchanged, when the
+        /// recorder is not Armed.
+        /// </summary>
+        public bool TryTrigger()
+        {
+            if (_state != TraceFlightRecorderState.Armed)
+            {
+                return false;
+            }
+
+            // Drain queued events first so an event enqueued immediately before
+            // the trigger is included in the pre-trigger history.
+            _logger.Drain();
+
+            int historyCount = _logger.HistoryCount;
+            _wasHistoryOverwrittenAtTrigger = _logger.OverwrittenCount > 0;
+
+            for (int i = 0; i < historyCount; i++)
+            {
+                _capture.Write(_logger.GetHistoryEvent(i));
+            }
+
+            _triggerHistoryCount = historyCount;
+            _capturedPostRollCount = 0;
+
+            _state = _postRollCapacity > 0
+                ? TraceFlightRecorderState.CapturingPostRoll
+                : TraceFlightRecorderState.Frozen;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Freezes the capture immediately, even if post-roll slots remain.
+        /// Returns false when not CapturingPostRoll.
+        /// </summary>
+        public bool Freeze()
+        {
+            if (_state != TraceFlightRecorderState.CapturingPostRoll)
+            {
+                return false;
+            }
+
+            _state = TraceFlightRecorderState.Frozen;
+            return true;
+        }
+
+        /// <summary>
+        /// Returns the captured event at the given chronological index, where 0
+        /// is the oldest captured event.
+        /// </summary>
+        public TraceEvent GetCapturedEvent(int chronologicalIndex)
+        {
+            return _capture[chronologicalIndex];
+        }
+
+        /// <summary>
+        /// Copies the captured events, oldest first, into
+        /// <paramref name="destination"/> starting at
+        /// <paramref name="destinationIndex"/>.
+        /// </summary>
+        public void CopyCapturedTo(TraceEvent[] destination, int destinationIndex)
+        {
+            _capture.CopyTo(destination, destinationIndex);
+        }
+
+        /// <summary>
+        /// Clears the capture and its counters and returns to Armed. The logger
+        /// history, queue and counters are left untouched, and the logger is not
+        /// disposed.
+        /// </summary>
+        public void Reset()
+        {
+            _capture.Clear();
+            _triggerHistoryCount = 0;
+            _capturedPostRollCount = 0;
+            _wasHistoryOverwrittenAtTrigger = false;
+            _state = TraceFlightRecorderState.Armed;
+        }
+
+        private int DrainCapturingPostRoll()
+        {
+            int remaining = _postRollCapacity - _capturedPostRollCount;
+            if (remaining <= 0)
+            {
+                _state = TraceFlightRecorderState.Frozen;
+                return _logger.Drain();
+            }
+
+            int drained = _logger.Drain(_capture, remaining, out int captured);
+            _capturedPostRollCount += captured;
+
+            if (_capturedPostRollCount >= _postRollCapacity)
+            {
+                _state = TraceFlightRecorderState.Frozen;
+            }
+
+            return drained;
+        }
+    }
+}
