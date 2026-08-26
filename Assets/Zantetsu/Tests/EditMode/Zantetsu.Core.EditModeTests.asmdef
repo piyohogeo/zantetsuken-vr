@@ -3,7 +3,9 @@
     "rootNamespace": "Zantetsu.Core.Tests",
     "references": [
         "Zantetsu.Core",
-        "Zantetsu.Trace"
+        "Zantetsu.Trace",
+        "Zantetsu.Observability",
+        "Unity.Collections"
     ],
     "includePlatforms": [
         "Editor"
