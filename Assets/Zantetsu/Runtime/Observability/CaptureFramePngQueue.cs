@@ -171,6 +171,29 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Internal, non-owning peek of the FIFO head. Returns the head request
+        /// and a non-owning view of its PNG without modifying queue state. The
+        /// returned <see cref="NativeArray{T}"/> is owned by the queue and must
+        /// only be used as a read-only save input; the caller must not dispose,
+        /// modify, or retain it.
+        /// </summary>
+        internal bool TryPeek(out CaptureFrameRequest frameRequest, out NativeArray<byte> pngBytes)
+        {
+            ThrowIfDisposed();
+
+            if (_count == 0)
+            {
+                frameRequest = default;
+                pngBytes = default;
+                return false;
+            }
+
+            frameRequest = _requests[_head];
+            pngBytes = _pngs[_head];
+            return true;
+        }
+
+        /// <summary>
         /// Disposes every PNG still held by the queue, resets all used slots,
         /// and clears the count. The allocated arrays are reused and the
         /// accepted/rejected counters are preserved.
