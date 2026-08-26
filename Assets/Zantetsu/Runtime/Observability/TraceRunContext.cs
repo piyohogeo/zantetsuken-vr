@@ -106,7 +106,30 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Value must not be null, empty, or whitespace.", paramName);
             }
 
+            ValidateNoLoneSurrogates(value, paramName);
+
             return value;
+        }
+
+        private static void ValidateNoLoneSurrogates(string value, string paramName)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (char.IsHighSurrogate(c))
+                {
+                    if (i + 1 >= value.Length || !char.IsLowSurrogate(value[i + 1]))
+                    {
+                        throw new ArgumentException("Value must not contain a lone surrogate.", paramName);
+                    }
+
+                    i++; // skip the paired low surrogate
+                }
+                else if (char.IsLowSurrogate(c))
+                {
+                    throw new ArgumentException("Value must not contain a lone surrogate.", paramName);
+                }
+            }
         }
 
         private static string ValidateSha256(string value, string paramName)

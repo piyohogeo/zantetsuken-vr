@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using UnityEngine;
 using Zantetsu.Trace;
 
@@ -67,6 +68,65 @@ namespace Zantetsu.Observability
                 snapshot.TriggerHistoryCount,
                 snapshot.CapturedPostRollCount,
                 snapshot.WasHistoryOverwrittenAtTrigger);
+        }
+
+        /// <summary>
+        /// Rebuilds a manifest from deserialized values, re-validating schema
+        /// version, trace format version and event-count consistency. Internal
+        /// to the observability assembly; does not construct an event array or
+        /// a fake snapshot.
+        /// </summary>
+        internal static TraceRunManifest Restore(
+            TraceRunContext context,
+            int schemaVersion,
+            ushort traceFormatMajor,
+            ushort traceFormatMinor,
+            int eventCount,
+            int triggerHistoryCount,
+            int capturedPostRollCount,
+            bool wasHistoryOverwrittenAtTrigger)
+        {
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            if (schemaVersion != CurrentSchemaVersion)
+            {
+                throw new InvalidDataException("Unsupported manifest schema version.");
+            }
+
+            if (traceFormatMajor != TraceBinaryFormat.MajorVersion || traceFormatMinor != TraceBinaryFormat.MinorVersion)
+            {
+                throw new InvalidDataException("Unsupported trace format version.");
+            }
+
+            if (eventCount < 0)
+            {
+                throw new InvalidDataException("Event count must not be negative.");
+            }
+
+            if (triggerHistoryCount < 0)
+            {
+                throw new InvalidDataException("Trigger history count must not be negative.");
+            }
+
+            if (capturedPostRollCount < 0)
+            {
+                throw new InvalidDataException("Captured post-roll count must not be negative.");
+            }
+
+            if ((long)eventCount != (long)triggerHistoryCount + (long)capturedPostRollCount)
+            {
+                throw new InvalidDataException("Event counts are inconsistent.");
+            }
+
+            return new TraceRunManifest(
+                context,
+                eventCount,
+                triggerHistoryCount,
+                capturedPostRollCount,
+                wasHistoryOverwrittenAtTrigger);
         }
 
         public int SchemaVersion => CurrentSchemaVersion;
