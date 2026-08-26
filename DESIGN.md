@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・固定Capture Profile／同期映像／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-08-26 |
+| 最終更新 | 2026-08-27 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -29,7 +29,7 @@
 
 - 表示と物理の不一致時間を短くし、プレイヤー身体や周辺破片が透明な旧Colliderへ接触する状態を最小化する。刀は物理衝突させず、切断可能時の論理Sweepだけを使用する。
 
-- 生涯切断数ではなく、未確定のPending Cut数が描画コストを決める構造にする。
+- 生涯切断数や全Pending Cut数ではなく、`ExposureState == Active`かつ`GeometryState != Committed`、すなわちGeometryが`Pending`または`Ready`で即時Rendererを必要とする境界数が一時描画コストを決める構造にする。Dormant／SuppressedなPending Cutは即時Renderer費用へ含めない。
 
 - 表示Mesh、プリプロセス済みSolid Cut Mesh、実行時Cut Shell、物理用Physics Proxyを分離し、入力モデル品質に性能と堅牢性を依存させすぎない。
 
@@ -120,7 +120,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ## 4. システムアーキテクチャ
 
-> **状態モデル** 各切断対象は Stable Geometry と Pending Cuts を持つ。バックグラウンド処理が完了した切断はStable側へ焼き込み、Pending一覧から除去する。
+> **状態モデル** 各切断対象はStable Geometry、Geometry未CommitのPending Cuts、全切断履歴を保持するCutBoundaryRecord群を持つ。バックグラウンド成果物が`Ready`になっただけではTemporary Rendererを外さず、描画フレーム境界で実Meshの適用と`GeometryState = Committed`がともに成功した後にだけ対応境界を一覧から除去する。CutBoundaryRecord、Cut Plane、論理Fragment、支持履歴はStable側へ移して保持し、Collider未完成は別の物理状態軸で管理する。
 
 ### 4.1 コンポーネント境界
 
@@ -128,7 +128,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 | --- | --- |
 | Blade Pose Adapter | OpenXR Grip Poseへ持ち手別のGripToKatanaOffsetを適用し、BladeAxis、EdgeDirection、SideNormal、追跡有効性を提供 |
 | Blade Sweep Detector | 刀身の連続姿勢からswept volumeとGesture Sampleを構築し、速度・移動量・Edge Direction Gateを評価。対象への最終命中は確定しない |
-| Cut State | Stable世代、Pending Cut列、論理破片、ジョブ状態、上限管理 |
+| Cut State | Stable世代、Geometry未CommitのPending Cut列、Temporary Render Boundary列、永続CutBoundaryRecord／論理破片、ジョブ状態、上限管理 |
 | Temporary Slice Renderer | clip、論理破片の分離オフセット、仮断面、切断縁演出 |
 | Visual Slice Worker | スキニング焼き込み、三角形切断、断面生成、属性補間、MeshData出力 |
 | Physics Slice Worker | Convex平面クリップ、質量特性計算、Collider Bake／cooking |
@@ -151,13 +151,13 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 - Extending中も既存`SlashFront`を停止させず有限速度で前進させ、観測された振りのうち`SpanAxis`方向へ単調に進む部分だけを同一平面内の頂点／辺として追加する。微小な逆行は手ぶれとして無視し、明確な逆行、非隣接辺との交差、頂点順序の反転では現在SlashをFinalizedする。各辺を前フレーム位置から現在位置まで細い帯状にSweepし、三日月VFXの前縁と同じ形状で実交差を確認する。
 
-- 実命中時に`HitConfirmed`を記録し、対象の`ObjectGeneration`を更新してPending Cutを追加する。同フレームからシェーダで正負側をclipし、仮断面、切断縁、音、火花、Hapticsを開始する。
+- 実命中時に`HitConfirmed`を記録し、対象の`ObjectGeneration`を更新してPending Cutを追加する。同フレーム中に固定支持を分類し、境界ごとの`ExposureState`を確定する。`Active`境界は直ちにシェーダで正負側をclipし、仮断面、切断縁、音、火花、Hapticsを開始する。両側が固定された`Dormant`境界は即時clip、Stencil、仮Cap、分離を起動せず、背景Geometry処理だけを継続する。分類未完了、世代不一致、接続が曖昧など、安全な露出状態を決定できない境界は`Suppressed`とし、clip、Stencil、仮Cap、Offset、Impulseをすべて起動しない。再分類に成功した時点で`Active`または`Dormant`へ遷移する。
 
 - 投機成果物が命中したSlash／Segment、確定した`SlashFrame`、基底対象世代、予測姿勢と一致すれば、表示・物理成果物を描画フレーム／物理ステップ境界でコミットする。
 
-- 投機成果物が未完成または検証不一致なら、実命中時の状態を基底として表示MeshとConvex切断を優先ジョブへ投入する。即時表示は完了まで継続する。
+- 投機成果物が未完成または検証不一致なら、実命中時の状態を基底として表示MeshとConvex切断を優先ジョブへ投入する。`Active`境界の即時表示だけを完了まで継続し、`Dormant`／`Suppressed`境界はそれぞれの抑止規則を維持する。
 
-- 実ジオメトリへ置換できたPending CutをStable Geometryへ焼き込み、Pending一覧から削除して一時描画コストを回収する。
+- `Ready`な実ジオメトリは描画フレーム境界で実Meshへ適用し、その適用成功と同じ原子的Commitで`GeometryState`を`Committed`へ進めてStable Geometryとする。`Ready`になった時点ではTemporary Rendererを外さず、Commit成功後にだけ対応境界をTemporary Renderer用Pending一覧から削除して一時描画コストを回収する。`CutBoundaryRecord`自体、Cut Plane、論理Fragment、FixedSupportGraph Edge、支持・露出履歴は削除せずStable側へ保持する。Collider未完成は`PendingPhysicsSplit`、`PendingSupportClassification`、`PendingAnchoredSplit`等の物理状態で独立して追跡する。
 
 ### 4.3 バックグラウンド実行モデル
 
@@ -175,13 +175,15 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ### 5.1 分離表示
 
-元メッシュを論理破片ごとに描画し、各切断面の正負符号に応じてフラグメントをclipする。単一切断では正側・負側の2インスタンスを描き、平面法線の正負方向へ小さく移動して隙間を作る。複数切断では、論理破片が保持する半空間の組み合わせだけを描画する。
+元メッシュを論理破片ごとに描画し、各切断面の正負符号に応じてフラグメントをclipする。論理上の切断幅（Kerf）は0とし、自由破片が相対移動した結果としてのみ隙間と断面が見える。単一切断では正側・負側の2インスタンスを描き、自由側へ必要最小限の仮分離Offsetを与える。複数切断では、論理破片が保持する半空間の組み合わせだけを描画する。
 
 破片の表示オフセットはスキニング後またはワールド変換後に加える。スキニング前に加えると、ボーン姿勢によって分離方向が歪むため避ける。
 
+FixedSupportGraph上で連結な切断境界の両側Fragmentがともに固定され、相対Transformと分離Offsetが同一なら、その`CutBoundaryRecord`の`ExposureState`を`Dormant`とする。判定単位はObject全体やCut Plane全体ではなく境界ごとである。実Fragment Meshが未完成の間は元の外観を描き、即時clip、Stencil、仮Cap、Shadow近似を起動しない。バックグラウンドの実Mesh切断が完成したら、両Fragmentを同一Transformのまま実断面付きMeshへ差し替えてよい。境界に生じる細い亀裂、輪郭線、軽微なチラツキは「極めて薄い切断痕」として許容する。後続切断でAnchorへ到達できない論理破片が生じた瞬間、その破片に接する過去のDormant境界をまとめてActiveへ変更し、完成済みFragmentはRenderer交換なしで動かし、未完成境界だけを即時レンダラで補う。
+
 ### 5.2 仮断面とステンシル
 
-ステンシルは切断そのものではなく、仮断面キャップのマスク生成に使う。プリプロセス済みSolid Cut Meshまたは直前のStable Cut Shellから、現在のPending Cutを適用した実行時Cut Shellを導出する。その閉じたCut Shellの表裏面から内部領域をStencilへ記録し、対象のローカルOBBと切断平面の交差から作る有限な`Cap Bounds Polygon`をStencil非ゼロ領域だけ描画する。
+ステンシルは切断そのものではなく、仮断面キャップのマスク生成に使う。プリプロセス済みSolid Cut Meshまたは直前のStable Cut Shellから、Geometry未CommitのPending Cutを適用した論理上の実行時Cut Shellを導出する。ただし即時Rendererへ投入するのは`ExposureState == Active && GeometryState != Committed`、すなわちGeometryが`Pending`または`Ready`の`Temporary Render Boundary Set`だけとする。その閉じたCut Shellの表裏面から対象境界の内部領域をStencilへ記録し、対象のローカルOBBと切断平面の交差から作る有限な`Cap Bounds Polygon`をStencil非ゼロ領域だけ描画する。
 
 - clip()：物体を正負に分け、隙間の空いた分離表示を作る。
 
@@ -189,9 +191,11 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 - 実断面Mesh：バックグラウンド処理完了後に仮断面を置換する。
 
-- Cap Bounds PolygonはOBBの12辺と切断平面を交差させ、epsilonで重複を除いた3～6頂点を平面上で並べて生成する。複数Pending Cutでは、ほかの切断平面が定める論理破片の半空間で凸多角形clipし、切断面同士の交差を即時表示へ反映する。
+- Cap Bounds PolygonはOBBの12辺と切断平面を交差させ、epsilonで重複を除いた3～6頂点を平面上で並べて生成する。複数のTemporary Render Boundaryでは、ほかの表示中切断面が定める論理破片の半空間で凸多角形clipし、切断面同士の交差を即時表示へ反映する。Dormant／SuppressedなPending Cutはこの即時描画用clip集合へ含めない。
 
 - Cap Bounds Polygonは物体表面との正確な交差輪郭ではないため、最終的な凹形状、穴、部品輪郭はStencilで制限する。実表面との輪郭を三角形化できた場合は実断面Meshとして扱い、Stencilへ重複して依存しない。
+
+- Dormant Cutでは仮断面を生成しないが、実断面Meshの生成と公開は停止しない。実断面は共通の片面トゥーンMaterialを基本とし、正負Fragmentで逆向きの法線を持たせる。Cull Offの両面描画は通常カラーPassで常用せず、同一位置の正負Cap全面が激しくZ-fightingする状態を避ける。
 
 > **入力品質上の注意** Stencilの表裏カウントは閉じた整合的な形状を前提とする。表示Meshを直接使わず、基底Solid Cut Meshから派生し、現在世代を表すCut Shellをマスク生成へ使う。Edgeが2面に接続するTopological Watertightだけでは十分でなく、面向き、退化、非隣接Faceの自己交差も検証する。面反転のない小さな自己交差はWinding Countの即時表示で見かけ上成立する場合があるが、正式なSolid Cut Mesh入力としては採用しない。
 
@@ -211,7 +215,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 | オレンジ | 計算予算超過、タイムアウト、簡易形状など品質低下フォールバック |
 | 紫の点滅 | 予測不一致またはGeneration不一致で先行成果物をReject |
 | 黒い縞／縁 | 表示形状とColliderが一時的に不一致 |
-| 通常グレー | 表示Mesh、実断面、Colliderが確定し、Pending CutがないStable状態 |
+| 通常グレー | 通常表示。Temporary Renderer対象がないStable表示にも使用 |
 
 赤は現在の仮表示状態、青／緑／水色は最終成果物の計算経路を表すため、典型的には`赤 -> 青／緑／水色 -> 通常グレー`と遷移する。経路解析モードではStable後も青／緑／水色を保持できるようにし、通常の状態確認モードではStable移行後に色上書きを解除する。通常グレーは「静止」を意味せず、破片が運動中でも表示と物理が確定していれば使用する。
 
@@ -233,9 +237,9 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ### 5.5 コスト制御
 
-- 同一物体のPending Cut数に上限を設ける。初期候補は2〜4枚。
+- 同一物体のTemporary Render Boundary数に上限を設ける。初期候補は2〜4枚。Dormant／SuppressedなPending CutとCommitted済みCutBoundaryRecordはこの描画上限へ数えない。
 
-- 上限到達時は複数切断をまとめて再構築し、古いPending CutをStable Meshへ焼き込む。
+- 上限到達時は複数切断をまとめて再構築し、古いActiveかつGeometry未Commitの境界をStable Meshへ焼き込む。`Ready`から実Mesh適用と`Committed`への遷移が同じ描画フレーム境界で成功した後にだけTemporary Renderer用Pending一覧から外し、切断履歴そのものは保持する。
 
 - 画面外・遠距離・停止中の物体を優先的に確定する。
 
@@ -255,15 +259,19 @@ StencilはParityの`Invert`ではなく、整合したCut ShellのFront／Back F
 
 - Broadphaseでは分離Offsetと安全Marginを含む物体OBBの左右眼投影矩形を使う。重なる組だけ、表向きのOBB切断面から得たCap Bounds Polygonを左右眼へ投影して再判定する。どちらの判定も非交差なら安全という悲観的な証明として扱い、Near Plane交差、Raster／MSAA、頭部移動誤差を考慮してBoundsを保守的に拡張する。
 
-- `CapCompatibilityKey`は順序を正規化した`CutPlaneId`列、Side Mask、Offset、Material／Debug Stateから作り、Raw floatだけをHashの正本にしない。同じSlash由来でも、対象が別々に移動・回転した後は現在のWorld Planeをepsilon比較し、一致しなければ別Groupへ分離する。片方だけに追加Pending Cutがある場合も互換ではない。
+- `CapCompatibilityKey`は順序を正規化した表示対象`CutPlaneId`列、Side Mask、Offset、Material／Debug Stateから作り、Raw floatだけをHashの正本にしない。同じSlash由来でも、対象が別々に移動・回転した後は現在のWorld Planeをepsilon比較し、一致しなければ別Groupへ分離する。片方だけに追加Temporary Render Boundaryがある場合も互換ではない。
 
 - キャップの可視性は元Object単位ではなく、`論理破片 × 切断面`の`CapRecord`単位で判定する。同じ切断面でも正負破片の断面Normalは逆向きになるため、片側が裏向きでも反対側を自動的に省略しない。
+
+- Facing判定より前にDormant Cut Cullを行う。切断面の両側がFixedSupportAnchorへ接続され、相対Transformが同一、分離Offsetが0、Kerfが0である即時CapRecordは、OBB切断面が表向きでも生成しない。その切断をStencil Conflict Graph、Greedy Coloring、Stencil Clear／Volume／仮Cap Drawへ投入せず、大断面の即時Stencil／Overdraw費用を省く。完成後の実Fragment Meshに含まれる断面submeshは通常の不透明Geometryとして描画してよい。
+
+- Dormant判定は描画最適化であり、Cut Plane、論理Fragment、ObjectGeneration、FixedSupportGraphの切断Edge、バックグラウンド表示Mesh／Convex処理を削除しない。後続切断、Anchor喪失、Constraint破断で対象成分がDetachedになった場合は、境界となる全Dormant Cutを再有効化する。
 
 - 現在のWorld Cap Planeについて、`dot(CapNormal, EyePosition - CapPoint)`を左右眼で評価する。両眼とも明確に裏向きのCapRecordを除外し、互換Group内の全CapRecordが除外された場合は、そのGroupをConflict Graphへ入れず、Stencil Clear／Volume／Cap処理を丸ごと省略する。片眼だけ表向きならSingle Pass Instanced用Recordを残す。
 
 - カメラが切断面近傍にある場合の左右眼不一致と頭部微動による点滅を避けるため、Facing epsilonと1～2フレーム相当のヒステリシスを候補とする。Frustum外判定も同じ段階で行うが、通常のclip済み破片カラー描画とShadowCasterは消さない。
 
-- Cap処理順は`CapRecord生成 -> 両眼Frustum／Facing Cull -> CapCompatibility Group -> Stencil Conflict Graph -> Greedy Coloring -> Stencil Volume／Cap描画`とする。Backface Raster Cullだけに任せず、Groupを早期除外して対応するStencil仕事も削減する。
+- Cap処理順は`Support Connectivity更新 -> Dormant Cut Cull -> CapRecord生成 -> 両眼Frustum／Facing Cull -> CapCompatibility Group -> Stencil Conflict Graph -> Greedy Coloring -> Stencil Volume／Cap描画`とする。Backface Raster Cullだけに任せず、Groupを早期除外して対応するStencil仕事も削減する。
 
 - PoCは単純な全組み合わせ`O(M^2)`とGreedy Coloringを使用する。Pending対象数が増えてCPU費用が問題になった場合だけ、スクリーングリッド／Sweep and Pruneへ置換する。最小彩色は求めない。
 
@@ -303,13 +311,27 @@ StencilはParityの`Invert`ではなく、整合したCut ShellのFront／Back F
 
 ### 7.1 一時状態
 
-ColliderのBake／cookingは視覚切断のクリティカルパスに含めない。切断命中フレームから断面と隙間を表示し、ConvexとBakeが間に合わなくても視覚応答を待たせない。切断直後は`PendingPhysicsSplit`へ入り、旧Convexを支持用として持つ1つの`FragmentGroup`の下で、正負側の表示破片を同じRigidbodyへ追従させる。旧Convexを複製して双方へ付与すると、不自然な押し出しや存在しない中央部への接触が発生するため行わない。
+ColliderのBake／cookingは視覚切断のクリティカルパスに含めない。`Active`な切断境界は命中フレームからclipと仮断面を表示し、物理状態が許可する場合は相対移動による隙間も表示する。ConvexとBakeが間に合わなくても視覚応答を待たせない。`Dormant`境界は例外として即時表示を省略する。切断直後の物理状態はFragmentGroup内の全LogicalFragmentの支持分類を集約し、`PendingPhysicsSplit`、`PendingAnchoredSplit`、`PendingSupportClassification`のいずれかへ一意に決める。いずれも旧Convexを支持用として持つ1つの`FragmentGroup`を維持し、旧Convexを複製して双方へ付与しない。複製すると、不自然な押し出しや存在しない中央部への接触が発生する。
 
 - 刀は旧Colliderを含む物理Colliderへ接触させず、Edge Direction Gate成立中の論理SweepだけでHitを判定する。プレイヤーの手・身体が旧Colliderへ触れる場合の例外方針は別途T-005で評価する。
 
 - `PendingPhysicsSplit`中は原則1つのRigidbodyと旧Colliderを物理状態の正本とし、左右の表示破片は独立した接触、落下、回転を行わない。外部から受けた力と接触ImpulseはFragmentGroup全体へ作用する。
 
-- 断面間の小さな見た目上のめり込み、周辺物体と表示破片の一時的なめり込み、見えている切断隙間に旧Colliderが残ることを許容する。違和感を限定するため、Pending中の表示分離量は切断幅を基準とした上限以内に抑える。
+- FragmentGroup内に支持分類未完了、世代不一致、または接続が曖昧なLogicalFragmentが1つでもあれば、Group物理状態は`PendingSupportClassification`へ入る。この状態では旧Rigidbody、Collider、ConstraintおよびTransformを変更せず、Group全体の分離Offset、切断Impulse、自由側解析運動を禁止する。一方、境界単位の描画判定は独立して維持し、`Active`と確定済みの境界ではclip、Stencil、仮Cap、非運動の切断演出を許可し、`Suppressed`境界ではすべての即時切断表示を禁止する。支持再分類と背景Geometry処理を進め、全LogicalFragmentが既知になった時点で、全て自由なら`PendingPhysicsSplit`、1つ以上の固定側を含めば`PendingAnchoredSplit`へ遷移する。再分類不能が予算時間を超えて継続する場合は、保守的な未分裂Fallbackを維持してTraceへ記録し、同期的な重いGraph処理やcookでフレームを停止させない。
+
+- 地面、壁、建物基礎などへ固定された対象は例外として`PendingAnchoredSplit`へ入る。分離運動または切断Impulseを適用する前に、`FixedSupportAnchor`を切断平面の正負半空間へ分類し、必要最小限の接続判定を完了する。固定側を含む旧Rigidbody／旧Collider全体へ切断Impulseを与えてはならない。
+
+- 単一の連結Convexと1個以上のFixedSupportAnchorだけで表せる対象は、各Anchorについて`dot(planeNormal, anchorPosition) + planeDistance`の符号を評価するだけで固定側を決める。正側だけにAnchorがあれば正側固定、負側だけなら負側固定、両側なら両側固定、どちらにもなければ通常の自由分裂とする。平面から`anchorEpsilon`以内のAnchorはPoCでは保守的に両側固定として扱い、破断可能な固定具は後続仕様とする。
+
+- Compound Convex、建物チャンク、複数支持部を持つ対象は、プリプロセス済み`FixedSupportGraph`を使用する。Physics Proxy／構造チャンクをNode、切断前の接続をEdge、FixedSupportAnchorをRootとして保持し、切断面で失われるEdgeを除いた後にRootから到達可能な成分を固定、到達不能な成分を自由と分類する。これは完全なConvex B-rep切断、質量特性計算、`Physics.BakeMesh`より先に行う軽量判定である。
+
+- `PendingAnchoredSplit`中は固定側の表示Offsetを0とし、自由側だけを衝突なしの解析運動で視覚的に分離できる。元の未切断Colliderは固定状態のまま残すため、周辺物体との一時的な透明接触や隙間内Colliderは許容する。切断幅は0であり、両側固定なら切断をDormantにして即時分離を見せず、どちらにも分離Impulseを与えない。実Fragment Meshが完成した時点で同一Transformのまま公開し、線状の切断痕が見えることは許容する。
+
+- FixedSupportGraphは最新の1切断面だけでなく、現在ObjectGenerationへ蓄積された全切断面で区切られた論理破片ごとにAnchor到達性を再評価する。例えば建物の最初の縦切断で両側が基礎へ接続していればDormantのままとし、交差する2面目によってAnchorなしの部品が初めて生じた時点で、その部品に接する1面目と2面目の断面を同時に可視化して分離する。
+
+- FixedSupport分類は命中フレーム内で完了する固定長処理を目標とし、少数Anchorの半空間分類は同期実行してよい。SlashFrameと候補対象の未来姿勢が命中前に確定している場合は投機評価し、実命中、ObjectGeneration、Anchor／Graph世代、切断面の一致をCommit条件とする。不一致または未完了時は対象境界を`Suppressed`として全即時表示と運動を抑止し、再分類へ送る。
+
+- 断面間の小さな見た目上のめり込み、周辺物体と表示破片の一時的なめり込み、見えている切断隙間に旧Colliderが残ることを許容する。違和感を限定するため、Pending中の仮分離Offsetには物体寸法と想定Impulseに基づく上限を設ける。Kerfは常に0であり、仮分離Offsetとは別パラメータとする。
 
 - 後続の斬撃Hitと幾何切断は旧Colliderではなく、Pending Cutを適用した論理破片とCut Shellを参照する。物理が未分離でも、表示・切断履歴・世代管理は切断済みとして進める。
 
@@ -334,6 +356,8 @@ ColliderのBake／cookingは視覚切断のクリティカルパスに含めな�
 - 各破片の初期線速度を`v_child = v_group + omega_group x (COM_child - COM_group)`、初期角速度を`omega_child = omega_group`として、Pending中にFragmentGroupが受けた運動を引き継ぐ。
 
 - 物理Commit時は表示上の分離位置とCollider位置を一致させ、切断面法線方向へ小さな分離Impulseを加える。Pending中に表示だけが大きく開き、Commit時に遅れて強く跳ねる動きは避ける。
+
+- `PendingAnchoredSplit`のCommitでは、Anchorから到達可能な破片を静的／Kinematicまたは元の固定Constraintへ残し、到達不能な自由破片だけにRigidbody、継承速度、分離Impulseを与える。複数Anchorが切断面の両側へ残る場合は両側を固定し、接続グラフ上で自由と証明できない破片へImpulseを与えない。
 
 - 表示用MeshとCollider用Meshを分離し、Collider cooking用形状は低頂点・閉形状に保つ。
 
@@ -427,18 +451,86 @@ PoCではVFX Graphで外観、汎用破片Fallback、URP／XR適合性を素早�
 
 各SlashはGestureのLatch時に単調増加する`SlashGeneration`を持つ。各切断対象は確定状態を示す`ObjectGeneration`を持ち、`SlashFront`のSweepによる実命中が確認され、Pending Cutを登録した時点でだけ更新する。空振り、候補列挙、投機ジョブ開始では対象世代を進めない。
 
-投機ジョブは開始時の`BaseObjectGeneration`、`SlashId`、`SlashGeneration`、命中した`FrontEdgeId`、`SlashFrame`を保持する。ジョブを強制キャンセルするのではなく、完成時およびCommit時に、実命中と各識別子・世代・前提条件を検証する。一致しない成果物はコミットせず破棄し、安全に再利用できる中間資産だけを回収する。
+投機ジョブは開始時の`BaseObjectGeneration`、`SlashId`、`SlashGeneration`、命中した`FrontEdgeId`、`SlashFrame`に加え、支持判定を使用する場合は`AnchorGeneration`と`SupportGraphGeneration`を保持する。ジョブを強制キャンセルするのではなく、完成時およびCommit時に、実命中と各識別子・世代・前提条件を検証する。一致しない成果物はコミットせず破棄し、安全に再利用できる中間資産だけを回収する。
 
-| 状態 | 意味 | 許可される処理 |
+状態は1個のObject単位enumへ集約せず、物理分裂、Fragment支持、切断境界の露出、Geometry完成度、非同期Work Resultの採否を直交する軸として保持する。同じ対象は、Activeな新規境界、Dormantな過去境界、Suppressedな分類待ち境界、完成済み実Mesh、未完成Colliderを同時に持ち得る。
+
+| Object／FragmentGroupの物理状態 | 意味 | 許可される処理 |
 | --- | --- | --- |
-| Stable | 描画・物理とも確定済み | 新規切断の基底に使用 |
-| Pending Visual | シェーダ仮表示中 | 追加入力を受け、表示ジョブを更新 |
+| Stable Unsplit | 物理的には未分裂で、1つのRigidbody／Colliderが確定済み | 新規切断の物理基底に使用 |
 | Pending Physics Split | FragmentGroupの1 Rigidbody／旧Colliderを共有し、表示と論理破片だけが分離済み | Convex生成とBakeを待ちながら、後続切断と外力を受理 |
-| Ready to Commit | 最新世代の成果物が完成 | 境界タイミングで原子的に差し替え |
+| Pending Support Classification | FragmentGroup内にUnknownなLogicalFragmentが1つ以上あり、物理分裂方法をまだ決定できない | 旧Rigidbody／Collider／Constraint／Transformを維持し、Group全体のOffset、Impulse、解析運動を禁止する。支持再分類と背景Geometry処理を進めつつ、既知のActive境界だけはclip／Stencil／仮Capを許可する |
+| Pending Anchored Split | 固定側分類済みだがCollider未分裂。旧Colliderは固定したまま、固定側は無移動、自由側だけを衝突なしで仮表示 | Anchor／接続判定結果を維持し、完全Convex切断とBakeを待つ。共有物理へ切断Impulseを与えない |
 | Stable Fast Cook | Fast Cook Colliderで物理分裂済み | 通常物理を継続し、必要なら低優先度Upgradeを予約 |
 | Physics Upgrade Pending | 別MeshをFast Simulationで再Bake中 | 現Colliderを維持し、世代変更時はUpgradeを破棄 |
 | Stable Fast Simulation | Fast Simulation Colliderへ安全に差し替え済み | 長寿命・高接触破片として通常物理を継続 |
-| Stale | 完成時点で世代が古い | 適用せず回収、必要なら中間資産のみ再利用 |
+
+| `LogicalFragment.SupportState` | 意味 | 許可される処理 |
+| --- | --- | --- |
+| Anchored | FixedSupportAnchorから到達可能 | OffsetとImpulseを0に保ち、固定物理へ追従 |
+| Detached | Anchorから到達不能であることを証明済み | Active境界を介した仮分離と、Collider完成後の物理分裂を許可 |
+| Unknown | 分類未完了、世代不一致、または接続が曖昧 | 動かさず再分類またはFallbackを待つ |
+
+| `CutBoundaryRecord.ExposureState` | 条件 | 描画・運動 |
+| --- | --- | --- |
+| Dormant | 境界両側のFragmentが`Anchored`で相対移動しない | clip、Stencil、仮Cap、Offset、Impulseを起動せず、背景Geometry処理を継続 |
+| Active | 分類結果から境界を露出可能と証明済み | clip、Stencil、仮Cap、切断演出を起動可能。Offset／Impulseは境界のSupport決定表に加え、FragmentGroup物理状態が許可する場合だけ適用 |
+| Suppressed | 分類不能で、安全な露出状態を決定できない | clip、Stencil、仮Cap、Offset、Impulseを起動せず、再分類後にDormantまたはActiveへ遷移 |
+
+SupportからExposureへの変換は次の完全な決定表を正本とする。本作では安全性と`PendingSupportClassification`の無運動契約を優先し、`Detached + Unknown`も`Suppressed`とする。正負は対称であり、表にない組み合わせを実装側で推測してはならない。
+
+| 正側Support | 負側Support | Exposure | Offset／Impulse |
+| --- | --- | --- | --- |
+| Anchored | Anchored | Dormant | 両側とも禁止 |
+| Anchored | Detached | Active | Detached側だけ許可 |
+| Detached | Anchored | Active | Detached側だけ許可 |
+| Detached | Detached | Active | 両側とも許可 |
+| Anchored | Unknown | Suppressed | 両側とも禁止 |
+| Detached | Unknown | Suppressed | 両側とも禁止 |
+| Unknown | Anchored | Suppressed | 両側とも禁止 |
+| Unknown | Detached | Suppressed | 両側とも禁止 |
+| Unknown | Unknown | Suppressed | 両側とも禁止 |
+
+上表は境界ごとのExposureを決めるために使用し、Object／FragmentGroupの物理状態を境界ごとに決めてはならない。FragmentGroup物理状態は、現在Groupに属する全LogicalFragmentの`SupportState`を次の優先順位で集約して一意に決める。
+
+1. `Unknown`が1つでもある場合は`PendingSupportClassification`。
+2. 全LogicalFragmentが既知で、`Anchored`が1つ以上ある場合は`PendingAnchoredSplit`。
+3. 全LogicalFragmentが`Detached`の場合は`PendingPhysicsSplit`。
+
+この集約は切断追加、再分類、Anchor／Graph世代変更のたびに全LogicalFragmentを対象として再評価する。`PendingSupportClassification`が選ばれた場合は、別の既知境界が`Active`でもGroup全体のOffset／Impulse／解析運動を禁止する。ただし、そのActive境界固有のclip／Stencil／仮Capは描画できる。`Suppressed`境界の表示禁止は常に優先する。
+
+| `CutBoundaryRecord.GeometryState` | 意味 | 許可される処理 |
+| --- | --- | --- |
+| Pending | 実Fragment Meshが未完成 | Active境界だけ即時Rendererで補い、Dormant／Suppressed境界は抑止 |
+| Ready | 最新世代の実Geometry成果物が完成し、Commit待ち | Active境界の即時Rendererを継続したまま世代と命中条件を検証し、描画フレーム境界で実Meshを適用 |
+| Committed | 実Geometryの表示適用に成功済み | 同じ原子的Commitで即時Rendererの対応仕事を回収し、後続切断の表示Geometry基底に使用。物理Commit完了は含意しない |
+
+| 非同期`WorkResultState` | 意味 | 許可される処理 |
+| --- | --- | --- |
+| Scheduled | Work Itemが予約済み | Job開始またはSchedule前取消を待つ |
+| Running | Jobが実行中 | 完了結果を生成し、直接Unity Objectを変更しない |
+| Ready | 成果物が完成し、Commit検証待ち | 最新の前提・各Generationと照合 |
+| Stale | 完成時点で前提または世代が古い | Commitせず、必要なら再利用可能な中間資産だけ回収 |
+| Committed | 有効な成果物を境界タイミングで適用済み | 二重Commitを禁止し、解放処理へ進む |
+| Disposed | 成果物と一時領域を解放済み | 以後の適用・参照を禁止 |
+
+`Dormant`、`Active`、`Suppressed`はCut Plane全体でもObject全体でもなく、切断によって生じた連結な論理Fragment境界ごとの属性とする。同じCut Plane上でも、ある境界Loopは両側固定でDormant、別の境界LoopはDetached部品に接してActive、分類不能な境界LoopはSuppressedとなり得る。`CutBoundaryRecord`は少なくとも`BoundaryId`、`CutPlaneId`、正負の`LogicalFragmentId`、`ExposureState`、`GeometryState`、作成時のObject／Anchor／SupportGraph各Generationを保持する。
+
+支持Topologyの最小ランタイムモデルは`FixedSupportAnchor`、`FixedSupportNode`、`FixedSupportEdge`、`LogicalFragment`、`CutBoundaryRecord`から成る。切断面で失われるEdgeを反映してAnchor到達性を再計算し、後続切断でDetached成分が生じた場合は、その成分に接する過去のDormant境界を同一フレームでActive化する。表示MeshやColliderが未完成でも、Cut Plane、論理Fragment、Graph Edge、世代情報は破棄しない。
+
+固定支持切断では次を不変条件とする。
+
+- `Kerf`は常に0であり、仮分離Offsetとは別設定とする。
+- 固定側の表示Offsetと切断Impulseは常に0とする。
+- 自由であると証明できない`Unknown`側は動かさない。
+- `Suppressed`境界ではclip、Stencil、仮Cap、Offset、Impulseを起動しない。
+- `PendingSupportClassification`中は旧Rigidbody、Collider、Constraint、Transformを変更しない。
+- `PendingSupportClassification`中でも既知のActive境界のclip、Stencil、仮Capは許可するが、Group全体のOffset、Impulse、解析運動は禁止する。
+- Dormant化してもCut Plane、論理Fragment、Graph Edge、`ObjectGeneration`を保持する。
+- 後続切断では最新面だけでなく、蓄積された全切断面に対してAnchor到達性を再評価する。
+- Dormant解除時はDetached成分に接する関係境界を同一フレームでActive化する。
+- 投機結果のCommit条件へ`AnchorGeneration`と`SupportGraphGeneration`を含める。
+- 同一位置の正負Capを通常カラーPassで常時両面描画しない。
 
 ## 9. リグ付き人形の切断
 
@@ -725,7 +817,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-064 | 開発Capture Profile | Windows PCVR、D3D11のみ、SDR／sRGB、MSAAなし、Dynamic Resolutionなし、Single Pass Instanced、App Projection Layer 1枚、左眼45fpsを初期固定構成とする | 確定 |
 | D-065 | Capture Fail Fast | 実行時のGraphics API、Format、Sample Count、Array Size、Layer、SubImageが固定Profileと違う場合は録画だけを停止し、構成差をTraceする | 確定 |
 | D-066 | Capture環境記録 | Unity／Package／Meta Runtime／Quest OS／GPU／Driver／Swapchain／Link設定をRun Manifestへ保存し、環境差のあるRunを同一条件として比較しない | 確定 |
-| D-067 | cooking非同期化 | Collider Bake／cookingを視覚切断のクリティカルパスから外し、完了前でも命中フレームから断面と隙間を表示する | 確定 |
+| D-067 | cooking非同期化 | Collider Bake／cookingを視覚切断のクリティカルパスから外し、Active境界は完了前でも命中フレームから断面と相対移動による隙間を表示する。Dormant境界は即時表示を省略する | 確定 |
 | D-068 | Pending物理共有 | `PendingPhysicsSplit`中は左右の表示破片を1つのFragmentGroup、Rigidbody、旧Colliderへ追従させ、小幅のめり込みと隙間内の旧Colliderを一時許容する | 確定 |
 | D-069 | 物理分裂Commit | Bake済みConvexの完成後、物理ステップ境界で左右Rigidbodyへ分裂し、親の線速度・角速度から各重心位置の速度を継承する | 確定 |
 | D-070 | Cooking Profile | Cleaning／Welding無効化を有力候補とし、Fast Cook／Fast Simulationの費用と効果を同条件で実測する | 技術検証付き確定 |
@@ -736,7 +828,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-075 | 重力一元管理 | `WorldPhysicsProfile`を正本とし、Unity Physics、未来予測、解析軌道、GPU破片、VFXへ同じ重力を供給してRunごとに記録する | 確定 |
 | D-076 | 即時Shadow | 即時切断中は同じper-instance clip／分離Offsetを適用した両面ShadowCasterで影を近似し、Shadow Map用Stencil断面は描かない | 技術検証付き確定 |
 | D-077 | Shadow Batch | Shadow描画をStable片面群とPending両面群へ分け、切断平面は固定長Instance Recordで渡して平面値・切断数によるDraw分割を避ける | 技術検証付き確定 |
-| D-078 | 有限仮キャップ | 即時キャップ板をローカルOBBと切断平面の3～6頂点交差多角形から生成し、他のPending Cut半空間でclipしてからStencilで実輪郭へ制限する | 確定 |
+| D-078 | 有限仮キャップ | 即時キャップ板をローカルOBBと切断平面の3～6頂点交差多角形から生成し、他のTemporary Render Boundary半空間でclipしてからStencilで実輪郭へ制限する | 確定 |
 | D-079 | Stencil彩色Batch | 左右眼いずれかでスクリーンBoundsが重なり、かつD-080のキャップ互換条件を満たさない対象だけを競合とし、Greedy ColoringしたColor単位でStencil Volume／Cap処理をまとめる | 技術検証付き確定 |
 | D-080 | Stencil互換Group | 全World Cut Plane、Side／半空間、Offset、Cap描画状態が一致する対象は、画面上で重なってもWinding Countの和集合として同じStencil Colorへ統合する | 技術検証付き確定 |
 | D-081 | 両眼Cap可視性Cull | 論理破片×切断面ごとに左右眼Facingを判定し、全Capが両眼とも裏向きの互換Groupは彩色前にStencil Clear／Volume／Cap処理から除外する | 技術検証付き確定 |
@@ -749,6 +841,14 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-088 | Solidの自己交差契約 | Topological Watertightと自己交差のないGeometrically Valid Solidを区別する。自己交差は即時clip／Stencilで条件付き表示できても、Stable Solid Cut Mesh、反復切断、Physics Proxyの合格入力にはしない | 確定 |
 | D-089 | 実Geometry GPU消滅 | Micro Attachmentの実Geometryを事前Shard Cluster化し、Vertex Pulling、解析運動、Indirect Batch、Opaque Dither Clipで消滅させる。汎用ローポリ破片は遠距離・Runtime転送予算超過時のFallbackとする | 技術検証付き確定 |
 | D-090 | ライセンスAsset保管 | Synty購入原本と派生物は、公開Unity Repoの兄弟に置く非公開Git LFS Repo`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理し、許可されたチーム以外へ共有しない | 確定 |
+| D-091 | 固定物体の切断 | 分離運動／Impulse前にFixedSupportAnchorの半空間分類と必要最小限の接続判定を完了し、固定側を動かさない。完全Convex切断とcookは非同期で後追いする | 確定 |
+| D-092 | ゼロ幅・休眠切断 | Kerfを0とし、両側Fragmentが固定され相対移動しない連結境界はDormantとして即時clip、Stencil、仮Cap、分離を省略する。実Mesh完成後は同一位置で公開し、後続交差切断でDetached部品が生じた時に関係する過去境界を一斉に可視化する | 確定 |
+| D-093 | 潜在切断痕 | Dormantな実Fragment Mesh境界の細い亀裂、輪郭線、軽微なチラツキを切断演出として許容する。通常Capは片面描画とし、画面規模の激しいZ-fightingは不具合として避ける | 確定 |
+| D-094 | 支持状態の粒度 | Dormant／Active／SuppressedはObjectの排他的状態ではなく連結な`CutBoundaryRecord`ごとの`ExposureState`とする。物理分裂、Fragment支持、境界露出、Geometry完成度、Work Result採否を独立した状態軸で管理する | 確定 |
+| D-095 | 支持モデルの実装順 | 描画側のDormant判定に必要な純粋データモデル、Anchor到達性、世代検証、単体テスト、Trace契約をPhase 2より前に実装する。Collider切断、Rigidbody生成、cookはPhase 4に維持する | 確定 |
+| D-096 | 分類不能時の物理 | 境界の一方でもSupportStateがUnknownならその境界をSuppressedとする。FragmentGroup内にUnknownなLogicalFragmentが1つでもあれば物理をPendingSupportClassificationとし、旧物理状態を完全維持する。Detached＋Unknownも分類確定まで動かさない | 確定 |
+| D-097 | 複数切断の物理集約 | FragmentGroupの物理状態は全LogicalFragmentから`Unknownあり`、`全既知かつAnchoredあり`、`全Detached`の優先順位で集約する。PendingSupportClassification中も既知のActive境界のclip／Stencil／仮Capは許可するが、Group全体の運動は禁止する | 確定 |
+| D-098 | Pending Cutと描画集合 | Pending CutはGeometry未Commitの切断とし、即時Renderer対象はActiveかつGeometry未Commit、すなわちPendingまたはReadyの境界とする。実Mesh適用とGeometry Commitの同時成功後にだけRenderer対象から外す。CutBoundaryRecord、Cut Plane、論理Fragment、支持履歴はStable側へ保持し、物理Pendingとは独立管理する | 確定 |
 
 ## 13. 未決事項
 
@@ -756,7 +856,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | --- | --- | --- | --- | --- |
 | O-001 | 初期ターゲット | 解決済み：PCVRを採用（D-011） | Quest単体は当面スコープ外 | 2026-08-21 |
 | O-002 | 目標FPS | 解決済み：両眼描画90fpsを基準（D-012） | 再投影は安全網として扱う | 2026-08-21 |
-| O-003 | Pending上限 | 同一物体2、3、4枚のどれを標準とするか | 描画コストと連続斬り感 | T-003後 |
+| O-003 | Temporary Renderer上限 | 同一物体のActiveかつGeometry未Commit（PendingまたはReady）境界について、2、3、4枚のどれを標準上限とするか | 描画コストと連続斬り感 | T-003後 |
 | O-004 | 断面表現 | 共通トゥーン＋粘土色グレーは確定。機械内部や人体で追加記号・部品表現を使う範囲 | 年齢区分とアート制作 | アート検証時 |
 | O-005 | 切断可能範囲 | 建物・道路まで切断対象に含めるか | レベル設計とメモリ | 垂直スライス後 |
 | O-006 | 破片寿命 | 最大動的破片数、消去時間、スリープ規則 | 物理CPUと視覚密度 | T-010後 |
@@ -867,6 +967,9 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | T-069 | Convex Job Pipeline | Convex分割と複数`Physics.BakeMesh`がメインスレッドを停止させず、世代不一致成果物を適用せず、Pending物理共有から安全に分裂できる | 破片数、面数、同時Slash数、Fast Cook／Fast Simulationを変え、各Job段階時間、Schedule数、Worker占有、Main Thread Commit時間、Bake P50／P95／P99、Generation Reject、物理差し替え時Impulseを測定。同一Mesh同時Bakeを不変条件として検出する |
 | T-070 | Unity／Native Cook Probe | U1／N1／N2／N3を同一入力と近似条件で再現測定し、Unity経路の実費用、Hull再計算の寄与、完全Topology／直接生成の改善上限を工程別に説明できる | 8～255頂点級、単発／Batch、Fast Cook／Fast SimulationをRelease相当で反復し、P50／P95／P99、Throughput、各工程時間、Thread占有、メモリ、失敗率、出力形状、接触／Query品質、Unity／PhysX版をRun Manifestへ保存する。版違いと非利用可能なNative生成物を明記する |
 | T-071 | Surface Projectionと自己交差 | Voxel形状より主要Silhouette／曲面誤差を改善しつつ、Projection／Reduction後も自己交差、面反転、退化、境界、体積異常を残さず、実Mesh切断の単純Loop前提を満たす | 車、建物、家具、薄板、近接二重面、内部装飾を含むDatasetでProjectionなし／無制約Shrinkwrap／制約付きProjectionを比較し、距離分布、Silhouette、Normal、包含、最小厚み、自己交差、投影拒否率、Triangle数、前処理時間、多方向切断Loop次数と三角形化成功率を測定する |
+| T-072 | 固定物体の即時切断 | cook遅延中も固定側が動かず、自由と証明された側だけが仮分離し、Commit後も位置・速度・Constraintが連続する | 単一Anchor、両側Anchor、面近傍Anchor、Compound Graph、連続切断、先行評価Reject、cook遅延／失敗を再生し、分類時間、誤Impulse、固定点変位、自由側軌道、Traceを検査する |
+| T-073 | Dormant Cut再可視化 | 両側固定のゼロ幅切断が即時Stencil／仮Cap／分離を起動せず、実Mesh完成後の切断痕を許容範囲に保ち、交差する後続切断でDetached部品とその全境界断面が同一フレームに現れる | 大型建物を縦1面、交差2面、3面で切り、Anchor配置を変えてDormant／Active遷移、線状亀裂、軽微なチラツキ、全面Z-fighting、Cap欠落、旧面復活、Stencil Draw／Pixel費用、背景Job完了順、再切断世代を検査する |
+| T-074 | 支持Topologyモデル | 同一物体にActive／Dormant／Suppressed境界とPending／Ready Geometryが混在しても状態を損なわず、完全決定表、FragmentGroup集約、全履歴面の再評価、物理状態遷移、世代Rejectが決定論的に動作する | 正負Supportの全9組み合わせに加え、`Anchored／Detached`のActive境界と`Unknown／Anchored`のSuppressed境界が同一Groupへ混在するFixtureを再生する。PendingSupportClassification中に旧Rigidbody、Collider、Constraint、TransformとGroup運動が変わらず、既知Active境界のclip／Stencil／仮Capだけが表示され、Suppressed境界は表示されないことを検査する。再分類後の集約遷移、同一フレームActive化、Timeout Fallback、Trace値も純粋C#テストで検査する |
 
 ## 15. 実装ロードマップ
 
@@ -875,16 +978,17 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Phase 0 | 非VR基盤・観測 | Unity 6.3 LTS 6000.3.22f1、Universal 3D／URP、Repo・ignore・Package Lock、固定テスト、Editor更新手順、入力抽象化、WorldPhysicsProfile、ProfilerMarker、Flow、TraceLogger、最小タイムライン、FrameId同期のUnity選択的キャプチャ | 固定Editor版から非VRで再現可能な性能基準、重力Profile、Work Item／Job時系列、対応画像を取得し、一時worktreeで更新・復帰手順を確認 |
 | Phase 0.25 | Cook比較Probe | 固定Convex Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Run Manifest、結果レポート | 同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、差の原因と版・設定差を区別して記録できる。Native PhysXを製品Runtime依存にはしない |
 | Phase 0.5 | XRスモークテスト | OpenXR、Quest 3S有線Link、Grip Pose、Tracking State、GripToKatanaOffset、Single Pass | 空シーンで両眼90Hzと左右の刀姿勢・追跡復帰を確認 |
-| Phase 1 | 即時切断 | 共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、Micro Attachment即時消去、実Geometry Shard／Vertex Pulling／Indirect Batch PoC、VFX Graph汎用Fallback | 非VR入力で箱と代表プロップに即時の隙間を表示し、切断帯内の微小付属物が同フレームに消えて実形状のShardへ遷移する。通常数千Triangleを少数Drawで処理し、予算超過時は汎用破片へ安全に低下する |
-| Phase 2 | 仮断面・影強化 | Cut Shell、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、Front／Back相殺とResidual Stencil Support検証、CapCompatibilityKey／互換Group、可視Cap Bounds競合判定、Winding Count Stencil、左右眼Stencil Conflict Graph／Greedy Coloring、Color単位Volume／Cap Batch、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用per-instance clip／Offset、Stable片面／Pending両面Batch、XR両眼対応、Pending Cut管理 | 2～4連続切断と複数対象の画面重複でStencilが混入せず、OBBが重なってもCap非交差なら安全にBatchされ、互換Groupは統合され、両眼不可視Cap Groupは欠落や点滅なく除外される。相殺不能入力はFallbackし、Shadow MapではStencil Capなしの影近似が許容範囲に収まる |
+| Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、Micro Attachment即時消去、実Geometry Shard／Vertex Pulling／Indirect Batch PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と代表プロップだけに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。切断帯内の微小付属物が同フレームに消えて実形状のShardへ遷移し、通常数千Triangleを少数Drawで処理し、予算超過時は汎用破片へ安全に低下する |
+| Phase 1.5 | 固定支持Topology | `FixedSupportAnchor`、Node／Edge、`LogicalFragment`、`CutBoundaryRecord`、Support／Exposure／Geometry／Work Result状態軸、`PendingSupportClassification`、Support→Exposure決定表、全LogicalFragment→FragmentGroup物理状態集約、Anchor到達性、Anchor／SupportGraph世代、Commit検証、純粋C#単体テスト、支持Trace契約 | 手書き／合成FixtureでT-074を満たし、Collider切断やcookなしで境界ごとのDormant／Active／Suppressed分類、複数境界混在時のGroup物理状態、分類不能時の物理完全維持と既知Active境界の描画、再分類遷移、全履歴面の再評価、世代不一致Reject、保守的Fallbackを決定論的に再現できる。完了後に固定支持対象を切断対象へ追加する |
+| Phase 2 | 仮断面・影強化 | Cut Shell、ゼロKerf、Dormant Cut Cull／再有効化、実Fragment Mesh早期公開、Temporary Render Boundary Set、Ready中の表示継続と原子的Geometry Commit、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、Front／Back相殺とResidual Stencil Support検証、CapCompatibilityKey／互換Group、可視Cap Bounds競合判定、Winding Count Stencil、左右眼Stencil Conflict Graph／Greedy Coloring、Color単位Volume／Cap Batch、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用per-instance clip／Offset、Stable片面／Pending両面Batch、XR両眼対応、Pending Cut／Stable履歴管理 | 2～4連続切断と複数対象の画面重複でStencilが混入せず、ActiveかつGeometry未Commit（PendingまたはReady）の境界だけが即時Renderer費用を発生させる。Ready到達だけでは表示を戻さず、実Mesh適用とCommitted遷移が同じ描画フレーム境界で成功した後にだけTemporary Renderer一覧から外す。両側固定のDormant Cutは大断面の即時Stencil仕事を発生させず、完成した実Meshを同一位置で公開できる。Geometry Commit後もCutBoundaryRecordと支持履歴が残る。許容する細い切断痕と禁止する全面Z-fightingを区別し、Detached化した瞬間に過去断面を欠落なく再表示する。OBBが重なってもCap非交差なら安全にBatchされ、互換Groupは統合され、両眼不可視Cap Groupは欠落や点滅なく除外される。相殺不能入力はFallbackし、Shadow MapではStencil Capなしの影近似が許容範囲に収まる |
 | Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、メインスレッドMesh公開、世代Commit | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない |
-| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit、Native Convex B-rep、Count／Write／Validation Job、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、予算管理、T-070との差分再確認 | cook遅延中も即時表示を維持し、Convex分割／BakeでMain Threadを停止させず、Fast Cookで早期分裂した後に価値のある破片だけを安全に昇格し、二重Meshメモリ、差し替え時の跳ね、Worker占有を許容範囲へ抑制する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、予算管理、T-070との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えず、分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、Fast Cookで早期分裂した後に価値のある破片だけを安全に昇格し、二重Meshメモリ、差し替え時の跳ね、Worker占有を許容範囲へ抑制する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
 | Phase 4.5 | 飛翔斬撃と未来評価 | Gesture状態機械、Edge Direction Gate、Recovery、NonCutting素通り、Slash Latch、Span／Travel Axis、単調・一価SlashFront、逆行／自己交差Finalized、前縁VFX、帯状Sweep、Candidate Flight Bounds、評価DAG、先行切断、Commit検証 | 復路とU字軌道で二重前縁や誤斬撃を作らず、Latch直後から三日月前縁が飛翔・命中し、Extending中も前縁が成長しながら進み、遠距離対象の多くが接触時に完成Meshへ即移行 |
 | Phase 4.6 | 予測拡張 | 局所PhysicsScene、未来Animation姿勢、信頼度別フォールバック | 動的対象でも予測採用率と予測費用が基準を満たす |
 | Phase 4.7 | モブ未来計画 | Mob Future Planner、MobPlan／PlanGeneration、AI LOD、経路・Animation先行確定、時空間予約、Trace | 介入なしの遠距離モブで計画再利用率と先行切断完了率が基準を満たし、介入時は安全に無効化される |
 | Phase 4.8 | OpenXR Projection Capture | Windows API Layer、D3D11固定、SDR、MSAAなし、Dynamic Resolutionなし、Single Pass、Projection 1枚、左眼45fps、Release前GPU Copy、固定Profile検証、GPU Encode、Capture Record／Run Manifest同期 | 切断PoCの異常をProjection画像とTraceで再現調査でき、想定外構成はFail Fastし、非録画時との差が性能予算内。不要なら導入を見送れる |
 | Phase 5 | 人形 | 姿勢スナップショット、CPUスキニング、骨proxy分類、物理移行 | 基本動作中のNPCを任意方向に切断 |
-| Phase 5.5 | Asset自動前処理 | Portable Blender Manifest／Bootstrap、固定版ヘッドレス実行、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、Reduction、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor生成、Solid／Proxy生成、検証、キャッシュ | 古いシステム版と共存し、代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類できる |
+| Phase 5.5 | Asset自動前処理 | Portable Blender Manifest／Bootstrap、固定版ヘッドレス実行、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、Reduction、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor生成、実Asset用FixedSupportGraph生成、Solid／Proxy生成、検証、キャッシュ | 古いシステム版と共存し、代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類できる。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通す |
 | Phase 6 | コンテンツ | Synty City街区、10プロップ、シェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 最適化 | 端末別品質、破片LOD、ジョブ優先度、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす |
 
@@ -892,7 +996,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 
 - 刀の高速移動でも代表プロップを安定して切断できる。
 
-- 斬撃直後に切断された両側が離れて見え、仮断面が両眼で一致する。
+- `Active`境界では斬撃直後からclipと仮断面が両眼で一致する。FragmentGroupが`PendingSupportClassification`でなければ許可された側が離れて見え、同状態ならGroup運動を止めたまま切断線と仮断面だけを表示する。`Dormant`境界は相対移動せず、`Suppressed`境界は再分類まで即時切断表示と運動を起動しない。
 
 - 通常断面は全体と同じトゥーン陰影の粘土色グレーで統一され、仮断面から実断面への差し替えで特殊な質感変化が見えない。
 
@@ -986,13 +1090,23 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 
 | 用語 | 定義 |
 | --- | --- |
-| Stable Geometry | バックグラウンド処理が完了し、表示・物理へ確定適用された形状 |
-| Pending Cut | シェーダでは見えているが、実MeshまたはColliderへ未反映の切断 |
+| Stable Geometry | バックグラウンド生成が完了し、表示へ確定適用された実Fragment Mesh／Cut Shell。ColliderやRigidbodyのCommit完了は含意しない |
+| Pending Cut | 実命中により登録済みだが、`CutBoundaryRecord.GeometryState`がまだ`Committed`ではない切断。ExposureStateによりActive／Dormant／Suppressedのいずれでもよく、Collider完成度は含意しない |
+| Temporary Render Boundary Set | `ExposureState == Active`かつ`GeometryState != Committed`、すなわちGeometryがPendingまたはReadyで即時Rendererを必要とする境界集合。一時描画コストと枚数上限はこの集合を基準にし、実Mesh適用とGeometry Commitが同じ描画フレーム境界で成功した後にだけ除去する |
 | Solid Cut Mesh | Blenderプリプロセスで入力Assetから生成する、表示には使わないTopological Watertightかつ自己交差のないGeometrically Validな基底形状。初回の内部判定、断面生成、反復切断の入力となる |
 | Cut Shell | 基底Solid Cut Meshまたは直前のStable Cut Shellへ確定済み切断を適用して派生する、現在のObjectGenerationを表す閉じた実行時形状。Stencil内部判定と次回切断に使う |
 | Physics Proxy | 物理接触と高速切断のための低複雑度Convex／Compound |
-| FragmentGroup | 物理分裂Commitまで、複数の表示・論理破片を1つのRigidbodyと旧Colliderで支持する一時的な物理単位 |
+| FragmentGroup | 物理分裂Commitまで、複数の表示・論理破片を1つのRigidbodyと旧Colliderで支持する一時的な物理単位。物理状態は全LogicalFragmentのSupportStateを集約して一意に決める |
 | PendingPhysicsSplit | 見た目と論理状態は切断済みだが、左右のBake済みColliderが未完成でFragmentGroupの物理モデルを共有している状態 |
+| FixedSupportAnchor | 地面、壁、基礎、固定Constraintなど、切断後も動かしてはいけない支持位置を表す点または小領域。Micro AttachmentのAnchorとは別概念 |
+| FixedSupportGraph | Compound Convex／構造チャンクの接続とFixedSupportAnchorをプリプロセスで記録し、切断後に固定Anchorから到達可能な成分を判定する軽量グラフ |
+| PendingSupportClassification | FragmentGroup内にUnknownなLogicalFragmentが1つ以上あり、旧Rigidbody、Collider、Constraint、TransformとGroup運動を完全維持したまま支持再分類と背景Geometry処理を進める物理状態。既知のActive境界はclip／Stencil／仮Capだけを表示でき、Timeout時も未分裂Fallbackを維持する |
+| PendingAnchoredSplit | FixedSupport分類は完了したがCollider切断／Bakeは未完了で、旧Colliderを固定したまま自由側だけを衝突なしで仮表示する状態 |
+| LogicalFragment | 蓄積された切断面で区切られた論理的な連結成分。Colliderや表示Meshの完成前から存在し、Anchor到達性と後続切断の基底になる |
+| CutBoundaryRecord | 1つのCut Planeが作った連結なFragment境界。正負Fragment、ExposureState、GeometryState、作成時の各Generationを保持する |
+| Dormant Cut Boundary | Kerf 0かつ境界両側のLogicalFragmentが固定され相対移動しないため、即時clip／Stencil／仮Cap／分離を省略する`CutBoundaryRecord`。実Mesh完成後は同一位置で公開でき、後続切断でDetached成分に接すればActive化する |
+| Suppressed Cut Boundary | 支持分類未完了、世代不一致、接続曖昧などにより安全な露出状態を決定できない`CutBoundaryRecord`。clip、Stencil、仮Cap、Offset、Impulseを起動せず、再分類後にDormantまたはActiveへ遷移する |
+| Kerf | 切断によって除去される物理的な幅。本作では0とし、見える隙間は破片の相対移動だけで生じる |
 | Cooking Profile | `Physics.BakeMesh`と`MeshCollider`へ同一指定するcookingOptionsの構成。初回分裂用Fast Cookと選択的Upgrade用Fast Simulationを使い分ける |
 | Physics Upgrade | Stable Fast Cook破片と同じ形状の別MeshをFast Simulationで再Bakeし、安全な物理ステップ境界でColliderを昇格させる処理 |
 | Micro Attachment | Physics Proxyで表現しない微小な付属部品。切断帯へ触れた場合は物理破片を作らず不可逆に全体消去する |
@@ -1002,7 +1116,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Shard Cluster | 接続、Normal、Material、面積を基準に隣接する通常2～8 Triangleをまとめ、同じGPU Transformで飛散させる単位 |
 | WorldPhysicsProfile | 世界重力を正本として保持し、Unity Physics、予測、解析運動、GPU Effectへ同じ値を供給するバージョン付き設定 |
 | Pending Two-Sided Shadow | 即時切断中だけ、開いた外殻の裏面をShadow Mapへ書いて断面キャップの遮蔽を近似する両面ShadowCaster経路 |
-| Cap Bounds Polygon | 対象のローカルOBBと切断平面の交差から生成し、他のPending Cut半空間でclipする3～6頂点の有限な仮キャップ板 |
+| Cap Bounds Polygon | 対象のローカルOBBと切断平面の交差から生成し、他のTemporary Render Boundary半空間でclipする3～6頂点の有限な仮キャップ板 |
 | Stencil Conflict Graph | CapCompatibilityKey別の互換Groupをノードとし、左右眼いずれかで保守的な可視Cap Boundsが重なる非互換Group間へ辺を張るStencil Batch彩色用グラフ |
 | CapCompatibilityKey | 全World Cut Plane、Side／半空間、分離Offset、Cap Material／Debug／Fade状態を正規化して表す、Stencil和集合共有の互換Key |
 | Winding Count Stencil | Cut ShellのFront／BackでStencilをIncrement／Decrementし、複数物体が重なっても非ゼロ内部Countを維持する方式 |
@@ -1275,6 +1389,9 @@ Zantetsu.Physics.Predict
 Zantetsu.Mesh.Classify
 Zantetsu.Mesh.BuildCap
 Zantetsu.Convex.Slice
+Zantetsu.Support.Classify
+Zantetsu.Support.Reachability
+Zantetsu.Support.CommitValidate
 Zantetsu.Commit.Validate
 Zantetsu.Commit.Apply
 Zantetsu.Trace.Drain
@@ -1297,7 +1414,9 @@ EventType / TaskType / FromState / ToState / Reason
 Value0 / Value1
 ```
 
-最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。既存Event名の`Task`は論理Work Itemを指し、`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用する。Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
+最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。支持判定実装時にはappend-onlyで`SupportClassificationPending`、`SupportClassificationRetried`、`SupportClassificationTimedOut`、`SupportClassified`、`AnchoredSplitStarted`、`AnchoredSplitCommitted`、`CutBoundaryDormant`、`CutBoundaryActivated`、`CutBoundarySuppressed`、`SupportResultRejected`、`SupportFallbackActivated`を追加する。既存Event名の`Task`は論理Work Itemを指し、`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用する。Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
+
+支持判定のReasonには`AnchorGenerationMismatch`、`SupportGraphGenerationMismatch`、`SupportClassificationUnavailable`、`SupportConnectivityAmbiguous`を追加する。現行の固定サイズTrace Eventと`Value0`／`Value1`を維持し、当面は期待値と実値のGenerationをこれらへ格納できるため、支持イベント追加だけを理由にバイナリレコード構造を変更しない。`TraceEventType`の数値はappend-onlyとし、既存値の変更や再利用を禁止する。
 
 Jobからは`NativeQueue<TraceEvent>.ParallelWriter`等のBurst互換経路へ書き込み、メインスレッドがフレーム末尾に回収する。毎フレーム全状態をスナップショットせず、状態遷移と重要な判断だけを記録する。
 
