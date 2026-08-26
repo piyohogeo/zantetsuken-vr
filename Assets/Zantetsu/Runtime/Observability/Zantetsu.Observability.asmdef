@@ -3,7 +3,8 @@
     "rootNamespace": "Zantetsu.Observability",
     "references": [
         "Zantetsu.Trace",
-        "Unity.Collections"
+        "Unity.Collections",
+        "Zantetsu.Core"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
