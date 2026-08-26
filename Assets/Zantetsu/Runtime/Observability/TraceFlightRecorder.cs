@@ -153,6 +153,35 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Creates an immutable snapshot of the frozen capture. Only valid when
+        /// the recorder is <see cref="TraceFlightRecorderState.Frozen"/>. The
+        /// logger is not referenced, so the snapshot can be created even after
+        /// the logger has been disposed.
+        /// </summary>
+        public TraceCaptureSnapshot CreateFrozenSnapshot()
+        {
+            if (_state != TraceFlightRecorderState.Frozen)
+            {
+                throw new InvalidOperationException("A snapshot can only be created from a frozen recorder.");
+            }
+
+            int total = _capture.Count;
+            if ((long)_triggerHistoryCount + (long)_capturedPostRollCount != (long)total)
+            {
+                throw new InvalidOperationException("Recorder capture counters are inconsistent with the captured event count.");
+            }
+
+            TraceEvent[] events = new TraceEvent[total];
+            _capture.CopyTo(events, 0);
+
+            return new TraceCaptureSnapshot(
+                events,
+                _triggerHistoryCount,
+                _capturedPostRollCount,
+                _wasHistoryOverwrittenAtTrigger);
+        }
+
+        /// <summary>
         /// Clears the capture and its counters and returns to Armed. The logger
         /// history, queue and counters are left untouched, and the logger is not
         /// disposed.
