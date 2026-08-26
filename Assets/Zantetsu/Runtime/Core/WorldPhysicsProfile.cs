@@ -12,9 +12,18 @@ namespace Zantetsu.Core
     [CreateAssetMenu(menuName = "Zantetsu/World Physics Profile", fileName = "WorldPhysicsProfile")]
     public class WorldPhysicsProfile : ScriptableObject
     {
+        // Serialized profile format version. Bump when the schema changes.
+        [SerializeField]
+        private int profileVersion = 1;
+
         // PoC tentative value from DESIGN.md D-074: approximately 0.5G.
         [SerializeField]
         private Vector3 gravity = new Vector3(0f, -4.9f, 0f);
+
+        /// <summary>
+        /// The serialized profile format version.
+        /// </summary>
+        public int ProfileVersion => profileVersion;
 
         /// <summary>
         /// The authoritative gravity vector in m/s^2.

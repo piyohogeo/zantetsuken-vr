@@ -25,6 +25,20 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void DefaultProfileVersion_IsOne()
+        {
+            WorldPhysicsProfile profile = ScriptableObject.CreateInstance<WorldPhysicsProfile>();
+            try
+            {
+                Assert.That(profile.ProfileVersion, Is.EqualTo(1));
+            }
+            finally
+            {
+                Object.DestroyImmediate(profile);
+            }
+        }
+
+        [Test]
         public void Apply_SetsPhysicsGravityToProfileValue()
         {
             WorldPhysicsProfile profile = ScriptableObject.CreateInstance<WorldPhysicsProfile>();
