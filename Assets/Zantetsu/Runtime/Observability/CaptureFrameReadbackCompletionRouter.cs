@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using Unity.Collections;
 
 namespace Zantetsu.Observability
 {
@@ -77,6 +79,79 @@ namespace Zantetsu.Observability
             }
 
             return CaptureFrameReadbackCollectStatus.Dropped;
+        }
+
+        /// <summary>
+        /// Collects a completed readback and, for successful results, encodes
+        /// the readback buffer as PNG and records a
+        /// <c>CaptureFrameEncoded</c> trace event.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Main-thread only. <see cref="CaptureFramePngCollectStatus.None"/>
+        /// and <see cref="CaptureFramePngCollectStatus.Dropped"/> return no PNG.
+        /// The <see cref="NativeArray{T}"/> returned with
+        /// <see cref="CaptureFramePngCollectStatus.Encoded"/> is owned by the
+        /// caller and must be disposed.
+        /// </para>
+        /// <para>
+        /// The raw readback slot is always released before this method returns.
+        /// Exceptions from PNG encoding or trace recording propagate after
+        /// cleanup. No file I/O is performed.
+        /// </para>
+        /// </remarks>
+        public CaptureFramePngCollectStatus TryCollectAndEncodePng(
+            out CaptureFrameRequest frameRequest,
+            out NativeArray<byte> pngBytes)
+        {
+            frameRequest = default;
+            pngBytes = default;
+
+            CaptureFrameReadbackCollectStatus status = TryCollect(out CaptureFrameReadbackResult result);
+
+            if (status == CaptureFrameReadbackCollectStatus.None)
+            {
+                return CaptureFramePngCollectStatus.None;
+            }
+
+            if (status == CaptureFrameReadbackCollectStatus.Dropped)
+            {
+                return CaptureFramePngCollectStatus.Dropped;
+            }
+
+            NativeArray<byte> encoded = default;
+            try
+            {
+                try
+                {
+                    NativeArray<byte> buffer = _dispatcher.GetBuffer(result);
+
+                    long startTimestamp = Stopwatch.GetTimestamp();
+                    encoded = CaptureFramePngEncoder.Encode(buffer, result.FrameRequest.PixelLayout);
+                    long endTimestamp = Stopwatch.GetTimestamp();
+                    double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+                    _observer.RecordEncoded(result.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
+                }
+                finally
+                {
+                    _dispatcher.Release(result);
+                }
+            }
+            catch
+            {
+                if (encoded.IsCreated)
+                {
+                    encoded.Dispose();
+                }
+
+                throw;
+            }
+
+            frameRequest = result.FrameRequest;
+            pngBytes = encoded;
+            encoded = default;
+            return CaptureFramePngCollectStatus.Encoded;
         }
     }
 }
