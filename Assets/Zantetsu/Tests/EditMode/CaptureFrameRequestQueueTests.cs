@@ -15,7 +15,8 @@ namespace Zantetsu.Core.Tests
                 CaptureSource.UnityRenderTexture,
                 CaptureEye.Left,
                 new CaptureImageRect(0, 0, 4, 4),
-                arrayIndex);
+                arrayIndex,
+                CapturePixelFormat.Rgba32);
         }
 
         private static void AssertNoReferenceFields(Type type)
@@ -95,8 +96,8 @@ namespace Zantetsu.Core.Tests
             CaptureFrameTraceContext ctx = new CaptureFrameTraceContext(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
             CaptureImageRect rect = new CaptureImageRect(0, 0, 1, 1);
 
-            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, (CaptureSource)999, CaptureEye.Left, rect, 0));
-            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, (CaptureEye)999, rect, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, (CaptureSource)999, CaptureEye.Left, rect, 0, CapturePixelFormat.Rgba32));
+            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, (CaptureEye)999, rect, 0, CapturePixelFormat.Rgba32));
         }
 
         [Test]
@@ -105,8 +106,8 @@ namespace Zantetsu.Core.Tests
             CaptureFrameTraceContext ctx = new CaptureFrameTraceContext(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
             CaptureImageRect rect = new CaptureImageRect(0, 0, 1, 1);
 
-            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.None, CaptureEye.Left, rect, 0));
-            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.None, rect, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.None, CaptureEye.Left, rect, 0, CapturePixelFormat.Rgba32));
+            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.None, rect, 0, CapturePixelFormat.Rgba32));
         }
 
         [Test]
@@ -114,7 +115,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureFrameTraceContext ctx = new CaptureFrameTraceContext(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
 
-            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.Left, default, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.Left, default, 0, CapturePixelFormat.Rgba32));
         }
 
         [Test]
@@ -123,7 +124,7 @@ namespace Zantetsu.Core.Tests
             CaptureFrameTraceContext ctx = new CaptureFrameTraceContext(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
             CaptureImageRect rect = new CaptureImageRect(0, 0, 1, 1);
 
-            Assert.Throws<ArgumentOutOfRangeException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.Left, rect, -1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new CaptureFrameRequest(ctx, CaptureSource.UnityRenderTexture, CaptureEye.Left, rect, -1, CapturePixelFormat.Rgba32));
         }
 
         [Test]

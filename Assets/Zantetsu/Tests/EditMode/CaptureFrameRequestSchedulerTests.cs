@@ -26,7 +26,8 @@ namespace Zantetsu.Core.Tests
                 CaptureSource.UnityRenderTexture,
                 CaptureEye.Left,
                 new CaptureImageRect(0, 0, 4, 4),
-                arrayIndex);
+                arrayIndex,
+                CapturePixelFormat.Rgba32);
         }
 
         [Test]

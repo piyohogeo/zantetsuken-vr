@@ -3,8 +3,8 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// A single capture frame request: correlation context plus source, eye,
-    /// image rectangle and output array index. A value type with no
+    /// A single capture frame request: correlation context, source, eye, image
+    /// rectangle, output array index and pixel layout. A value type with no
     /// reference-type fields and no Unity object references.
     /// </summary>
     public readonly struct CaptureFrameRequest
@@ -19,14 +19,26 @@ namespace Zantetsu.Observability
 
         public int ArrayIndex { get; }
 
-        public bool IsValid => Source != CaptureSource.None && Eye != CaptureEye.None && ImageRect.IsValid && ArrayIndex >= 0;
+        public CaptureFramePixelLayout PixelLayout { get; }
+
+        public int RequiredByteCount { get; }
+
+        public bool IsValid =>
+            Source != CaptureSource.None &&
+            Eye != CaptureEye.None &&
+            ImageRect.IsValid &&
+            ArrayIndex >= 0 &&
+            PixelLayout.IsValid &&
+            PixelLayout.Width == ImageRect.Width &&
+            PixelLayout.Height == ImageRect.Height;
 
         public CaptureFrameRequest(
             CaptureFrameTraceContext traceContext,
             CaptureSource source,
             CaptureEye eye,
             CaptureImageRect imageRect,
-            int arrayIndex)
+            int arrayIndex,
+            CapturePixelFormat pixelFormat)
         {
             if (source != CaptureSource.UnityRenderTexture && source != CaptureSource.OpenXRProjection)
             {
@@ -48,11 +60,15 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(arrayIndex), arrayIndex, "Array index must not be negative.");
             }
 
+            CaptureFramePixelLayout layout = new CaptureFramePixelLayout(pixelFormat, imageRect.Width, imageRect.Height);
+
             TraceContext = traceContext;
             Source = source;
             Eye = eye;
             ImageRect = imageRect;
             ArrayIndex = arrayIndex;
+            PixelLayout = layout;
+            RequiredByteCount = layout.ByteCount;
         }
     }
 }
