@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・固定Capture Profile／同期映像／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-08-25 |
+| 最終更新 | 2026-08-26 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -87,17 +87,25 @@ Unity EditorはUnity Hubの管理領域へインストールし、プロジェ�
 C:\Program Files\Unity\Hub\Editor\6000.3.22f1\Editor\Unity.exe
 ```
 
-専用公開リポジトリは次を基準とし、リポジトリ直下をUnityプロジェクトルートとする。`Game`などの追加階層や同名フォルダの二重化は行わない。
+公開UnityリポジトリとライセンスAsset専用の非公開リポジトリは兄弟ディレクトリとして分離する。公開リポジトリ直下をUnityプロジェクトルートとし、`Game`などの追加階層や同名フォルダの二重化は行わない。非公開リポジトリはGit LFSを使用する。
 
 ```text
-C:\Users\%USERNAME%\src\zantetsuken-vr\
-  .git\
-  Assets\
-  Packages\
-  ProjectSettings\
-  docs\
-  BlenderPipeline\
-  Tools\
+C:\Users\%USERNAME%\src\
+  zantetsuken-vr\                    # 公開Unityリポジトリ
+    .git\
+    .gitignore
+    DESIGN.md
+    Assets\
+    Packages\
+    ProjectSettings\
+    BlenderPipeline\
+    Tools\
+  zantetsuken-assets-private\        # 非公開Git LFSリポジトリ
+    .git\
+    .gitattributes
+    Vendor\Synty\POLYGON_City\v5\Original\
+      POLYGON_City_SourceFiles_v5.zip
+      POLYGON_City_Unity_2022_3_v1_12_4.unitypackage
 ```
 
 新規作成には空の`Universal 3D`テンプレートを使用し、URPを初期設定する。`Universal 3D Sample`は使用しない。Hubでプロジェクト名を`zantetsuken-vr`、保存場所を`C:\Users\%USERNAME%\src`とした場合、最終作成先が上記リポジトリ直下であることを確認する。既存リポジトリがあるため作成を拒否された場合は、一時ディレクトリに生成した`Assets`、`Packages`、`ProjectSettings`だけをリポジトリ直下へ移す。
@@ -629,6 +637,10 @@ Cache Keyが変化したAssetだけを再生成する。大量処理の並列化
 
 変換コード、汎用Recipe Schema、ライセンスAssetを含まないテンプレート、検証コード、Blender版Manifest、Bootstrapは公開する。Blender本体、Syntyの入力Asset、`.unitypackage`、付属`.meta`、生成されたSolid Cut Mesh、Physics Proxy、加工済み断面素材は公開しない。`/Tools/Blender/`と`/Generated/`をgitignoreし、公開履歴への混入をCIで検査する。
 
+Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離した非公開Git LFSリポジトリ`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理する。2026-08-26時点で、`Vendor\Synty\POLYGON_City\v5\Original`へ`POLYGON_City_SourceFiles_v5.zip`と`POLYGON_City_Unity_2022_3_v1_12_4.unitypackage`を格納済みであり、両ファイルはLFS対象である。ダウンロード元と格納先のSHA-256一致を確認済みとする。
+
+非公開リポジトリへのアクセスはSyntyライセンス上の許可を持つ開発チームだけに限定する。購入原本は変更せず保存し、展開したFBX／Texture、加工Asset、Solid Cut Mesh、Physics Proxyなどのライセンス派生物も公開Git履歴へ入れない。公開リポジトリから参照する場合も、公開Submodule、公開Release、公開CI Artifact、共有Cacheを経由してAsset本体を配布しない。
+
 公開CIはPlaceholder Assetで前処理と切断ロジックを検証する。Syntyを用いる変換と製品ビルドは、許可されたローカル環境または限定private runnerだけで実行し、公開Artifactと共有Cacheへ生成物を残さない。
 
 ## 11. モーション方針
@@ -736,6 +748,7 @@ Cache Keyが変化したAssetだけを再生成する。大量処理の並列化
 | D-087 | Voxel後Surface Projection | Voxel／SDFをTopology修復用中間表現とし、簡略化前にTrusted Exteriorだけへ距離・法線・包含制約付きで投影する。Projection失敗部はVoxel位置へ戻し、UV／Material転送は必須としない | 技術検証付き確定 |
 | D-088 | Solidの自己交差契約 | Topological Watertightと自己交差のないGeometrically Valid Solidを区別する。自己交差は即時clip／Stencilで条件付き表示できても、Stable Solid Cut Mesh、反復切断、Physics Proxyの合格入力にはしない | 確定 |
 | D-089 | 実Geometry GPU消滅 | Micro Attachmentの実Geometryを事前Shard Cluster化し、Vertex Pulling、解析運動、Indirect Batch、Opaque Dither Clipで消滅させる。汎用ローポリ破片は遠距離・Runtime転送予算超過時のFallbackとする | 技術検証付き確定 |
+| D-090 | ライセンスAsset保管 | Synty購入原本と派生物は、公開Unity Repoの兄弟に置く非公開Git LFS Repo`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理し、許可されたチーム以外へ共有しない | 確定 |
 
 ## 13. 未決事項
 
@@ -808,7 +821,7 @@ Cache Keyが変化したAssetだけを再生成する。大量処理の並列化
 | T-023 | Solid品質 | 生成物がwatertight、向き整合、退化面なしで切断可能 | 非多様体Edge、体積、面数と多方向切断を自動検査 |
 | T-024 | 例外Recipe | 開口、空洞、別部品、建物チャンクを再現可能に指定できる | 車と建物の初回設定後に無人再生成 |
 | T-025 | 前処理キャッシュ | 入力未変更時に再生成せず、変更時のみ確実に無効化 | 入力、Recipe、Script、Blender版を個別変更 |
-| T-026 | 公開Repo分離 | 公開履歴と成果物にSynty入力・派生Assetが混入しない | ignore、CI検査、履歴スキャンを実行 |
+| T-026 | 公開Repo分離 | 公開履歴と成果物にSynty入力・派生Assetが混入せず、原本が非公開Git LFS Repoだけに存在する | ignore、CI検査、履歴スキャン、LFS追跡状態、private remoteのアクセス権を確認 |
 | T-027 | 境界Loop封鎖 | 小さく平面的な欠損を誤接続せず自動封鎖できる | 穴径・平面誤差・頂点数を変えた合成Meshで検査 |
 | T-028 | 片面Solidify | 分類別厚みと法線規約で閉じた薄肉Solidを生成できる | 壁、屋根、看板、車体パネルで検査 |
 | T-029 | Voxel修復 | 微小隙間を閉じつつ窓・入口・トンネルを誤封鎖しない | Closing半径別に表面誤差、体積変化、判定結果を比較 |
