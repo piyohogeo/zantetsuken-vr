@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using Unity.Collections;
 
 namespace Zantetsu.Observability
@@ -43,7 +44,25 @@ namespace Zantetsu.Observability
 
         public int CopyBufferSize => _copyBuffer.Length;
 
+        /// <summary>
+        /// Atomically saves the PNG and returns an immutable receipt proving the
+        /// published destination path, byte count, and content SHA-256.
+        /// Synchronous I/O; the input is not owned. The content hash is computed
+        /// incrementally from the same chunks that are written to the file, and
+        /// the receipt is returned only after the rename has succeeded. Linking
+        /// the receipt to a Capture Record is the caller's responsibility.
+        /// </summary>
+        public CaptureFramePngSaveReceipt SaveAtomicWithReceipt(string destinationPath, NativeArray<byte> pngBytes)
+        {
+            return SaveAtomicCore(destinationPath, pngBytes);
+        }
+
         public void SaveAtomic(string destinationPath, NativeArray<byte> pngBytes)
+        {
+            SaveAtomicCore(destinationPath, pngBytes);
+        }
+
+        private CaptureFramePngSaveReceipt SaveAtomicCore(string destinationPath, NativeArray<byte> pngBytes)
         {
             string fullPath = Validate(destinationPath, pngBytes);
 
@@ -53,10 +72,13 @@ namespace Zantetsu.Observability
 
             bool tempCreated = false;
             FileStream stream = null;
+            IncrementalHash hasher = null;
             try
             {
                 stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 tempCreated = true;
+
+                hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
                 int offset = 0;
                 while (offset < pngBytes.Length)
@@ -69,14 +91,26 @@ namespace Zantetsu.Observability
 
                     NativeArray<byte>.Copy(pngBytes, offset, _copyBuffer, 0, chunkLength);
                     stream.Write(_copyBuffer, 0, chunkLength);
+                    hasher.AppendData(_copyBuffer, 0, chunkLength);
                     offset += chunkLength;
                 }
+
+                byte[] hashBytes = hasher.GetHashAndReset();
+                string contentSha256 = CaptureFramePngSaveReceipt.ToLowerHex(hashBytes);
 
                 stream.Flush(flushToDisk: true);
                 stream.Dispose();
                 stream = null;
 
+                hasher.Dispose();
+                hasher = null;
+
+                CaptureFramePngSaveReceipt receipt =
+                    new CaptureFramePngSaveReceipt(fullPath, pngBytes.Length, contentSha256);
+
                 File.Move(tempPath, fullPath);
+
+                return receipt;
             }
             catch
             {
@@ -85,6 +119,18 @@ namespace Zantetsu.Observability
                     try
                     {
                         stream.Dispose();
+                    }
+                    catch
+                    {
+                        // Best-effort dispose; never replace the original exception.
+                    }
+                }
+
+                if (hasher != null)
+                {
+                    try
+                    {
+                        hasher.Dispose();
                     }
                     catch
                     {
