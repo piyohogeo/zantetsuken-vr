@@ -96,7 +96,7 @@ namespace Zantetsu.Core.Tests
 
                 observer.RecordQueued(context);
                 observer.RecordEncoded(context, 1.5, 100);
-                observer.RecordDropped(context, 7);
+                observer.RecordDropped(context, CaptureFrameDropReason.RequestQueueFull);
                 observer.RecordRingFrozen(context);
 
                 logger.Drain();
@@ -126,18 +126,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Observer_DroppedReasonCode()
+        public void Observer_DroppedReasonValue()
         {
             using (TraceLogger logger = new TraceLogger(4))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
 
-                observer.RecordDropped(MakeContext(), 9);
+                observer.RecordDropped(MakeContext(), CaptureFrameDropReason.RequestQueueFull);
                 logger.Drain();
 
                 TraceEvent e = logger.GetHistoryEvent(0);
                 Assert.That(e.Value0, Is.EqualTo(0));
-                Assert.That(e.Value1, Is.EqualTo(9));
+                Assert.That(e.Value1, Is.EqualTo((int)CaptureFrameDropReason.RequestQueueFull));
             }
         }
 
@@ -207,14 +207,14 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Observer_InvalidDroppedReasonCode_NoEnqueue()
+        public void Observer_InvalidDroppedReason_NoEnqueue()
         {
             using (TraceLogger logger = new TraceLogger(4))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
 
-                Assert.Throws<ArgumentOutOfRangeException>(() => observer.RecordDropped(MakeContext(), 0));
-                Assert.Throws<ArgumentOutOfRangeException>(() => observer.RecordDropped(MakeContext(), -5));
+                Assert.Throws<ArgumentOutOfRangeException>(() => observer.RecordDropped(MakeContext(), CaptureFrameDropReason.None));
+                Assert.Throws<ArgumentOutOfRangeException>(() => observer.RecordDropped(MakeContext(), (CaptureFrameDropReason)999));
 
                 logger.Drain();
                 Assert.That(logger.HistoryCount, Is.EqualTo(0));

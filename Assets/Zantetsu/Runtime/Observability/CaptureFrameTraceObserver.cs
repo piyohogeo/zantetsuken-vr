@@ -45,15 +45,15 @@ namespace Zantetsu.Observability
             _logger.Enqueue(e);
         }
 
-        public void RecordDropped(in CaptureFrameTraceContext context, int reasonCode)
+        public void RecordDropped(in CaptureFrameTraceContext context, CaptureFrameDropReason reason)
         {
-            if (reasonCode < 1)
+            if (reason != CaptureFrameDropReason.RequestQueueFull)
             {
-                throw new ArgumentOutOfRangeException(nameof(reasonCode), reasonCode, "Reason code must be at least 1.");
+                throw new ArgumentOutOfRangeException(nameof(reason), reason, "Reason must be a defined non-None value.");
             }
 
             TraceEvent e = BuildEvent(context, TraceEventType.CaptureFrameDropped);
-            e.Value1 = reasonCode;
+            e.Value1 = (int)reason;
             _logger.Enqueue(e);
         }
 
