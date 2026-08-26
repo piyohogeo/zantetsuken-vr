@@ -89,6 +89,22 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Returns the FIFO head without modifying queue state. Returns false
+        /// with <paramref name="request"/> set to default when empty.
+        /// </summary>
+        public bool TryPeek(out CaptureFrameRequest request)
+        {
+            if (_count == 0)
+            {
+                request = default;
+                return false;
+            }
+
+            request = _buffer[_head];
+            return true;
+        }
+
+        /// <summary>
         /// Empties the queue while reusing the allocated buffer. Cumulative
         /// accepted/rejected counters are preserved.
         /// </summary>

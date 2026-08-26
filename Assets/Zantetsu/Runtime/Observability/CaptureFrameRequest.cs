@@ -70,5 +70,40 @@ namespace Zantetsu.Observability
             PixelLayout = layout;
             RequiredByteCount = layout.ByteCount;
         }
+
+        /// <summary>
+        /// Allocation-free, field-by-field equality used by the pump to verify
+        /// that a dequeued request is identical to the peeked one. Avoids
+        /// boxing, reflection, string generation, and <c>ValueType.Equals</c>.
+        /// </summary>
+        internal bool IdenticalTo(in CaptureFrameRequest other)
+        {
+            return
+                TraceContext.Timestamp == other.TraceContext.Timestamp &&
+                TraceContext.UnityFrameId == other.TraceContext.UnityFrameId &&
+                TraceContext.FixedStepId == other.TraceContext.FixedStepId &&
+                TraceContext.ThreadId == other.TraceContext.ThreadId &&
+                TraceContext.CaptureFrameId == other.TraceContext.CaptureFrameId &&
+                TraceContext.OpenXRFrameId == other.TraceContext.OpenXRFrameId &&
+                TraceContext.TestRunId == other.TraceContext.TestRunId &&
+                TraceContext.SlashId == other.TraceContext.SlashId &&
+                TraceContext.FrontEdgeId == other.TraceContext.FrontEdgeId &&
+                TraceContext.ObjectId == other.TraceContext.ObjectId &&
+                TraceContext.ObjectGeneration == other.TraceContext.ObjectGeneration &&
+                TraceContext.TaskId == other.TraceContext.TaskId &&
+                Source == other.Source &&
+                Eye == other.Eye &&
+                ImageRect.X == other.ImageRect.X &&
+                ImageRect.Y == other.ImageRect.Y &&
+                ImageRect.Width == other.ImageRect.Width &&
+                ImageRect.Height == other.ImageRect.Height &&
+                ArrayIndex == other.ArrayIndex &&
+                PixelLayout.Format == other.PixelLayout.Format &&
+                PixelLayout.Width == other.PixelLayout.Width &&
+                PixelLayout.Height == other.PixelLayout.Height &&
+                PixelLayout.BytesPerPixel == other.PixelLayout.BytesPerPixel &&
+                PixelLayout.RowStrideBytes == other.PixelLayout.RowStrideBytes &&
+                PixelLayout.ByteCount == other.PixelLayout.ByteCount;
+        }
     }
 }

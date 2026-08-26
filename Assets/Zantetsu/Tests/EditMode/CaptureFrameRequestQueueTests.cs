@@ -272,6 +272,50 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Queue_TryPeek_Empty_ReturnsFalseAndDefault()
+        {
+            CaptureFrameRequestQueue queue = new CaptureFrameRequestQueue(2);
+
+            Assert.That(queue.TryPeek(out CaptureFrameRequest request), Is.False);
+            Assert.That(request.IsValid, Is.False);
+            Assert.That(queue.Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Queue_TryPeek_ReturnsHeadWithoutChangingState()
+        {
+            CaptureFrameRequestQueue queue = new CaptureFrameRequestQueue(2);
+            queue.TryEnqueue(MakeRequest(10));
+            queue.TryEnqueue(MakeRequest(20));
+
+            Assert.That(queue.TryPeek(out CaptureFrameRequest first), Is.True);
+            Assert.That(first.ArrayIndex, Is.EqualTo(10));
+            Assert.That(queue.Count, Is.EqualTo(2));
+            Assert.That(queue.TotalAccepted, Is.EqualTo(2));
+            Assert.That(queue.TotalRejected, Is.EqualTo(0));
+
+            Assert.That(queue.TryPeek(out CaptureFrameRequest second), Is.True);
+            Assert.That(second.ArrayIndex, Is.EqualTo(10));
+            Assert.That(queue.Count, Is.EqualTo(2));
+            Assert.That(queue.TotalAccepted, Is.EqualTo(2));
+            Assert.That(queue.TotalRejected, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Queue_PeekThenDequeue_ReturnsSameHead()
+        {
+            CaptureFrameRequestQueue queue = new CaptureFrameRequestQueue(2);
+            queue.TryEnqueue(MakeRequest(10));
+            queue.TryEnqueue(MakeRequest(20));
+
+            Assert.That(queue.TryPeek(out CaptureFrameRequest peeked), Is.True);
+            Assert.That(queue.TryDequeue(out CaptureFrameRequest dequeued), Is.True);
+
+            Assert.That(dequeued.ArrayIndex, Is.EqualTo(peeked.ArrayIndex));
+            Assert.That(queue.Count, Is.EqualTo(1));
+        }
+
+        [Test]
         public void Queue_HasNoUnityObjectOrLoggerDependency()
         {
             Type type = typeof(CaptureFrameRequestQueue);
