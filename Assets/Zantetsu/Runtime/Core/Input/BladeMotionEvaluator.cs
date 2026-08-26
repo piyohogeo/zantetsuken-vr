@@ -9,8 +9,6 @@ namespace Zantetsu.Core.Input
     /// </summary>
     public static class BladeMotionEvaluator
     {
-        private const float UnitLengthTolerance = 1e-4f;
-        private const float OrthogonalityTolerance = 1e-4f;
         private const float MinLateralSpeedSquared = 1e-12f;
 
         /// <summary>
@@ -49,7 +47,7 @@ namespace Zantetsu.Core.Input
                 return false;
             }
 
-            if (!IsFinite(previous.CutSamplePosition) || !IsFinite(current.CutSamplePosition))
+            if (!BladePoseValidation.IsFinite(previous.CutSamplePosition) || !BladePoseValidation.IsFinite(current.CutSamplePosition))
             {
                 return false;
             }
@@ -57,18 +55,13 @@ namespace Zantetsu.Core.Input
             Vector3 bladeAxis = current.BladeAxis;
             Vector3 edgeDirection = current.EdgeDirection;
 
-            if (!IsUnitAxis(bladeAxis) || !IsUnitAxis(edgeDirection))
-            {
-                return false;
-            }
-
-            if (Mathf.Abs(Vector3.Dot(bladeAxis, edgeDirection)) > OrthogonalityTolerance)
+            if (!BladePoseValidation.HasValidBladeAxes(current))
             {
                 return false;
             }
 
             Vector3 displacement = current.CutSamplePosition - previous.CutSamplePosition;
-            if (!IsFinite(displacement))
+            if (!BladePoseValidation.IsFinite(displacement))
             {
                 return false;
             }
@@ -87,7 +80,7 @@ namespace Zantetsu.Core.Input
             float speed = Mathf.Sqrt(speedSq);
 
             Vector3 lateralVelocity = velocity - Vector3.Dot(velocity, bladeAxis) * bladeAxis;
-            if (!IsFinite(lateralVelocity))
+            if (!BladePoseValidation.IsFinite(lateralVelocity))
             {
                 return false;
             }
@@ -156,35 +149,12 @@ namespace Zantetsu.Core.Input
             return true;
         }
 
-        private static bool IsUnitAxis(Vector3 axis)
-        {
-            if (!IsFinite(axis))
-            {
-                return false;
-            }
-
-            float magnitude = axis.magnitude;
-            if (!float.IsFinite(magnitude))
-            {
-                return false;
-            }
-
-            return Mathf.Abs(magnitude - 1f) <= UnitLengthTolerance;
-        }
-
         // Explicit normalization that does not rely on Vector3.normalized's
         // implicit zeroing of very short vectors.
         private static Vector3 Normalize(Vector3 v)
         {
             float length = Mathf.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
             return new Vector3(v.x / length, v.y / length, v.z / length);
-        }
-
-        private static bool IsFinite(Vector3 v)
-        {
-            return !float.IsNaN(v.x) && !float.IsInfinity(v.x)
-                && !float.IsNaN(v.y) && !float.IsInfinity(v.y)
-                && !float.IsNaN(v.z) && !float.IsInfinity(v.z);
         }
     }
 }
