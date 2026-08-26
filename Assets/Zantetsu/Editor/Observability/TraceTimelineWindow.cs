@@ -1,4 +1,6 @@
 using System;
+using System.Globalization;
+using System.IO;
 using UnityEngine;
 using UnityEditor;
 using Zantetsu.Observability;
@@ -20,6 +22,9 @@ namespace Zantetsu.Observability.Editor
     /// </remarks>
     public sealed class TraceTimelineWindow : EditorWindow
     {
+        /// <summary>Default maximum number of events loaded from a saved bundle.</summary>
+        public const int DefaultMaximumBundleEventCount = 250000;
+
         private const float RowHeight = 18f;
         private const float TimelineStripHeight = 44f;
         private const float ListMinHeight = 140f;
@@ -55,6 +60,13 @@ namespace Zantetsu.Observability.Editor
         private TraceTimelineModel _model = new TraceTimelineModel();
         private int _selectedVisibleIndex = -1;
         private Vector2 _scrollPosition;
+
+        private string _loadedBundlePath;
+        private TraceRunManifest _loadedManifest;
+        private string _loadedManifestContentSha256;
+        private string _loadedTraceContentSha256;
+        private string _loadError;
+        private bool _showManifestPanel = true;
 
         // Filter panel UI state. Kept separate from the model so that an
         // explicit zero value is distinguishable from a disabled filter.
@@ -112,6 +124,45 @@ namespace Zantetsu.Observability.Editor
             set => _scrollPosition = value;
         }
 
+        /// <summary>Whether a saved bundle has been loaded.</summary>
+        public bool HasLoadedBundle => _loadedManifest != null;
+
+        /// <summary>Normalized absolute path of the loaded bundle, or null.</summary>
+        public string LoadedBundlePath => _loadedBundlePath;
+
+        /// <summary>Manifest of the loaded bundle, or null.</summary>
+        public TraceRunManifest LoadedManifest => _loadedManifest;
+
+        /// <summary>SHA-256 of the loaded bundle's manifest.json, or null.</summary>
+        public string LoadedManifestContentSha256 => _loadedManifestContentSha256;
+
+        /// <summary>SHA-256 of the loaded bundle's trace.bin, or null.</summary>
+        public string LoadedTraceContentSha256 => _loadedTraceContentSha256;
+
+        /// <summary>
+        /// Verifies and loads a saved bundle, then swaps it into the window's
+        /// model. On failure the window state is left unchanged (strong
+        /// exception safety).
+        /// </summary>
+        public void LoadBundle(string bundleDirectoryPath, int maximumEventCount)
+        {
+            TraceRunBundle bundle = TraceRunBundleStore.Load(bundleDirectoryPath, maximumEventCount);
+
+            TraceTimelineModel newModel = new TraceTimelineModel();
+            newModel.Lane = _model.Lane;
+            newModel.Filter = _model.Filter;
+            newModel.Load(bundle.Snapshot);
+
+            _model = newModel;
+            _selectedVisibleIndex = -1;
+            _scrollPosition = Vector2.zero;
+            _loadedBundlePath = Path.GetFullPath(bundleDirectoryPath);
+            _loadedManifest = bundle.Manifest;
+            _loadedManifestContentSha256 = bundle.ManifestContentSha256;
+            _loadedTraceContentSha256 = bundle.TraceContentSha256;
+            _loadError = null;
+        }
+
         [MenuItem("Window/Zantetsu/Trace Timeline")]
         public static TraceTimelineWindow ShowWindow()
         {
@@ -126,6 +177,7 @@ namespace Zantetsu.Observability.Editor
             _model.Load(events);
             _selectedVisibleIndex = -1;
             _scrollPosition = Vector2.zero;
+            ClearBundleMetadata();
         }
 
         /// <summary>
@@ -137,14 +189,16 @@ namespace Zantetsu.Observability.Editor
             _model.Load(logger);
             _selectedVisibleIndex = -1;
             _scrollPosition = Vector2.zero;
+            ClearBundleMetadata();
         }
 
-        /// <summary>Clears all events and the selection.</summary>
+        /// <summary>Clears all events, the selection and bundle metadata.</summary>
         public void Clear()
         {
             _model.Clear();
             _selectedVisibleIndex = -1;
             _scrollPosition = Vector2.zero;
+            ClearBundleMetadata();
         }
 
         /// <summary>
@@ -297,15 +351,116 @@ namespace Zantetsu.Observability.Editor
         private void OnGUI()
         {
             DrawToolbar();
+            DrawLoadError();
+            DrawManifestPanel();
             DrawFilterPanel();
             DrawTimelineStrip();
             DrawEventList();
             DrawDetailPanel();
         }
 
+        private void OpenBundleFromDialog()
+        {
+            string selected = EditorUtility.OpenFolderPanel("Open Trace Bundle", "", "");
+            if (string.IsNullOrEmpty(selected))
+            {
+                return;
+            }
+
+            try
+            {
+                LoadBundle(selected, DefaultMaximumBundleEventCount);
+                Repaint();
+            }
+            catch (ArgumentException ex)
+            {
+                _loadError = ex.GetType().Name + ": " + ex.Message;
+            }
+            catch (IOException ex)
+            {
+                _loadError = ex.GetType().Name + ": " + ex.Message;
+            }
+            catch (InvalidDataException ex)
+            {
+                _loadError = ex.GetType().Name + ": " + ex.Message;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _loadError = ex.GetType().Name + ": " + ex.Message;
+            }
+        }
+
+        private void DrawLoadError()
+        {
+            if (!string.IsNullOrEmpty(_loadError))
+            {
+                EditorGUILayout.HelpBox(_loadError, MessageType.Error);
+            }
+        }
+
+        private void DrawManifestPanel()
+        {
+            if (_loadedManifest == null)
+            {
+                return;
+            }
+
+            _showManifestPanel = EditorGUILayout.Foldout(_showManifestPanel, "Bundle Manifest", true);
+            if (!_showManifestPanel)
+            {
+                return;
+            }
+
+            EditorGUILayout.SelectableLabel("Bundle path: " + _loadedBundlePath, GUILayout.Height(18f));
+            EditorGUILayout.LabelField("TestRunId", Inv(_loadedManifest.TestRunId));
+            EditorGUILayout.LabelField("Captured UTC milliseconds", Inv(_loadedManifest.CapturedUtcUnixMilliseconds));
+            EditorGUILayout.LabelField("BuildId", _loadedManifest.BuildId);
+            EditorGUILayout.LabelField("Unity version", _loadedManifest.UnityVersion);
+            EditorGUILayout.SelectableLabel("Package lock SHA-256: " + _loadedManifest.PackageLockSha256, GUILayout.Height(18f));
+            EditorGUILayout.LabelField("Scene", _loadedManifest.SceneId);
+            EditorGUILayout.LabelField("Random seed", Inv(_loadedManifest.RandomSeed));
+            EditorGUILayout.LabelField("Fixed delta time", Inv(_loadedManifest.FixedDeltaTimeSeconds));
+            EditorGUILayout.LabelField("Quality level", Inv(_loadedManifest.QualityLevel));
+            EditorGUILayout.LabelField("Quality name", _loadedManifest.QualityName);
+            EditorGUILayout.LabelField("WorldPhysicsProfile version", Inv(_loadedManifest.WorldPhysicsProfileVersion));
+            EditorGUILayout.LabelField("Gravity", "(" + Inv(_loadedManifest.Gravity.x) + ", " + Inv(_loadedManifest.Gravity.y) + ", " + Inv(_loadedManifest.Gravity.z) + ")");
+            EditorGUILayout.LabelField("Trace format major", Inv(_loadedManifest.TraceFormatMajorVersion));
+            EditorGUILayout.LabelField("Trace format minor", Inv(_loadedManifest.TraceFormatMinorVersion));
+            EditorGUILayout.LabelField("Event count", Inv(_loadedManifest.EventCount));
+            EditorGUILayout.LabelField("Trigger-history count", Inv(_loadedManifest.TriggerHistoryCount));
+            EditorGUILayout.LabelField("Post-roll count", Inv(_loadedManifest.CapturedPostRollCount));
+            EditorGUILayout.LabelField("History overwritten", _loadedManifest.WasHistoryOverwrittenAtTrigger ? "true" : "false");
+            EditorGUILayout.SelectableLabel("Manifest SHA-256: " + _loadedManifestContentSha256, GUILayout.Height(18f));
+            EditorGUILayout.SelectableLabel("Trace SHA-256: " + _loadedTraceContentSha256, GUILayout.Height(18f));
+        }
+
+        private void ClearBundleMetadata()
+        {
+            _loadedBundlePath = null;
+            _loadedManifest = null;
+            _loadedManifestContentSha256 = null;
+            _loadedTraceContentSha256 = null;
+            _loadError = null;
+        }
+
+        private static string Inv(long value) => value.ToString(CultureInfo.InvariantCulture);
+
+        private static string Inv(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+        private static string Inv(ushort value) => value.ToString(CultureInfo.InvariantCulture);
+
+        private static string Inv(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+
+        private static string Inv(float value) => value.ToString("R", CultureInfo.InvariantCulture);
+
         private void DrawToolbar()
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+
+            if (GUILayout.Button("Open Bundle...", EditorStyles.toolbarButton))
+            {
+                OpenBundleFromDialog();
+            }
 
             TraceTimelineLane newLane = (TraceTimelineLane)EditorGUILayout.EnumPopup(Lane, GUILayout.Width(96f));
             if (newLane != Lane)

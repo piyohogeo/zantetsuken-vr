@@ -473,5 +473,70 @@ namespace Zantetsu.Core.Tests
                 Assert.That(logger.IsCreated, Is.True);
             }
         }
+
+        private static TraceCaptureSnapshot MakeSnapshotOf(params TraceEvent[] events)
+        {
+            TraceLogger logger = new TraceLogger(events.Length + 1);
+            TraceFlightRecorder recorder = new TraceFlightRecorder(logger, 0);
+            foreach (TraceEvent e in events)
+            {
+                logger.Enqueue(e);
+            }
+
+            logger.Drain();
+            recorder.TryTrigger();
+            TraceCaptureSnapshot snapshot = recorder.CreateFrozenSnapshot();
+            logger.Dispose();
+            return snapshot;
+        }
+
+        [Test]
+        public void Load_NullSnapshot_Rejected()
+        {
+            TraceTimelineModel model = new TraceTimelineModel();
+            Assert.Throws<ArgumentNullException>(() => model.Load((TraceCaptureSnapshot)null));
+        }
+
+        [Test]
+        public void Load_Snapshot_SortsByTimestamp()
+        {
+            TraceCaptureSnapshot snapshot = MakeSnapshotOf(MakeEvent(30, 1), MakeEvent(10, 1), MakeEvent(20, 1));
+            TraceTimelineModel model = new TraceTimelineModel();
+            model.Load(snapshot);
+
+            Assert.That(model.Count, Is.EqualTo(3));
+            Assert.That(model.GetEvent(0).Timestamp, Is.EqualTo(10));
+            Assert.That(model.GetEvent(1).Timestamp, Is.EqualTo(20));
+            Assert.That(model.GetEvent(2).Timestamp, Is.EqualTo(30));
+        }
+
+        [Test]
+        public void Load_Snapshot_DoesNotMutateSnapshot()
+        {
+            TraceCaptureSnapshot snapshot = MakeSnapshotOf(MakeEvent(2, 1), MakeEvent(1, 1));
+            TraceTimelineModel model = new TraceTimelineModel();
+            model.Load(snapshot);
+
+            Assert.That(snapshot.EventCount, Is.EqualTo(2));
+            Assert.That(snapshot.GetEvent(0).Timestamp, Is.EqualTo(2));
+            Assert.That(snapshot.GetEvent(1).Timestamp, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Load_Snapshot_FilterWorks()
+        {
+            TraceEvent e1 = MakeEvent(10, 1); e1.SlashId = 5;
+            TraceEvent e2 = MakeEvent(20, 2); e2.SlashId = 7;
+            TraceEvent e3 = MakeEvent(30, 3); e3.SlashId = 5;
+
+            TraceCaptureSnapshot snapshot = MakeSnapshotOf(e1, e2, e3);
+            TraceTimelineModel model = new TraceTimelineModel();
+            model.Load(snapshot);
+            model.Filter = Filter(slashId: 5);
+
+            Assert.That(model.VisibleCount, Is.EqualTo(2));
+            Assert.That(model.GetVisibleEvent(0).SlashId, Is.EqualTo(5));
+            Assert.That(model.GetVisibleEvent(1).SlashId, Is.EqualTo(5));
+        }
     }
 }

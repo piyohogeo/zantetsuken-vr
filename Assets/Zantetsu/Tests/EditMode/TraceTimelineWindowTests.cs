@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
@@ -42,6 +43,48 @@ namespace Zantetsu.Core.Tests
             Assert.That(window.TrySelectVisibleEvent(visibleIndex), Is.True);
             Assert.That(window.TryGetSelectedEvent(out TraceEvent e), Is.True);
             return e;
+        }
+
+        private static string CreateBundle(long[] timestamps, out TraceRunManifest manifest)
+        {
+            string parent = Path.Combine(Path.GetTempPath(), "zantetsu-timeline-bundle", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(parent);
+
+            TraceLogger logger = new TraceLogger(timestamps.Length + 1);
+            TraceFlightRecorder recorder = new TraceFlightRecorder(logger, 0);
+            foreach (long ts in timestamps)
+            {
+                logger.Enqueue(MakeEvent(ts));
+            }
+
+            logger.Drain();
+            recorder.TryTrigger();
+            TraceCaptureSnapshot snapshot = recorder.CreateFrozenSnapshot();
+            logger.Dispose();
+
+            string sha64 = new string('a', 64);
+            TraceRunContext context = new TraceRunContext(7, 1234, "build-x", "6000.3.22f1", sha64, "scene-y", 42, 0.016, 2, "Ultra", 3, new Vector3(0f, -9.81f, 0f));
+            manifest = TraceRunManifest.Create(snapshot, context);
+
+            string bundlePath = Path.Combine(parent, "bundle");
+            TraceRunBundleStore.SaveAtomic(bundlePath, snapshot, manifest);
+            return bundlePath;
+        }
+
+        private static void DeleteBundle(string bundlePath)
+        {
+            string parent = Path.GetDirectoryName(bundlePath);
+            try
+            {
+                if (Directory.Exists(parent))
+                {
+                    Directory.Delete(parent, true);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
         }
 
         [Test]
@@ -621,6 +664,351 @@ namespace Zantetsu.Core.Tests
             finally
             {
                 UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void DefaultMaximumBundleEventCount_Is250000()
+        {
+            Assert.That(TraceTimelineWindow.DefaultMaximumBundleEventCount, Is.EqualTo(250000));
+        }
+
+        [Test]
+        public void LoadBundle_LoadsNormalBundle()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 30, 10, 20 }, out TraceRunManifest manifest);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+
+                    Assert.That(window.HasLoadedBundle, Is.True);
+                    Assert.That(window.LoadedBundlePath, Is.EqualTo(Path.GetFullPath(bundlePath)));
+                    Assert.That(window.LoadedManifest, Is.Not.Null);
+                    Assert.That(window.LoadedManifest.TestRunId, Is.EqualTo(7));
+                    Assert.That(window.LoadedManifestContentSha256, Is.Not.Null);
+                    Assert.That(window.LoadedManifestContentSha256.Length, Is.EqualTo(64));
+                    Assert.That(window.LoadedTraceContentSha256, Is.Not.Null);
+                    Assert.That(window.LoadedTraceContentSha256.Length, Is.EqualTo(64));
+
+                    Assert.That(window.EventCount, Is.EqualTo(3));
+                    Assert.That(window.VisibleEventCount, Is.EqualTo(3));
+                    Assert.That(SelectEventAt(window, 0).Timestamp, Is.EqualTo(10));
+                    Assert.That(SelectEventAt(window, 1).Timestamp, Is.EqualTo(20));
+                    Assert.That(SelectEventAt(window, 2).Timestamp, Is.EqualTo(30));
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_PreservesLaneAndFilter()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10, 20, 30 }, out _);
+                try
+                {
+                    window.Lane = TraceTimelineLane.Slash;
+                    window.Filter = Filter(slashId: 99);
+
+                    window.LoadBundle(bundlePath, 100);
+
+                    Assert.That(window.Lane, Is.EqualTo(TraceTimelineLane.Slash));
+                    Assert.That(window.Filter.SlashId, Is.EqualTo(99L));
+                    Assert.That(window.EventCount, Is.EqualTo(3));
+                    Assert.That(window.VisibleEventCount, Is.EqualTo(0)); // filter applied to new events
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_ResetsSelectionAndScroll()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10, 20 }, out _);
+                try
+                {
+                    window.Load(new[] { MakeEvent(1), MakeEvent(2) });
+                    Assert.That(window.TrySelectVisibleEvent(1), Is.True);
+                    window.ScrollPosition = new Vector2(0f, 100f);
+
+                    window.LoadBundle(bundlePath, 100);
+
+                    Assert.That(window.SelectedVisibleIndex, Is.EqualTo(-1));
+                    Assert.That(window.ScrollPosition, Is.EqualTo(Vector2.zero));
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_MaximumEventCountExceeded_Rejected()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10, 20, 30 }, out _);
+                try
+                {
+                    Assert.Throws<InvalidDataException>(() => window.LoadBundle(bundlePath, 2));
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_CorruptBundle_Fails()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10, 20 }, out _);
+                try
+                {
+                    File.WriteAllText(Path.Combine(bundlePath, "bundle.index"), "garbage");
+
+                    Assert.Throws<InvalidDataException>(() => window.LoadBundle(bundlePath, 100));
+                    Assert.That(window.HasLoadedBundle, Is.False);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_Failure_StateUnchanged()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundleA = CreateBundle(new long[] { 10, 20 }, out _);
+                string bundleB = CreateBundle(new long[] { 30, 40 }, out _);
+                try
+                {
+                    window.LoadBundle(bundleA, 100);
+                    string pathA = window.LoadedBundlePath;
+
+                    byte[] trace = File.ReadAllBytes(Path.Combine(bundleB, "trace.bin"));
+                    trace[0] ^= 0x01;
+                    File.WriteAllBytes(Path.Combine(bundleB, "trace.bin"), trace);
+
+                    Assert.Throws<InvalidDataException>(() => window.LoadBundle(bundleB, 100));
+
+                    Assert.That(window.LoadedBundlePath, Is.EqualTo(pathA));
+                    Assert.That(window.EventCount, Is.EqualTo(2));
+                    Assert.That(window.HasLoadedBundle, Is.True);
+                }
+                finally
+                {
+                    DeleteBundle(bundleA);
+                    DeleteBundle(bundleB);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadEvents_ClearsBundleMetadata()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10 }, out _);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+                    Assert.That(window.HasLoadedBundle, Is.True);
+
+                    window.Load(new[] { MakeEvent(1) });
+
+                    Assert.That(window.HasLoadedBundle, Is.False);
+                    Assert.That(window.LoadedManifest, Is.Null);
+                    Assert.That(window.LoadedBundlePath, Is.Null);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadLogger_ClearsBundleMetadata()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10 }, out _);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+
+                    using (TraceLogger logger = new TraceLogger(4))
+                    {
+                        logger.Enqueue(MakeEvent(1));
+                        logger.Drain();
+                        window.Load(logger);
+                    }
+
+                    Assert.That(window.HasLoadedBundle, Is.False);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadEvents_Failure_KeepsBundleMetadata()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10 }, out _);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+
+                    Assert.Throws<ArgumentNullException>(() => window.Load((TraceEvent[])null));
+
+                    Assert.That(window.HasLoadedBundle, Is.True);
+                    Assert.That(window.LoadedManifest, Is.Not.Null);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void Clear_ClearsBundleMetadata()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10 }, out _);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+                    Assert.That(window.HasLoadedBundle, Is.True);
+
+                    window.Clear();
+
+                    Assert.That(window.HasLoadedBundle, Is.False);
+                    Assert.That(window.LoadedBundlePath, Is.Null);
+                    Assert.That(window.LoadedManifest, Is.Null);
+                    Assert.That(window.LoadedManifestContentSha256, Is.Null);
+                    Assert.That(window.LoadedTraceContentSha256, Is.Null);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void LoadBundle_ReleasesHandles()
+        {
+            TraceTimelineWindow window = CreateWindow();
+            try
+            {
+                string bundlePath = CreateBundle(new long[] { 10 }, out _);
+                try
+                {
+                    window.LoadBundle(bundlePath, 100);
+
+                    string moved = bundlePath + ".moved";
+                    Directory.Move(bundlePath, moved);
+                    Directory.Delete(moved, true);
+                }
+                finally
+                {
+                    DeleteBundle(bundlePath);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        [Test]
+        public void Window_NoSnapshotOrMutableArrayPublicApi()
+        {
+            Type type = typeof(TraceTimelineWindow);
+
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                Assert.That(property.PropertyType, Is.Not.EqualTo(typeof(TraceCaptureSnapshot)), "Snapshot exposed via " + property.Name);
+                Assert.That(property.PropertyType.IsArray, Is.False, "Array exposed via " + property.Name);
+            }
+
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                Assert.That(field.FieldType.IsArray, Is.False, "Array field exposed: " + field.Name);
             }
         }
     }

@@ -117,6 +117,22 @@ namespace Zantetsu.Observability.Editor
             Load(snapshot);
         }
 
+        /// <summary>
+        /// Loads a defensive, timestamp-sorted copy of the snapshot's events.
+        /// The snapshot itself is not modified.
+        /// </summary>
+        public void Load(TraceCaptureSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                throw new ArgumentNullException(nameof(snapshot));
+            }
+
+            TraceEvent[] events = new TraceEvent[snapshot.EventCount];
+            snapshot.CopyEventsTo(events, 0);
+            Load(events);
+        }
+
         public void Clear()
         {
             _events = Array.Empty<TraceEvent>();
