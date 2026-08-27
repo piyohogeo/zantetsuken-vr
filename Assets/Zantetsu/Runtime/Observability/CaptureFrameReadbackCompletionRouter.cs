@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Unity.Collections;
 
 namespace Zantetsu.Observability
@@ -213,6 +214,57 @@ namespace Zantetsu.Observability
             return TryCollectEncodeAndEnqueueCore(queue, recordRegistry);
         }
 
+        /// <summary>
+        /// Collects a completed readback, encodes it as PNG, and enqueues the
+        /// result, while reconciling both the corresponding
+        /// <see cref="CaptureFrameRecord"/> and the render target lease.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The completed request is the source of truth: its record and render
+        /// target lease are each matched by full request identity, and the lease
+        /// is additionally validated through
+        /// <see cref="CaptureFrameRenderTargetPool.GetRenderTexture"/> before any
+        /// side effect. On success, or on any encode/trace/enqueue failure where
+        /// the dispatcher slot was released, the lease is removed from the
+        /// registry and returned to the pool, and a non-continuable record is
+        /// removed. On <see cref="CaptureFramePngQueueStatus.Queued"/> the record
+        /// is kept for artifact persistence and the PNG is owned by the queue.
+        /// </para>
+        /// <para>
+        /// If <c>Dispatcher.Release</c> itself fails, GPU safety cannot be proven,
+        /// so the lease is left registered and rented and the record is kept;
+        /// the failure is rethrown without transformation. The router never owns,
+        /// disposes, releases, or clears the queue, registries, pool, logger,
+        /// PNG, or render texture.
+        /// </para>
+        /// </remarks>
+        public CaptureFramePngQueueStatus TryCollectEncodeAndEnqueue(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRenderTargetLeaseRegistry leaseRegistry,
+            CaptureFrameRenderTargetPool renderTargetPool)
+        {
+            ValidateQueue(queue);
+
+            if (recordRegistry == null)
+            {
+                throw new ArgumentNullException(nameof(recordRegistry));
+            }
+
+            if (leaseRegistry == null)
+            {
+                throw new ArgumentNullException(nameof(leaseRegistry));
+            }
+
+            if (renderTargetPool == null)
+            {
+                throw new ArgumentNullException(nameof(renderTargetPool));
+            }
+
+            return TryCollectEncodeAndEnqueueLeaseCore(queue, recordRegistry, leaseRegistry, renderTargetPool);
+        }
+
         private static void ValidateQueue(CaptureFramePngQueue queue)
         {
             if (queue == null)
@@ -301,30 +353,12 @@ namespace Zantetsu.Observability
             bool queued = false;
             try
             {
-                try
-                {
-                    NativeArray<byte> buffer = _dispatcher.GetBuffer(collected);
+                encoded = EncodeBufferAndRelease(collected, out _);
 
-                    long startTimestamp = Stopwatch.GetTimestamp();
-                    encoded = CaptureFramePngEncoder.Encode(buffer, collected.FrameRequest.PixelLayout);
-                    long endTimestamp = Stopwatch.GetTimestamp();
-                    double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
-
-                    _observer.RecordEncoded(collected.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
-                }
-                finally
-                {
-                    _dispatcher.Release(collected);
-                }
-
-                if (queue.TryEnqueue(collected.FrameRequest, encoded))
+                if (EnqueueOrRecordQueueFull(queue, collected.FrameRequest, encoded))
                 {
                     transferred = true;
                     queued = true;
-                }
-                else
-                {
-                    _observer.RecordDropped(collected.FrameRequest.TraceContext, CaptureFrameDropReason.EncodedPngQueueFull);
                 }
             }
             catch
@@ -347,6 +381,281 @@ namespace Zantetsu.Observability
 
             RemoveRecord(recordRegistry, record, collected.FrameRequest);
             return CaptureFramePngQueueStatus.Dropped;
+        }
+
+        private CaptureFramePngQueueStatus TryCollectEncodeAndEnqueueLeaseCore(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRenderTargetLeaseRegistry leaseRegistry,
+            CaptureFrameRenderTargetPool renderTargetPool)
+        {
+            if (!_dispatcher.TryCollect(out CaptureFrameReadbackResult collected))
+            {
+                return CaptureFramePngQueueStatus.None;
+            }
+
+            CaptureFrameRecord record;
+            bool found;
+            try
+            {
+                found = recordRegistry.TryGet(collected.FrameRequest, out record);
+            }
+            catch
+            {
+                _dispatcher.Release(collected);
+                throw;
+            }
+
+            if (!found)
+            {
+                _dispatcher.Release(collected);
+                throw new InvalidOperationException("No capture frame record is registered for the completed capture frame ID.");
+            }
+
+            CaptureFrameRenderTargetLease lease;
+            try
+            {
+                found = leaseRegistry.TryGet(collected.FrameRequest, out lease);
+            }
+            catch
+            {
+                _dispatcher.Release(collected);
+                throw;
+            }
+
+            if (!found)
+            {
+                _dispatcher.Release(collected);
+                throw new InvalidOperationException("No render target lease is registered for the completed capture frame ID.");
+            }
+
+            try
+            {
+                renderTargetPool.GetRenderTexture(lease);
+            }
+            catch
+            {
+                _dispatcher.Release(collected);
+                throw;
+            }
+
+            if (collected.HasError)
+            {
+                return FinishReadbackFailureWithLease(recordRegistry, record, collected, lease, leaseRegistry, renderTargetPool);
+            }
+
+            return FinishEncodeAndEnqueueWithLease(queue, recordRegistry, record, collected, lease, leaseRegistry, renderTargetPool);
+        }
+
+        private CaptureFramePngQueueStatus FinishReadbackFailureWithLease(
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRecord record,
+            in CaptureFrameReadbackResult collected,
+            in CaptureFrameRenderTargetLease lease,
+            CaptureFrameRenderTargetLeaseRegistry leaseRegistry,
+            CaptureFrameRenderTargetPool renderTargetPool)
+        {
+            Exception traceFailure = null;
+            try
+            {
+                _observer.RecordDropped(collected.FrameRequest.TraceContext, CaptureFrameDropReason.ReadbackFailed);
+            }
+            catch (Exception ex)
+            {
+                traceFailure = ex;
+            }
+
+            try
+            {
+                _dispatcher.Release(collected);
+            }
+            catch (Exception releaseException)
+            {
+                if (traceFailure != null)
+                {
+                    throw new AggregateException(traceFailure, releaseException);
+                }
+
+                throw;
+            }
+
+            try
+            {
+                ReclaimLease(leaseRegistry, renderTargetPool, collected.FrameRequest, lease);
+            }
+            catch (Exception reclaimException)
+            {
+                RemoveRecord(recordRegistry, record, collected.FrameRequest);
+
+                if (traceFailure != null)
+                {
+                    throw new AggregateException(traceFailure, reclaimException);
+                }
+
+                throw;
+            }
+
+            RemoveRecord(recordRegistry, record, collected.FrameRequest);
+
+            if (traceFailure != null)
+            {
+                ExceptionDispatchInfo.Capture(traceFailure).Throw();
+                return CaptureFramePngQueueStatus.Dropped;
+            }
+
+            return CaptureFramePngQueueStatus.Dropped;
+        }
+
+        private CaptureFramePngQueueStatus FinishEncodeAndEnqueueWithLease(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRecord record,
+            in CaptureFrameReadbackResult collected,
+            in CaptureFrameRenderTargetLease lease,
+            CaptureFrameRenderTargetLeaseRegistry leaseRegistry,
+            CaptureFrameRenderTargetPool renderTargetPool)
+        {
+            NativeArray<byte> encoded = default;
+            bool transferred = false;
+            bool queued = false;
+            bool released = false;
+            bool leaseReclaimAttempted = false;
+            try
+            {
+                encoded = EncodeBufferAndRelease(collected, out released);
+
+                if (released)
+                {
+                    leaseReclaimAttempted = true;
+                    ReclaimLease(leaseRegistry, renderTargetPool, collected.FrameRequest, lease);
+                }
+
+                if (EnqueueOrRecordQueueFull(queue, collected.FrameRequest, encoded))
+                {
+                    transferred = true;
+                    queued = true;
+                }
+            }
+            catch
+            {
+                if (released)
+                {
+                    if (!leaseReclaimAttempted)
+                    {
+                        ReclaimLease(leaseRegistry, renderTargetPool, collected.FrameRequest, lease);
+                    }
+
+                    RemoveRecord(recordRegistry, record, collected.FrameRequest);
+                }
+
+                throw;
+            }
+            finally
+            {
+                if (!transferred && encoded.IsCreated)
+                {
+                    encoded.Dispose();
+                }
+            }
+
+            if (queued)
+            {
+                return CaptureFramePngQueueStatus.Queued;
+            }
+
+            RemoveRecord(recordRegistry, record, collected.FrameRequest);
+            return CaptureFramePngQueueStatus.Dropped;
+        }
+
+        private NativeArray<byte> EncodeBufferAndRelease(
+            in CaptureFrameReadbackResult collected,
+            out bool released)
+        {
+            released = false;
+            NativeArray<byte> encoded = default;
+
+            try
+            {
+                NativeArray<byte> buffer = _dispatcher.GetBuffer(collected);
+
+                long startTimestamp = Stopwatch.GetTimestamp();
+                encoded = CaptureFramePngEncoder.Encode(buffer, collected.FrameRequest.PixelLayout);
+                long endTimestamp = Stopwatch.GetTimestamp();
+                double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+                _observer.RecordEncoded(collected.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
+            }
+            catch
+            {
+                if (encoded.IsCreated)
+                {
+                    encoded.Dispose();
+                    encoded = default;
+                }
+
+                try
+                {
+                    _dispatcher.Release(collected);
+                    released = true;
+                }
+                catch
+                {
+                    throw;
+                }
+
+                throw;
+            }
+
+            try
+            {
+                _dispatcher.Release(collected);
+                released = true;
+            }
+            catch
+            {
+                if (encoded.IsCreated)
+                {
+                    encoded.Dispose();
+                    encoded = default;
+                }
+
+                throw;
+            }
+
+            return encoded;
+        }
+
+        private bool EnqueueOrRecordQueueFull(
+            CaptureFramePngQueue queue,
+            in CaptureFrameRequest frameRequest,
+            NativeArray<byte> encoded)
+        {
+            if (queue.TryEnqueue(frameRequest, encoded))
+            {
+                return true;
+            }
+
+            _observer.RecordDropped(frameRequest.TraceContext, CaptureFrameDropReason.EncodedPngQueueFull);
+            return false;
+        }
+
+        private static void ReclaimLease(
+            CaptureFrameRenderTargetLeaseRegistry leaseRegistry,
+            CaptureFrameRenderTargetPool renderTargetPool,
+            in CaptureFrameRequest request,
+            in CaptureFrameRenderTargetLease expectedLease)
+        {
+            if (!leaseRegistry.TryRemove(request, out CaptureFrameRenderTargetLease removedLease))
+            {
+                throw new InvalidOperationException("No render target lease is registered for the completed capture frame.");
+            }
+
+            if (!removedLease.IdenticalTo(expectedLease))
+            {
+                throw new InvalidOperationException("The reclaimed render target lease does not match the registered lease.");
+            }
+
+            renderTargetPool.Return(removedLease);
         }
 
         private static void RemoveRecord(
