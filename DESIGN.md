@@ -417,9 +417,50 @@ Physics Proxyで表現しないアンテナ、細い取手、小装飾などは�
 
 Micro Attachment消去時は、元部品の実Geometryを事前生成したShard Clusterへ分け、Vertex Pullingと間接描画でGPU上に短時間飛散させる。1体全体が2,000～3,000 Triangle程度というAsset予算から、Micro Attachment 1件は通常20～150 Triangle程度を想定し、シーン全体の通常Active量は数千Triangle以下とする。`HitConfirmed`と同じフレームに元RendererのAliveMaskを落とし、CPUから共有`GpuMicroDebrisSystem`へ発生Event Recordを1件だけ送る。
 
+この命中同フレーム経路は、Blender前処理または手作業で`AttachmentId`、対象Triangle、`ShardId`が事前確定したMicro Attachmentだけに使用する。任意切断によって新しく生じる小さな論理Fragmentは、即時clip段階では接続成分、面積、体積、Triangle集合を確定できないため、Shader側で微小破片と推測しない。即時切断中は通常Fragmentと同じ塊としてclip表示し、実表示Mesh切断が接続成分を確定するまで形状を保つ。
+
+任意切断由来FragmentをGPU Micro Debrisへ移す主判定は、見た目の小ささではなく「独立した物理Convex集合で安全に表現できるか」とする。実表示Mesh切断が生成した連結な`RenderFragment`と、cook前の自前Convex切断が生成した`LogicalConvexFragment`の対応を二部グラフとして構築し、各RenderFragmentへ`PhysicsRepresentationStatus`を付ける。対応判定は論理ConvexのTopologyが完成すれば実行でき、`Physics.BakeMesh`の完了を待たない。
+
+| `PhysicsRepresentationStatus` | 固定値 | 条件 | 基本処理 |
+| --- | ---: | --- | --- |
+| Pending | 0 | 対応判定前または判定Job実行中 | デブリ化、Collider生成、物理Commitを禁止し、塊表示と既存物理を維持 |
+| Represented | 1 | 1個以上の専有LogicalConvexFragment集合がRenderFragmentを安全な精度で被覆 | 通常の物理Fragmentとして維持。凹形状の1 RenderFragment対複数Convexを正常系として含む |
+| Missing | 2 | RenderFragmentに対応するLogicalConvexFragmentがない | 非物理デブリ候補。重要・大型なら消さずProxy再構築または未分裂Fallback |
+| Shared | 3 | 必要なLogicalConvexFragmentの一部または全部を複数RenderFragmentが共有 | Shared連結成分へ解決Roleを付与し、小さく非重要な非代表だけをデブリ候補にする。複数が大型なら共有状態を維持してConvex分割を待つ |
+| Ambiguous | 4 | 対応Edge、被覆率、専有割当を安全に確定できない | デブリ化と物理Commitを禁止し、FragmentGroup共有またはProxy再構築へFallback |
+
+Sharedは状態だけで代表関係を表さず、各RenderFragmentへ`SharedResolutionRole`を別フィールドとして持たせる。
+
+| `SharedResolutionRole` | 固定値 | 意味 |
+| --- | ---: | --- |
+| None | 0 | 未設定、またはPhysicsRepresentationStatusがShared以外 |
+| Keeper | 1 | Shared連結成分で物理Convexを代表して保持するFragment |
+| DebrisCandidate | 2 | 小さく非重要で、Keeperから切り離してGPU Debris化できる非代表Fragment |
+| PreserveFallback | 3 | 大型、重要、同率、または安全に代表を決められず、共有物理のまま保持するFragment |
+
+1 RenderFragment対複数の専有Convexは`Represented`とする。複数RenderFragment対複数Convexでも共有関係と被覆が決定的なら`Shared`連結成分として扱い、不確かな対応Edgeを含む場合だけ`Ambiguous`とする。RenderFragmentが専有Convexだけで十分に被覆され、余分なShared Convexを割当から除外できる場合は`Represented`としてよい。
+
+PoCではConvex集合の厳密なBoolean Unionや完全体積証明を要求しない。切断面と親Convexの系譜、Bounds交差、RenderFragmentから選ぶ固定数の包含Sample、推定体積被覆率、境界距離を組み合わせ、固定閾値から十分離れた場合だけ`Represented`／`Missing`／`Shared`を確定する。閾値近傍、世代不一致、Edge競合は`Ambiguous`へ落とす。`Missing`または`SharedResolutionRole == DebrisCandidate`であることをデブリ候補の主条件とし、Triangle数、面積、体積、画面寸法は候補を実際に消してよいかを守る補助条件にする。
+
+Gameplay上重要、シルエット上大きい、相互作用対象、または複数の大きなRenderFragmentが同じConvexを共有する場合は、物理対応が不完全でも微小破片として消さない。SharedのKeeperは体積、面積、意味的重要度、既存Constraint／Anchorとの関係から決め、同値時のTie-breakを固定して決定論的にする。明確なKeeperがない場合は全Fragmentを`PreserveFallback`とする。
+
+`PhysicsRepresentationStatus`と`SharedResolutionRole`は上表の数値を明示したenumとし、default初期化を安全状態へ固定する。対応判定前は`Pending`、Roleは`None`とする。Shared以外のRoleは常に`None`でなければならず、SharedはRoleが`None`の間、デブリ化と物理Commitを禁止する。`Pending`／`Ambiguous`もデブリ化と物理Commitを禁止する。不正なStatus／Role組み合わせは不変条件違反としてTraceし、未分裂Fallbackへ移行する。
+
+対応グラフの結果が確定するまでは任意切断由来Fragmentを通常の塊として表示する。MissingまたはShared非代表かつ補助条件を満たした場合だけ、表示Geometry Commitと同時、または論理Convex結果が後着した時点でGPU Micro Debrisへ引き渡す。塊として切れた後に少し遅れて崩れる演出を正式な挙動として許容する。clipされた表面Triangleをその場でばらす「clip＋ポリゴン崩壊」は実装せず、切断前GeometryのTriangleを紙吹雪状に剥がす近似も使用しない。
+
 - Blender前処理で、接続、面Normal、Material、面積上限を基準に隣接2～8 Triangle程度を同じ`ShardId`へまとめる。Triangle単位の紙吹雪感を避け、各Shard内は元Meshの形状を保ったまま共通の並進・回転を行う。小さすぎる部品はTriangle単位でもよい。
 
-- GeometryはVertex Buffer、Corner／Index Buffer、Shard Metadataからなる共有`Debris Geometry Atlas`へ事前登録する。Vertex Shaderは`SV_VertexID`等からCorner、元Vertex、ShardIdを引き、Shard単位のTransformを適用する。Runtime生成された小さな論理破片は表示Mesh切断Jobの出力時にDebris用Corner Streamも生成できるが、転送／Atlas予算超過時は汎用ローポリ破片または即時消去へFallbackする。
+- 事前生成GeometryはVertex Buffer、Corner／Index Buffer、Shard MetadataからなるImmutableな共有`Debris Geometry Atlas`へAssetロード時に登録し、Micro AttachmentとAssetの寿命に合わせて保持する。Vertex Shaderは`SV_VertexID`等からCorner、元Vertex、ShardIdを引き、Shard単位のTransformを適用する。
+
+- Runtime生成されたRenderFragmentは事前Atlasへ追記せず、別の固定容量`Runtime Debris Geometry Arena`へ置く。実表示Mesh切断Jobが接続成分と候補Metadataを生成し、論理Convexとの対応判定がMissingまたは`SharedResolutionRole == DebrisCandidate`を確定した後、そのJob出力からDebris用Corner Streamを生成してArenaのPage／Ring Sliceへ転送する。物理対応確定前に推測生成しない。
+
+- `DebrisEventId`は0をInvalid用に予約した`uint`とし、1つの`GpuMicroDebrisSystem`実行セッションを1つのTrace Runと一致させ、そのRun内で1から単調発行して再利用しない。Arena Slice、Event Record、最終Draw Fence、Traceを同じIDで関連付け、Trace上の一意キーは既存共通フィールドの`TestRunId + DebrisEventId`とする。カウンタの再初期化は、全Active／Retiring EventがなくArenaが完全にQuiescentで、かつ新しい`TestRunId`を発行して新規実行セッションを開始するときだけ許可する。同じTrace Run内ではQuiescentになっても戻さず、Wrapが近づいた場合はRun終了まで新規Runtime Eventを停止してFallbackする。
+
+- Runtime Arenaの各Sliceは`DebrisEventId`とObjectGenerationが排他的に所有する。Slice状態は固定値`Invalid=0`、`Allocated=1`、`Active=2`、`Retiring=3`、`Reusable=4`の`RuntimeDebrisSliceState`で表し、`Allocated -> Active -> Retiring -> Reusable`と遷移する。Event寿命終了後は新しいCommand Bufferから参照せず、最終Drawの後ろへUnity／Graphics APIが提供する`GraphicsFence`または同等の完了証拠を挿入する。`Retiring`から`Reusable`へ進める条件は、完了証拠が成立し、かつ設定した最小保持Frame数を経過したことの論理積とする。固定Frame遅延だけを完了証拠の代替にしてはならない。
+
+- Runtime Arenaのライフサイクルはappend-onlyな専用Trace Eventの`RuntimeDebrisSliceAllocated`、`RuntimeDebrisSliceActivated`、`RuntimeDebrisSliceRetiring`、`RuntimeDebrisSliceReclaimed`で記録する。4イベントとも`Value0`へ`DebrisEventId`を整数値として格納する。`uint`の全範囲はIEEE 754 `double`で正確に表現できるため、signed intの`FromState`／`ToState`へIDを格納しない。イベント別の残りフィールドとTimeline解釈はTrace契約表を正本とする。
+
+- Fence未完了または完了証拠を取得できないSliceは回収せず、Arenaが枯渇しても使用中Sliceを上書きしない。容量不足時にBuffer再確保、GPU待機、メインスレッド同期を行わず、汎用ローポリ破片、短いディザ消去、即時消去の順にFallbackする。対象環境で完了証拠を利用できない場合はRuntime実Geometry経路を無効化する。Arena容量、Page寸法、最大同時Upload、Fence待ち時間、Retiring数、Allocation失敗数をO-031／T-063で測定する。
 
 - Event RecordはGeometry Offset、発生Transform、切断面法線、親Rigidbodyの点速度、基底色、乱数Seed、開始時刻、寿命を持つ。各ShardにGameObject、Transform、Rigidbody、Colliderを作らず、位置を`p(t) = p0 + v0 * t + 0.5 * g * t^2`、回転をSeed由来の軸・角速度・経過時間からShader内で直接求め、CPUの毎フレーム更新を行わない。
 
@@ -433,7 +474,7 @@ Micro Attachment消去時は、元部品の実Geometryを事前生成したShard
 
 - 初期予算は、1 Event 20～150 Triangle、通常Active合計500～3,000 Triangle、品質低下開始5,000～8,000 Triangle、Hard Cap候補10,000 Triangle、Active Event 8～32とする。1～2万TriangleはMicro Attachment通常仕様ではなく、全身／大きめ破片まで流した場合のStress Testに限定する。Triangle数に加えて両眼の画面占有面積とOverdrawを予算化し、超過時は古いEventの寿命短縮、Shard統合、汎用破片、火花／Quad、即時ディザ消去の順で品質低下する。
 
-PoCではVFX Graphで外観、汎用破片Fallback、URP／XR適合性を素早く検証する。実Geometry経路は固定長Event Buffer、Geometry Atlas、Shard Metadata、解析運動Shader、`Graphics.RenderPrimitivesIndirect`／同等APIによる専用Vertex Pulling実装を第一候補とする。GPU Eventなど実験的機能への依存は必須にしない。
+Phase 1のPoCでは、手作業で事前Shard化した専用テストMeshを入力し、VFX Graphで外観、汎用破片Fallback、URP／XR適合性を素早く検証する。この段階では任意切断結果の微小判定、Triangle抽出、AliveMask連携を受け入れ条件に含めない。実Geometry経路は固定長Event Buffer、Geometry Atlas、Shard Metadata、解析運動Shader、`Graphics.RenderPrimitivesIndirect`／同等APIによる専用Vertex Pulling実装を第一候補とする。GPU Eventなど実験的機能への依存は必須にしない。
 
 ### 7.7 全体低重力
 
@@ -849,6 +890,13 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-096 | 分類不能時の物理 | 境界の一方でもSupportStateがUnknownならその境界をSuppressedとする。FragmentGroup内にUnknownなLogicalFragmentが1つでもあれば物理をPendingSupportClassificationとし、旧物理状態を完全維持する。Detached＋Unknownも分類確定まで動かさない | 確定 |
 | D-097 | 複数切断の物理集約 | FragmentGroupの物理状態は全LogicalFragmentから`Unknownあり`、`全既知かつAnchoredあり`、`全Detached`の優先順位で集約する。PendingSupportClassification中も既知のActive境界のclip／Stencil／仮Capは許可するが、Group全体の運動は禁止する | 確定 |
 | D-098 | Pending Cutと描画集合 | Pending CutはGeometry未Commitの切断とし、即時Renderer対象はActiveかつGeometry未Commit、すなわちPendingまたはReadyの境界とする。実Mesh適用とGeometry Commitの同時成功後にだけRenderer対象から外す。CutBoundaryRecord、Cut Plane、論理Fragment、支持履歴はStable側へ保持し、物理Pendingとは独立管理する | 確定 |
+| D-099 | 微小Fragment崩壊時期 | clip＋ポリゴン崩壊は採用しない。事前分類済みMicro Attachmentだけ命中同フレームにGPU崩壊でき、任意切断由来Fragmentは実Meshと論理Convexの対応確定後にGeometry Commit時または後追いで崩壊させる | 確定 |
+| D-100 | Runtimeデブリ主判定 | 任意切断由来Fragmentは物理Convex対応を主判定とし、MissingまたはSharedのDebrisCandidateをデブリ候補にする。1 Render対複数専有ConvexはRepresentedとし、幾何寸法は消去可否の安全条件、大型・重要・Ambiguousは物理Fallbackとする | 確定 |
+| D-101 | Fragment Trace ID | Render／Convex／Shared GroupのLocalIdは0を未設定用に予約した正のintとし、ObjectId＋ObjectGeneration内で種別ごとに一意かつ非再利用とする。TaskIdはWork Item専用のまま維持し、固定Traceのイベント別フィールド割当で対応EdgeとShared連結成分を記録する | 確定 |
+| D-102 | Runtime Debris Buffer | 事前Asset用Immutable Debris Geometry Atlasと、Runtime Fragment用固定容量Geometry Arenaを分離する。Arena Sliceは単調uintのDebrisEventIdが所有し、最終Draw後のFence等の完了証拠と最小保持期間の両方を満たしてから回収する。容量不足時は再確保・待機せず品質低下する | 確定 |
+| D-103 | 物理表現enum初期値 | PhysicsRepresentationStatusはPending=0、Represented=1、Missing=2、Shared=3、Ambiguous=4、SharedResolutionRoleはNone=0、Keeper=1、DebrisCandidate=2、PreserveFallback=3で固定する | 確定 |
+| D-104 | Debris Reject Trace | FragmentのReject／Fallback理由はappend-onlyなTraceReasonへ格納し、Value0／Value1へReason enumを重複保存しない。イベント別表でStatus、測定値、閾値の意味を固定する | 確定 |
+| D-105 | Debris Trace相関 | Runtime Arenaの4段階ライフサイクルEventをappend-onlyで追加し、Value0へuint DebrisEventIdを格納する。一意キーはTestRunId＋DebrisEventIdとし、IDカウンタはArenaがQuiescentかつ新しいTestRunIdのTrace Runを開始するときだけ再初期化する | 確定 |
 
 ## 13. 未決事項
 
@@ -884,13 +932,14 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | O-028 | 最終像録画 | Meta compositor／Quest Link後の映像を併録する条件と手段 | Reprojection、圧縮、HMD固有不具合の切分け | T-056後 |
 | O-029 | Collider Upgrade規則 | 寿命、距離、接触／Query頻度、Sleep状態による昇格Score、同時Upgrade数、メモリ上限 | Physics CPU、再cook費用、二重Meshメモリ、差し替え頻度 | T-060～T-061後 |
 | O-030 | Micro Attachment閾値 | Bounds、体積比、画面上寸法、切断帯幅、Anchor判定、重要部品Recipeの標準値 | シルエット保持、消去頻度、前処理工数、極小破片数 | T-062後 |
-| O-031 | GPU Micro Debris予算 | 通常500～3,000 Triangle、品質低下開始5,000～8,000、Hard Cap候補10,000、Active Event 8～32、寿命0.3～0.8秒を初期値とし、画面占有面積／Overdraw、Shard Cluster寸法、Geometry Atlas容量、Draw上限、Runtime Geometry転送条件を決める | GPU時間、Draw／Batch、Buffer転送・メモリ、見た目の密度 | T-063後 |
+| O-031 | GPU Micro Debris予算 | 通常500～3,000 Triangle、品質低下開始5,000～8,000、Hard Cap候補10,000、Active Event 8～32、寿命0.3～0.8秒を初期値とし、画面占有面積／Overdraw、Immutable Atlas容量、Runtime Arena容量／Page／最小保持Frame／Fence方式／同時Upload、Draw上限、Allocation失敗時Fallbackを決める | GPU時間、Draw／Batch、Buffer転送・メモリ、見た目の密度 | T-063後 |
 | O-032 | 最終重力と周辺調整 | 0.35G／0.5G／0.7G／1.0Gの採用値と、反発、Drag、分離Impulse、Animation、破片寿命の追加調整要否 | 空中斬り成功率、世界の重量感、テンポ、物理安定性 | T-064のプレイテスト後 |
 | O-033 | Shadow近似品質 | 両面・キャップなし近似を許容する距離／時間、Stable専用Shader分離、問題時の簡易Shadow Cap導入条件 | Shadow GPU時間、Draw、接地影、Self Shadow、実装複雑度 | T-065後 |
 | O-034 | Stencil Batch予算 | 最大Color数、OBB／Cap Bounds Margin、World Plane一致epsilon、Facing epsilon／ヒステリシス、Stencil Clear／Count方式、相殺不成立時のFallback、上限超過時にキャップを省略する距離／画面寸法 | CPU分類・彩色時間、Stencil GPU時間、Draw、仮断面品質 | T-066～T-068後 |
 | O-035 | Job実行予算 | フレームごとのSchedule数、Batch Size、Worker占有上限、複数フレームJobのNativeメモリAllocator／寿命、MeshData一括Commit数、Bake同時実行数 | 90fps安定性、投機完了率、Pending滞留、メモリ | T-069後 |
 | O-036 | Native Cook再検討閾値 | 「継続的に大きい差」の倍率、Unity Bake P99／Pending許容時間、Worker占有、Native部分置換へ進む最低改善量と保守工数上限 | Backend選択、実装規模、Unity更新追従、再現性 | T-070とPhase 4実測後 |
 | O-037 | Surface Projection閾値 | Trusted Exterior分類、最大距離、法線内積、包含Margin、最小厚み、Reduction前後の再Projection条件、自己交差検出精度 | Silhouette回復、Solid堅牢性、自動成功率、前処理時間 | T-071後 |
+| O-038 | Render／Convex対応閾値 | 専有Convex集合の被覆を近似する系譜、Bounds、固定数包含Sample、推定体積被覆率、境界距離、Shared Keeper Score、DebrisCandidate最大寸法・重要度、Ambiguous Margin | 誤消去、Collider欠落、共有Convexのめり込み、判定費用 | T-075後 |
 
 ## 14. 技術検証項目
 
@@ -958,7 +1007,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | T-060 | 二段階Cooking | Fast Cookで物理分裂を早め、選択的Fast Simulation昇格が再cook費用を上回るPhysics CPU削減を得る | Fast Cookのみ、Fast Simulationのみ、二段階を同一切断Traceで比較し、Bake時間P50／P95／P99、Pending時間、Upgrade率、10分間のPhysics CPUとピークメモリを測定 |
 | T-061 | Collider Upgrade Commit | 別Meshへの差し替えで位置・速度と接触が連続し、再切断済みの古いUpgradeが適用されない | Sleep、自由運動、接触中、同時再切断を再現し、Wake、接触Impulse、主スレッド時間、Generation Reject、Mesh回収を確認 |
 | T-062 | Micro Attachment消去 | 切断帯へ触れた微小付属物が命中フレームに消え、実Mesh Commit、再切断、古いJob完了後にも復活せず、重要部品を誤消去しない | アンテナ、取手、ミラー、装飾を切断帯の内外で切り、AliveMask、AttachmentId、ObjectGeneration、Trace、VFX、極小Rigidbody生成数を照合 |
-| T-063 | GPU Micro Debris | 実GeometryのShard Clusterが連続消去でもGameObject／Rigidbody／ColliderとGCを増やさず、通常数千Triangleを少数Drawで両眼安定描画し、予算超過時に段階的Fallbackできる | 1 Event 20～150、Active合計500～3,000、5,000～8,000、10,000、Stress 1～2万Triangleを比較し、Shard数、寿命、画面占有、Overdraw、Vertex／Pixel GPU時間、CPU時間、Draw、Atlas／転送メモリ、GC、左右眼ディザ差、Fallback順を測定する。Triangle単位と2～8 Triangle Clusterの見た目も比較する |
+| T-063 | GPU Micro Debris | Immutable Atlasの事前Shard GeometryとRuntime Arenaへ転送した物理表現不能Fragmentが、連続消去でもGameObject／Rigidbody／ColliderとGCを増やさず、通常数千Triangleを少数Drawで両眼安定描画し、予算超過時に段階的Fallbackできる。完了証拠なしにSliceを再利用せず、即時clip中のTriangle崩壊を発生させない。TestRunId＋DebrisEventIdからSlice所有者と全ライフサイクルを一意に復元できる | 1 Event 20～150、Active合計500～3,000、5,000～8,000、10,000、Stress 1～2万Triangleを比較する。Arena Page枯渇、同時Upload、Event終了、長時間GPU Stall、Fence未完了／非対応、最小保持Frame経過だけの状態、DebrisEventId Wrap手前、同一Run内Quiescent、新Trace Run開始を再生し、使用中Slice非上書き、Fence後回収、Allocation失敗、経路無効化、ID非再利用、Run境界だけでのカウンタ再初期化、4 Eventの相関復元、Fallback、GPU／CPU時間、Draw、転送メモリ、GCを測定する |
 | T-064 | 全体低重力プレイ | 一般プレイヤーが空中物体を狙いやすく、世界全体の浮遊感とゲームテンポが許容でき、全軌道系で重力が一致する | 0.35G／0.5G／0.7G／1.0Gを同一投擲・切断Scenarioで比較し、滞空時間、斬撃成功率、主観評価、Physics／予測／GPU破片の軌道差を記録 |
 | T-065 | 即時切断Shadow | Stencil Capなしの両面Shadowが即時状態で許容でき、clip／Offsetがカラー像と一致し、片面／両面群分割が90fps予算を阻害しない | 箱、薄板、凹形、非閉形状を床／壁近傍で切り、Directional各Cascade、Point、Spot、Bias条件について実Capとの差分、漏れ、peter-panning、Shadow Draw、GPU時間を比較 |
 | T-066 | Stencil彩色Batch | 非互換な可視Cap Boundsが左右眼のいずれかで重なる対象だけを別Colorへ分離し、OBB投影またはCap Boundsの非交差で安全と証明できる対象を同一Colorへまとめ、Stencil混入なしでCPU／GPU予算内に収まる | 左右眼だけでCapが重なる配置、OBBは重なるがCapは非交差の配置、Near Plane交差、全Cap重複、非重複、多数Pendingを生成し、Conflict Graph、Color数、Stencil差分、彩色CPU、Clear／Volume／Cap GPU、Draw、Fallbackを測定 |
@@ -970,6 +1019,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | T-072 | 固定物体の即時切断 | cook遅延中も固定側が動かず、自由と証明された側だけが仮分離し、Commit後も位置・速度・Constraintが連続する | 単一Anchor、両側Anchor、面近傍Anchor、Compound Graph、連続切断、先行評価Reject、cook遅延／失敗を再生し、分類時間、誤Impulse、固定点変位、自由側軌道、Traceを検査する |
 | T-073 | Dormant Cut再可視化 | 両側固定のゼロ幅切断が即時Stencil／仮Cap／分離を起動せず、実Mesh完成後の切断痕を許容範囲に保ち、交差する後続切断でDetached部品とその全境界断面が同一フレームに現れる | 大型建物を縦1面、交差2面、3面で切り、Anchor配置を変えてDormant／Active遷移、線状亀裂、軽微なチラツキ、全面Z-fighting、Cap欠落、旧面復活、Stencil Draw／Pixel費用、背景Job完了順、再切断世代を検査する |
 | T-074 | 支持Topologyモデル | 同一物体にActive／Dormant／Suppressed境界とPending／Ready Geometryが混在しても状態を損なわず、完全決定表、FragmentGroup集約、全履歴面の再評価、物理状態遷移、世代Rejectが決定論的に動作する | 正負Supportの全9組み合わせに加え、`Anchored／Detached`のActive境界と`Unknown／Anchored`のSuppressed境界が同一Groupへ混在するFixtureを再生する。PendingSupportClassification中に旧Rigidbody、Collider、Constraint、TransformとGroup運動が変わらず、既知Active境界のclip／Stencil／仮Capだけが表示され、Suppressed境界は表示されないことを検査する。再分類後の集約遷移、同一フレームActive化、Timeout Fallback、Trace値も純粋C#テストで検査する |
+| T-075 | Render／Convex対応 | Pending／Represented／Missing／Shared／AmbiguousとNone／Keeper／DebrisCandidate／PreserveFallbackを固定値どおり決定論的に扱い、物理表現不能な小Fragmentだけをデブリ化して、大型・重要・未分類・曖昧なFragmentを誤消去しない | default初期化、全Status／Role組合せ、1 Render対1 Convex、1 Render対複数専有Convex、対応なし、複数Render対1 Convex、多対多、専有＋Shared混在、複数大型共有、閾値近傍、世代不一致を合成する。不正組合せReject、近似被覆、Keeper選択、未分裂Fallback、SharedGroupLocalIdの0予約・世代内一意性・非再利用、Trace Reasonと対応／Shared連結成分の復元を検査する |
 
 ## 15. 実装ロードマップ
 
@@ -978,17 +1028,17 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Phase 0 | 非VR基盤・観測 | Unity 6.3 LTS 6000.3.22f1、Universal 3D／URP、Repo・ignore・Package Lock、固定テスト、Editor更新手順、入力抽象化、WorldPhysicsProfile、ProfilerMarker、Flow、TraceLogger、最小タイムライン、FrameId同期のUnity選択的キャプチャ | 固定Editor版から非VRで再現可能な性能基準、重力Profile、Work Item／Job時系列、対応画像を取得し、一時worktreeで更新・復帰手順を確認 |
 | Phase 0.25 | Cook比較Probe | 固定Convex Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Run Manifest、結果レポート | 同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、差の原因と版・設定差を区別して記録できる。Native PhysXを製品Runtime依存にはしない |
 | Phase 0.5 | XRスモークテスト | OpenXR、Quest 3S有線Link、Grip Pose、Tracking State、GripToKatanaOffset、Single Pass | 空シーンで両眼90Hzと左右の刀姿勢・追跡復帰を確認 |
-| Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、Micro Attachment即時消去、実Geometry Shard／Vertex Pulling／Indirect Batch PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と代表プロップだけに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。切断帯内の微小付属物が同フレームに消えて実形状のShardへ遷移し、通常数千Triangleを少数Drawで処理し、予算超過時は汎用破片へ安全に低下する |
+| Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、事前Shard済み専用テストMeshによるVertex Pulling／Indirect Batch描画性能PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と代表プロップだけに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。任意切断由来の微小Fragment判定やclip＋ポリゴン崩壊は行わず、全Fragmentを通常の塊としてclip表示する。事前Shard済み専用Meshだけを通常数千Triangle・少数Drawで描画し、GPU経路の性能とFallbackを確認する |
 | Phase 1.5 | 固定支持Topology | `FixedSupportAnchor`、Node／Edge、`LogicalFragment`、`CutBoundaryRecord`、Support／Exposure／Geometry／Work Result状態軸、`PendingSupportClassification`、Support→Exposure決定表、全LogicalFragment→FragmentGroup物理状態集約、Anchor到達性、Anchor／SupportGraph世代、Commit検証、純粋C#単体テスト、支持Trace契約 | 手書き／合成FixtureでT-074を満たし、Collider切断やcookなしで境界ごとのDormant／Active／Suppressed分類、複数境界混在時のGroup物理状態、分類不能時の物理完全維持と既知Active境界の描画、再分類遷移、全履歴面の再評価、世代不一致Reject、保守的Fallbackを決定論的に再現できる。完了後に固定支持対象を切断対象へ追加する |
 | Phase 2 | 仮断面・影強化 | Cut Shell、ゼロKerf、Dormant Cut Cull／再有効化、実Fragment Mesh早期公開、Temporary Render Boundary Set、Ready中の表示継続と原子的Geometry Commit、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、Front／Back相殺とResidual Stencil Support検証、CapCompatibilityKey／互換Group、可視Cap Bounds競合判定、Winding Count Stencil、左右眼Stencil Conflict Graph／Greedy Coloring、Color単位Volume／Cap Batch、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用per-instance clip／Offset、Stable片面／Pending両面Batch、XR両眼対応、Pending Cut／Stable履歴管理 | 2～4連続切断と複数対象の画面重複でStencilが混入せず、ActiveかつGeometry未Commit（PendingまたはReady）の境界だけが即時Renderer費用を発生させる。Ready到達だけでは表示を戻さず、実Mesh適用とCommitted遷移が同じ描画フレーム境界で成功した後にだけTemporary Renderer一覧から外す。両側固定のDormant Cutは大断面の即時Stencil仕事を発生させず、完成した実Meshを同一位置で公開できる。Geometry Commit後もCutBoundaryRecordと支持履歴が残る。許容する細い切断痕と禁止する全面Z-fightingを区別し、Detached化した瞬間に過去断面を欠落なく再表示する。OBBが重なってもCap非交差なら安全にBatchされ、互換Groupは統合され、両眼不可視Cap Groupは欠落や点滅なく除外される。相殺不能入力はFallbackし、Shadow MapではStencil Capなしの影近似が許容範囲に収まる |
-| Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、メインスレッドMesh公開、世代Commit | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない |
-| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、予算管理、T-070との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えず、分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、Fast Cookで早期分裂した後に価値のある破片だけを安全に昇格し、二重Meshメモリ、差し替え時の跳ね、Worker占有を許容範囲へ抑制する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、RenderFragment接続成分、Triangle数／面積／体積／重要度Metadata、後続Debris Corner Stream生成用出力、メインスレッドMesh公開、世代Commit | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない。任意切断由来Fragmentは物理Convex対応が確定するまで塊として表示され、Phase 3だけでは大きさを理由にデブリ化せず、clip中の表面Triangle崩壊を起こさない |
+| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、予算管理、T-063／T-070／T-075との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Arena不足で待機・再確保せず品質低下する。分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
 | Phase 4.5 | 飛翔斬撃と未来評価 | Gesture状態機械、Edge Direction Gate、Recovery、NonCutting素通り、Slash Latch、Span／Travel Axis、単調・一価SlashFront、逆行／自己交差Finalized、前縁VFX、帯状Sweep、Candidate Flight Bounds、評価DAG、先行切断、Commit検証 | 復路とU字軌道で二重前縁や誤斬撃を作らず、Latch直後から三日月前縁が飛翔・命中し、Extending中も前縁が成長しながら進み、遠距離対象の多くが接触時に完成Meshへ即移行 |
 | Phase 4.6 | 予測拡張 | 局所PhysicsScene、未来Animation姿勢、信頼度別フォールバック | 動的対象でも予測採用率と予測費用が基準を満たす |
 | Phase 4.7 | モブ未来計画 | Mob Future Planner、MobPlan／PlanGeneration、AI LOD、経路・Animation先行確定、時空間予約、Trace | 介入なしの遠距離モブで計画再利用率と先行切断完了率が基準を満たし、介入時は安全に無効化される |
 | Phase 4.8 | OpenXR Projection Capture | Windows API Layer、D3D11固定、SDR、MSAAなし、Dynamic Resolutionなし、Single Pass、Projection 1枚、左眼45fps、Release前GPU Copy、固定Profile検証、GPU Encode、Capture Record／Run Manifest同期 | 切断PoCの異常をProjection画像とTraceで再現調査でき、想定外構成はFail Fastし、非録画時との差が性能予算内。不要なら導入を見送れる |
 | Phase 5 | 人形 | 姿勢スナップショット、CPUスキニング、骨proxy分類、物理移行 | 基本動作中のNPCを任意方向に切断 |
-| Phase 5.5 | Asset自動前処理 | Portable Blender Manifest／Bootstrap、固定版ヘッドレス実行、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、Reduction、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor生成、実Asset用FixedSupportGraph生成、Solid／Proxy生成、検証、キャッシュ | 古いシステム版と共存し、代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類できる。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通す |
+| Phase 5.5 | Asset自動前処理 | Portable Blender Manifest／Bootstrap、固定版ヘッドレス実行、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、Reduction、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor／対象Triangle／ShardId生成、実Asset用FixedSupportGraph生成、Solid／Proxy／Debris Atlas生成、検証、キャッシュ | 古いシステム版と共存し、代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類する。事前分類済みMicro Attachmentだけは命中同フレームにAliveMask消去とGPU崩壊へ移行できる。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通す |
 | Phase 6 | コンテンツ | Synty City街区、10プロップ、シェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 最適化 | 端末別品質、破片LOD、ジョブ優先度、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす |
 
@@ -1111,8 +1161,18 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Physics Upgrade | Stable Fast Cook破片と同じ形状の別MeshをFast Simulationで再Bakeし、安全な物理ステップ境界でColliderを昇格させる処理 |
 | Micro Attachment | Physics Proxyで表現しない微小な付属部品。切断帯へ触れた場合は物理破片を作らず不可逆に全体消去する |
 | Attachment AliveMask | AttachmentIdごとの生存状態。即時表示、確定Mesh、再切断、世代管理で共有し、消去済み部品の再出現を防ぐ |
-| GPU Micro Debris | Micro Attachmentの実GeometryをShard Cluster化し、Vertex Pulling、解析運動、Indirect Batch、Opaque Dither Clipで描く短寿命・衝突なしEffect。汎用ローポリ破片はFallback |
-| Debris Geometry Atlas | Micro AttachmentのVertex、Corner／Index、Shard Metadataを事前登録し、発生時のGeometry転送とBuffer再確保を避ける共有GPU Buffer群 |
+| GPU Micro Debris | 事前分類済みMicro Attachment、または物理Convex対応がMissing／SharedのDebrisCandidateで補助的な消去条件も満たしたRuntime Fragmentの実GeometryをShard Cluster化し、Vertex Pulling、解析運動、Indirect Batch、Opaque Dither Clipで描く短寿命・衝突なしEffect。即時clip中のTriangle崩壊には使用せず、汎用ローポリ破片はFallback |
+| RenderFragment | 実表示Mesh切断後の連結な表示成分。論理Convexとの対応確定までは塊として表示し、幾何寸法だけではデブリ化しない |
+| LogicalConvexFragment | 自前Convex切断で生成されるcook前の論理物理成分。RenderFragmentとの対応判定には使用できるが、まだUnity Colliderとして適用済みとは限らない |
+| PhysicsRepresentationStatus | RenderFragmentとLogicalConvexFragment集合の対応状態。`Pending=0`／`Represented=1`／`Missing=2`／`Shared=3`／`Ambiguous=4`で固定し、defaultは物理Commit禁止のPendingになる |
+| SharedResolutionRole | Shared連結成分内のRenderFragmentへ付けるRole。`None=0`／`Keeper=1`／`DebrisCandidate=2`／`PreserveFallback=3`で固定し、Shared以外はNoneとする |
+| RenderFragmentLocalId | ObjectId＋ObjectGeneration内だけで一意かつ非再利用とする正のintのRenderFragment識別子。0は未設定用に予約し、TaskIdとは独立 |
+| LogicalConvexFragmentLocalId | ObjectId＋ObjectGeneration内だけで一意かつ非再利用とする正のintのLogicalConvexFragment識別子。0は未設定用に予約し、TaskIdとは独立 |
+| SharedGroupLocalId | Shared対応グラフの連結成分を識別する正のint。0は未設定用に予約し、ObjectId＋ObjectGeneration内で一意かつ同一世代中は解体後も再利用しない |
+| Debris Geometry Atlas | Micro Attachment等の事前生成Vertex、Corner／Index、Shard MetadataをAssetロード時に登録し、Asset寿命中は変更しないImmutableな共有GPU Buffer群 |
+| DebrisEventId | 0をInvalid用に予約し、1 Trace Runに一致するGpuMicroDebrisSystem実行セッション内で1から単調発行して再利用しないuint ID。TraceではValue0のdoubleへ正確な整数として格納し、TestRunIdとの組でArena Slice、Event、Fenceを一意に関連付ける |
+| RuntimeDebrisSliceState | Runtime Arena Sliceの状態。`Invalid=0`、`Allocated=1`、`Active=2`、`Retiring=3`、`Reusable=4`の固定値を持つ |
+| Runtime Debris Geometry Arena | Runtime FragmentのCorner Streamを置く固定容量Page／Ring GPU Buffer。SliceをDebrisEventIdが所有し、最終Draw後のFence等による完了証拠と最小保持Frameの両方を満たした後にだけ回収する。容量不足時は再確保・待機せずFallbackする |
 | Shard Cluster | 接続、Normal、Material、面積を基準に隣接する通常2～8 Triangleをまとめ、同じGPU Transformで飛散させる単位 |
 | WorldPhysicsProfile | 世界重力を正本として保持し、Unity Physics、予測、解析運動、GPU Effectへ同じ値を供給するバージョン付き設定 |
 | Pending Two-Sided Shadow | 即時切断中だけ、開いた外殻の裏面をShadow Mapへ書いて断面キャップの遮蔽を近似する両面ShadowCaster経路 |
@@ -1406,7 +1466,7 @@ Zantetsu.Capture.Encode
 Trace Eventは固定サイズを基本とし、ホットパスでは文字列、例外、可変長オブジェクトを保持しない。
 
 ```text
-Timestamp / Frame / FixedStep / ThreadId
+Timestamp / FrameId / FixedStep / ThreadId
 SlashId / SlashGeneration / FrontEdgeId / ObjectId / ObjectGeneration
 MobId / PlanGeneration / TaskId
 CaptureFrameId / OpenXRFrameId / TestRunId
@@ -1414,9 +1474,26 @@ EventType / TaskType / FromState / ToState / Reason
 Value0 / Value1
 ```
 
-最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。支持判定実装時にはappend-onlyで`SupportClassificationPending`、`SupportClassificationRetried`、`SupportClassificationTimedOut`、`SupportClassified`、`AnchoredSplitStarted`、`AnchoredSplitCommitted`、`CutBoundaryDormant`、`CutBoundaryActivated`、`CutBoundarySuppressed`、`SupportResultRejected`、`SupportFallbackActivated`を追加する。既存Event名の`Task`は論理Work Itemを指し、`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用する。Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
+最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。支持判定実装時にはappend-onlyで`SupportClassificationPending`、`SupportClassificationRetried`、`SupportClassificationTimedOut`、`SupportClassified`、`AnchoredSplitStarted`、`AnchoredSplitCommitted`、`CutBoundaryDormant`、`CutBoundaryActivated`、`CutBoundarySuppressed`、`SupportResultRejected`、`SupportFallbackActivated`を追加する。Render／Convex対応実装時には`FragmentPhysicsRepresentationClassified`、`FragmentConvexMappingEdge`、`FragmentSharedRoleAssigned`、`FragmentDebrisPromoted`、`FragmentDebrisRejected`、`FragmentPhysicsFallbackActivated`をappend-onlyで追加する。Runtime Arena実装時には`RuntimeDebrisSliceAllocated`、`RuntimeDebrisSliceActivated`、`RuntimeDebrisSliceRetiring`、`RuntimeDebrisSliceReclaimed`をappend-onlyで追加する。既存Event名の`Task`は論理Work Itemを指し、`TaskId`をFragment識別子へ流用しない。`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用し、Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
 
-支持判定のReasonには`AnchorGenerationMismatch`、`SupportGraphGenerationMismatch`、`SupportClassificationUnavailable`、`SupportConnectivityAmbiguous`を追加する。現行の固定サイズTrace Eventと`Value0`／`Value1`を維持し、当面は期待値と実値のGenerationをこれらへ格納できるため、支持イベント追加だけを理由にバイナリレコード構造を変更しない。`TraceEventType`の数値はappend-onlyとし、既存値の変更や再利用を禁止する。
+`RenderFragmentLocalId`と`LogicalConvexFragmentLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId + ObjectGeneration`をスコープとして種別ごとに一意かつ同一世代内で再利用しない。`SharedGroupLocalId`も0を未設定用に予約した正の32bit `int`とし、同じ`ObjectId + ObjectGeneration`内で一意かつ、連結成分の解体後も同一世代内では再利用しない。Traceの`ObjectId`／`ObjectGeneration`と各LocalIdを組み合わせてFragmentとShared連結成分を一意に復元する。doubleへ格納するLocalIdと対応数も非負int範囲に制限するため、IEEE 754 doubleで整数精度を失わない。イベント別の固定フィールド割当は次を正本とし、汎用的なFrom／To State遷移と混同しない。
+
+| EventType | FromState | ToState | Reason | Value0 | Value1 |
+| --- | --- | --- | --- | --- | --- |
+| `FragmentPhysicsRepresentationClassified` | RenderFragmentLocalId | PhysicsRepresentationStatus | 正常時`None`、不変条件違反時は専用Reason | 推定被覆率 | 対応Convex数 |
+| `FragmentConvexMappingEdge` | RenderFragmentLocalId | LogicalConvexFragmentLocalId | `None` | Overlap／包含Score | SharedGroupLocalId |
+| `FragmentSharedRoleAssigned` | RenderFragmentLocalId | SharedResolutionRole | 正常時`None` | KeeperのRenderFragmentLocalId。Keeper自身は自身、未決定は0 | SharedGroupLocalId |
+| `FragmentDebrisPromoted` | RenderFragmentLocalId | PhysicsRepresentationStatus | `None` | Triangle数 | 推定体積 |
+| `FragmentDebrisRejected` | RenderFragmentLocalId | PhysicsRepresentationStatus | Reject理由。`None`禁止 | Reasonが示す測定値／Score | 比較閾値 |
+| `FragmentPhysicsFallbackActivated` | RenderFragmentLocalId | PhysicsRepresentationStatus | Fallback理由。`None`禁止 | 対応Convex数 | Fallback種別 |
+| `RuntimeDebrisSliceAllocated` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Allocated` | `None` | DebrisEventId | 割当Byte数 |
+| `RuntimeDebrisSliceActivated` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Active` | `None` | DebrisEventId | 0（予約） |
+| `RuntimeDebrisSliceRetiring` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Retiring` | `None` | DebrisEventId | 0（予約） |
+| `RuntimeDebrisSliceReclaimed` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Reusable` | `None` | DebrisEventId | Retiringから回収までのFrame数 |
+
+支持判定のReasonには`AnchorGenerationMismatch`、`SupportGraphGenerationMismatch`、`SupportClassificationUnavailable`、`SupportConnectivityAmbiguous`を追加する。Render／Convex対応とRuntime Debrisには`FragmentCoverageBelowThreshold`、`FragmentMappingAmbiguous`、`FragmentSharedKeeperUnavailable`、`FragmentProtectedByImportance`、`FragmentProtectedBySize`、`FragmentGenerationMismatch`、`InvalidPhysicsRepresentationState`、`RuntimeDebrisArenaFull`、`RuntimeDebrisFenceUnavailable`、`RuntimeDebrisUploadRejected`を追加する。いずれも既存`TraceReason`の次の未使用値へappend-onlyで明示値を割り当て、既存値を変更・再利用しない。Reject／Fallbackイベントは専用Reasonを必須とし、Reason enumを`Value0`／`Value1`へ重複保存しない。
+
+現行の固定サイズTrace Eventと`Value0`／`Value1`を維持し、支持判定では当面、期待値と実値のGenerationをこれらへ格納できる。支持イベント、Fragmentイベント、Runtime Arenaイベント追加だけを理由にバイナリレコード構造を変更しない。Runtime Arenaの4イベントでは`Value0`をDebrisEventId専用としてTimelineが整数表示・検索し、発生フレームは共通`FrameId`フィールドを使用する。`FromState`／`ToState`は通常の汎用状態遷移ではなく上表のイベント固有割当として解釈する。`TraceEventType`と`TraceReason`の数値はappend-onlyとし、既存値の変更や再利用を禁止する。
 
 Jobからは`NativeQueue<TraceEvent>.ParallelWriter`等のBurst互換経路へ書き込み、メインスレッドがフレーム末尾に回収する。毎フレーム全状態をスナップショットせず、状態遷移と重要な判断だけを記録する。
 
@@ -1434,7 +1511,7 @@ Jobからは`NativeQueue<TraceEvent>.ParallelWriter`等のBurst互換経路へ�
 
 - 横軸は時刻またはフレームとする。
 - レーンはSlash、Object、MobPlan、Task、Threadを切り替える。
-- `SlashId`、`ObjectId`、`ObjectGeneration`、`MobId`、`PlanGeneration`、`TaskId`、失敗理由で絞り込む。
+- `SlashId`、`ObjectId`、`ObjectGeneration`、`MobId`、`PlanGeneration`、`TaskId`、失敗理由で絞り込む。Render／Convex対応イベントではイベント別フィールド表を解釈し、`ObjectId + ObjectGeneration + RenderFragmentLocalId`または`LogicalConvexFragmentLocalId`でも絞り込めるようにする。
 - Running、Completed、Rejected、Stale、Fallbackを色分けする。
 - イベント選択時に前提世代、予測値、拒否理由、依存Taskを表示する。
 - 対応するGameObjectをHierarchyで選択できるようにする。
