@@ -69,6 +69,9 @@ namespace Zantetsu.Observability
 
         public TraceFlightRecorderState State => _state;
 
+        /// <summary>The logger this recorder drains from.</summary>
+        internal TraceLogger Logger => _logger;
+
         public int PostRollCapacity => _postRollCapacity;
 
         /// <summary>Number of post-roll slots reserved for the freeze terminal.</summary>

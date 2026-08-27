@@ -6,7 +6,8 @@
         "Zantetsu.Trace",
         "Zantetsu.Observability",
         "Zantetsu.Observability.Editor",
-        "Unity.Collections"
+        "Unity.Collections",
+        "Unity.Burst"
     ],
     "includePlatforms": [
         "Editor"
