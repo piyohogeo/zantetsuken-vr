@@ -25,6 +25,7 @@ namespace Zantetsu.Observability
         private int _triggerHistoryCount;
         private int _capturedPostRollCount;
         private bool _wasHistoryOverwrittenAtTrigger;
+        private int _traceCaptureOverflowCount;
 
         public TraceFlightRecorder(TraceLogger logger, int postRollCapacity)
             : this(logger, postRollCapacity, 0)
@@ -87,6 +88,13 @@ namespace Zantetsu.Observability
 
         /// <summary>Whether the logger history had already overwritten events at trigger time.</summary>
         public bool WasHistoryOverwrittenAtTrigger => _wasHistoryOverwrittenAtTrigger;
+
+        /// <summary>
+        /// Number of events drained while CapturingPostRoll that could not be
+        /// duplicated into the normal capture region. Non-negative and
+        /// saturating at <see cref="int.MaxValue"/>.
+        /// </summary>
+        public int TraceCaptureOverflowCount => _traceCaptureOverflowCount;
 
         /// <summary>
         /// Drains the logger according to the current state. In Armed and Frozen
@@ -216,6 +224,7 @@ namespace Zantetsu.Observability
             _capture.Clear();
             _triggerHistoryCount = 0;
             _capturedPostRollCount = 0;
+            _traceCaptureOverflowCount = 0;
             _wasHistoryOverwrittenAtTrigger = false;
             _state = TraceFlightRecorderState.Armed;
         }
@@ -230,11 +239,14 @@ namespace Zantetsu.Observability
                     _state = TraceFlightRecorderState.Frozen;
                 }
 
-                return _logger.Drain();
+                int drainedOnly = _logger.Drain();
+                _traceCaptureOverflowCount = SaturatingAdd(_traceCaptureOverflowCount, drainedOnly);
+                return drainedOnly;
             }
 
             int drained = _logger.Drain(_capture, remaining, out int captured);
             _capturedPostRollCount += captured;
+            _traceCaptureOverflowCount = SaturatingAdd(_traceCaptureOverflowCount, drained - captured);
 
             if (_capturedPostRollCount >= NormalPostRollCapacity && _freezeTerminalTraceReserve == 0)
             {
@@ -242,6 +254,17 @@ namespace Zantetsu.Observability
             }
 
             return drained;
+        }
+
+        internal static int SaturatingAdd(int current, int delta)
+        {
+            long sum = (long)current + (long)delta;
+            if (sum > int.MaxValue)
+            {
+                return int.MaxValue;
+            }
+
+            return (int)sum;
         }
     }
 }
