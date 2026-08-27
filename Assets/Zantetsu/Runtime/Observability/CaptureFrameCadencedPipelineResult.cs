@@ -10,8 +10,10 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// This is a value type with no public constructor; instances are created
-    /// only by <see cref="CaptureFrameCadencedPipelineCoordinator"/>. It owns
-    /// neither the advance result's artifact/receipt nor the accepted record.
+    /// only by <see cref="CaptureFrameCadencedPipelineCoordinator"/> and
+    /// <see cref="CaptureFrameRenderTargetCadencedPipelineCoordinator"/>. It
+    /// owns neither the advance result's artifact/receipt nor the accepted
+    /// record.
     /// </para>
     /// <para>
     /// Invariant: <see cref="HasAcceptedRecord"/> is true exactly when
