@@ -174,6 +174,47 @@ namespace Zantetsu.Observability
         /// </remarks>
         public CaptureFramePngQueueStatus TryCollectEncodeAndEnqueue(CaptureFramePngQueue queue)
         {
+            ValidateQueue(queue);
+            return TryCollectEncodeAndEnqueueCore(queue, null);
+        }
+
+        /// <summary>
+        /// Collects a completed readback, encodes it as PNG, and enqueues the
+        /// result into <paramref name="queue"/>, while reconciling the
+        /// corresponding <see cref="CaptureFrameRecord"/> in
+        /// <paramref name="recordRegistry"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The record is kept while its PNG is successfully enqueued. It is
+        /// removed when the readback fails, when the encoded PNG queue is full,
+        /// or when an exception leaves the frame unable to continue. The
+        /// record's capture frame ID is looked up with
+        /// <see cref="CaptureFrameRecordRegistry.TryGet"/> before any resource
+        /// work; a missing or mismatched record aborts the operation after the
+        /// rented raw slot is released.
+        /// </para>
+        /// <para>
+        /// Main-thread only. Does not own or dispose the queue, registry,
+        /// dispatcher, observer, logger, or pool. No file I/O is performed.
+        /// </para>
+        /// </remarks>
+        public CaptureFramePngQueueStatus TryCollectEncodeAndEnqueue(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry)
+        {
+            ValidateQueue(queue);
+
+            if (recordRegistry == null)
+            {
+                throw new ArgumentNullException(nameof(recordRegistry));
+            }
+
+            return TryCollectEncodeAndEnqueueCore(queue, recordRegistry);
+        }
+
+        private static void ValidateQueue(CaptureFramePngQueue queue)
+        {
             if (queue == null)
             {
                 throw new ArgumentNullException(nameof(queue));
@@ -183,37 +224,149 @@ namespace Zantetsu.Observability
             {
                 throw new ObjectDisposedException(nameof(CaptureFramePngQueue));
             }
+        }
 
-            CaptureFramePngCollectStatus status = TryCollectAndEncodePng(out CaptureFrameRequest frameRequest, out NativeArray<byte> pngBytes);
-
-            if (status == CaptureFramePngCollectStatus.None)
+        private CaptureFramePngQueueStatus TryCollectEncodeAndEnqueueCore(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry)
+        {
+            if (!_dispatcher.TryCollect(out CaptureFrameReadbackResult collected))
             {
                 return CaptureFramePngQueueStatus.None;
             }
 
-            if (status == CaptureFramePngCollectStatus.Dropped)
+            CaptureFrameRecord record = null;
+            if (recordRegistry != null)
             {
-                return CaptureFramePngQueueStatus.Dropped;
-            }
-
-            bool transferred = false;
-            try
-            {
-                if (queue.TryEnqueue(frameRequest, pngBytes))
+                bool found;
+                try
                 {
-                    transferred = true;
-                    return CaptureFramePngQueueStatus.Queued;
+                    found = recordRegistry.TryGet(collected.FrameRequest, out record);
+                }
+                catch
+                {
+                    _dispatcher.Release(collected);
+                    throw;
                 }
 
-                _observer.RecordDropped(frameRequest.TraceContext, CaptureFrameDropReason.EncodedPngQueueFull);
-                return CaptureFramePngQueueStatus.Dropped;
+                if (!found)
+                {
+                    _dispatcher.Release(collected);
+                    throw new InvalidOperationException("No capture frame record is registered for the completed capture frame ID.");
+                }
+            }
+
+            if (collected.HasError)
+            {
+                return FinishReadbackFailure(recordRegistry, record, collected);
+            }
+
+            return FinishEncodeAndEnqueue(queue, recordRegistry, record, collected);
+        }
+
+        private CaptureFramePngQueueStatus FinishReadbackFailure(
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRecord record,
+            in CaptureFrameReadbackResult collected)
+        {
+            try
+            {
+                try
+                {
+                    _observer.RecordDropped(collected.FrameRequest.TraceContext, CaptureFrameDropReason.ReadbackFailed);
+                }
+                finally
+                {
+                    _dispatcher.Release(collected);
+                }
+            }
+            catch
+            {
+                RemoveRecord(recordRegistry, record, collected.FrameRequest);
+                throw;
+            }
+
+            RemoveRecord(recordRegistry, record, collected.FrameRequest);
+            return CaptureFramePngQueueStatus.Dropped;
+        }
+
+        private CaptureFramePngQueueStatus FinishEncodeAndEnqueue(
+            CaptureFramePngQueue queue,
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRecord record,
+            in CaptureFrameReadbackResult collected)
+        {
+            NativeArray<byte> encoded = default;
+            bool transferred = false;
+            bool queued = false;
+            try
+            {
+                try
+                {
+                    NativeArray<byte> buffer = _dispatcher.GetBuffer(collected);
+
+                    long startTimestamp = Stopwatch.GetTimestamp();
+                    encoded = CaptureFramePngEncoder.Encode(buffer, collected.FrameRequest.PixelLayout);
+                    long endTimestamp = Stopwatch.GetTimestamp();
+                    double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+                    _observer.RecordEncoded(collected.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
+                }
+                finally
+                {
+                    _dispatcher.Release(collected);
+                }
+
+                if (queue.TryEnqueue(collected.FrameRequest, encoded))
+                {
+                    transferred = true;
+                    queued = true;
+                }
+                else
+                {
+                    _observer.RecordDropped(collected.FrameRequest.TraceContext, CaptureFrameDropReason.EncodedPngQueueFull);
+                }
+            }
+            catch
+            {
+                RemoveRecord(recordRegistry, record, collected.FrameRequest);
+                throw;
             }
             finally
             {
-                if (!transferred && pngBytes.IsCreated)
+                if (!transferred && encoded.IsCreated)
                 {
-                    pngBytes.Dispose();
+                    encoded.Dispose();
                 }
+            }
+
+            if (queued)
+            {
+                return CaptureFramePngQueueStatus.Queued;
+            }
+
+            RemoveRecord(recordRegistry, record, collected.FrameRequest);
+            return CaptureFramePngQueueStatus.Dropped;
+        }
+
+        private static void RemoveRecord(
+            CaptureFrameRecordRegistry recordRegistry,
+            CaptureFrameRecord expected,
+            in CaptureFrameRequest request)
+        {
+            if (recordRegistry == null)
+            {
+                return;
+            }
+
+            if (!recordRegistry.TryRemove(request, out CaptureFrameRecord removed))
+            {
+                throw new InvalidOperationException("Registry rollback failed: no record matched the completed capture frame.");
+            }
+
+            if (!ReferenceEquals(removed, expected))
+            {
+                throw new InvalidOperationException("Registry rollback failed: the removed record is not the record that was matched.");
             }
         }
     }

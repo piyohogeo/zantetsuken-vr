@@ -32,6 +32,14 @@ namespace Zantetsu.Observability
         private long _totalRejected;
         private bool _disposed;
 
+        /// <summary>
+        /// Test-only seam: when set, the next enqueue attempt throws instead of
+        /// enqueuing. Intended exclusively for EditMode tests that exercise
+        /// exception-cleanup paths without inducing a real queue failure.
+        /// Cleared after one use.
+        /// </summary>
+        private bool _forceNextEnqueueError;
+
         public CaptureFramePngQueue(int capacity)
         {
             if (capacity <= 0)
@@ -95,6 +103,12 @@ namespace Zantetsu.Observability
         public bool TryEnqueue(in CaptureFrameRequest frameRequest, NativeArray<byte> pngBytes)
         {
             ThrowIfDisposed();
+
+            if (_forceNextEnqueueError)
+            {
+                _forceNextEnqueueError = false;
+                throw new ObjectDisposedException(nameof(CaptureFramePngQueue));
+            }
 
             if (!frameRequest.IsValid)
             {
