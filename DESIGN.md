@@ -414,7 +414,7 @@ Native PhysXが生成した`PxConvexMesh`またはCook済みBinaryをUnity `Mesh
 
 同じPure Native入力と出力Bufferを使い、表示Mesh／Convex／Temporary Proxyの計算Kernelだけを同期実行する`Single-Thread Kernel`と、実際の`Schedule -> Worker実行 -> Complete`を使う`Job Batch`を分離する。前者は`µs/op`、入力／出力要素当たり時間、P50／P95／P99を記録し、Job Schedule、GC、Unity Object生成を含めない。Unity API境界を含む`Physics.BakeMesh`、Mesh公開、Collider CommitはPure Kernel値へ混ぜず、直列の単発LatencyとBatch時のEnd-to-End値として別記する。Job側は`cuts/s`、`input triangles/s`、`output triangles/s`、`convexes/s`、`cooks/s`、Job End-to-End latency、Schedule時間、Worker占有率、Main Thread Commit時間を記録する。単発Jobのレイテンシと十分なBatchを連続投入した定常Throughputを混同しない。
 
-固定Datasetには、公開可能な合成Fixtureを正本として、表示Mesh 500／1,000／3,000／10,000／30,000 Triangle級、Convex 8／16／32／64／128／255頂点級、1／4／16／64 Convex、2／4／8 Fragment、中央切断／端切断／非交差、単一／複数断面、単純／複数Cap Loopを含める。暫定Proxyは50／100／250／500 Triangleまたは1／4／16 Primitive級を初期候補とする。ローカルのライセンスAsset由来Proxyも代表値確認には使えるが、公開結果から入力Geometryを復元できるデータは保存しない。
+固定Datasetには、公開可能な合成Fixtureをcanonical正本として、表示Mesh 500／1,000／3,000／10,000／30,000 Triangle級、Convex 8／16／32／64／128／255頂点級、1／4／16／64 Convex、2／4／8 Fragment、中央切断／端切断／非交差、単一／複数断面、単純／複数Cap Loopを含める。暫定Proxyは50／100／250／500 Triangleまたは1／4／16 Primitive級を初期候補とする。Phase 0.2で自動選抜したSynty由来の`LicensedRepresentative` Render／Solid／Convex Fixtureも非公開の補助Suiteとして同じ測定を行い、Render／SolidはOriginal、100、500、1,000、2,000、5,000 Triangle級のDirect Variantに加え、Voxel64／128／256基底と限定Post-Decimateを比較する。合成Fixtureの代替や全Asset互換性の証拠にはせず、公開結果から入力GeometryやAsset対応を復元できるデータは保存しない。
 
 Release Player相当、Burst有効、Jobs Debugger／Safety Checks無効を採用判断用の正本とし、Editor値は開発時の回帰検出専用とする。Cold start、初回JIT／Burst Compile、Allocator拡張は定常値と分け、Managed GC、Native一時メモリ、失敗／Fallback率も記録する。結果の正しさを事前検証し、無効出力や早期Rejectを成功経路の高速値へ混ぜない。Temporary Low-Poly ProxyはT-077の正しさ検証を通過した実装済み品質段階だけをT-076の性能比較へ含め、未実装の目標品質を0コストとして扱わない。
 
@@ -752,6 +752,292 @@ SupportからExposureへの変換は次の完全な決定表を正本とする�
 
 Blender側の共通変換工程として、Transform適用、原点・単位統一、共通マテリアル化、三角形化、Micro Attachment候補の連結成分抽出とRecipe分類、Solid Cut Mesh生成、Physics Proxy生成、Unity向け書き出しをプリセット化する。実行時Cut ShellはUnity側でSolid Cut Meshから派生させる。Micro Attachmentには安定した`AttachmentId`、Bounds、Anchor、本体に対する体積比、重要部品除外フラグを出力する。
 
+#### 10.2.1 早期Licensed Fixture選抜
+
+Phase 5.5の全Asset対応前に、Phase 0.2でSyntyの多数モデルを固定版Blenderへ一括投入し、簡易処理だけで成功した少数を表示テストと性能測定へ使用する。これは製品用Asset前処理の前倒しではなく、手作業、Asset別Recipe、最終外観調整を原則行わない使い捨て可能な選抜工程である。失敗Assetを個別修理して網羅率を上げず、時間上限または検証失敗で即Rejectして次の候補へ進む。
+
+```text
+Synty Source FBX群
+  -> Import／Transform・単位適用
+  -> Object／Material／Triangle統計
+  -> 三角形化
+  -> 重複頂点・退化面・孤立要素の最低限除去
+  -> 面向き再計算
+  -> 基底Render／Solid／Convex Gate
+  -> Original／Direct Decimate系列生成
+  -> Voxel64／Voxel128／Voxel256基底と限定Post-Decimate系列生成
+  -> VariantごとのRender／Solid再検証
+  -> 成功Fixtureだけを非公開Datasetへ固定
+```
+
+選抜Tierは次に分離する。同一Assetが複数Tierへ合格してもよい。
+
+| Tier | 用途 | 早期合格条件 |
+| --- | --- | --- |
+| `Render Fixture` | 即時clip、Mesh切断Kernel、MeshData公開、見た目確認 | Profileのfinite／epsilon／Bounds／Triangle／連結成分Gateを満たす。開放面、複数Submesh、複数連結成分を許容 |
+| `Solid Fixture` | Cap Loop、反復切断、Stable Fragment Mesh | Render条件に加え、Boundary／Non-Manifold／向き不整合／自己交差が0。Profileの径／平面誤差／個数内の穴だけ自動封鎖でき、単一Presetの粗いVoxel Solid化も許可 |
+| `Convex Fixture` | Convex切断、`Physics.BakeMesh`、Cook Probe | Solidまたは単純連結成分から、ProfileのHull数、Hull頂点／Face数、合計頂点、正体積上限内の単一Convex／簡易Compoundを生成できる |
+
+Render／Solid Fixtureには、三角形化後の`Original`、元表面へ直接適用する絶対Triangle Target `Tri100`／`Tri500`／`Tri1000`／`Tri2000`／`Tri5000`、Topologyを再構成するVoxel Remesh系列を候補として持たせる。絶対数を主軸とし、Reduction比は`ActualOutputTriangleCount / SourceTriangleCount`から導出する。Direct DecimateとVoxel後Post-Decimateにはそれぞれ固定Presetだけを使用し、手動ウェイト、局所修正、Target別の見た目調整を行わない。
+
+- Direct Decimateでは、元MeshがTarget以下なら増やさず、そのTargetは`NoOp`としてReportだけへ記録してGeometryを複製しない。元MeshがTargetを1 Triangleでも上回る場合は削減率にかかわらず生成を試みる。Voxel後Post-DecimateもVoxel基底がTargetを上回れば同じ規則で生成する。
+
+- 異なるTargetが同じ出力hashになった場合はGeometryを1件へ重複排除し、ReportにAlias関係を残す。
+
+- 各Variantは実際の出力Triangle数でRender Gateを再検証する。Solid Variantはさらにwatertight、面向き、退化、自己交差を再検証し、失敗したTarget VariantだけをRejectする。元Assetや別Targetまで連鎖Rejectしない。
+
+- 元から100／500 Triangle級の小プロップは`Original`として低Triangle帯へ含め、より大きなAssetをTri100／Tri500へ強制削減したVariantと区別する。極端なReduction Variantは形状検証を通れば性能限界測定用`BenchmarkOnly`として保持できるが、見た目代表値には使用しない。
+
+- Render／SolidのTriangle TargetとConvexの頂点／Hull／Compound削減は別系列とし、`Tri100`等をCollider品質の指定として解釈しない。
+
+Voxel Remesh基底はSourceとTriangle数が同じ、近い、またはSourceより増える場合でも、閉形状化、自己交差の解消可能性、連結、面配置が異なるため生成する。最長ローカルBounds辺を基準に`Voxel64`=`BoundsMax / 64`、`Voxel128`=`BoundsMax / 128`、`Voxel256`=`BoundsMax / 256`の相対Voxel Sizeを初期Presetとし、World Scaleだけで解像度が変わらないようにする。Voxel基底とSourceの出力hashが一致する場合だけAlias化できる。
+
+Variant爆発を避けるため、初期Post-Decimate行列は次へ限定する。`Base`はVoxel Remesh直後を意味する。
+
+| Voxel基底 | 生成するPost-Decimate候補 |
+| --- | --- |
+| `Voxel256` | `Base`、`Tri5000` |
+| `Voxel128` | `Base`、`Tri2000`、`Tri1000` |
+| `Voxel64` | `Base`、`Tri500`、`Tri100` |
+
+Voxel Variantは`fixture_017.render.vox128.base`、`fixture_017.solid.vox128.tri1000`のようにTierを含む`DatasetCaseId`を使う。Voxel基底と各Post-Decimate結果はRender／Solid Gateを独立に通し、形状検証を通ってもSilhouette／表面偏差が大きい結果は`BenchmarkOnly`へ分類する。簡易なBounds差、体積変化率、元表面へのsampled距離はReportへ残すが、Phase 0.2ではSurface Projectionや手動修正を行わない。
+
+早期Fixtureの`DatasetCaseId`は`{SourceFixtureId}.{TierToken}.{VariantId}`で構築し、TierTokenを`render`／`solid`／`convex`へ固定する。例えばDirect Decimateは`fixture_017.render.original`、`fixture_017.solid.tri100`、Voxelは上記命名を使う。SourceFixtureIdは最大64文字、VariantIdは最大48文字とし、構築結果が既存Manifestの`[A-Za-z0-9._-]{1,128}`へ収まり、Dataset内で一意であることをCodecが検証する。同じSourceとVariant名が複数Tierで合格しても別caseになる。Benchmark時の実入力は各生成Variantなので、既存`GeometryBenchmarkRunManifest.InputTriangleCount`には`ActualOutputTriangleCount`を格納し、`OutputTriangleCount`は切断等のBenchmark対象処理後のTriangle数として従来どおり使用する。Source、Tier、Process Mode、Voxel Size、Post-Reduction Target、Reduction比、Applied状態はDatasetCaseIdで対応する`EarlyFixtureSelectionReport`から復元し、Benchmark schemaへ意味の重複するpropertyを追加しない。
+
+早期工程ではTrusted Exteriorへの投影、製品品質の見た目を保つReduction、UV／Material再構成、Micro Attachment／FixedSupportGraph、意味を伴う開口保持、車・建物別Recipeを必須にしない。ProfileのHard Bounds／Volume、自己交差、Boundary／Non-Manifold、決定論的Triangle／Component／Voxel Cell／Solid Candidate Pair上限を満たせないVariantはGeometryRejectedまたはProfileUnsupportedとする。120秒／4 GiBの運用上限超過はResourceLimitExceededとして再試行し、形状不合格にはしない。未採用Asset／VariantはPhase 5.5まで保留する。
+
+簡単なAssetだけが残る選抜バイアスを隠さないため、投入総数、Tier別合格数、`AssetCategory`、固定境界の`SourceTriangleBand`、`GeometryProcessMode`、`ReductionVariant`、`SourceTriangleCount`、`ReductionTargetTriangleCount`、`ActualOutputTriangleCount`、`ReductionRatio`、`ReductionApplied`、`VoxelResolutionCells`、`VoxelSize`、`PostReductionTargetTriangleCount`、Bounds差、体積変化率、sampled表面距離、連結成分、Boundary Edge、非多様体Edge、向き不整合Edge、自己交差、全Attemptの処理時間／Peak Working Set／Tool結果、Reject Stage／Reasonを`EarlyFixtureSelectionReport`へ保存する。家具、車、建物、道路設備、小物と複数Triangle帯から少数ずつ固定し、最速の単純形状だけに偏らせない。ただし、この合格集合からSynty全体の互換率やPhase 5.5の成功率を主張しない。
+
+公開可能な合成Fixtureをcanonical Benchmark Datasetの正本として維持する。Synty由来Fixtureは同じHarnessとManifest／Result schemaで測る非公開の`LicensedRepresentative` Datasetとし、合成入力から得た容量式が実Asset分布でも大きく外れないかを確認する補助系列に限定する。入力Geometry、派生Mesh、選抜レポートのAsset名対応表は非公開Asset Repoへ置き、公開RepoにはライセンスGeometryを含まないScript、Schema、匿名化した集計だけを置く。公開可能性が不明な結果は非公開を既定とする。
+
+##### EarlyFixtureSelectionProfile v1
+
+選抜Gate、形状品質区分、決定論的入力上限、運用上の資源上限はversion付きcanonical JSON `EarlyFixtureSelectionProfile`へ固定する。Profile v1のproperty順と値は次を初期正本とし、変更時はProfile hashと全派生Fixtureを無効化する。
+
+| Property | JSON型 | v1値／意味 |
+| --- | --- | --- |
+| `SchemaVersion` | integer | `1` |
+| `ProfileId` | string | `early-synty-v1` |
+| `AssetCategories` | string array | 固定順で`["Furniture","Vehicle","Building","RoadEquipment","SmallProp","Character","Other"]`。Reportで許可するカテゴリ集合 |
+| `SourceTriangleBandUpperBounds` | integer array | 固定長5、厳密に`[100, 500, 1000, 2000, 5000]`。Source Triangle帯の上限 |
+| `AbsoluteEpsilonMeters` | number | `0.000001` |
+| `RelativeEpsilon` | number | `0.000001`。Asset epsilonは`max(AbsoluteEpsilonMeters, BoundsDiagonal * RelativeEpsilon)` |
+| `MinBoundsDiagonalMeters` | number | `0.001` |
+| `MaxBoundsDiagonalMeters` | number | `1000` |
+| `MinNonZeroExtentAxes` | integer | `2`。各軸extentがAsset epsilonを超えるかで数える |
+| `AutoFillMaxHoleDiameterRelative` | number | `0.02`。Boundary Loop最大頂点間距離／BoundsDiagonal |
+| `AutoFillMaxHoleDiameterMeters` | number | `0.05`。自動封鎖可能径はrelative値とabsolute値の小さい方 |
+| `AutoFillPlanarityRelative` | number | `0.001`。Loop頂点から最小二乗平面への最大距離／Loop径 |
+| `AutoFillPlanarityMeters` | number | `0.00001`。許容平面誤差はrelative値とabsolute値の大きい方 |
+| `AutoFillMaxHoleCount` | integer | `16` |
+| `RepresentativeBoundsExtentError` | number | `0.05`。各軸extentのSource比最大誤差 |
+| `HardBoundsExtentError` | number | `0.25`。超過はGeometry Reject |
+| `HardBoundsCenterShift` | number | `0.05`。中心移動／Source BoundsDiagonal。超過はGeometry Reject |
+| `RepresentativeSurfaceDistanceP95` | number | `0.02`。Source BoundsDiagonalで正規化した双方向sampled距離P95 |
+| `RepresentativeVolumeError` | number | `0.10`。SolidのSource比体積誤差 |
+| `HardVolumeError` | number | `0.50`。Solidで超過時はGeometry Reject |
+| `SurfaceSampleCountPerDirection` | integer | `4096`。Source hash由来seedの面積加重sample |
+| `MaxSelfIntersectionCount` | integer | `0`。隣接面を除くTriangle交差数 |
+| `SolidIntersectionAlgorithm` | string enum | `ClosedTriangleDistanceV1`に固定。別実装・別predicateへの暗黙Fallbackは禁止 |
+| `MaxConvexVerticesPerHull` | integer | `255` |
+| `MaxConvexFacesPerHull` | integer | `255` |
+| `MaxCompoundHullCount` | integer | `16` |
+| `MaxCompoundTotalVertices` | integer | `2048` |
+| `MaxSourceTriangleCount` | integer | `200000` |
+| `MaxVariantTriangleCount` | integer | `200000` |
+| `MaxConnectedComponentCount` | integer | `256` |
+| `MaxEstimatedVoxelCellCount` | integer | `16777216` |
+| `MaxSolidCandidatePairCount` | integer | `2000000`。epsilon拡張AABB broad phase後の一意Triangle pair上限 |
+| `SoftTimeoutSeconds` | integer | `120`。資源状態判定専用で形状Gateに使わない |
+| `RetryTimeoutSeconds` | integer | `300` |
+| `MaxWorkingSetBytes` | integer | `4294967296` |
+| `ResourceRetryCount` | integer | `1`。再試行は単一Blender Process、並列なし |
+
+Render Gateは全頂点／属性が有限、Triangleが非退化、BoundsDiagonalがProfile範囲内、非ゼロextent軸が2以上、出力Triangle／連結成分が上限内であることを要求する。Triangle非退化の最終定義は、候補をZCG座標binary32へ量子化した後の`ZcgNumericKernelV1`による`twiceArea > epsArea`とする。Solid GateはさらにBoundary Edge=0、Non-Manifold Edge=0、向き不整合=0、自己交差=0、正の有限体積を要求し、ZCG decode後に同じGateを必ず再実行する。小穴自動封鎖はProfileの径、平面誤差、個数をすべて満たすBoundary Loopだけに適用する。
+
+Convex GateはHull数1..16、各Hullの頂点4..255、Face 4..255、全Hull頂点合計2048以下、各Hullの正の有限体積を要求する。上限を超える形状を暗黙に再簡略化せず、そのConvex VariantをGeometry Rejectする。
+
+SourceとVariantのBounds extent誤差25%超、中心移動5%超、Solid体積誤差50%超はGeometry Rejectとする。Bounds extent相対誤差はSource extentがAsset epsilonを超える軸だけで求め、薄い／平面軸は絶対誤差がAsset epsilon以下かを検査する。Hard Gate内でも、Bounds extent誤差5%、双方向sampled表面距離P95 2%、Solid体積誤差10%のいずれかを超えたVariantは`BenchmarkOnly`とし、見た目代表値へ使わない。これにより「Bounds妥当」「主要Silhouetteが崩れる」を数値判定へ置き換える。
+
+形状偏差のSource基準はRender Variantでは正規化済みOriginal Render、Direct Solid Variantでは封鎖後の検証済みOriginal Solidとする。Voxel Solidで比較可能なSource Solidがない場合、VolumeErrorは`null`としてBounds／sampled表面距離／Solid Gateだけを適用する。`null`を0誤差として扱わない。
+
+Source／Variant Triangle、連結成分、推定Voxel Cell、Solid Candidate Pairの決定論的上限超過は`ProfileUnsupported`とする。同じ入力では再試行してもCandidate Pair数が変わらないため、`MaxSolidCandidatePairCount`超過をResource retryへ流さない。一方、上限内の処理におけるwall-clock、Working Set、Tool crash等は形状不合格にせず`ResourceLimitExceeded`または`ToolFailed`とする。最初の資源超過後は同じ入力hash、Profile、Script、Presetを単一Process・並列なしで1回だけ再試行し、300秒または4 GiBを再度超えた場合は`ResourceDeferred`とする。最初の試行だけが上限へ達し、再試行が処理完了した場合の最終Statusは結果に応じて`Selected`、`BenchmarkOnly`、`GeometryRejected`、`ProfileUnsupported`、`NoOp`または`Alias`とする。各試行はEntry内の固定順`Attempts`へ独立保存し、初回がTimeout／MemoryLimit／ToolFailureのどれだったか、時間、Peak Working Set、Tool終了結果を失わない。`ResourceLimitExceeded`は再試行待ちの中間Statusであり、このStatusを含むReportからDataset Index／Receiptを確定してはならない。再試行完了後は決定表の完了Status、`ResourceDeferred`または`ToolFailed`へ必ず収束させる。Resource状態のVariantはLicensed Datasetへ入れず、後日の同一契約による再実行を許可する。処理時間とPeak Working Setは観測値として記録するが、Tier合否、Geometry hash、Dataset hashの入力には使用しない。
+
+##### Canonical Selection Report／Licensed Dataset Index／Receipt
+
+`EarlyFixtureSelectionProfile`、`EarlyFixtureSourceCatalog`、`CanonicalBundleIndex`、`EarlyFixtureSelectionReport`、`LicensedRepresentativeDatasetIndex`、`LicensedFixtureSelectionReceipt`は独立したSchema Version、canonical UTF-8 JSON Codec、content SHA-256を持つ。共通規則はBOMなし、余分な空白／末尾改行なし、固定property順、未知property禁止、nullable propertyも省略せずJSON `null`、hashは小文字64桁、浮動小数点は有限・負の0を0へ正規化した最短round-trip表現とする。
+
+`EarlyFixtureSourceCatalog` v1はImport処理より前に作り、投入母集団と匿名IDを固定する。root property順は`SchemaVersion`、`CatalogId`、`EntryCount`、`Entries`とし、SchemaVersionはinteger `1`、CatalogIdは`[A-Za-z0-9._-]{1,128}`、EntryCountは1..100000かつ配列長と一致する。Entryは`SourceFixtureId`のordinal順で、property順を`SourceFixtureId`、`AssetCategory`、`SourceRelativePath`、`SourceFileSha256`とする。SourceFixtureIdはCatalog内で一意な`[A-Za-z0-9_-]{1,64}`の匿名ID、AssetCategoryはProfileの許可値、SourceRelativePathは後述のSource Bundle Indexに存在する正規化相対path、SourceFileSha256はそのfile bytesのSHA-256とする。これによりBlender起動／FBX Importに失敗してTriangle数を得られなくても、投入Source、カテゴリ、入力file hashをReportへ復元できる。
+
+Source／Script／Preset bundleはarchive file自体やdirectory timestampをhashせず、展開済みtreeから作るcanonical `CanonicalBundleIndex` v1で識別する。root property順は`SchemaVersion`、`BundleKind`、`EntryCount`、`Entries`、SchemaVersionはinteger `1`、BundleKindは`Source`／`Script`／`Preset`、EntryCountは1..100000かつ配列長と一致する。各Entryのproperty順は`RelativePath`、`ByteLength`、`ContentSha256`とし、RelativePathのUTF-8 byte列によるordinal昇順、ByteLengthは0..2147483647、ContentSha256はfile bytesの小文字64桁SHA-256とする。
+
+RelativePathはbundle rootからの相対pathをUnicode NFCへ正規化し、separatorを`/`へ統一する。空path、先頭`/`、drive／UNC prefix、末尾`/`、空segment、`.`／`..` segment、NUL／control文字、backslashをRejectし、正規化後の完全一致とUnicode simple case-fold後の衝突をともにRejectする。通常fileだけを列挙し、symlink、junction、reparse point、device、socket等はRejectする。空directory、directory名、timestamp、ACL、所有者、archive圧縮方式はIndexへ含めない。CanonicalBundleIndex artifact自体はindexed rootの外へ出力し、自己参照Entryへ含めない。file bytesは変換せずそのままhashし、Indexのcanonical bytesのSHA-256をBundle Content SHA-256とする。同じ展開file集合ならZIP等のcontainer bytesや展開時刻が違っても同じbundle hashになる。
+
+Source Bundleにはcanonical Source Catalog bytesを予約path`metadata/early_fixture_source_catalog.v1.json`の通常Entryとして必ず含め、Catalogが参照する全SourceRelativePathとSourceFileSha256をBundle Indexへ1対1照合する。Catalog外の補助fileをSource Bundleへ含めてもよいが、選抜対象SourceはCatalog Entryだけとする。`SourcePackageContentSha256`、`ScriptBundleContentSha256`、`PresetBundleContentSha256`は、それぞれBundleKindが一致するCanonicalBundleIndex bytesのSHA-256であり、Report／Index Codecは参照Indexを再hashして一致を検証する。これによりSourceFixtureIdとAssetCategoryの対応、Script、Presetの算出対象がすべてhashへ閉じる。
+
+`CanonicalBundleVerifier`は既存Bundle Indexと明示された対応rootを受け取り、Index生成時と同一規則でrootを再帰列挙する。symlink／junction／reparse point等をRejectし、正規化した通常file path集合がIndex EntryのRelativePath集合と完全一致することを要求する。欠落file、Indexにない余分な通常file、path重複／case-fold衝突をRejectし、各fileの実byte長とraw bytes SHA-256をByteLength／ContentSha256へ照合する。Index artifact自体はroot外にあることを要求し、探索順、mtime、archive bytes、キャッシュ済みhashだけで検証を省略しない。
+
+Phase 0.2 HarnessはBlenderを起動する前にSource／Script／Presetの3 rootをそれぞれVerifierへ通し、その時点の3 Bundle Index content hashをSelection Runへ固定する。Report／Dataset Index生成後、Receiptを確定する直前に同じ3 rootと同じIndex bytesでもう一度完全照合し、file集合、長さ、内容またはIndex hashが開始時から変化していればRun全体をRejectしてReceiptを作らない。Report／Index CodecによるIndex bytesの再hashはこの実tree照合の代替ではなく、Receipt確定済みRunの再利用時も、対応rootが提供される処理ではVerifier合格を必須とする。
+
+Report v1のproperty順は`SchemaVersion`、`SelectionRunId`、`ProfileContentSha256`、`SourcePackageContentSha256`、`BlenderVersion`、`BlenderExecutableSha256`、`ScriptBundleContentSha256`、`PresetBundleContentSha256`、`HostProfileId`、`DatasetIndexContentSha256`、`EntryCount`、`Entries`とする。`SelectionRunId`は小文字UUID、各version／ID stringはTrim済み1..128文字、`DatasetIndexContentSha256`はDatasetを確定できた場合だけhash、それ以外は`null`とする。Entriesは`SourceFixtureId + Tier + GeometryProcessMode + VariantId`のordinal順で並べ、EntryCountは0..100000かつ配列長と一致する。
+
+ReportはSource Catalogの全SourceFixtureIdを少なくとも1 Entryで被覆する。Blender Processを開始できない場合は`Launch`、Process開始後に固定Script／Presetの初期化、version検証、引数検証へ失敗してImportへ到達しない場合は`Bootstrap`、Source fileの読込／FBX解析失敗は`Import`として区別する。これらによりVariant展開へ到達しなかったSourceには、`Tier=Render`、`GeometryProcessMode=Original`、`VariantId=original`の決定的な失敗Entryを1件作り、Status／Attemptへ実際のStageとToolまたはResource失敗を記録する。開始したVariant試行は成功・失敗を問わずそれぞれ固有Entryを持たせ、後続失敗をSource Catalogや成功Entryだけで代用しない。CatalogにないSourceFixtureIdをReportへ追加することは禁止する。
+
+各Report Entryのproperty順と型は次に固定する。
+
+| Entry property | JSON型 | 契約 |
+| --- | --- | --- |
+| `SourceFixtureId` | string | Catalogと同じ匿名化した`[A-Za-z0-9_-]{1,64}` |
+| `SourceGeometrySha256` | string | Source CatalogのSourceFileSha256と一致する小文字64桁。Import失敗時もSource file bytesから取得可能 |
+| `AssetCategory` | string enum | `Furniture`／`Vehicle`／`Building`／`RoadEquipment`／`SmallProp`／`Character`／`Other`。Source内で不変 |
+| `SourceTriangleBand` | string enum／null | `UpTo100`／`From101To500`／`From501To1000`／`From1001To2000`／`From2001To5000`／`Over5000`。Triangle数取得前のLaunch／Bootstrap／Import失敗時だけ`null` |
+| `Tier` | string enum | `Render`／`Solid`／`Convex` |
+| `GeometryProcessMode` | string enum | `Original`／`DirectDecimate`／`VoxelRemesh`／`VoxelPostDecimate`／`ConvexBuild` |
+| `VariantId` | string | 同じSourceFixtureId＋Tier内で一意な`[A-Za-z0-9._-]{1,48}` |
+| `DatasetCaseId` | string／null | `Selected`／`BenchmarkOnly`だけ必須。`SourceFixtureId.TierToken.VariantId`と厳密一致。それ以外は`null` |
+| `Status` | string enum | `Selected`／`BenchmarkOnly`／`GeometryRejected`／`ProfileUnsupported`／`NoOp`／`Alias`／`ResourceLimitExceeded`／`ResourceDeferred`／`ToolFailed` |
+| `CanonicalVariantId` | string／null | `NoOp`／`Alias`では同じSourceFixtureId＋Tier内にある既存Selected／BenchmarkOnly VariantIdを必須。それ以外は`null` |
+| `OutputGeometrySha256` | string／null | Geometry生成成功時は小文字64桁。それ以外は`null` |
+| `SourceTriangleCount` | integer／null | 取得済みなら`1..MaxSourceTriangleCount`、上限超過記録は`1..2147483647`。事前解析不能なLaunch／Bootstrap／Import失敗時だけ`null` |
+| `ReductionTargetTriangleCount` | integer／null | Direct Target時は1以上。それ以外は`null` |
+| `ActualOutputTriangleCount` | integer／null | Geometry生成成功時は1以上。それ以外は`null` |
+| `ConnectedComponentCount` | integer／null | ZCG後検査完了時は1以上。それ以前の失敗は`null` |
+| `ReductionRatio` | number／null | Actual／Source。Geometry生成成功時だけ有限・正 |
+| `ReductionApplied` | boolean | Decimateを実行したか |
+| `VoxelResolutionCells` | integer／null | Voxel64／128／256。それ以外は`null` |
+| `VoxelSize` | number／null | Voxel時だけ正のmeter値 |
+| `PostReductionTargetTriangleCount` | integer／null | Voxel Post-Decimate時だけ1以上 |
+| `BoundsExtentError` | number／null | Source比最大誤差 |
+| `BoundsCenterShift` | number／null | Source diagonal比 |
+| `VolumeError` | number／null | Solid／ConvexだけSource比 |
+| `SurfaceDistanceP95` | number／null | Render／SolidのSource diagonal比 |
+| `BoundaryEdgeCount` | integer／null | 検査完了時は0以上 |
+| `NonManifoldEdgeCount` | integer／null | 検査完了時は0以上 |
+| `OrientationMismatchEdgeCount` | integer／null | 検査完了時は0以上 |
+| `SelfIntersectionCandidatePairCount` | integer／null | Solid broad phase完了時は`0..MaxSolidCandidatePairCount`。上限超過時は検出時点の`MaxSolidCandidatePairCount + 1` |
+| `SelfIntersectionCount` | integer／null | 検査完了時は0以上 |
+| `ConvexHullCount` | integer／null | Convex時だけ0以上 |
+| `ConvexTotalVertexCount` | integer／null | Convex時だけ0以上 |
+| `AttemptCount` | integer | `1..2` |
+| `Attempts` | object array | `AttemptCount`件。AttemptOrdinal昇順、最大2件。下記固定schema |
+| `RejectStage` | string enum | `None`／`Launch`／`Bootstrap`／`Import`／`Normalize`／`ProfileGuard`／`RenderGate`／`SolidGate`／`ConvexGate`／`VoxelRemesh`／`Decimate`／`CanonicalGeometry`／`ResourceGuard`／`Export` |
+| `RejectReason` | string enum | `None`／`NonFinite`／`DegenerateBounds`／`DegenerateTriangle`／`Boundary`／`NonManifold`／`Orientation`／`SelfIntersection`／`BoundsDeviation`／`VolumeDeviation`／`ConvexLimit`／`InputLimit`／`OutputLimit`／`VoxelCellLimit`／`CandidatePairLimit`／`Timeout`／`MemoryLimit`／`ToolFailure` |
+
+各Attemptのproperty順は`AttemptOrdinal`、`AttemptStatus`、`ProcessMilliseconds`、`PeakWorkingSetBytes`、`ToolExitCode`、`RejectStage`、`RejectReason`とする。`AttemptOrdinal`は1始まりの連番、`AttemptStatus`は`Succeeded`／`ResourceLimitExceeded`／`ToolFailed`、時間は有限の0以上、Peakは0以上のinteger、`ToolExitCode`はProcessが終了codeを返した場合だけsigned 32-bit integer、それ以外は`null`とする。`Succeeded`ではAttemptのReject Stage／Reasonを`None`、資源超過またはTool失敗では該当Stage／Reasonを必須とする。Entryの最終Reject Stage／Reasonは最終分類結果、Attempts内は各実行結果を表し、相互に上書きしない。`AttemptCount == Attempts.length`を要求し、2件目は1件目が`ResourceLimitExceeded`の場合だけ許可する。初回超過後に成功したEntryは`AttemptCount=2`、Attemptsが`ResourceLimitExceeded`、`Succeeded`の順となる。
+
+最終Entry StatusとAttempt列の許可組合せは次の完全決定表に固定し、表にない組合せをCodecでRejectする。角括弧内はAttemptStatusの順序である。
+
+| 最終Entry Status | 許可Attempt列 | Entry最終Reject Stage／Reason |
+| --- | --- | --- |
+| `Selected`／`BenchmarkOnly`／`NoOp`／`Alias` | `[Succeeded]`または`[ResourceLimitExceeded, Succeeded]` | `None／None` |
+| `GeometryRejected` | `[Succeeded]`または`[ResourceLimitExceeded, Succeeded]` | Geometryを棄却した実Stageと、`NonFinite`から`ConvexLimit`までの該当Geometry Reason。資源／Tool Reasonは禁止 |
+| `ProfileUnsupported` | `[Succeeded]`または`[ResourceLimitExceeded, Succeeded]` | `ProfileGuard`と`InputLimit`／`OutputLimit`／`VoxelCellLimit`／`CandidatePairLimit`のいずれか |
+| `ResourceLimitExceeded` | `[ResourceLimitExceeded]`だけ | `ResourceGuard`と`Timeout`または`MemoryLimit`。再試行待ちの中間Reportだけで許可 |
+| `ResourceDeferred` | `[ResourceLimitExceeded, ResourceLimitExceeded]`だけ | `ResourceGuard`と2件目の`Timeout`または`MemoryLimit` |
+| `ToolFailed` | `[ToolFailed]`または`[ResourceLimitExceeded, ToolFailed]` | Tool失敗が発生した実Stageと`ToolFailure` |
+
+Attempt単位の`ResourceLimitExceeded`は超過が実際に発生した`Launch`／`Bootstrap`／`Import`／`Normalize`／`RenderGate`／`SolidGate`／`ConvexGate`／`VoxelRemesh`／`Decimate`／`CanonicalGeometry`／`Export`のいずれかと、Reason `Timeout`／`MemoryLimit`を持つ。Attempt単位の`ToolFailed`も失敗が起きた実StageとReason `ToolFailure`、`Succeeded`は`None／None`だけを許可する。Entry全体のResource Statusだけは最終Stageを`ResourceGuard`へ集約し、最終Reasonを末尾Attemptと一致させる。2件目は常に最終Attemptであり、ToolFailed後のretry、Succeeded後のretry、3件目を禁止する。最終Statusが`ResourceLimitExceeded`の未完了Reportでは`DatasetIndexContentSha256=null`とし、Dataset Index／Receiptを確定してはならない。これにより`Selected + ToolFailed`、1 Attemptの`ResourceDeferred`、`GeometryRejected + ResourceLimitExceeded`等を表現不能にする。
+
+同じ`SourceFixtureId`を持つ全EntryはSource Catalogと同一の`SourceGeometrySha256`／`AssetCategory`を持ち、そのカテゴリがProfileの`AssetCategories`に含まれることを要求する。`SourceTriangleCount`が非nullなら`SourceTriangleBand`も必須で、Profileの`SourceTriangleBandUpperBounds`からCodecが再計算して一致を検証する。両方の`null`は、全Attemptが`Launch`／`Bootstrap`／`Import`のいずれかでGeometry取得前に失敗し、最終Statusが`ToolFailed`、`ResourceLimitExceeded`または`ResourceDeferred`の場合だけ許可する。この場合、Triangle依存の形状統計とReductionRatioも`null`にする。片方だけの`null`、Geometry取得後の`null`、不明値を0として保存することは禁止する。カテゴリはSource Catalogで固定し、処理成否やVariant結果から後付け変更しない。
+
+`VariantId`の一意keyは`SourceFixtureId + Tier + VariantId`とし、Tier間では同じVariantIdを許可する。Selected／BenchmarkOnlyの`DatasetCaseId`は上記Tier付き構築式と厳密一致し、Index全体で重複してはならない。`CanonicalVariantId`によるNoOp／Alias参照も同じSourceFixtureId＋Tier内だけに限定し、RenderとSolidなどTierをまたぐAlias化や参照を禁止する。
+
+`NoOp`と`Alias`は新しいDatasetCaseを作らず、`DatasetCaseId=null`とし、`CanonicalVariantId`で既存のcanonical Variantへ対応させる。参照先がSelected／BenchmarkOnlyとして存在しない場合はNoOp／Aliasにせず、基底と同じ失敗Status／Reasonを記録する。Geometry Reject、ProfileUnsupported、Resource状態、ToolFailedもDataset Indexへ入れない。
+
+`LicensedRepresentativeDatasetIndex` v1のproperty順は`SchemaVersion`、`DatasetId`、`ProfileContentSha256`、`SourcePackageContentSha256`、`BlenderVersion`、`BlenderExecutableSha256`、`ScriptBundleContentSha256`、`PresetBundleContentSha256`、`VariantCount`、`Variants`とする。SchemaVersionはinteger `1`、DatasetIdは`[A-Za-z0-9._-]{1,128}`、VariantsはDatasetCaseIdのordinal順で並べ、DatasetCaseIdはIndex内で一意、VariantCountは1..100000かつ配列長と一致する。各Variantのproperty順は`DatasetCaseId`、`SourceFixtureId`、`Tier`、`GeometryProcessMode`、`VariantId`、`QualityClass`、`GeometryFormat`、`GeometryFormatVersion`、`GeometryRelativePath`、`GeometryByteLength`、`GeometryContentSha256`、`SourceGeometrySha256`、`SourceTriangleCount`、`ActualInputTriangleCount`、`ReductionTargetTriangleCount`、`VoxelResolutionCells`、`PostReductionTargetTriangleCount`とする。GeometryFormatはstring enum `ZantetsuCanonicalGeometry`、GeometryFormatVersionはinteger `1`、QualityClassは`Representative`／`BenchmarkOnly`、GeometryByteLengthは16..67108864、Triangle／Voxel countsは0以上のinteger、nullableなTarget／Voxel propertyは非該当時に明示`null`とする。
+
+##### ZantetsuCanonicalGeometry v1
+
+Phase 0.2のBenchmark GeometryはFBX、OBJ、glTF、Blender file等を直接保存せず、決定的なbinary `ZantetsuCanonicalGeometry`（ZCG）v1へ変換する。v1は形状切断／Cook Benchmarkに必要な位置、面Topology、Convex Hull境界だけを正本とし、object名、material名、UV、Normal、色、Animation、custom property、timestamp、exporter metadataを含めない。表示確認時の法線と単色MaterialはDecoder側で再構築し、製品用Asset表現とは分離する。
+
+全integerはunsigned little-endian、浮動小数点はIEEE 754 binary32 little-endianとする。BlenderからZCGへの座標変換は次の順序と式へ固定する。列vectorを使用し、評価済みObjectのlocal頂点を`p_local`、Object world行列を`M_object`、そのSource Fixture用にImport時に作る合成Asset Rootのworld行列を`M_root`、Blender sceneのmeter／Blender Unitを表す正の有限値を`s = scene.unit_settings.scale_length`とする。まずbinary64で`p_b = inverse(M_root) * M_object * [p_local.x,p_local.y,p_local.z,1]`を評価して全Object transformをasset-local Blender右手系へBakeし、次にtranslationを含む全成分へ単位scaleを適用して`p_m = s * p_b.xyz`、最後に固定基底変換`p_zcg = C * p_m`を行う。
+
+```text
+C = | 1 0 0 |
+    | 0 0 1 |
+    | 0 1 0 |
+
+(x_zcg, y_zcg, z_zcg) = (s * x_b, s * z_b, s * y_b)
+```
+
+したがってZCGはlocal meter、Y-up、`+Z` forwardの左手系となる。単位scaleをObject／Root行列より前へ適用したり、translationだけを未scaleにしたり、別軸の符号を反転してはならない。`M_root`／`M_object`の成分と行列積は取得順binary64、各dot積は左からの加算、FMA無効で評価する。Asset Root逆行列が特異、scaleが非正／非有限、変換後座標が非有限ならRejectする。
+
+Blender評価Meshのface loopは、`inverse(M_root) * M_object`の線形成分が負determinantならObject transform Bake時に1回だけ反転し、Bake後のBlender右手系で評価時のfront-facingを保つ。Solid／Convexはその後に外向きCCWへOrientation Gateで統一し、開放Renderは評価時の向きを保つ。`C`のdeterminantは`-1`なので、Blender右手系のCCW loopはindex順を追加反転せずZCG左手系の外向きclockwise loopになる。TriangulationはTransform Bake、負determinant補正、Solid向き統一の後、`C`適用前に行う。
+
+変換後floatはround-to-nearest-ties-to-evenでbinary32化し、NaN／InfinityをReject、負の0を正の0へ正規化する。Headerは4 byte ASCII magic `ZCG1`、1 byte `GeometryKind`（`1=TriangleMesh`、`2=ConvexSet`）、3 byte zero reserved、8 byte unsigned payload lengthの計16 byteとし、宣言長はfile長から16を引いた値と厳密一致させる。可変padding、末尾data、未知Kind、非zero reservedをRejectする。
+
+ZCGの全幾何判定は、格納対象の正規化済みbinary32 positionをbinary64へ正確に拡張した値だけを正本とする共通`ZcgNumericKernelV1`を使う。Blender側の元double座標、Normal、既存Plane、Unity側float計算を判定へ混ぜない。演算はIEEE 754 binary64 round-to-nearest-ties-to-even、FMA／fast-math無効、積と差を式の記載順、dotと総和を左畳みで行う。`dot(a,b) = ((a.x*b.x + a.y*b.y) + a.z*b.z)`、`crossRH(a,b) = (a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x)`、`length(c) = sqrt(((c.x*c.x + c.y*c.y) + c.z*c.z))`へ固定し、sqrtはIEEE 754 correctly-rounded binary64を使用する。
+
+検証対象domainのbinary32 positionから各軸min／maxをpositionのcanonical順に比較して求め、軸差を`dx,dy,dz`とする。`D = sqrt(((dx*dx + dy*dy) + dz*dz))`、`epsDistance = max(Profile.AbsoluteEpsilonMeters, D * Profile.RelativeEpsilon)`、`epsArea = epsDistance * epsDistance`、`epsVolume = epsArea * epsDistance`とする。Dが非正／非有限ならRejectする。距離／半空間誤差はepsilon以下を包含側とする一方、非退化面積と正体積はそれぞれ`> epsArea`、`> epsVolume`を必須とし、等号は退化側としてRejectする。
+
+`TriangleMesh` payloadは`uint32 PositionCount`、`uint32 TriangleCount`、続いてPositionCount件の`float32 x,y,z`、TriangleCount件の`uint32 i0,i1,i2`とする。元Geometryを位置だけのtriangle soupへ展開し、完全に同じ正規化positionを1件へweldして、positionを数値`x,y,z`のlexicographic昇順へ並べ直す。各Triangleは新indexへremapし、windingを反転せず3 indexをcyclic rotationして辞書順最小表現にし、Triangle列全体を`i0,i1,i2`の辞書順へsortする。範囲外index、同一頂点を含むTriangle、同一index tripleの重複をRejectする。Render／Solid TierはこのKindを使う。
+
+Triangle退化判定のdomainはTriangleMesh全体とし、上記domain Boundsからepsilonを1回だけ計算する。各Triangleについて`u=v1-v0`、`w=v2-v0`、`twiceArea = length(crossRH(u,w))`を記載順binary64で計算し、`twiceArea > epsArea`だけを合格とする。`twiceArea == epsArea`とそれ未満はRejectし、binary32 positionの1 ULP差で境界をまたぐ場合もこの比較結果をそのまま使用する。実面積へ0.5を掛けてから比較したり、TriangleごとのBounds、Blender double、Unity float、近似Normal長を使ってはならない。
+
+座標変換のGolden Fixtureは`M_root=identity`、`M_object=translation(10,20,30)`、`s=0.5`、Blender local triangle `[(1,2,3),(4,6,5),(-2,7,11)]`を入力とする。ZCG変換、position sort、triangle cyclic rotation後はpositions `[(4,20.5,13.5),(5.5,16.5,11),(7,17.5,13)]`、triangle `[0,1,2]`、payload length 56、file length 72でなければならない。完成fileのhexは`5a4347310100000038000000000000000300000001000000000080400000a441000058410000b04000008441000030410000e04000008c4100005041000000000100000002000000`、SHA-256は`5210748ea4fe7a8f349b52e919af7dd1aad4c542a91fb741806bf517f2426cdbf`へ固定する。
+
+`ConvexSet` payloadは`uint32 HullCount`の後にHull recordを連結する。各Hull recordは`uint32 PositionCount`、`uint32 FaceCount`、position列、各Faceの`uint32 IndexCount`とindex列からなる。Hull内positionはTriangleMeshと同じ規則でweld／sort／remapする。Face loopは外向きwindingを維持したままcyclic rotationで辞書順最小化し、Face列をIndexCountとindex列の辞書順へsortする。各Hullを一時canonical bytesへserializeし、そのbytesのunsigned byte lexicographic昇順でHull recordをsortする。Convex TierはこのKindを使う。
+
+Convexの検証domainはHullごととし、各Hullのbinary32 position Boundsから`ZcgNumericKernelV1`で`epsDistance`／`epsArea`／`epsVolume`を独立に計算する。比較境界と演算精度は共通Kernelから変更しない。
+
+各Faceはcanonical rotation後の`v0`を固定し、`i=1..IndexCount-2`の順に`c = -crossRH(v[i]-v0, v[i+1]-v0)`を計算して、`length(c) > epsArea`となる最初のtripletをPlane生成へ使う。存在しなければFaceを退化としてRejectする。`n = c / length(c)`、`d = -(((n.x*v0.x + n.y*v0.y) + n.z*v0.z))`とし、このPlaneをそのpolygon faceの唯一の解釈とする。Face全頂点で`abs((((n.x*v.x + n.y*v.y) + n.z*v.z) + d)) <= epsDistance`を要求し、非平面polygonをepsilon内だけ許可する。Hull全頂点について同じ値が`<= epsDistance`であることを要求し、1点でも正側へ超過したHullを非凸または内向きFaceとしてRejectする。
+
+Topologyは各FaceのIndexCount 3以上、範囲内でFace内重複indexなし、重複Faceなしを要求し、各undirected edgeがちょうど2 Faceに現れてdirected向きが互いに逆であることを閉鎖条件とする。Hull bounds centerを`r`とし、canonical Face順と各Faceのfan順で`V = left_sum(-dot(v0-r, crossRH(v[i]-r, v[i+1]-r)) / 6)`を計算する。ZCGのclockwise外向き規約では`V > epsVolume`を必須とし、`V <= epsVolume`、負volume、非有限volumeをRejectする。Face半空間、閉鎖edge、正volumeの全条件を通ったものだけをConvexとして扱う。3未満のFace index、ProfileのHull／Vertex／Face上限超過もRejectする。
+
+ZCG Encoderは同じ正規化Geometryから常に同じbytesを生成し、`GeometryContentSha256`は完成ZCG file bytes全体のSHA-256とする。Alias判定も同じSourceFixtureId＋Tier内のこのhashで行う。Verifier／Benchmark LoaderはIndexのFormat／VersionでDecoderを選び、decode後に同じEncoderで再serializeしたbytesが入力fileとbyte-for-byte一致しなければnon-canonicalとしてRejectする。これにより元Triangle／Vertex／Hullの列挙順、FBX metadata、container timestampはGeometry hashへ影響せず、位置、winding、Topologyの変化だけがcanonical bytesへ反映される。
+
+全VariantはZCG encode後にfileをDecoderで読み直し、decodeされたbinary32 positionとcanonical indexだけを入力として最終Gateを再実行する。Render Tierはfinite、Bounds、Triangle退化／重複、Profile Triangle／Component上限を再検証する。Solid Tierはそれらに加え、undirected edge key `(min(i0,i1), max(i0,i1))`をcanonical Triangle順で構築し、出現1回をBoundary、3回以上をNon-Manifold、2回でもdirected向きが逆でないものをOrientation不整合として数え、すべて0を要求する。binary32 weld後のTriangle edge adjacencyから連結成分を再構築し、成分はその成分が含む最小canonical Triangle indexの昇順、成分内Triangleはglobal canonical Triangle順を保つ。
+
+Solidのsigned volumeは成分ごとに次の`SolidSignedVolumeV1`だけで計算する。成分で参照されるpositionをcanonical position index順に走査してbinary64のcomponent Bounds `min`／`max`を求め、参照点を各軸について`r = min + (max - min) * 0.5`の順で計算する。Triangle `(v0,v1,v2)`ごとに`a=v0-r`、`b=v1-r`、`c=v2-r`、`q=crossRH(b,c)`、`numerator=-dot(a,q)`、`term=numerator/6.0`をこの順にbinary64で評価する。`V0=+0.0`から成分内canonical Triangle順に`Vk+1=Vk+termk`を左畳みし、除算後のtermだけを加算する。式の再結合、原点基準への置換、pairwise／Kahan加算、FMA、除算の後回しは禁止する。成分Boundsから共通Numeric Kernelで算出した`epsVolume`に対し、有限な`V > epsVolume`だけを合格とし、`V == epsVolume`を含む`V <= epsVolume`、負値、非有限値をRejectする。Report用の全体Volumeは成分順に各合格`V`を同じbinary64左畳みで加算し、途中または最終値が非有限ならRejectする。
+
+`SolidGeometryValidatorV1`はZCG bytesを入力とするversion固定の共有Validatorを唯一の正本とし、Profileの`SolidIntersectionAlgorithm`は`ClosedTriangleDistanceV1`だけを許可する。Phase 0.2のBlender HarnessはPython独自predicateを実装せず、ZCG encode後にScript Bundleへhash固定された共有Validatorを呼び出す。Unity Editor側のDataset検証とT-081も同じValidator artifactを使用する。実装artifact、CLI引数、終了codeは`ScriptBundleContentSha256`の対象とし、利用不能・version不一致・未知algorithmを`ToolFailed`として扱い、別ライブラリへFallbackしない。事前Solid Gateの結果を流用したり、元Blender doubleで再判定したりしない。
+
+`ClosedTriangleDistanceV1`はbinary32から正確にbinary64へ展開した2つの閉Triangle間の最小二乗距離を決定論的に求める。候補は、Aの3頂点から閉Triangle Bへのpoint-triangle二乗距離、Bの3頂点から閉Triangle Aへの同距離、Aの3 closed edgeから閉Triangle Bへのsegment-triangle二乗距離、Bの3 closed edgeから閉Triangle Aへの同距離、AとBの各3 edgeによる9組のclosed-segment間二乗距離の順とし、各群内はlocal vertex／edge番号の辞書順で評価する。segment-triangleはsegmentとTriangle planeの交点parameterが閉区間`[0,1]`にある場合、固定式で`u`、`v`、`w=1-u-v`の順にbinary64 barycentricを計算し、`u >= 0 && v >= 0 && w >= 0`ならface interior／boundary貫通として距離0のwitnessを返す。等号は包含し、比較不能／非有限ならこの0距離分岐を採用せず後続の保守的距離候補へ進む。非平行時のplane交点、平行／coplanar時の3 edgeとのsegment-segment、両endpointのpoint-triangle候補を固定順に評価するため、「一方のedgeが他方のface内部を貫通するが頂点もedge同士も接触しない」proper crossingも検出する。
+
+point-triangle、segment-triangle、segment-segmentはversion固定のEricson型region testを、`ZcgNumericKernelV1`のbinary64演算順、`dot`、`crossRH`、除算、clampへ逐語的に固定した共有実装とする。各候補は二乗距離だけでなく両Triangle上のclosest witness `(pA,pB)`と各Triangleのbarycentricを返す。barycentric値およびsegment parameterの`0`と`1`は閉区間へ含め、clampは`x < 0 ? 0 : (x > 1 ? 1 : x)`、候補minimumはstrict `<`の場合だけ更新して同値なら先の候補を保持する。退化Triangleは先行Triangle Gateで、zero-length edgeまたは非有限な分母はTopology／退化Rejectで到達不能とし、predicate内で別形状へ降格しない。`epsDistanceSquared=epsDistance*epsDistance`もbinary64でこの順に一度だけ計算する。
+
+自己交差候補は全`TriangleCount choose 2`を走査せず、version固定の`SolidCandidateBvhV1`で生成する。各Triangleのbinary64 AABBを各軸の正負へ`epsDistance`だけ拡張し、非有限化またはdomain Boundsを越える算術overflowをRejectする。primitive初期順はcanonical Triangle index順とし、各nodeでTriangle centroid Boundsのextentが最大の軸をsplit axisに選ぶ。同値はX、Y、Z順、軸上のstable sort keyは`centroid[axis]`のbinary64 total-order、次にcanonical Triangle indexとする。個数`n`のnodeは`floor(n/2)`で左右へ分割し、leafは1 Triangle、node IDはpreorderで付与する。比較、Bounds union、中央値、node作成順をこの規則から変更せず、SAHや並列schedule順をcanonical結果へ使わない。
+
+候補生成はroot対rootから始める。同一node pairでは`(left,left)`、`(left,right)`、`(right,right)`、異なるnode pairではAABBが全3軸で閉区間交差する場合だけ下降する。両方leafなら`a < b`へ正規化してpairを出力し、片方だけ内部nodeならその左右を順に、両方内部nodeならprimitive数の多い側を分割し、同数ならnode IDの大きい側を分割する。この規則により各unordered leaf pairを最大1回だけ生成するが、出力後もuint32 `(a,b)`のradix sortで昇順へ正規化し、隣接重複を除去してから狭域判定へ渡す。重複の有無を診断値へ残し、重複があってもdeduplicate後の意味は変えない。
+
+候補counter、node数、byte数はchecked unsigned 64-bitで配列確保前とappend前に検査する。一意候補がProfileの`MaxSolidCandidatePairCount=2000000`へ達した後、次の異なるpairを検出した時点で追加割当や狭域判定を行わず、Reportの`SelfIntersectionCandidatePairCount`を`MaxSolidCandidatePairCount + 1`、最終Statusを`ProfileUnsupported`、RejectStageを`ProfileGuard`、RejectReasonを`CandidatePairLimit`として終了する。候補counter、`2 * TriangleCount - 1`のnode数、pair／node byte長のいずれかがchecked overflowする場合も、割当前に同じsentinelと`ProfileUnsupported／ProfileGuard／CandidatePairLimit`へ収束させる。Triangle AABBのepsilon拡張だけが非有限化した場合はGeometry入力の`NonFinite`として`GeometryRejected／CanonicalGeometry`にする。これらは決定論的入力複雑度または数値上限でありResource retryしない。上限以内でも実際の120／300秒または4 GiBを超えた場合だけ既存の`ResourceLimitExceeded`／`ResourceDeferred`へ移す。
+
+sort／deduplicate後の候補だけをcanonical pair `(a,b)`昇順に処理し、AABB broad phaseを通らなかったpairへ`ClosedTriangleDistanceV1`やResidual最適化を実行しない。position indexを共有していても候補pair自体を除外せず、まず共有を無視した閉Triangle同士の接触／近接を求める。
+
+共有indexが1または2のpairには、同じ共有Validator artifactに含まれる`SharedSimplexResidualV1`を追加適用する。共有1 indexならそのpositionを閉point、共有2 indexなら2 positionをcanonical index昇順で結ぶ閉segmentとして共有simplex `S`を定義し、`N(S) = { x | squaredDistance(x,S) <= epsDistanceSquared }`を閉じた許可近傍とする。ここで接触集合を`CA = { x in closed A | squaredDistance(x, closed B) <= epsDistanceSquared }`、`CB = { x in closed B | squaredDistance(x, closed A) <= epsDistanceSquared }`と定義する。`CA union CB`の全点が`N(S)`に含まれることを証明できた場合だけ正規の共有simplex接触として許可し、1点でもstrictに外にあるwitnessを得た場合、または包含を証明できない場合は保守的に自己交差として数える。binary64で計算済みの`epsDistanceSquared`の直後の有限表現可能値を`epsOutsideSquared = nextUp(epsDistanceSquared)`とし、`nextUp`はIEEE 754 binary64の正方向に隣接する値を返すbit-level操作へ固定する。有限非負値について`distanceSquared > epsDistanceSquared`と`distanceSquared >= epsOutsideSquared`を同値として扱い、epsilon等号を残余側へ含めない。
+
+`SharedSimplexResidualV1`は上記集合包含を別実装へ委ねず、`ClosedTriangleDistanceV1`が生成する全point-triangle、全segment-triangle、全segment-segment witnessに加え、coplanar時はdominant-axisへ射影した2D Sutherland-Hodgman閉Triangle clippingで得る全intersection polygon頂点、非coplanar時は各方向3 edgeのsegment-triangle交点をcanonical候補順に検査する。各接触witnessの`pA`と`pB`について共有pointまたはclosed segmentへの二乗距離を同じKernelで計算し、どちらかが`>= epsOutsideSquared`なら残余交差とする。さらにepsilon近接領域については、各Triangleのbarycentric domainを共有simplexから遠ざかる方向へ制約した二次距離最小化を、共有artifact内の固定`ResidualClosestPointV1`で実行する。共有vertexではその共有vertexのbarycentric weightが`< 1`となる3 edge／face region、共有edgeでは非共有vertex weightが`> 0`となるedge／face regionを固定region順に列挙し、`squaredDistanceToS >= epsOutsideSquared`の閉制約を満たす各regionの最小Triangle間二乗距離を求める。いずれかが`<= epsDistanceSquared`なら残余交差、全regionがstrictに超過した場合だけ包含証明成功とする。`squaredDistanceToS == epsDistanceSquared`は許可近傍内、`== epsOutsideSquared`は残余候補内とする。数値的にregionを分類不能、非有限値、`nextUp`を生成不能な値は残余交差側へ倒す。この実装sourceとgolden結果もScript Bundle hashへ含め、Blender／Unityで別の近似判定を持たない。
+
+pair分類は次の完全決定表に固定する。
+
+| 共有position index数 | 距離条件 | 判定 |
+| --- | --- | --- |
+| 3 | 任意 | 重複Triangleとして先行GateでReject。自己交差数へ到達しない |
+| 2 | 全接触／epsilon近接集合が共有edgeの`N(S)`内と証明済み | 正規の共有edge接触として許可。directed向き不整合は先行Orientation GateでReject |
+| 2 | `N(S)`外のwitnessあり、または包含証明不能 | 共有edge以外にもcoplanar overlap、proper crossing、非共有近接があるため自己交差1件 |
+| 1 | 全接触／epsilon近接集合が共有vertexの`N(S)`内と証明済み | 正規の共有vertex接触として許可 |
+| 1 | `N(S)`外のwitnessあり、または包含証明不能 | 共有vertex以外にもcoplanar overlap、proper crossing、非共有近接があるため自己交差1件 |
+| 0 | `minimumSquaredDistance <= epsDistanceSquared` | coplanar overlap、proper crossing、非共有vertex／edge／face接触、epsilon以内のnear missを区別せず自己交差1件として数える |
+| 0 | `minimumSquaredDistance > epsDistanceSquared` | 非交差。自己交差数へ加えない |
+
+したがって「Triangle interiorだけ」という別predicateは持たず、Topologyで共有されたedge／vertexのepsilon近傍だけを明示的に許可する。共有index数だけを根拠にpair全体を除外してはならない。共有indexなしのpair、または共有simplex許可領域外の残余接触ではTriangle間距離がepsilonちょうどなら自己交差、binary64でその直外なら非交差とする。共有simplexからの距離がepsilonちょうどの正常接触は閉じた`N(S)`内として許可する。候補pairをcanonical順に処理した件数がProfileの`MaxSelfIntersectionCount=0`以下であることを要求する。
+
+ZCG後GateでBoundary、Non-Manifold、向き、自己交差、成分volume、Bounds、Triangle退化のいずれかが失敗したVariantは最終Status `GeometryRejected`、RejectStage `CanonicalGeometry`、対応する既存Geometry RejectReasonとし、DatasetCaseIdを付与せずDataset Index／Receiptへ含めない。ReportのActualOutputTriangleCount、連結成分、Bounds、Volume、Boundary／Non-Manifold／SelfIntersection Candidate Pair／SelfIntersection統計は合格・不合格ともZCG decode後の値で上書きし、canonical化前の値を最終統計として残さない。Candidate Pair上限超過だけは完全列挙せず、規定のsentinel `MaxSolidCandidatePairCount + 1`を保存する。
+
+ZCG v1のschema byte上限は64 MiBとし、Decoderはそれ以下の呼び出し側`maxBytes`を必須とする。HeaderとIndexのGeometryByteLengthを配列確保前に照合し、TriangleMeshはTriangleCountをProfileのMaxVariantTriangleCount以下、PositionCountをその3倍以下、ConvexSetはHull／Vertex／Face数をProfileのConvex上限以下へ制限する。全record長はchecked 64-bit算術でpayload長と突き合わせ、overflow、宣言数過剰、途中EOFをRejectしてからだけ配列を確保する。未知Format／Versionを別形式として推測decodeせずRejectする。
+
+`GeometryRelativePath`はGeometry Dataset rootからの相対pathで、CanonicalBundleIndexと同じNFC、`/` separator、segment、control文字、case-fold衝突、通常file限定の規則を適用し、拡張子を小文字`.zcg`へ固定する。各Variantは異なるGeometryRelativePathを持ち、Index／Report／Receipt artifactはGeometry Dataset rootの外へ保存する。directory階層は固定しないが、pathはIndexのcanonical identityに含め、DatasetCaseId変更時に暗黙で使い回さない。
+
+Index Codecは各Variantを最終Report内の同じDatasetCaseIdを持つSelected／BenchmarkOnly Entryへ厳密に1対1対応させ、Tier付きDatasetCaseId構築式、Process、VariantId、Source／Geometry hash、Source／Actual Triangle、Target／Voxel property、QualityClassが一致することを検証する。Verifierは明示されたGeometry Dataset rootを再帰列挙し、symlink／junction／reparse point等をRejectして、正規化した通常file path集合がIndexのGeometryRelativePath集合と完全一致することを要求する。欠落file、Indexにない余分な通常file、path重複／case-fold衝突をRejectし、各fileの実byte長をGeometryByteLength、raw bytesのSHA-256をGeometryContentSha256へ照合する。探索順や拡張子推測で対象fileを選ばない。ReportだけにあるNoOp／Alias／失敗／Resource EntryはIndex件数へ含めない。
+
+`DatasetContentSha256`はcanonical `LicensedRepresentativeDatasetIndex` bytesそのもののSHA-256とし、後続`GeometryBenchmarkRunManifest`へ同じ`DatasetId`とともに格納する。変動するAttempt時間、Peak Working Set、HostProfileId、Report hashはDataset Indexへ含めないため、同じGeometry集合とTool／Profile hashなら実行時間が変わってもDataset hashは変化しない。
+
+最終的な双方向監査は小さなcanonical `LicensedFixtureSelectionReceipt` v1で閉じる。property順は`SchemaVersion`、`SelectionRunId`、`DatasetId`、`ReportContentSha256`、`DatasetIndexContentSha256`、`DatasetContentSha256`とし、SchemaVersionはinteger `1`、SelectionRunIdはReportと同じ小文字UUID、DatasetIdはIndexと同じID、3 hashは小文字64桁とする。`DatasetIndexContentSha256 == DatasetContentSha256`を要求し、Report bytesとIndex bytesを再hashして両Content hashへ照合し、Report内のSelectionRunId／DatasetIndexContentSha256とIndex内のDatasetIdも一致させる。ReceiptはReportとIndexの両方がcanonical検証に合格した後、最後に原子的に確定するcommit markerであり、欠落または不一致ならその選抜Runを未確定としてBenchmarkへ渡さない。これによりDataset hashは時間情報から独立したまま、失敗EntryやAttempt履歴を含む特定Reportを特定Indexへ固定できる。
+
+canonical Loaderのschema上限はProfile 64 KiB、Source Catalog 16 MiBかつ100000 Entry、各Canonical Bundle Index 16 MiBかつ100000 Entry、Report 64 MiBかつ100000 Entry／合計200000 Attempt、Dataset Index 64 MiBかつ100000 Variant、Receipt 64 KiBとする。すべてのLoaderは`maxBytes`を、Catalog／Bundle／Index Loaderは`maxEntries`を、Report Loaderは`maxEntries`と`maxAttempts`を呼び出し側から必須で受け取り、各値が0より大きく対応するschema上限以下でなければ呼出し自体をRejectする。無制限overloadやschema上限だけを暗黙使用するpublic APIは設けない。
+
+Loaderは、(1) seek可能入力なら配列確保前に総byte長をschema上限と呼び出し側上限の小さい方へ照合する。非seek入力では有効limitを`min(schemaMaxBytes, maxBytes)`とし、最大`limit + 1` byteまで試読して、Parser bufferへ保持するのは先頭limit byteまでとする。`limit + 1`番目を1 byteでも取得した時点でSizeLimitExceededとしてRejectし、そのbyteをJSON parserやhashへ渡さない。ちょうどlimit byteでEOFなら受理可能とする。(2) JSON nesting最大8、単一string token最大1024 UTF-8 byte、property数を各固定schemaへ制限、(3) SchemaVersionと固定root property順を検証、(4) 宣言Entry／Variant／Attempt件数をschema上限と呼び出し側上限へ照合、(5) その後だけ配列を確保、(6) 全要素、実配列長、ordinal順、末尾dataなしを検証、の順で処理する。Reportの`AttemptCount`合計も`min(200000, maxAttempts)`以下かつ実Attempts総数と一致させる。Receipt Loaderは参照先を自動で無制限読込せず、検証側が各参照文書用の個別上限を明示して読み込む。
+
 ### 10.3 Blenderヘッドレス前処理
 
 Blenderを手作業用DCCだけでなく、ライセンスAssetをローカル変換するバッチプロセッサとして使用する。システムに既存のBlenderやPATH上の`blender`には依存せず、プロジェクト専用の固定版を明示パスから`--background --factory-startup --python --python-exit-code 1`で起動する。PythonスクリプトとAsset別RecipeからSolid Cut Mesh、Physics Proxy、検証レポートを生成する。
@@ -913,7 +1199,7 @@ Cache Keyが変化したAssetだけを再生成する。大量処理の並列化
 
 Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離した非公開Git LFSリポジトリ`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理する。2026-08-26時点で、`Vendor\Synty\POLYGON_City\v5\Original`へ`POLYGON_City_SourceFiles_v5.zip`と`POLYGON_City_Unity_2022_3_v1_12_4.unitypackage`を格納済みであり、両ファイルはLFS対象である。ダウンロード元と格納先のSHA-256一致を確認済みとする。
 
-非公開リポジトリへのアクセスはSyntyライセンス上の許可を持つ開発チームだけに限定する。購入原本は変更せず保存し、展開したFBX／Texture、加工Asset、Solid Cut Mesh、Physics Proxyなどのライセンス派生物も公開Git履歴へ入れない。公開リポジトリから参照する場合も、公開Submodule、公開Release、公開CI Artifact、共有Cacheを経由してAsset本体を配布しない。
+非公開リポジトリへのアクセスはSyntyライセンス上の許可を持つ開発チームだけに限定する。購入原本は変更せず保存し、展開したFBX／Texture、Phase 0.2のEarly Licensed Fixture／Asset対応表、加工Asset、Solid Cut Mesh、Physics Proxyなどのライセンス派生物も公開Git履歴へ入れない。公開リポジトリから参照する場合も、公開Submodule、公開Release、公開CI Artifact、共有Cacheを経由してAsset本体を配布しない。
 
 公開CIはPlaceholder Assetで前処理と切断ロジックを検証する。Syntyを用いる変換と製品ビルドは、許可されたローカル環境または限定private runnerだけで実行し、公開Artifactと共有Cacheへ生成物を残さない。
 
@@ -1044,6 +1330,11 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-109 | Benchmark Case／Loader契約 | 1 Manifestを単一DatasetCaseIdと固定規模軸へ限定し、Manifestの説明変数とResultの測定値から容量式を復元する。Target×Stage×ExecutionModeを許可表で検証し、Result v1は100万Sample／64 MiBをschema上限、呼び出し側の明示上限を必須とする。Bytes／Countのraw値と順序統計量は整数に限定するがMeanはcanonical doubleとする | 確定 |
 | D-110 | Benchmark集計／全Loader境界 | Percentの0..100制約からAggregate.Countを除外し、Meanを取得順binary64左畳みで固定する。Rejectedは対象結果を観測不能な試行だけとし、対象処理の失敗はFailureRateへ含める。Manifestは64 KiB、Indexは10万Entry／64 MiBを上限とし、Manifest／Result／Indexの全Loaderへ呼び出し側上限を必須とする | 確定 |
 | D-111 | Suite内Dataset同一性 | 同一BenchmarkSuiteIdでは1つのDatasetIdを厳密に1つのDatasetContentSha256へ対応させ、Suite Loaderがjoin前に全Manifestを検証する。異なるDataset版は別Suiteまたは明示的な別DatasetIdとして測定する | 確定 |
+| D-112 | 早期実Asset Fixture | Phase 0.2でSynty多数モデルへ共通の簡易Blender処理を適用し、Render／Solid／Convex Gateを自動通過した少数だけを非公開LicensedRepresentative Datasetへ固定する。個別修理と最終最適化は行わず、投入母数とReject理由を保持し、全Asset互換性の証拠にはしない | 確定 |
+| D-113 | 早期Triangle Variant | Phase 0.2のRender／Solid FixtureはOriginalと100／500／1,000／2,000／5,000 Triangle Targetを共通Decimate Presetで生成する。Source／Voxel基底がTargetを上回れば削減率に関係なく生成し、Target以下のNoOpと同一hash Aliasだけを重複Geometryから除外する。SolidはTargetごとに再検証し、Convex削減系列とは分離する | 確定 |
+| D-114 | 早期Voxel Variant | Voxel64／128／256をTopology再構成系列としてDirect Decimateと分離し、SourceとのTriangle差や増減にかかわらず基底Variantを保持する。限定Post-Decimate行列だけを生成し、各結果を再検証して大偏差はBenchmarkOnlyとする | 確定 |
+| D-115 | 早期Fixture canonical契約 | 数値Gate、カテゴリ、Triangle帯、決定論的／資源上限をEarlyFixtureSelectionProfileへ固定し、Import前の投入母集団をEarlyFixtureSourceCatalogへ固定する。Source／Script／Presetはcanonical file index bytesでhashし、Blender実行前とReceipt確定前に実treeとの完全一致を再検証する。VariantIdはSource＋Tier内で一意、DatasetCaseIdはTierを含める。Selection ReportはLaunch／Bootstrap／Importを区別した完全決定表に従うStatus／Attempt列と変動時間を記録する。採用GeometryはZantetsuCanonicalGeometry v1へ正規化し、binary32 decode後にRender／Solid／Convex Gateを再実行する。LicensedRepresentativeDatasetIndexは再検証合格GeometryのFormat／Version／相対path／byte長／canonical file hashを完全なfile許可リストとしてTool／Profile hashとともに確定する。Index canonical bytesのSHA-256をBenchmark DatasetContentSha256とし、Report／Index両hashをLicensedFixtureSelectionReceiptで監査可能に固定する | 確定 |
+| D-116 | Solid自己交差Broad Phase | 最大20万Triangleに対する全pair列挙を禁止し、epsilon拡張AABBの決定論的`SolidCandidateBvhV1`で候補を生成してcanonical pair順へsort／deduplicateする。200万一意候補をProfile上限とし、次のpairで`ProfileUnsupported／CandidatePairLimit`へ決定論的に停止する。上限内の実時間／メモリ超過だけをResource retryへ流す | 確定 |
 
 ## 13. 未決事項
 
@@ -1170,26 +1461,31 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | T-075 | Render／Convex対応 | Pending／Represented／Missing／Shared／AmbiguousとNone／Keeper／DebrisCandidate／PreserveFallbackを固定値どおり決定論的に扱い、物理表現不能な小Fragmentだけをデブリ化して、大型・重要・未分類・曖昧なFragmentを誤消去しない | default初期化、全Status／Role組合せ、1 Render対1 Convex、1 Render対複数専有Convex、対応なし、複数Render対1 Convex、多対多、専有＋Shared混在、複数大型共有、閾値近傍、世代不一致を合成する。不正組合せReject、近似被覆、Keeper選択、未分裂Fallback、SharedGroupLocalIdの0予約・世代内一意性・非再利用、Trace Reasonと対応／Shared連結成分の復元を検査する |
 | T-076 | Geometry／Cook Microbenchmark | 製品の表示Mesh切断、Convex切断、T-077検証済みTemporary Low-Poly Proxy生成、`Physics.BakeMesh`を工程別に再現測定し、単発レイテンシとJob定常処理容量を分離して、入力規模からP95／P99完了時間を見積もれる。T-070の早期Probeを製品入力分布から補完・再解釈する | 公開合成DatasetをRelease Player相当／Burst有効でWarm-up後に反復する。計算KernelのSingle-Thread µs/op、Bake／Commitの直列単発Latency、Job Batchのcuts／triangles／convexes／cooks per second、Schedule／Complete latency、Worker占有、Main Thread Commit、GC／Nativeメモリ、失敗率を規模別に保存する。Target×Stage×ExecutionMode許可規則、Metric／Unit組合せ、系列一意性を検査し、`ColliderCommit + SingleThreadKernel`と`PlaneClassification + MainThreadCommit`をRejectする。ManifestのDatasetCaseIdと全規模軸をResultへjoinし、Samples／P50／P95／P99と容量式の説明変数を一意に復元する。同一Suiteへ同じDatasetId・異なるDatasetContentSha256を持つLatency／Throughput等を混在させたFixtureをjoin前にSuite Rejectし、別Suiteまたは別DatasetIdなら受理する。Bytes／Count Samples `[1,2]`からMean `1.5`を取得順binary64左畳みで再計算し、101件以上のPercent系列でもCountを範囲違反にしない。対象処理の失敗／FallbackがRejectedではなくFailureRateへ入ること、一部計測不能時の件数、全試行計測不能時のSuite Rejectを検査する。Manifest／Result相互ID・hash・件数、Aggregate再計算、Result差し替え、欠落／余分Entry、開始／終了clean検証、途中HEAD変更、Repository外一時出力、Index-last原子的確定、未知Schema／property Rejectを試験する。Manifest 64 KiB、Result 64 MiB／100万Sample、Index 64 MiB／10万Entryと呼び出し側のより小さい上限、宣言件数超過、非seek入力、過剰nesting、末尾dataを配列確保前にRejectし、全Loaderに無制限APIが存在しないことを確認する |
 | T-077 | Temporary Low-Poly Proxy正しさ | 実装した各品質段階が有限で決定的なGeometryを生成し、表示ProxyはBounds／切断側／Triangle上限、物理Proxyはwatertight／面向き／凸性またはCompound規約／PhysX上限を満たす。不正入力を成功扱いせず安全な下位Fallbackへ移す | 中央／端／非交差、薄形状、極端なAspect、複数Fragment、退化Bounds、NaN入力を合成し、同一入力Hashからの出力一致、有限頂点、退化面、Bounds逸脱、切断側分類、体積、凸性、Primitive重複、上限、Validation Reason、Fallback順を検査する。合格した品質段階だけをT-076へ渡す |
+| T-078 | 早期Licensed Fixture選抜 | Asset別Recipeや手修正なしの共通Presetで多数のSyntyモデルを処理し、Render／Solid／Convex Fixtureを決定論的に選抜できる。失敗を無理に通さず、合格少数の実Asset試験をPhase 0.25／1／3／4へ供給し、公開Repoへライセンス派生物を漏らさない | 家具、車、建物、道路設備、小物とProfile固定の全Source Triangle帯から多数を投入し、固定Blender／Script／Presetで2回実行する。Resource状態を除くTier合否、Geometry hash、形状統計、Reject Stage／Reasonの完全一致を要求する。各AttemptのProcessMilliseconds／Peak Working Set／Tool結果は保存するが時間／Peakの完全一致を要求せず、初回Timeout／MemoryLimitを固定順Attemptsから復元し、ResourceLimitExceededを単一Processで1回再試行して再超過をResourceDeferredとしてGeometry Rejectと分離する。開放Render、容易なwatertight Solid、単純Convex、自己交差、複雑開口、Profile上限、時間／メモリ超過を含める。公開合成FixtureとLicensedRepresentativeの結果・保存先を分離し、投入総数とカテゴリ／Triangle帯／Tier別合格率を残して選抜集合を全Asset互換性と誤認しないこと、公開Git／Artifact／CacheへAsset名対応表とGeometryが混入しないことを検査する |
+| T-079 | Early Fixture Reduction Variant | Original／Tri100／Tri500／Tri1000／Tri2000／Tri5000を同じSource Fixtureから決定論的に生成し、実Triangle数ごとの切断性能と形状検証結果を比較できる | 元Triangle数が50、100、120、500、900、1,100、2,200、5,500以上のAssetを含める。Target以下のNoOp、SourceがTargetを1 Triangleだけ上回る生成、異Target同一hash Alias、TargetごとのRender／Solid合否、Solidだけの自己交差／watertight失敗、BenchmarkOnly分類を検査する。同じSourceのRender／Solid Originalが`fixture_017.render.original`／`fixture_017.solid.original`として衝突せず、VariantIdはTier内一意、Tier間Aliasは禁止されることを確認する。NoOp／AliasがDatasetCaseを作らず同TierのCanonicalVariantIdを持つこと、ReportのSource／Target／Actual／Ratio／AppliedとDatasetCaseId対応、Manifest InputTriangleCountがActualと一致しOutputTriangleCountを切断後出力に維持すること、Convex削減設定へTriangle Targetが漏れないことを確認する |
+| T-080 | Early Fixture Voxel Variant | Voxel Remesh基底をTriangle削減率だけで省略せず、相対解像度と限定Post-DecimateのTopology／Solid化／性能差を再現測定できる | 同一SourceをVoxel64／128／256へ通し、SourceよりTriangleが減る、同数、1 Triangleだけ変わる、増える各caseを含めて全基底を保持する。Voxel基底とSourceの同一hash Alias、Bounds Scale変更時の相対Voxel Size一致、限定行列外Variant非生成、Voxel基底がPost Targetを1 Triangleだけ上回る生成を検査する。各Variantのwatertight、自己交差、体積変化、Bounds差、sampled表面距離、BenchmarkOnly、DatasetCaseId、Report項目、Manifest InputTriangleCount、決定論的Profile上限とResource状態を確認する |
+| T-081 | Early Fixture canonical schema | Profile／Source Catalog／Bundle Index／Report／Dataset Index／Receiptから投入母集団、選抜条件、カテゴリ／Triangle帯、全試行、採用Geometry集合と各fileを一意に復元でき、変動時間がDatasetContentSha256を変えない | Profile property順／数値境界／Triangle帯境界、Catalog全Source被覆、Blender Launch／Bootstrap／FBX Import失敗時の正しいStage、null Triangle／Band、決定的失敗Entry、全Status／Reason、AssetCategory、SourceTriangleBand再計算、nullable規則、Entry sort、Tier付きDatasetCaseId、Tier内VariantId一意性、Tier間Alias禁止、最大2件Attemptsと初回Timeout／Memory／Tool結果、Resource retry、未知propertyを検査する。Status完全決定表の全許可列に加え、`Selected + ToolFailed`、1 AttemptのResourceDeferred、GeometryRejected末尾Resource、ToolFailed後retry、Resource中間ReportのIndex／Receipt確定をRejectする。Bundle Kind、NFCと`/`のpath正規化、ordinal順、case-fold衝突、`.`／`..`、symlink／junction、空directory無視、raw file hash、Catalog予約EntryとSource参照照合、archive再圧縮によるhash不変を試験する。既存Bundle Indexを残したままroot fileを変更／追加／削除したcase、開始後からReceipt前の変更、長さ／hash不一致を3 BundleすべてでRejectする。Geometry rootではIndex記載pathとの完全一致、欠落／余分file、重複／case-fold衝突、path traversal、symlink、byte長、raw hash、Index外metadataを試験する。ZCGではFormat／Version／Kind、reserved／長さ／末尾data、非有限／負の0、position／triangle／face／hull入力順のPermutation、cyclic rotation、winding、重複／退化、decode後再serialize一致を試験する。本文の非対称三角形を固定golden bytes／SHA-256へ照合し、Root／Object translation、unit scale、Y/Z swap、負determinant transformを個別に変えたcaseで変換順とwindingを確認する。TriangleMeshはbinary32後の全体Boundsから求めたtwiceAreaがepsAreaちょうど、1 ULP下、1 ULP上のFixtureをBlender EncoderとUnity Decoderで同じ合否にする。Solidはbinary32化／position weldによってBoundary、Non-Manifold、向き、自己交差、連結成分、volumeが変わるFixtureをZCG後GateでGeometryRejected／CanonicalGeometryとし、Index／Receiptへ入れず、Report統計がdecode後値になることを確認する。`SolidSignedVolumeV1`は成分Bounds中心からの同一形状を原点付近と大きく平行移動したcase、およびbinary64で`V`が`epsVolume`ちょうど、1 ULP下、1 ULP上となるcaseを用い、canonical Triangle／成分順、termごとの除算、左畳みを共有Validatorで照合する。`ClosedTriangleDistanceV1`はproper crossing、特に一方のedgeが他方のface内部を貫通する一方で頂点はface上になくedge-edge接触もないcase、coplanar overlap、非共有vertex／edge／face接触、epsilonちょうど、1 ULP内側／外側のnear miss、正規の共有edge／vertex、重複Triangle、AABB broad phase境界を検査する。共有vertex／edgeだけで接するcase、および接触集合が共有simplexから正確に`epsDistanceSquared`境界まで達する十分な高さの正常隣接Triangleは許可する。そこから`epsOutsideSquared=nextUp(epsDistanceSquared)`へ1 ULP外れた残余接触、または同じ共有indexを持ちながら近傍外でcoplanar overlap、proper crossing、near missを持つcaseは`SharedSimplexResidualV1`でSelfIntersectionにする。包含不能は保守的Rejectとし、Blender HarnessとUnity Editor Harnessが同じScript BundleのValidator artifactから同じ件数／Rejectを得ること、未知algorithmやValidator version不一致をFallbackせずRejectすることを確認する。`SolidCandidateBvhV1`は最大20万Triangleが空間的に分離したFixtureで全pair走査せず0または局所候補だけを生成し、入力Triangle列挙順やworker数を変えても同じBVH split、sort済みpair列、Candidate Countを得ることを確認する。候補数がProfile上限ちょうどのcaseを処理し、次の一意pairで`ProfileUnsupported／ProfileGuard／CandidatePairLimit`とsentinel `MaxSolidCandidatePairCount + 1`へ決定論的に停止すること、checked counter／node／byte overflow、AABBがepsilonちょうど接するpair、重複候補のsort／deduplicate、上限内の実Timeout／MemoryだけがResource retryへ入ることを試験する。Convexはbinary32量子化の前後、Face平面距離／半空間距離／signed volumeがepsilonちょうど、1 ULP内側、1 ULP外側となるFixture、非平面Face、内向きFace、開放edgeをBlender EncoderとUnity Decoderの双方で同じ合否にし、同一形状の列挙順やFBX metadataだけを変えてもGeometryContentSha256が一致することを確認する。Profile 64 KiB、Catalog／Bundle各16 MiB／10万Entry、Report 64 MiB／10万Entry／20万Attempt、Index 64 MiB／10万Variant、Receipt 64 KiB、ZCG 64 MiBと必須のより小さい呼び出し側上限を、配列確保前、非seek入力のlimit／limit+1 byte、宣言件数不一致、過剰nesting、末尾dataで試験する。同じGeometry／Tool hashでAttempt時間だけを変えた2 Reportは同じDataset Index hashを参照するが異なるReport hash／Receiptになること、ReportまたはIndex差し替え、Receipt欠落をRejectすること、Geometry、Profile、Source Package、Blender、Script、Presetのいずれかを変えるとIndex hashが変わることを確認する。Index hashをGeometryBenchmarkRunManifest.DatasetContentSha256へ設定してSuite Loaderまで照合する |
 
 ## 15. 実装ロードマップ
 
 | 段階 | 焦点 | 主要成果物 | 完了条件 |
 | --- | --- | --- | --- |
 | Phase 0 | 非VR基盤・観測 | Unity 6.3 LTS 6000.3.22f1、Universal 3D／URP、Repo・ignore・Package Lock、固定テスト、Editor更新手順、入力抽象化、WorldPhysicsProfile、ProfilerMarker、Flow、TraceLogger、最小タイムライン、FrameId同期のUnity選択的キャプチャ | 固定Editor版から非VRで再現可能な性能基準、重力Profile、Work Item／Job時系列、対応画像を取得し、一時worktreeで更新・復帰手順を確認 |
-| Phase 0.25 | Cook比較Probe | 固定Convex Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Repository外のManifest／Result／Suite Index Bundle、結果レポート | 製品Geometry完成前の早期Probeとして、同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、N1／N2／N3の必須Stage差、版・設定差、Manifestと実測Resultのhash対応を記録できる。T-076の前提とはせず、Native PhysXを製品Runtime依存にはしない |
+| Phase 0.2 | 早期Licensed Fixture選抜 | 固定版Portable Blender最小Bootstrap、Source FBX列挙、共通簡易Preset、`EarlyFixtureSelectionProfile`、`EarlyFixtureSourceCatalog`、Source／Script／Preset `CanonicalBundleIndex`と完全tree Verifier、Launch／Bootstrap／Import Stage、Render／Solid／Convex Gate、Original／Tri100／Tri500／Tri1000／Tri2000／Tri5000、Voxel64／128／256と限定Post-Decimate、ZantetsuCanonicalGeometry v1 Encoder／Decoder／Numeric Kernel／ZCG後Gate、`SolidSignedVolumeV1`、Script Bundleへhash固定した共有`SolidGeometryValidatorV1`／`ClosedTriangleDistanceV1`、`EarlyFixtureSelectionReport`、`LicensedRepresentativeDatasetIndex`、`LicensedFixtureSelectionReceipt`、非公開Geometry Dataset、T-078／T-079／T-080／T-081 | Import前に投入Source／カテゴリ／file hashをCatalogへ固定し、Blender起動・Bootstrap・Import失敗を正しいReport Stageから復元できる。多数のSyntyモデルを手修正・Asset別Recipeなしで一括処理し、Profile固定カテゴリ／Triangle帯を含む少数のRender／Solid／Convex Fixtureを再現選抜できる。小プロップの自然な低Triangle Originalと、大きいAssetのDirect Reduction Variant、Topologyを再構成するVoxel Variantを区別して有効実入力を用意する。基底がTargetを上回れば削減率にかかわらず生成し、Target以下のNoOpと同一hash AliasだけをDataset Geometryから除外する。数値Profileで全Gateを判定し、Status完全決定表に合う全AttemptをReportへ保持してResource状態をGeometry Rejectと分離する。採用候補をZCG v1へ決定的serialize／decodeし、binary32後のTriangle退化とRender／Solid／Convex Gateを再実行して、失敗VariantをCanonicalGeometry Rejectへ移す。Solid volumeは成分Bounds中心とcanonical順で一意に再現し、自己交差はBlender／Unity別実装ではなく同一共有Validator artifactの完全決定表で判定する。Blender実行前とReceipt直前に3 Bundle rootをIndexと完全照合し、Index canonical bytesからDatasetContentSha256を再現し、ReceiptでReport／Index両hashを固定してからBenchmarkへ渡す。入力・派生GeometryとAsset対応表を非公開Repoだけへ保存し、選抜結果を全Asset互換率と扱わない |
+| Phase 0.25 | Cook比較Probe | 公開合成Convex Dataset、Phase 0.2の非公開LicensedRepresentative Convex補助Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Repository外のManifest／Result／Suite Index Bundle、結果レポート | 製品Geometry完成前の早期Probeとして、同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、N1／N2／N3の必須Stage差、版・設定差、Manifestと実測Resultのhash対応を記録できる。合成Datasetをcanonical正本とし、LicensedRepresentativeは実Asset傾向の補助確認に限定する。T-076の前提とはせず、Native PhysXを製品Runtime依存にはしない |
 | Phase 0.5 | XRスモークテスト | OpenXR、Quest 3S有線Link、Grip Pose、Tracking State、GripToKatanaOffset、Single Pass | 空シーンで両眼90Hzと左右の刀姿勢・追跡復帰を確認 |
-| Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、事前Shard済み専用テストMeshによるVertex Pulling／Indirect Batch描画性能PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と代表プロップだけに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。任意切断由来の微小Fragment判定やclip＋ポリゴン崩壊は行わず、全Fragmentを通常の塊としてclip表示する。事前Shard済み専用Meshだけを通常数千Triangle・少数Drawで描画し、GPU経路の性能とFallbackを確認する |
+| Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、公開合成MeshとPhase 0.2の非公開Render Fixture、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、事前Shard済み専用テストMeshによるVertex Pulling／Indirect Batch描画性能PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と選抜済みSynty代表プロップに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。任意切断由来の微小Fragment判定やclip＋ポリゴン崩壊は行わず、全Fragmentを通常の塊としてclip表示する。事前Shard済み専用Meshだけを通常数千Triangle・少数Drawで描画し、GPU経路の性能とFallbackを確認する |
 | Phase 1.5 | 固定支持Topology | `FixedSupportAnchor`、Node／Edge、`LogicalFragment`、`CutBoundaryRecord`、Support／Exposure／Geometry／Work Result状態軸、`PendingSupportClassification`、Support→Exposure決定表、全LogicalFragment→FragmentGroup物理状態集約、Anchor到達性、Anchor／SupportGraph世代、Commit検証、純粋C#単体テスト、支持Trace契約 | 手書き／合成FixtureでT-074を満たし、Collider切断やcookなしで境界ごとのDormant／Active／Suppressed分類、複数境界混在時のGroup物理状態、分類不能時の物理完全維持と既知Active境界の描画、再分類遷移、全履歴面の再評価、世代不一致Reject、保守的Fallbackを決定論的に再現できる。完了後に固定支持対象を切断対象へ追加する |
 | Phase 2 | 仮断面・影強化 | Cut Shell、ゼロKerf、Dormant Cut Cull／再有効化、実Fragment Mesh早期公開、Temporary Render Boundary Set、Ready中の表示継続と原子的Geometry Commit、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、Front／Back相殺とResidual Stencil Support検証、CapCompatibilityKey／互換Group、可視Cap Bounds競合判定、Winding Count Stencil、左右眼Stencil Conflict Graph／Greedy Coloring、Color単位Volume／Cap Batch、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用per-instance clip／Offset、Stable片面／Pending両面Batch、XR両眼対応、Pending Cut／Stable履歴管理 | 2～4連続切断と複数対象の画面重複でStencilが混入せず、ActiveかつGeometry未Commit（PendingまたはReady）の境界だけが即時Renderer費用を発生させる。Ready到達だけでは表示を戻さず、実Mesh適用とCommitted遷移が同じ描画フレーム境界で成功した後にだけTemporary Renderer一覧から外す。両側固定のDormant Cutは大断面の即時Stencil仕事を発生させず、完成した実Meshを同一位置で公開できる。Geometry Commit後もCutBoundaryRecordと支持履歴が残る。許容する細い切断痕と禁止する全面Z-fightingを区別し、Detached化した瞬間に過去断面を欠落なく再表示する。OBBが重なってもCap非交差なら安全にBatchされ、互換Groupは統合され、両眼不可視Cap Groupは欠落や点滅なく除外される。相殺不能入力はFallbackし、Shadow MapではStencil Capなしの影近似が許容範囲に収まる |
-| Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、RenderFragment接続成分、Triangle数／面積／体積／重要度Metadata、後続Debris Corner Stream生成用出力、メインスレッドMesh公開、世代Commit | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない。任意切断由来Fragmentは物理Convex対応が確定するまで塊として表示され、Phase 3だけでは大きさを理由にデブリ化せず、clip中の表面Triangle崩壊を起こさない |
-| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Temporary Low-Poly Proxy生成Kernel／Validation／Fallback、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、保守的な仮予算管理、T-063／T-070／T-075／T-077との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Temporary Proxyの実装済み品質段階がT-077を通り、不正入力は下位Fallbackへ移る。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリへ保守的な仮上限を設定し、Arena不足でも待機・再確保しない。分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
-| Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Single-Thread Kernel Harness、Job Batch Harness、表示Mesh／Convex／T-077検証済みTemporary Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装を同一入力でT-076に従って測定し、各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039の初期確定予算と斬撃波Deadlineまでに処理可能な対象数を根拠付きで決め、T-070の早期結果を再解釈できる |
+| Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、RenderFragment接続成分、Triangle数／面積／体積／重要度Metadata、後続Debris Corner Stream生成用出力、メインスレッドMesh公開、世代Commit、Phase 0.2 Solid Fixture回帰 | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない。公開合成Fixtureに加えて選抜済みSynty Solid FixtureでもCap／Fragment生成を確認する。任意切断由来Fragmentは物理Convex対応が確定するまで塊として表示され、Phase 3だけでは大きさを理由にデブリ化せず、clip中の表面Triangle崩壊を起こさない |
+| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Temporary Low-Poly Proxy生成Kernel／Validation／Fallback、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、保守的な仮予算管理、Phase 0.2 Convex Fixture回帰、T-063／T-070／T-075／T-077との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Temporary Proxyの実装済み品質段階がT-077を通り、不正入力は下位Fallbackへ移る。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリへ保守的な仮上限を設定し、Arena不足でも待機・再確保しない。分類後は固定側を動かさず自由側だけを安全に分離する。公開合成Fixtureと選抜済みSynty Convex Fixtureの両方で、Convex分割／BakeがMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Phase 0.2 LicensedRepresentative補助Dataset、Single-Thread Kernel Harness、Job Batch Harness、表示Mesh／Convex／T-077検証済みTemporary Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装をT-076に従い、公開合成Datasetをcanonical正本、選抜済みSynty Fixtureを別の非公開補助Suiteとして測定する。各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039の初期確定予算と斬撃波Deadlineまでに処理可能な対象数を根拠付きで決め、T-070の早期結果を再解釈できる |
 | Phase 4.5 | 飛翔斬撃と未来評価 | Gesture状態機械、Edge Direction Gate、Recovery、NonCutting素通り、Slash Latch、Span／Travel Axis、単調・一価SlashFront、逆行／自己交差Finalized、前縁VFX、帯状Sweep、Candidate Flight Bounds、評価DAG、先行切断、Commit検証 | 復路とU字軌道で二重前縁や誤斬撃を作らず、Latch直後から三日月前縁が飛翔・命中し、Extending中も前縁が成長しながら進み、遠距離対象の多くが接触時に完成Meshへ即移行 |
 | Phase 4.6 | 予測拡張 | 局所PhysicsScene、未来Animation姿勢、信頼度別フォールバック | 動的対象でも予測採用率と予測費用が基準を満たす |
 | Phase 4.7 | モブ未来計画 | Mob Future Planner、MobPlan／PlanGeneration、AI LOD、経路・Animation先行確定、時空間予約、Trace | 介入なしの遠距離モブで計画再利用率と先行切断完了率が基準を満たし、介入時は安全に無効化される |
 | Phase 4.8 | OpenXR Projection Capture | Windows API Layer、D3D11固定、SDR、MSAAなし、Dynamic Resolutionなし、Single Pass、Projection 1枚、左眼45fps、Release前GPU Copy、固定Profile検証、GPU Encode、Capture Record／Run Manifest同期 | 切断PoCの異常をProjection画像とTraceで再現調査でき、想定外構成はFail Fastし、非録画時との差が性能予算内。不要なら導入を見送れる |
 | Phase 5 | 人形 | 姿勢スナップショット、CPUスキニング、骨proxy分類、物理移行 | 基本動作中のNPCを任意方向に切断 |
-| Phase 5.5 | Asset自動前処理 | Portable Blender Manifest／Bootstrap、固定版ヘッドレス実行、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、Reduction、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor／対象Triangle／ShardId生成、実Asset用FixedSupportGraph生成、Solid／Proxy／Debris Atlas生成、検証、キャッシュ | 古いシステム版と共存し、代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類する。事前分類済みMicro Attachmentだけは命中同フレームにAliveMask消去とGPU崩壊へ移行できる。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通す |
+| Phase 5.5 | Asset自動前処理 | Phase 0.2の選抜Report／失敗例を入力に、完全なPortable Blender Manifest／Bootstrap、固定版ヘッドレス実行、Asset別Recipe、開放Mesh修復、Voxel／SDF内部充填、Trusted Exterior分類、制約付きSurface Projection、Projection後自己交差検証、見た目を保つReduction、UV／Material再構成、Micro Attachment連結成分抽出／Recipe分類、AttachmentId／Anchor／対象Triangle／ShardId生成、実Asset用FixedSupportGraph生成、Solid／Proxy／Debris Atlas生成、検証、キャッシュを実装する | Phase 0.2でRejectした複雑Assetも対象に含め、古いシステム版と共存しながら代表家具・車・建物を別PCでもGUIなしで再現生成する。主要外形をVoxel結果より改善し、自己交差入力をStable Solidへ通さず、重要部品を除外しながら微小付属物を安定分類する。事前分類済みMicro Attachmentだけは命中同フレームにAliveMask消去とGPU崩壊へ移行できる。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通し、Phase 0.2より広いAsset範囲と製品品質を達成する |
 | Phase 6 | コンテンツ | Synty City街区、10プロップ、シェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 最適化 | 端末別品質、破片LOD、ジョブ優先度、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす |
 
@@ -1224,6 +1520,8 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 - NPCを移動中に切断し、姿勢固定から剛体破片への移行が成立する。
 
 - 代表的な連続切断シナリオで目標フレームレートとメモリ予算を満たす。
+
+- Phase 0.2ではImport前のSource CatalogとSource／Script／Preset Bundle Indexから投入母集団、匿名ID／カテゴリ対応、全入力file、Script、Presetを再現識別でき、Blender Launch／Bootstrap／Import失敗も正しいStageで欠落させない。多数のSyntyモデルを共通簡易Presetへ投入し、個別修理なしでRender／Solid／Convex Fixtureを少数選抜できる。Render／SolidはOriginal、100／500／1,000／2,000／5,000 Triangle級のDirect Variant、Voxel64／128／256基底と限定Post-Decimateを持ち、小プロップの自然な低Triangle Original、強制Reduction、Topology再構成を区別する。基底がTargetを上回れば削減率にかかわらず生成し、NoOp／Aliasは新しいDatasetCaseを作らない。採用形状はFormat／Version固定のZCG canonical bytesへ変換し、入力列挙順や非本質的metadataからGeometry hashを分離する。数値Profileにより形状合否を再現し、Resource状態と変動時間を形状Gate／Dataset hashから分離する。投入母数、Profile固定のAsset Category／Source Triangle Band、Process Mode、Source／Target／Actual／Ratio／Applied、Voxel Size、形状偏差、Tier別合格数、全Attempt、Reject Stage／Reason、出力hashがReportへ記録され、IndexからDatasetContentSha256を再現できる。ReportとIndexの両hashをReceiptで固定し、Receiptが欠落・不一致のDatasetをBenchmarkへ渡さない。選抜済み少数の成功を全Asset互換率として扱わず、LicensedRepresentative GeometryとAsset対応表は非公開Repoだけに存在する。
 
 - 10種類のアセットが、Blenderヘッドレス処理によってDisplay／Solid Cut Mesh／Physics Proxyの自動またはRecipe駆動工程を通過する。
 
@@ -1287,7 +1585,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 
 - DOCXを再生成せず、このMarkdownのみを正本として更新する。
 
-> **次の推奨アクション** Phase 0として非VR固定テストと共通切断入力に加え、ProfilerMarker、Flow Event、固定長TraceLogger、最小Editorタイムライン、FrameId付きの選択的静止画／片眼録画を先に用意する。箱とSynty代表プロップ1個の単一切断で性能基準、完全なWork Item／Job時系列、対応画像を取得する。続いてPhase 0.25のCook比較Probeを測定専用で実施し、Native依存を製品へ持ち込まず結果を固定する。その後Phase 0.5でQuest 3S有線Linkの両眼表示と90Hzを確認する。OpenXR API Layerは切断PoC成立とT-054完了後まで実装しない。
+> **次の推奨アクション** Phase 0として非VR固定テストと共通切断入力に加え、ProfilerMarker、Flow Event、固定長TraceLogger、最小Editorタイムライン、FrameId付きの選択的静止画／片眼録画を先に用意する。まず公開合成箱で性能基準、完全なWork Item／Job時系列、対応画像を取得する。次にPhase 0.2で固定版Blenderの最小実行経路、共通簡易Preset、`EarlyFixtureSelectionProfile`、Source Catalog、3種のCanonical Bundle Index、ZCG v1 Encoder／Decoder、Report／Dataset Index／Receipt Codecを作り、多数のSyntyモデルからRender／Solid／Convex Fixtureを自動選抜する。Render／SolidにはOriginal、100／500／1,000／2,000／5,000 Triangle Direct Target、Voxel64／128／256基底と限定Post-Decimateを生成・再検証して非公開Datasetへ固定する。続いてPhase 0.25のCook比較Probeを合成Convex正本とReceipt検証済みIndex hashで識別したLicensedRepresentative補助Datasetで実施し、Native依存を製品へ持ち込まず結果を固定する。その後Phase 0.5でQuest 3S有線Linkの両眼表示と90Hzを確認する。OpenXR API Layerは切断PoC成立とT-054完了後まで実装しない。
 
 ## 18. 用語
 
@@ -1354,7 +1652,7 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Temporary Low-Poly Proxy | Stable Geometry／Colliderが未完成または検証失敗の間に使う、低Triangle表示形状、簡易Convex、Compound Primitive、汎用ローポリFallbackの総称。各実装品質段階の正しさをT-077、生成費用をT-076で測る |
 | Geometry／Cook Microbenchmark | 表示Mesh切断、Convex切断、Temporary Low-Poly Proxy、cookを固定Datasetで工程別に測り、計算KernelのSingle-Thread µs/op、Bake／Commit単発Latency、Job Batch Throughput／End-to-End latencyから容量式を作る性能検証 |
 | GeometryBenchmarkRunManifest | Cook ProbeとGeometry／Cook Microbenchmark専用のversion付きcanonical JSON。1 Manifestは単一DatasetCaseIdの固定規模軸と、単一Target／Stage／ExecutionMode／CookingProfile／Metric／Unitの1測定系列を表し、BenchmarkSuiteIdで複数系列を束ねる。同一SuiteではDatasetIdからDatasetContentSha256への写像を一意にする。Target×Stage×Mode、全propertyの型・値域・null条件・順序を固定し、clean Repositoryだけ保存を許可して既存TraceRunManifestを拡張しない。v1のLoader上限は64 KiB |
-| DatasetCaseId | DatasetContentSha256で固定されたDataset内の1入力caseを識別するID。同一Suiteでは1つのDatasetIdに1つのDatasetContentSha256だけを許可し、同じcaseの規模軸を不変とする。Manifestの説明変数とResultの測定値をjoinして容量式へ使用する |
+| DatasetCaseId | DatasetContentSha256で固定されたDataset内の1入力caseを識別するID。早期Licensed Fixtureでは`SourceFixtureId.TierToken.VariantId`を使い、Render／Solid／Convexの同名Variantを分離する。同一Suiteでは1つのDatasetIdに1つのDatasetContentSha256だけを許可し、同じcaseの規模軸を不変とする。Manifestの説明変数とResultの測定値をjoinして容量式へ使用する |
 | GeometryBenchmarkResult | 1 BenchmarkRunIdの取得順Samplesと、同じSamplesから決定論的に再計算できるCount／Minimum／Maximum／Mean／P50／P95／P99を保持するcanonical JSON。対応Manifestのcontent hashを持つ。v1は100万Sample／64 MiBをschema上限とし、Loaderにはそれ以下の明示上限を必須とする。Bytes／CountのSamplesと順序統計量は整数だがMeanは取得順binary64左畳みのcanonical doubleである。Rejectedは計測不能だけを数え、対象処理失敗はFailureRateへ残す |
 | GeometryBenchmarkSuiteIndex | 1 BenchmarkSuiteId内の全RunについてManifest／Result content hashとsample／reject件数を固定するcanonical index。v1は10万Entry／64 MiBを上限とし、Loaderへそれ以下のbyte／件数上限を必須とする。Repository外の一時出力へ最後に書き、検証後にSuiteディレクトリを原子的に確定する |
 | Unity Built-in 3D Physics | GameObject／Rigidbody系で使用するUnity内蔵NVIDIA PhysX統合。DOTSの`Unity Physics`パッケージとは別物 |
@@ -1365,6 +1663,21 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Trace Event | 状態遷移、Taskライフサイクル、Commit結果を整数IDと時刻で表す軽量イベント |
 | Flow Event | Schedule元と別スレッド／Job上の実行をUnity Profiler内で結ぶ相関情報 |
 | Flight Recorder | 直近イベントを循環保持し、異常検出時に前後履歴を固定・保存する仕組み |
+| Early Licensed Fixture | Phase 0.2でライセンスAsset群へ共通簡易Presetを適用し、個別修理なしで自動選抜したRender／Solid／ConvexテストGeometry。製品用変換済みAssetや全Asset対応の証拠ではない |
+| LicensedRepresentative Dataset | Early Licensed Fixtureを同じHarnessで測る非公開の補助Dataset。公開合成Fixtureのcanonical結果が実Asset傾向から大きく外れないか確認するために使い、入力GeometryとAsset対応は公開しない |
+| EarlyFixtureSelectionProfile | Phase 0.2のAsset Category集合、Source Triangle Band境界、epsilon、穴封鎖、Bounds／表面／体積品質、Solid／Convex Gate、決定論的入力上限、資源上限、再試行を固定するversion付きcanonical JSON。Profile hash変更で派生Fixtureを無効化する |
+| EarlyFixtureSourceCatalog | Blender Import前に匿名SourceFixtureId、AssetCategory、正規化SourceRelativePath、Source file hashを固定するcanonical非公開Catalog。Import前失敗でも投入母集団を復元でき、canonical bytesはSource Bundleへ含める |
+| CanonicalBundleIndex | Source／Script／Presetの展開済み通常fileを正規化相対path、byte長、raw content hashで列挙するversion付きcanonical Index。空directoryやtimestampを無視し、symlink等を拒否する。Index bytesのSHA-256を各Bundle Content SHA-256とし、Verifierが実rootの欠落／余分file、長さ、hashをBlender前とReceipt前に完全照合する |
+| ZantetsuCanonicalGeometry | Phase 0.2のRender／Solid Triangle MeshまたはConvex Setを、meter／Y-up／左手系、正規化binary32位置、決定的なposition／face／hull順で保存するversion付きcanonical binary。v1は切断／Cook Benchmark用の形状Topologyだけを持ち、拡張子は`.zcg`、decode後の再serialize一致を必須とする |
+| SolidSignedVolumeV1 | ZCG decode後のSolid連結成分について、成分Bounds中心、canonical Triangle／成分順、triangleごとの除算、binary64左畳みを固定して正体積を判定する唯一のvolume契約 |
+| SolidGeometryValidatorV1 | ZCG bytesを読み、Solid Topology、`SolidSignedVolumeV1`、`ClosedTriangleDistanceV1`を同一artifactで検証するversion固定Validator。Script Bundleで内容を固定し、Blender HarnessとUnity Editor Harnessが共有する |
+| SolidCandidateBvhV1 | binary32 decode後Triangleのepsilon拡張AABBから固定axis／median規則で構築し、自己交差の一意候補pairだけを生成する決定論的BVH。候補はcanonical順へsortし、Profile上限超過を`CandidatePairLimit`として停止する |
+| ClosedTriangleDistanceV1 | 全Triangle pairを、固定順のpoint-to-closed-triangle／segment-to-closed-triangle／closed-segment距離候補と`epsDistance`で保守的に分類するSolid自己交差predicate。共有indexがあるpairも除外せず、`SharedSimplexResidualV1`で共有simplex近傍外の残余交差を検査する |
+| Early Fixture Reduction Variant | 同じSource Fixtureから固定Direct Decimate Presetで作るOriginal／Tri100／Tri500／Tri1000／Tri2000／Tri5000。DatasetCaseIdで区別し、実入力Triangle数をBenchmark Manifestへ、Source／Target／Ratio／Appliedを選抜Reportへ記録する。Voxel／Convex削減系列とは別物 |
+| Early Fixture Voxel Variant | Sourceを相対Voxel SizeのVoxel64／128／256でTopology再構成した基底と、その限定Post-Decimate。Triangle差が小さくても基底を保持し、`vox128.base`等のVariantIdとTier付きDatasetCaseId、Voxel Size、形状偏差、Solid検証を記録する |
+| EarlyFixtureSelectionReport | Phase 0.2の全Entryについて、version、Profile／Source／Blender／Script／Preset hash、AssetCategory、Profile固定SourceTriangleBand、Status、Process Mode、形状統計、最大2件の固定順Attempts、Resource状態、最終Reject Stage／Reasonを記録するcanonical非公開レポート。Attempt時間／Peak Working Setは観測値でありDataset hashへ含めない |
+| LicensedRepresentativeDatasetIndex | Selected／BenchmarkOnly GeometryだけをTier付きDatasetCaseId順に列挙し、Profile／Source Package／Blender／Script／Preset、Geometry Format／Version／RelativePath／ByteLength／canonical Content hashを固定する非公開Index。Geometry rootの完全な通常file許可リストでもあり、このcanonical bytesのSHA-256をGeometryBenchmarkRunManifest.DatasetContentSha256とする |
+| LicensedFixtureSelectionReceipt | SelectionRunId、DatasetId、ReportContentSha256、DatasetIndexContentSha256、DatasetContentSha256を結び、ReportとIndexのcanonical検証後に最後に原子的確定する小さなcommit marker。欠落・不一致時は選抜RunをBenchmarkへ渡さない |
 | Preprocess Recipe | Assetごとの包含・除外部品、封鎖、空洞保持、分割、Voxel品質を記述する設定 |
 | Preprocess Cache Key | 入力、Recipe、Script、Blender版のハッシュから生成する再構築判定値 |
 | Boundary Loop | 片面または開放Meshで、1面だけに属するEdgeが形成する穴の輪郭 |
