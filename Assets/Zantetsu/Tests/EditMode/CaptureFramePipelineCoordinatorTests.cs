@@ -302,6 +302,49 @@ namespace Zantetsu.Core.Tests
                 new object[] { persistenceStatus, readbackCompletionStatus, readbackStarted, completedArtifact, sidecarReceipt });
         }
 
+        private static ConstructorInfo GetAdvanceResultCtor()
+        {
+            ConstructorInfo ctor = typeof(CaptureFramePipelineAdvanceResult).GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance, null,
+                new[]
+                {
+                    typeof(CaptureFramePngArtifactPersistenceStatus),
+                    typeof(CaptureFramePngQueueStatus),
+                    typeof(CaptureFramePngArtifact),
+                    typeof(CaptureFramePngArtifactSaveReceipt)
+                },
+                null);
+            Assert.That(ctor, Is.Not.Null);
+            return ctor;
+        }
+
+        private static Exception GetAdvanceResultCtorException(
+            CaptureFramePngArtifactPersistenceStatus persistenceStatus,
+            CaptureFramePngQueueStatus readbackCompletionStatus,
+            CaptureFramePngArtifact completedArtifact,
+            CaptureFramePngArtifactSaveReceipt sidecarReceipt)
+        {
+            try
+            {
+                GetAdvanceResultCtor().Invoke(new object[] { persistenceStatus, readbackCompletionStatus, completedArtifact, sidecarReceipt });
+                return null;
+            }
+            catch (TargetInvocationException ex)
+            {
+                return ex.InnerException;
+            }
+        }
+
+        private static CaptureFramePipelineAdvanceResult MakeAdvanceResult(
+            CaptureFramePngArtifactPersistenceStatus persistenceStatus,
+            CaptureFramePngQueueStatus readbackCompletionStatus,
+            CaptureFramePngArtifact completedArtifact,
+            CaptureFramePngArtifactSaveReceipt sidecarReceipt)
+        {
+            return (CaptureFramePipelineAdvanceResult)GetAdvanceResultCtor().Invoke(
+                new object[] { persistenceStatus, readbackCompletionStatus, completedArtifact, sidecarReceipt });
+        }
+
         private static void RegisterAndSchedule(
             CaptureFrameRecordRegistry recordRegistry,
             CaptureFrameRequestQueue requestQueue,
@@ -378,6 +421,24 @@ namespace Zantetsu.Core.Tests
             Exception[] combined = new Exception[cleanupExceptions.Length + 1];
             Array.Copy(cleanupExceptions, combined, cleanupExceptions.Length);
             combined[cleanupExceptions.Length] = ex;
+            return combined;
+        }
+
+        private static Exception[] ConcatExceptions(Exception[] first, Exception[] second)
+        {
+            if (first == null || first.Length == 0)
+            {
+                return second ?? new Exception[0];
+            }
+
+            if (second == null || second.Length == 0)
+            {
+                return first;
+            }
+
+            Exception[] combined = new Exception[first.Length + second.Length];
+            Array.Copy(first, combined, first.Length);
+            Array.Copy(second, 0, combined, first.Length, second.Length);
             return combined;
         }
 
@@ -1330,6 +1391,502 @@ namespace Zantetsu.Core.Tests
                     Assert.That(requestQueue.Count, Is.EqualTo(0));
                     Assert.That(artifactQueue.Count, Is.EqualTo(0));
                     Assert.That(pngQueue.Count, Is.EqualTo(1));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        // ---- Advance result tests ----
+
+        [Test]
+        public void AdvanceResult_DefaultValues()
+        {
+            CaptureFramePipelineAdvanceResult result = default;
+
+            Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
+            Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
+            Assert.That(result.CompletedArtifact, Is.Null);
+            Assert.That(result.SidecarReceipt, Is.Null);
+            Assert.That(result.HasCompletedArtifact, Is.False);
+        }
+
+        [Test]
+        public void AdvanceResult_SidecarCompleted_RequiresArtifactReceipt()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            CaptureFrameRecord record = MakeRecord(manifest, 42, out CaptureFrameRequest request);
+            CaptureFramePngArtifact artifact = new CaptureFramePngArtifact(record, request, MakePngReceipt("C:\\x\\out.png", 32, FixedPngHash));
+            CaptureFramePngArtifactSaveReceipt receipt = MakeSidecarReceipt("C:\\x\\out.json", 123, FixedPngHash);
+
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, null, receipt), Is.InstanceOf<ArgumentNullException>());
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, artifact, null), Is.InstanceOf<ArgumentNullException>());
+
+            CaptureFramePipelineAdvanceResult result = MakeAdvanceResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, artifact, receipt);
+
+            Assert.That(result.CompletedArtifact, Is.SameAs(artifact));
+            Assert.That(result.SidecarReceipt, Is.SameAs(receipt));
+            Assert.That(result.HasCompletedArtifact, Is.True);
+        }
+
+        [Test]
+        public void AdvanceResult_NonCompletedStatus_RejectsArtifactReceipt()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            CaptureFrameRecord record = MakeRecord(manifest, 42, out CaptureFrameRequest request);
+            CaptureFramePngArtifact artifact = new CaptureFramePngArtifact(record, request, MakePngReceipt("C:\\x\\out.png", 32, FixedPngHash));
+            CaptureFramePngArtifactSaveReceipt receipt = MakeSidecarReceipt("C:\\x\\out.json", 123, FixedPngHash);
+
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, artifact, null), Is.InstanceOf<ArgumentException>());
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, null, receipt), Is.InstanceOf<ArgumentException>());
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.PngPrepared, CaptureFramePngQueueStatus.None, artifact, receipt), Is.InstanceOf<ArgumentException>());
+        }
+
+        [Test]
+        public void AdvanceResult_UndefinedEnums_Rejected()
+        {
+            Assert.That(GetAdvanceResultCtorException((CaptureFramePngArtifactPersistenceStatus)999, CaptureFramePngQueueStatus.None, null, null), Is.InstanceOf<ArgumentException>());
+            Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.None, (CaptureFramePngQueueStatus)999, null, null), Is.InstanceOf<ArgumentException>());
+        }
+
+        // ---- Split API tests ----
+
+        [Test]
+        public void AdvancePendingWork_PersistenceAtMostOnce()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
+                    pipeline.Tick(rt); // start
+                    AsyncGPUReadback.WaitAllRequests();
+                    pipeline.Tick(rt); // collect → PNG queue 1
+
+                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+
+                    Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
+                    Assert.That(artifactQueue.Count, Is.EqualTo(1));
+                    Assert.That(pngQueue.Count, Is.EqualTo(0));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void AdvancePendingWork_CollectAtMostOnce()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 1, out _);
+                    RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
+                    pipeline.Tick(rt); // start 1
+                    pipeline.Tick(rt); // start 2
+                    AsyncGPUReadback.WaitAllRequests();
+
+                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+
+                    Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
+                    Assert.That(pngQueue.Count, Is.EqualTo(1));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void AdvancePendingWork_DoesNotStartPendingRequest()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
+
+                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+
+                    Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
+                    Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+                    Assert.That(dispatcher.ActiveCount, Is.EqualTo(0));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void TryStartNextReadback_StartsAtMostOne()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 1, out _);
+                    RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
+
+                    bool started = pipeline.TryStartNextReadback(rt);
+
+                    Assert.That(started, Is.True);
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+                    Assert.That(dispatcher.ActiveCount, Is.EqualTo(1));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void TryStartNextReadback_DoesNotAdvancePersistence()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 1, out _);
+                    pipeline.Tick(rt); // start 1
+                    AsyncGPUReadback.WaitAllRequests();
+                    pipeline.Tick(rt); // collect 1 → PNG queue 1
+                    RegisterAndSchedule(registry, requestQueue, manifest, 2, out _); // pending 2
+
+                    bool started = pipeline.TryStartNextReadback(rt);
+
+                    Assert.That(started, Is.True);
+                    Assert.That(pngQueue.Count, Is.EqualTo(1));
+                    Assert.That(artifactQueue.Count, Is.EqualTo(0));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void TryStartNextReadback_EmptyQueue_NullSource_False()
+        {
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out _, out _, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                try
+                {
+                    Assert.That(pipeline.TryStartNextReadback(null), Is.False);
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, null, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void TryStartNextReadback_InvalidSource_ExceptionAndRequestKept()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                RenderTexture uncreated = null;
+                RenderTexture small = null;
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
+
+                    Assert.Throws<ArgumentNullException>(() => pipeline.TryStartNextReadback(null));
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+
+                    uncreated = new RenderTexture(2, 2, 0, RenderTextureFormat.ARGB32);
+                    Assert.Throws<ArgumentException>(() => pipeline.TryStartNextReadback(uncreated));
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+
+                    small = CreateTex2D(1, 1);
+                    Assert.Throws<ArgumentOutOfRangeException>(() => pipeline.TryStartNextReadback(small));
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    Exception[] gpuErrors = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+
+                    try
+                    {
+                        DestroyTexture(uncreated);
+                    }
+                    catch (Exception ex)
+                    {
+                        gpuErrors = AppendCleanupException(gpuErrors, ex);
+                    }
+
+                    try
+                    {
+                        DestroyTexture(small);
+                    }
+                    catch (Exception ex)
+                    {
+                        gpuErrors = AppendCleanupException(gpuErrors, ex);
+                    }
+
+                    cleanupExceptions = gpuErrors;
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void SplitApi_StartException_DoesNotRollbackAdvance()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    // A collected into the PNG queue.
+                    RegisterAndSchedule(registry, requestQueue, manifest, 1, out _);
+                    pipeline.Tick(rt); // start A
+                    AsyncGPUReadback.WaitAllRequests();
+                    pipeline.Tick(rt); // collect A → PNG queue 1
+
+                    // B pending.
+                    RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
+
+                    CaptureFramePipelineAdvanceResult advance = pipeline.AdvancePendingWork();
+                    Assert.That(advance.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
+
+                    Assert.Throws<ArgumentNullException>(() => pipeline.TryStartNextReadback(null));
+
+                    // The prepared artifact is not rolled back and B is still pending.
+                    Assert.That(artifactQueue.Count, Is.EqualTo(1));
+                    Assert.That(pngQueue.Count, Is.EqualTo(0));
+                    Assert.That(requestQueue.Count, Is.EqualTo(1));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = CleanupGpuTest(dispatcher, rt, pngQueue, pool, logger);
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void Tick_EqualsAdvanceThenStart()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir1 = CreateTempDir();
+            string dir2 = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline1 = MakePipeline(dir1, 2, out CaptureFrameReadbackBufferPool pool1, out UnityRenderTextureReadbackDispatcher dispatcher1, out CaptureFrameRequestQueue requestQueue1, out CaptureFrameRecordRegistry registry1, out CaptureFramePngQueue pngQueue1, out CaptureFramePngArtifactQueue artifactQueue1, out TraceLogger logger1);
+                CaptureFramePipelineCoordinator pipeline2 = MakePipeline(dir2, 2, out CaptureFrameReadbackBufferPool pool2, out UnityRenderTextureReadbackDispatcher dispatcher2, out CaptureFrameRequestQueue requestQueue2, out CaptureFrameRecordRegistry registry2, out CaptureFramePngQueue pngQueue2, out CaptureFramePngArtifactQueue artifactQueue2, out TraceLogger logger2);
+                RenderTexture rt1 = CreateTex2D(2, 2);
+                RenderTexture rt2 = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry1, requestQueue1, manifest, 42, out _);
+                    RegisterAndSchedule(registry2, requestQueue2, manifest, 42, out _);
+
+                    CaptureFramePipelineTickResult tick = pipeline1.Tick(rt1);
+
+                    CaptureFramePipelineAdvanceResult advance = pipeline2.AdvancePendingWork();
+                    bool started = pipeline2.TryStartNextReadback(rt2);
+
+                    Assert.That(advance.PersistenceStatus, Is.EqualTo(tick.PersistenceStatus));
+                    Assert.That(advance.ReadbackCompletionStatus, Is.EqualTo(tick.ReadbackCompletionStatus));
+                    Assert.That(started, Is.EqualTo(tick.ReadbackStarted));
+                    Assert.That(advance.CompletedArtifact, Is.SameAs(tick.CompletedArtifact));
+                    Assert.That(advance.SidecarReceipt, Is.SameAs(tick.SidecarReceipt));
+
+                    Assert.That(requestQueue1.Count, Is.EqualTo(requestQueue2.Count));
+                    Assert.That(pngQueue1.Count, Is.EqualTo(pngQueue2.Count));
+                    Assert.That(artifactQueue1.Count, Is.EqualTo(artifactQueue2.Count));
+                    Assert.That(dispatcher1.ActiveCount, Is.EqualTo(dispatcher2.ActiveCount));
+                }
+                catch (Exception ex)
+                {
+                    bodyException = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    cleanupExceptions = ConcatExceptions(
+                        CleanupGpuTest(dispatcher1, rt1, pngQueue1, pool1, logger1),
+                        CleanupGpuTest(dispatcher2, rt2, pngQueue2, pool2, logger2));
+                }
+            }
+            finally
+            {
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir1));
+                cleanupExceptions = AppendCleanupException(cleanupExceptions, DeleteTempDir(dir2));
+            }
+
+            ThrowCleanupAndBody(bodyException, cleanupExceptions);
+        }
+
+        [Test]
+        public void SplitApi_DoesNotDisposeOrClearDependencies()
+        {
+            TraceRunManifest manifest = MakeManifest();
+            string dir = CreateTempDir();
+            ExceptionDispatchInfo bodyException = null;
+            Exception[] cleanupExceptions = null;
+            try
+            {
+                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
+
+                    pipeline.AdvancePendingWork();
+                    pipeline.TryStartNextReadback(rt);
+
+                    Assert.That(pngQueue.IsCreated, Is.True);
+                    Assert.That(dispatcher.IsCreated, Is.True);
+                    Assert.That(artifactQueue.Count, Is.EqualTo(0));
+                    Assert.That(pngQueue.Count, Is.EqualTo(0));
+                    Assert.That(requestQueue.Count, Is.EqualTo(0));
                 }
                 catch (Exception ex)
                 {

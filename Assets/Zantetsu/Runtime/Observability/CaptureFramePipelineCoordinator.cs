@@ -25,6 +25,17 @@ namespace Zantetsu.Observability
     /// state, and exceptions are never translated.
     /// </para>
     /// <para>
+    /// <see cref="AdvancePendingWork"/> and
+    /// <see cref="TryStartNextReadback"/> split a tick so a caller can advance
+    /// completed work first and then connect the current frame's submission and
+    /// readback start within the same frame. <see cref="AdvancePendingWork"/>
+    /// never starts a request, and <see cref="TryStartNextReadback"/> never
+    /// advances persistence, encoding, or collection. If a caller mutates the
+    /// queues, registry, or dispatcher between the two calls, the consistency of
+    /// that intermediate state is the caller's responsibility. Both are
+    /// main-thread only.
+    /// </para>
+    /// <para>
     /// Main-thread only and <b>not</b> thread-safe.
     /// </para>
     /// <para>
@@ -91,9 +102,12 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Runs one pipeline tick and returns a summary of what happened.
+        /// Advances completed work without starting any new readback: artifact
+        /// persistence first, then completed readback collect/encode/PNG
+        /// enqueue, each at most once. Does not touch the request queue or the
+        /// dispatcher start state.
         /// </summary>
-        public CaptureFramePipelineTickResult Tick(RenderTexture source)
+        public CaptureFramePipelineAdvanceResult AdvancePendingWork()
         {
             CaptureFramePngArtifactPersistenceStatus persistenceStatus = _persistenceCoordinator.TryAdvanceNext(
                 _pngQueue,
@@ -103,14 +117,37 @@ namespace Zantetsu.Observability
 
             CaptureFramePngQueueStatus readbackCompletionStatus = _readbackCompletionRouter.TryCollectEncodeAndEnqueue(_pngQueue, _recordRegistry);
 
-            bool readbackStarted = _readbackPump.TryStartNext(source);
-
-            return new CaptureFramePipelineTickResult(
+            return new CaptureFramePipelineAdvanceResult(
                 persistenceStatus,
                 readbackCompletionStatus,
-                readbackStarted,
                 completedArtifact,
                 sidecarReceipt);
+        }
+
+        /// <summary>
+        /// Starts at most one pending readback by delegating to the readback
+        /// pump unchanged. Does not persist artifacts or collect completed
+        /// readbacks and records no trace.
+        /// </summary>
+        public bool TryStartNextReadback(RenderTexture source)
+        {
+            return _readbackPump.TryStartNext(source);
+        }
+
+        /// <summary>
+        /// Runs one pipeline tick: the advance half followed by the start half.
+        /// </summary>
+        public CaptureFramePipelineTickResult Tick(RenderTexture source)
+        {
+            CaptureFramePipelineAdvanceResult advance = AdvancePendingWork();
+            bool readbackStarted = TryStartNextReadback(source);
+
+            return new CaptureFramePipelineTickResult(
+                advance.PersistenceStatus,
+                advance.ReadbackCompletionStatus,
+                readbackStarted,
+                advance.CompletedArtifact,
+                advance.SidecarReceipt);
         }
     }
 }
