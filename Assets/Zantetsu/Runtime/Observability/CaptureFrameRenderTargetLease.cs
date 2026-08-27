@@ -36,5 +36,18 @@ namespace Zantetsu.Observability
             _slotIndex = slotIndex;
             _generation = generation;
         }
+
+        /// <summary>
+        /// Allocation-free, field-by-field equality used by the registry to
+        /// detect duplicate or conflicting lease registrations. Avoids boxing,
+        /// reflection, string generation, and <c>ValueType.Equals</c>.
+        /// </summary>
+        internal bool IdenticalTo(in CaptureFrameRenderTargetLease other)
+        {
+            return
+                _ownerToken == other._ownerToken &&
+                _slotIndex == other._slotIndex &&
+                _generation == other._generation;
+        }
     }
 }
