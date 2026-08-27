@@ -393,13 +393,154 @@ Fast Simulationへの昇格候補は、長寿命、プレイヤー近傍、接�
 | N2 | Native PhysX、頂点＋Polygon＋Index、`eCOMPUTE_CONVEX`なし | 自前B-repを利用して凸包計算を省く改善上限 |
 | N3 | N2を`PxCreateConvexMesh`で直接生成 | Stream serialize／loadを省いたリアルタイム生成上限 |
 
-同じ自前Convex切断結果を入力し、頂点／面数、Cooking設定、検証有無、Allocator、Thread数、Warm-up、Release相当Build、CPU Affinityを可能な範囲で揃える。Unity同梱PhysXとProbe側PhysXの版が一致しない場合は両版をRun Manifestへ記録し、差をAPI経路だけの因果差と断定しない。
+同じ自前Convex切断結果を入力し、頂点／面数、Cooking設定、検証有無、Allocator、Thread数、Warm-up、Release相当Build、CPU Affinityを可能な範囲で揃える。Unity同梱PhysXとProbe側PhysXの版が一致しない場合は両版を`GeometryBenchmarkRunManifest`へ記録し、差をAPI経路だけの因果差と断定しない。
 
-計測は少なくとも、自前Convex clipping、Descriptor／MeshData構築、Native境界転送、`ApplyAndDisposeWritableMeshData`、Hull計算、PhysX内部形式生成、Stream処理、`Physics.BakeMesh`、Collider Commitへ分離する。8、16、32、64、128、255頂点級、単発／Batch、同時Slash、Fast Cook／Fast SimulationでP50／P95／P99、Throughput、Worker占有、Main Thread時間、一時／最終メモリ、失敗率、生成頂点／面、接触／Query品質を比較する。
+計測は少なくとも、自前Convex clipping=`PolygonClip`、Descriptor／MeshData構築=`DescriptorBuild`／`MeshDataBuild`、Native境界転送=`NativeBoundaryTransfer`、`ApplyAndDisposeWritableMeshData`=`MeshApply`、Hull計算=`HullComputation`、PhysX内部形式生成=`PhysXFormatBuild`、Stream処理=`StreamSerialize`／`StreamLoad`、`Physics.BakeMesh`=`Bake`、Collider Commit=`Commit`へ分離する。8、16、32、64、128、255頂点級、単発／Batch、同時Slash、Fast Cook／Fast SimulationでP50／P95／P99、Throughput、Worker占有、Main Thread時間、一時／最終メモリ、失敗率、生成頂点／面、接触／Query品質を比較する。
 
 Native PhysXが生成した`PxConvexMesh`またはCook済みBinaryをUnity `MeshCollider`へ注入する公開経路は前提にしない。大差が出ても、まずUnity経路のBatch化、Cooking Profile、入力簡略化、二段階Collider、Cacheで要件を満たせるか確認する。Native採用は、Unity経路のP99が実際にPending／90Hz予算を破り、差が継続的かつ大きく、Unity側で回避不能な工程にあり、Native成果物を実ゲームへ統合する別の小型Prototypeが成立した場合だけ再検討する。この場合はcook関数だけの交換ではなく、切断破片のQuery／接触／Scene同期を含む物理経路の部分置換として見積もる。
 
-### 7.5 微小付属物の消去
+### 7.5 Geometry／Cook Microbenchmark
+
+表示Mesh切断、Convex切断、暫定ローポリモデル生成、cookの各実装が個別に正しい結果を生成できた時点で、予算校正と追加最適化を行う前の初期製品実装Baselineを取得する。Job／Burst、Batch、Fast Cook／Fast Simulation等のPhase 3／4で採用済み基本経路はBaselineに含む。目的は最速値の宣伝ではなく、入力規模から単発完了時間、Jobキュー滞留、斬撃波到達までの完了率、同時Pending上限を見積もるための容量モデルを作ることである。Phase 0.25のT-070は固定ConvexによってUnity／Native cook経路の差と改善上限を早期に調べるProbeであり、T-076の前提ではない。Phase 4.1のT-076は製品の表示Mesh／Convex／Proxy生成経路が完成した後に取得し、T-069の統合測定を補完するとともに、T-070の早期結果を製品入力分布と工程内訳から再解釈するBaselineとする。
+
+計測単位は次に固定し、複数工程を一つの数値へ混ぜない。
+
+| 対象 | 分離して測る工程 | 主な規模軸 |
+| --- | --- | --- |
+| 表示Mesh | 頂点／Triangle平面分類、Count、Write、交点統合、断面Loop／三角形化、接続成分、Metadata、Writable MeshData構築 | 入力／出力Triangle数、交差Edge数、断面Loop数、Fragment数、累積切断面数 |
+| Physics Convex | Convex Count、Polygon clipping、切断面生成、Write、Validation、体積／重心／慣性、Collider用MeshData構築 | Convex数、各Convexの頂点／面数、交差Convex率、出力Convex数 |
+| Temporary Low-Poly Proxy | Bounds／切断面からの簡易表示Proxy、簡易Convex、Compound Primitiveまたは汎用ローポリFallbackの生成 | 目標Triangle／Primitive数、Fragment数、入力Bounds／切断面数 |
+| Cook／Commit | `Physics.BakeMesh`のFast Cook／Fast Simulation、Mesh公開、Collider Commit | Convex頂点数、Bake数、Batch Size、Profile、同時実行数 |
+
+同じPure Native入力と出力Bufferを使い、表示Mesh／Convex／Temporary Proxyの計算Kernelだけを同期実行する`Single-Thread Kernel`と、実際の`Schedule -> Worker実行 -> Complete`を使う`Job Batch`を分離する。前者は`µs/op`、入力／出力要素当たり時間、P50／P95／P99を記録し、Job Schedule、GC、Unity Object生成を含めない。Unity API境界を含む`Physics.BakeMesh`、Mesh公開、Collider CommitはPure Kernel値へ混ぜず、直列の単発LatencyとBatch時のEnd-to-End値として別記する。Job側は`cuts/s`、`input triangles/s`、`output triangles/s`、`convexes/s`、`cooks/s`、Job End-to-End latency、Schedule時間、Worker占有率、Main Thread Commit時間を記録する。単発Jobのレイテンシと十分なBatchを連続投入した定常Throughputを混同しない。
+
+固定Datasetには、公開可能な合成Fixtureを正本として、表示Mesh 500／1,000／3,000／10,000／30,000 Triangle級、Convex 8／16／32／64／128／255頂点級、1／4／16／64 Convex、2／4／8 Fragment、中央切断／端切断／非交差、単一／複数断面、単純／複数Cap Loopを含める。暫定Proxyは50／100／250／500 Triangleまたは1／4／16 Primitive級を初期候補とする。ローカルのライセンスAsset由来Proxyも代表値確認には使えるが、公開結果から入力Geometryを復元できるデータは保存しない。
+
+Release Player相当、Burst有効、Jobs Debugger／Safety Checks無効を採用判断用の正本とし、Editor値は開発時の回帰検出専用とする。Cold start、初回JIT／Burst Compile、Allocator拡張は定常値と分け、Managed GC、Native一時メモリ、失敗／Fallback率も記録する。結果の正しさを事前検証し、無効出力や早期Rejectを成功経路の高速値へ混ぜない。Temporary Low-Poly ProxyはT-077の正しさ検証を通過した実装済み品質段階だけをT-076の性能比較へ含め、未実装の目標品質を0コストとして扱わない。
+
+性能測定の環境情報は既存の`TraceRunManifest`を拡張せず、別schemaの`GeometryBenchmarkRunManifest`へ保存する。1 Manifestは単一`DatasetCaseId`の固定入力に対する「単一`BenchmarkTarget`、単一`BenchmarkStage`、単一`ExecutionMode`、単一`CookingProfile`、単一`BenchmarkMetric`、単一`MeasurementUnit`を反復する1測定系列」だけを表す。T-070／T-076の1回のHarness実行は複数Manifestを生成し、全系列へ同じ`BenchmarkSuiteId`を付けて束ねる。各系列は異なる`BenchmarkRunId`を持ち、同じSuite内でRun IDと`Target + Stage + ExecutionMode + CookingProfile + Metric + Unit + DatasetId + DatasetContentSha256 + DatasetCaseId + BatchSize`の組を重複させない。別case、別工程、別指標は同じManifestへ混在させず、同じSuiteの別系列として保存する。
+
+独立したSchema Version、canonical UTF-8 JSON Codec、content SHA-256、Golden Fixtureを持つ。Schema v1のproperty順と型・値域は次を正本とする。`nullable`と明記したもの以外は必須かつ非nullである。
+
+| Property | JSON型 | 必須性・範囲・意味 |
+| --- | --- | --- |
+| `SchemaVersion` | integer | 必須。v1では厳密に`1` |
+| `BenchmarkSuiteId` | string | 必須。小文字RFC 4122 UUID `D`形式。1回のT-070／T-076 Harness実行を識別 |
+| `BenchmarkRunId` | string | 必須。小文字RFC 4122 UUID `D`形式。Suite内で一意な1測定系列ID。再利用禁止 |
+| `GitCommit` | string | 必須。cleanなRepositoryのHEADを表す小文字16進40桁または64桁。空文字は禁止 |
+| `UnityVersion` | string | 必須。Trim済み1～128文字。空／空白だけ／前後空白は禁止 |
+| `BurstVersion` | string | 必須。Trim済み1～128文字。空／空白だけ／前後空白は禁止 |
+| `CollectionsVersion` | string | 必須。Trim済み1～128文字。空／空白だけ／前後空白は禁止 |
+| `UnityPhysXVersion` | string | 必須。Trim済み1～128文字。空／空白だけ／前後空白は禁止 |
+| `NativePhysXVersion` | string／null | Native PhysX TargetではTrim済み1～128文字を必須とし、それ以外は厳密に`null` |
+| `CpuName` | string | 必須。Trim済み1～256文字。空／空白だけ／前後空白は禁止 |
+| `OperatingSystem` | string | 必須。Trim済み1～256文字。空／空白だけ／前後空白は禁止 |
+| `WorkerCount` | integer | 必須。計測時の設定値`1..1024` |
+| `PowerProfile` | string | 必須。Trim済み1～128文字。空／空白だけ／前後空白は禁止 |
+| `BuildConfiguration` | string enum | 必須。`UnityReleasePlayer`／`NativeRelease`／`EditorDevelopment`。採用判断は前二者だけ |
+| `BurstEnabled` | boolean | 必須。実測値。Native専用系列では`false` |
+| `SafetyChecksEnabled` | boolean | 必須。実測値 |
+| `DatasetId` | string | 必須。`[A-Za-z0-9._-]{1,128}` |
+| `DatasetContentSha256` | string | 必須。小文字64桁`[0-9a-f]{64}` |
+| `DatasetCaseId` | string | 必須。Dataset内の固定入力caseを表す`[A-Za-z0-9._-]{1,128}`。同じDatasetContentSha256内で意味を変更しない |
+| `InputTriangleCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `OutputTriangleCount` | integer | 必須。`0..2147483647`。確定出力または検証済み期待値。非該当Targetでは0 |
+| `IntersectedEdgeCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `CapLoopCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `FragmentCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `InputConvexCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `OutputConvexCount` | integer | 必須。`0..2147483647`。非該当Targetでは0 |
+| `InputConvexVertexCount` | integer | 必須。全入力Convexの合計頂点数`0..2147483647`。非該当Targetでは0 |
+| `OutputConvexVertexCount` | integer | 必須。全出力Convexの合計頂点数`0..2147483647`。非該当Targetでは0 |
+| `PrimitiveCount` | integer | 必須。Temporary Proxy等のPrimitive数`0..2147483647`。非該当Targetでは0 |
+| `CutPlaneCount` | integer | 必須。`0..2147483647`。切断を伴わないTargetでは0 |
+| `BatchSize` | integer | 必須。`JobBatch`では`2..1000000`、それ以外のExecutionModeでは厳密に1 |
+| `WarmupIterations` | integer | 必須。`0..1000000`。定常Baselineでは1以上、Cold測定だけ0を許可 |
+| `MeasurementIterations` | integer | 必須。`1..1000000`。GeometryBenchmarkResult v1の最大Sample試行数と一致 |
+| `CookingProfile` | string enum／null | Cook Targetでは`FastCook`／`FastSimulation`を必須とし、表示Mesh／Convex切断／Proxy／Commit等の非Cook Targetでは厳密に`null` |
+| `BenchmarkTarget` | string enum | 必須。`DisplayMeshCut`／`ConvexCut`／`TemporaryLowPolyProxy`／`UnityBakeMesh`／`NativePhysXComputeHull`／`NativePhysXCompleteTopology`／`NativePhysXDirectInsertion`／`MeshPublish`／`ColliderCommit` |
+| `BenchmarkStage` | string enum | 必須。`WholePipeline`／`PlaneClassification`／`Count`／`Write`／`IntersectionMerge`／`CapLoopBuild`／`CapTriangulation`／`Connectivity`／`Metadata`／`PolygonClip`／`CutFaceBuild`／`Validation`／`MassProperties`／`DescriptorBuild`／`MeshDataBuild`／`ProxyGeneration`／`NativeBoundaryTransfer`／`MeshApply`／`HullComputation`／`PhysXFormatBuild`／`StreamSerialize`／`StreamLoad`／`DirectInsertion`／`Bake`／`Schedule`／`WorkerExecution`／`Complete`／`Commit` |
+| `ExecutionMode` | string enum | 必須。`SingleThreadKernel`／`SerialApiLatency`／`JobSingle`／`JobBatch`／`MainThreadCommit` |
+| `BenchmarkMetric` | string enum | 必須。`Latency`／`Throughput`／`InputRate`／`OutputRate`／`WorkerOccupancy`／`ManagedAllocation`／`NativeMemoryPeak`／`FailureRate`／`ScheduleCount` |
+| `MeasurementUnit` | string enum | 必須。`Microseconds`／`MicrosecondsPerOperation`／`OperationsPerSecond`／`CutsPerSecond`／`InputTrianglesPerSecond`／`OutputTrianglesPerSecond`／`ConvexesPerSecond`／`CooksPerSecond`／`Percent`／`Bytes`／`Count`／`FailuresPerMillionOperations`から1つだけ選ぶ |
+| `TraceRunManifestContentSha256` | string／null | Trace参照時は小文字64桁`[0-9a-f]{64}`、未参照時は厳密に`null` |
+
+canonical JSONは全propertyを上表順序で常に出力し、UTF-8 BOMなし、余分な空白と末尾改行なし、不変Cultureの数値表現とする。nullable propertyも省略せず上表の条件で文字列またはJSON `null`を出力する。Cook Targetは`UnityBakeMesh`と3つの`NativePhysX*`、Native Targetは3つの`NativePhysX*`と定義する。CodecはTargetとStage、ExecutionMode、`NativePhysXVersion`、`CookingProfile`の組合せを検証し、`WholePipeline`以外のStageを無関係なTargetへ指定できないようにする。
+
+`BenchmarkTarget × BenchmarkStage`の許可集合は次を正本とする。`Schedule`／`WorkerExecution`／`Complete`はJob実装を持つTargetだけで使用し、表にない組合せはCodecでRejectする。`WholePipeline`は対象のEnd-to-End系列であり、下位Stageの代用として工程別必須系列を省略してはならない。
+
+| BenchmarkTarget | 許可するBenchmarkStage |
+| --- | --- |
+| `DisplayMeshCut` | `WholePipeline`、`PlaneClassification`、`Count`、`Write`、`IntersectionMerge`、`CapLoopBuild`、`CapTriangulation`、`Connectivity`、`Metadata`、`MeshDataBuild`、`Schedule`、`WorkerExecution`、`Complete` |
+| `ConvexCut` | `WholePipeline`、`PlaneClassification`、`Count`、`PolygonClip`、`CutFaceBuild`、`Write`、`Validation`、`MassProperties`、`MeshDataBuild`、`Schedule`、`WorkerExecution`、`Complete` |
+| `TemporaryLowPolyProxy` | `WholePipeline`、`ProxyGeneration`、`Validation`、`MeshDataBuild`、`Schedule`、`WorkerExecution`、`Complete` |
+| `UnityBakeMesh` | `WholePipeline`、`DescriptorBuild`、`MeshDataBuild`、`MeshApply`、`NativeBoundaryTransfer`、`Bake`、`Schedule`、`WorkerExecution`、`Complete` |
+| `NativePhysXComputeHull` | `WholePipeline`、`DescriptorBuild`、`NativeBoundaryTransfer`、`HullComputation`、`PhysXFormatBuild`、`StreamSerialize`、`StreamLoad` |
+| `NativePhysXCompleteTopology` | `WholePipeline`、`DescriptorBuild`、`NativeBoundaryTransfer`、`PhysXFormatBuild`、`StreamSerialize`、`StreamLoad` |
+| `NativePhysXDirectInsertion` | `WholePipeline`、`DescriptorBuild`、`NativeBoundaryTransfer`、`PhysXFormatBuild`、`DirectInsertion` |
+| `MeshPublish` | `WholePipeline`、`MeshApply`、`Commit` |
+| `ColliderCommit` | `WholePipeline`、`Commit` |
+
+規模軸はDataset caseの固定説明変数であり、Samplesとは独立してManifestへ保存する。`DisplayMeshCut`／`MeshPublish`はTriangle／Edge／Cap／Fragment軸、`ConvexCut`はConvex／Convex Vertex／Fragment／Cut Plane軸、`TemporaryLowPolyProxy`はTriangle／Fragment／Primitive／Cut Plane軸、Cook Target／`ColliderCommit`はConvex／Convex Vertex軸を使用する。使用しない軸は厳密に0とし、同じ`DatasetId + DatasetContentSha256 + DatasetCaseId`で軸値が異なるManifestを同一Suiteへ含めない。CodecとSuite LoaderはこのTarget別規模軸規則を検証する。
+
+同一`BenchmarkSuiteId`内では、1つの`DatasetId`を厳密に1つの`DatasetContentSha256`へ対応させる。Suite Loaderは全Manifestを読む際に`DatasetId -> DatasetContentSha256`の写像を構築し、同じDatasetIdから異なるhashが1件でも現れたSuite全体を、Resultの読込や容量式tableへのjoin前にRejectする。異なるDataset版を比較する場合は別`BenchmarkSuiteId`で測定するか、版を表す別`DatasetId`を明示的に割り当てる。同一Suite内でhashだけを変えてLatency、Throughput、FailureRate等の系列を混在させることは禁止する。
+
+`BenchmarkStage × ExecutionMode`の許可集合も固定し、Target×Stage表との積で最終的な許可組合せを決める。
+
+| BenchmarkStage分類 | 許可するExecutionMode |
+| --- | --- |
+| `PlaneClassification`、`Count`、`Write`、`IntersectionMerge`、`CapLoopBuild`、`CapTriangulation`、`Connectivity`、`Metadata`、`PolygonClip`、`CutFaceBuild`、`Validation`、`MassProperties`、`MeshDataBuild`、`ProxyGeneration` | `SingleThreadKernel`、`JobSingle`、`JobBatch` |
+| `DescriptorBuild` | `SingleThreadKernel`、`SerialApiLatency`、`JobSingle`、`JobBatch` |
+| `NativeBoundaryTransfer` | `SerialApiLatency`、`JobSingle`、`JobBatch` |
+| `HullComputation`、`PhysXFormatBuild`、`StreamSerialize`、`StreamLoad`、`DirectInsertion` | `SerialApiLatency` |
+| `Bake` | `SerialApiLatency`、`JobSingle`、`JobBatch` |
+| `Schedule`、`WorkerExecution`、`Complete` | `JobSingle`、`JobBatch` |
+| `MeshApply`、`Commit` | `MainThreadCommit` |
+
+`WholePipeline`だけはTarget別にModeを固定する。`DisplayMeshCut`／`ConvexCut`／`TemporaryLowPolyProxy`は`SingleThreadKernel`／`JobSingle`／`JobBatch`、`UnityBakeMesh`は`SerialApiLatency`／`JobSingle`／`JobBatch`、3つのNative PhysX Targetは`SerialApiLatency`、`MeshPublish`／`ColliderCommit`は`MainThreadCommit`だけを許可する。さらにNative PhysX Targetの下位Stageはすべて`SerialApiLatency`、`MeshPublish`／`ColliderCommit`の下位Stageはすべて`MainThreadCommit`へ限定する。`JobBatch`は`BatchSize >= 2`、それ以外は`BatchSize == 1`を要求する。これにより`ColliderCommit + SingleThreadKernel`、`PlaneClassification + MainThreadCommit`等をCodecでRejectする。
+
+MetricとUnitの許可組合せも固定する。`Latency`は`Microseconds`／`MicrosecondsPerOperation`、`Throughput`は`OperationsPerSecond`／`CutsPerSecond`／`ConvexesPerSecond`／`CooksPerSecond`、`InputRate`は`InputTrianglesPerSecond`、`OutputRate`は`OutputTrianglesPerSecond`、`WorkerOccupancy`は`Percent`、`ManagedAllocation`／`NativeMemoryPeak`は`Bytes`、`FailureRate`は`Percent`／`FailuresPerMillionOperations`、`ScheduleCount`は`Count`だけを許可する。UUID、enum、文字列長、数値範囲、SHA-256の長さ／小文字／文字種もCodecで検証する。
+
+canonical Suite開始時に一度だけ、公開Repositoryで`git status --porcelain=v1 --untracked-files=all`相当の結果が空であることを必須検証し、その時点のHEADを全Manifest共通の`GitCommit`として固定する。出力先はRepository外の`%LOCALAPPDATA%\Zantetsuken\Benchmarks\<BenchmarkSuiteId>.tmp\`を既定とし、Suite中にRepositoryへManifest、Result、Logを生成しない。全測定終了後かつ最終化前に、HEADが開始時の`GitCommit`と一致し作業ツリーが引き続きcleanであることを再検証する。途中でstaged、unstaged、未追跡変更が生じた場合はSuite全体をRejectし、一時出力を確定しない。
+
+dirty状態の非公式な対話計測は画面表示だけ許可できるが、canonical Manifest、content hash、Result、Suite Indexを保存せず、回帰比較、容量校正、Native採用判断へ使用しない。Golden Fixture等のRepository内成果物更新はBenchmark Suiteとは別の実装作業として行い、測定開始前にコミットする。
+
+各`GeometryBenchmarkRunManifest`には、同じ`BenchmarkSuiteId`／`BenchmarkRunId`を持つcanonical `GeometryBenchmarkResult`を厳密に1件対応させる。Result Schema v1のproperty順は`SchemaVersion`、`BenchmarkSuiteId`、`BenchmarkRunId`、`ManifestContentSha256`、`SampleCount`、`RejectedSampleCount`、`Samples`、`Aggregate`で固定する。
+
+| Result property | JSON型 | 契約 |
+| --- | --- | --- |
+| `SchemaVersion` | integer | 厳密に`1` |
+| `BenchmarkSuiteId` | string | 対応Manifestと同じ小文字UUID |
+| `BenchmarkRunId` | string | 対応Manifestと同じ小文字UUID |
+| `ManifestContentSha256` | string | 対応するcanonical Manifest bytesの小文字64桁SHA-256 |
+| `SampleCount` | integer | `1..MeasurementIterations`かつ`Samples`長と一致 |
+| `RejectedSampleCount` | integer | `0..MeasurementIterations-1`かつ`SampleCount + RejectedSampleCount == MeasurementIterations` |
+| `Samples` | number array | 取得順を維持した、ManifestのMetric／Unitに従う有限・非負値。長さは`SampleCount` |
+| `Aggregate` | object | property順を`Count`、`Minimum`、`Maximum`、`Mean`、`P50`、`P95`、`P99`に固定。CountはSampleCountと一致し、残りはSamplesから決定論的に再計算できる有限・非負値 |
+
+Resultの浮動小数点は負の0を`0`へ正規化し、NaN／正負Infinityを禁止して、不変Cultureの最短round-trip JSON numberで表す。`Bytes`／`Count`系列の`Samples`と、Samplesから値を選ぶ`Minimum`／`Maximum`／`P50`／`P95`／`P99`だけは`0..2^53-1`の整数に限定する。`Aggregate.Count`は常にSampleCountと同じintegerであり、Unit固有の測定値範囲には含めない。一方、`Aggregate.Mean`はBytes／Count系列を含む全Unitで有限・非負のcanonical doubleを許可し、例えばSamples `[1,2]`のMeanは`1.5`とする。`Percent`系列は`Samples`と`Aggregate.Minimum`／`Maximum`／`Mean`／`P50`／`P95`／`P99`だけを`0..100`へ制限し、`Aggregate.Count`は101以上でもよい。
+
+PercentileはSamplesを数値昇順に並べたnearest-rank法`index = ceil(p * Count) - 1`でP50／P95／P99を求める。Meanは`sum = +0.0`から開始し、Samplesの取得順に各値をIEEE 754 binary64のround-to-nearest, ties-to-evenで`sum = sum + sample`と左畳みし、最後に同じbinary64規則で`sum / Count`を1回だけ行う。途中または除算後に非有限値となったResultはRejectし、負の0は0へ正規化する。並べ替え、pairwise／Kahan等の補償加算、FMA、拡張精度による中間値保持を許可しない。Codecはこの手順でAggregateを再計算し、canonical JSON numberの再parse後のbinary64 bit patternが一致することを要求する。Result content SHA-256はResult自身へ埋め込まず、canonical Result bytesから計算してSuite Indexへ格納する。
+
+`RejectedSampleCount`は、Timer不成立、Harness内部例外、測定中断、sample値の破損など「対象処理の成否を観測できなかった試行」だけを数える。切断、Proxy生成、cook、Commit等の対象処理が正常に実行されて失敗／Fallbackを返した試行は有効な観測であり、Rejectedへ移さない。`FailureRate + Percent`系列では単一試行を成功=`0`、失敗／Fallback=`100`、Batch試行を`失敗operation数 / 全operation数 * 100`としてSamplesへ含める。`FailureRate + FailuresPerMillionOperations`では同じ比率を100万operation当たりへ換算する。他Metricにも失敗試行の経過時間、attempt数、allocation等の定義済み値を可能な限り含め、結果の存在しない指標だけを別系列のRejectedとする。全`MeasurementIterations`が計測不能で`SampleCount == 0`となるRunはResultを生成せず、Suite全体をRejectする。
+
+Result Schema v1は`MaxSampleCount = 1000000`、`MaximumCanonicalByteCount = 67108864`（64 MiB）をハード上限とする。`MeasurementIterations`、`SampleCount`、`SampleCount + RejectedSampleCount`はいずれもMaxSampleCount以下でなければならない。Result Loaderは`maxCanonicalByteCount`と`maxSampleCount`を必須引数として受け、呼び出し値を`1..MaximumCanonicalByteCount`および`1..MaxSampleCount`へ制限する。schema上限を暗黙使用する無引数／無制限overloadは提供しない。
+
+Result Loaderは配列や全file Bufferを確保する前に、seek可能な入力ではfile長、非seek入力では上限付きCounting Streamでbyte上限を検査する。`Samples`より前に現れる`SampleCount`を読み、呼び出し側上限、schema上限、対応ManifestのMeasurementIterations、対応するSuite Index EntryのSampleCountと照合してからだけ固定長領域を確保する。宣言件数より多いJSON要素、過剰nesting、末尾data、上限到達後の追加readをRejectする。Suite Loaderは対応Index EntryのSampleCount以下の値を各Result Loaderの`maxSampleCount`として渡し、攻撃的または破損したResultによる無制限確保を禁止する。
+
+Manifest Schema v1は`ManifestMaximumCanonicalByteCount = 65536`（64 KiB）をハード上限とする。Manifest Loaderは`maxManifestCanonicalByteCount`を必須引数として受け、`1..ManifestMaximumCanonicalByteCount`だけを許可する。seek可能／非seek入力ともResultと同じ事前byte検査を行い、上限内と確認するまで全file Bufferを確保しない。Manifestには可変長配列を許可せず、文字列はproperty表の個別上限も同時に検証する。
+
+Suiteの対応関係はcanonical `GeometryBenchmarkSuiteIndex`で確定する。Index Schema v1のproperty順は`SchemaVersion`、`BenchmarkSuiteId`、`GitCommit`、`EntryCount`、`Entries`とし、Entriesは`BenchmarkRunId`のordinal昇順で並べる。各Entryのproperty順は`BenchmarkRunId`、`ManifestContentSha256`、`ResultContentSha256`、`SampleCount`、`RejectedSampleCount`とする。`IndexMaxEntryCount = 100000`、`IndexMaximumCanonicalByteCount = 67108864`（64 MiB）をハード上限とし、EntryCountは`1..IndexMaxEntryCount`かつEntries長と一致し、Run ID重複を禁止する。Index Loaderは`maxIndexCanonicalByteCount`と`maxEntryCount`を必須引数として受け、各値を`1..`各schema上限へ制限する。file／streamのbyte上限を先に検査し、Entriesより前のEntryCountを呼び出し側上限とschema上限へ照合してからだけ配列を確保する。Loaderは各Manifest／Resultを再hashし、Suite／Run ID、Manifest参照hash、件数、Indexの両content hashが一致しなければBundle全体をRejectする。
+
+ResultとSuite IndexもManifestと同じUTF-8 BOMなし、余分な空白／末尾改行なし、固定property順、未知property禁止、canonical再serialize一致の規則を使う。Result／Indexの`SchemaVersion`はinteger `1`、Suite／Run IDは小文字UUID、`GitCommit`はManifest群と同じ小文字40／64桁、content hashは小文字64桁、件数は非負integerとしてCodecで型と範囲を検証する。Index EntryのSampleCount／RejectedSampleCountは対応Resultと一致し、EntryCountはSuite内のManifest件数およびResult件数の双方と一致しなければならない。Manifest／Result／Indexの全Loaderはschema上限以下の呼び出し側byte上限を必須とし、配列を持つResult／Indexは件数上限も必須とする。無引数、既定で無制限、または配列確保後にしか件数を検査しないAPIを提供しない。
+
+Suite完了時は`<BenchmarkRunId>.manifest.json`と`<BenchmarkRunId>.result.json`を一時ディレクトリへ書いて再読込・再hashした後、`suite.index.json`を最後に書く。全検証成功後だけ一時ディレクトリを同じ親上の`<BenchmarkSuiteId>\`へ原子的にRenameする。Indexがない、一時suffixのまま、hash不一致、余分な未登録Result／Manifestがあるディレクトリは未完成として比較対象へ入れない。これにより同じManifestへ異なる実測データを後付けしてもIndex hash検証で検出する。
+
+`TraceRunManifest`本体、Codec、Golden Hash、Trace bundle形式は変更せず、Benchmark Manifestの未知Schema Version、未知property、順序違反、canonical再serialize不一致は比較対象からRejectする。
+
+各RunのManifestにある`DatasetCaseId`、Triangle／Edge／Cap／Fragment／Convex／Vertex／Primitive／Cut Plane／Batch Size軸を説明変数、対応ResultのSamples／Aggregateを目的変数として、保守的なP95／P99容量式を作る。Suite LoaderはManifest／Result／Indexをjoinした機械可読tableを生成でき、容量式の各行から元のSuite／Run／Dataset caseへ戻れるようにする。実行時Schedulerは後にこの式と実測キュー長からDeadlineまでの完了見込みを推定できるが、初期実装では係数を最適化に直結させず、Worker時間予算、Batch Size、同時Bake数、Temporary Renderer上限を決める根拠として使用する。コード変更時も同一Dataset case系列を比較する。
+
+### 7.6 微小付属物の消去
 
 Physics Proxyで表現しないアンテナ、細い取手、小装飾などは、プリプロセス時に`Micro Attachment`として本体から識別可能にする。斬撃の切断帯に触れたMicro Attachmentは、極小の表示Mesh／Collider／Rigidbodyを生成せず、`HitConfirmed`と同じフレームで部品全体を不可逆に消去する。即時シェーダで一度切れた部品が実Meshへの差し替え時に復活する挙動は禁止する。
 
@@ -413,7 +554,7 @@ Physics Proxyで表現しないアンテナ、細い取手、小装飾などは�
 
 - 実装を単純にするため、Blender前処理で対象の連結成分を別Renderer／別Componentへ分離する構成を優先する。統合Meshのまま扱う必要があるAssetだけ、頂点／三角形の`AttachmentId`とGPU生存Maskを使用する。
 
-### 7.6 GPU Micro Debris
+### 7.7 GPU Micro Debris
 
 Micro Attachment消去時は、元部品の実Geometryを事前生成したShard Clusterへ分け、Vertex Pullingと間接描画でGPU上に短時間飛散させる。1体全体が2,000～3,000 Triangle程度というAsset予算から、Micro Attachment 1件は通常20～150 Triangle程度を想定し、シーン全体の通常Active量は数千Triangle以下とする。`HitConfirmed`と同じフレームに元RendererのAliveMaskを落とし、CPUから共有`GpuMicroDebrisSystem`へ発生Event Recordを1件だけ送る。
 
@@ -476,7 +617,7 @@ Gameplay上重要、シルエット上大きい、相互作用対象、または
 
 Phase 1のPoCでは、手作業で事前Shard化した専用テストMeshを入力し、VFX Graphで外観、汎用破片Fallback、URP／XR適合性を素早く検証する。この段階では任意切断結果の微小判定、Triangle抽出、AliveMask連携を受け入れ条件に含めない。実Geometry経路は固定長Event Buffer、Geometry Atlas、Shard Metadata、解析運動Shader、`Graphics.RenderPrimitivesIndirect`／同等APIによる専用Vertex Pulling実装を第一候補とする。GPU Eventなど実験的機能への依存は必須にしない。
 
-### 7.7 全体低重力
+### 7.8 全体低重力
 
 空中物体斬りの猶予を自然に増やし、世界全体の挙動を統一するため、個別の空中斬り補助ではなく全体低重力を初期方針とする。PoCの仮値は標準重力の約0.5倍、`(0, -4.9, 0) m/s^2`とするが、最終値はプレイテストで決める。
 
@@ -897,6 +1038,12 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-103 | 物理表現enum初期値 | PhysicsRepresentationStatusはPending=0、Represented=1、Missing=2、Shared=3、Ambiguous=4、SharedResolutionRoleはNone=0、Keeper=1、DebrisCandidate=2、PreserveFallback=3で固定する | 確定 |
 | D-104 | Debris Reject Trace | FragmentのReject／Fallback理由はappend-onlyなTraceReasonへ格納し、Value0／Value1へReason enumを重複保存しない。イベント別表でStatus、測定値、閾値の意味を固定する | 確定 |
 | D-105 | Debris Trace相関 | Runtime Arenaの4段階ライフサイクルEventをappend-onlyで追加し、Value0へuint DebrisEventIdを格納する。一意キーはTestRunId＋DebrisEventIdとし、IDカウンタはArenaがQuiescentかつ新しいTestRunIdのTrace Runを開始するときだけ再初期化する | 確定 |
+| D-106 | Geometry／Cook性能Baseline | T-070を早期Cook比較Probe、T-076を製品Geometry完成後の補完・再解釈Baselineとする。表示Mesh切断、Convex切断、検証済みTemporary Low-Poly Proxy、cookを工程別に、計算KernelのSingle-Thread µs/op、cook／Commitの単発Latency、Job Batchの定常Throughput／End-to-End latencyへ分けて測り、保守的なP95／P99容量式を作る | 確定 |
+| D-107 | Benchmark Manifest分離 | GeometryBenchmarkRunManifestは単一Target／Stage／ExecutionMode／CookingProfile／Metric／Unitの1測定系列ごとに作り、BenchmarkSuiteIdで一回のHarness実行を束ねる。型・値域・組合せ・全property順・非該当値のJSON nullを固定し、canonical保存はclean Repositoryだけに許可する。既存TraceRunManifestとCodec／Golden Hash／bundle形式を変更しない | 確定 |
+| D-108 | Benchmark Result Bundle | 各Run Manifestへraw Samplesと固定Aggregateを持つGeometryBenchmarkResultを1対1対応させ、GeometryBenchmarkSuiteIndexがManifest／Result hashと件数を固定する。Suite開始・終了時に同じclean HEADを検証し、Repository外でIndexを最後に書いて原子的に確定する | 確定 |
+| D-109 | Benchmark Case／Loader契約 | 1 Manifestを単一DatasetCaseIdと固定規模軸へ限定し、Manifestの説明変数とResultの測定値から容量式を復元する。Target×Stage×ExecutionModeを許可表で検証し、Result v1は100万Sample／64 MiBをschema上限、呼び出し側の明示上限を必須とする。Bytes／Countのraw値と順序統計量は整数に限定するがMeanはcanonical doubleとする | 確定 |
+| D-110 | Benchmark集計／全Loader境界 | Percentの0..100制約からAggregate.Countを除外し、Meanを取得順binary64左畳みで固定する。Rejectedは対象結果を観測不能な試行だけとし、対象処理の失敗はFailureRateへ含める。Manifestは64 KiB、Indexは10万Entry／64 MiBを上限とし、Manifest／Result／Indexの全Loaderへ呼び出し側上限を必須とする | 確定 |
+| D-111 | Suite内Dataset同一性 | 同一BenchmarkSuiteIdでは1つのDatasetIdを厳密に1つのDatasetContentSha256へ対応させ、Suite Loaderがjoin前に全Manifestを検証する。異なるDataset版は別Suiteまたは明示的な別DatasetIdとして測定する | 確定 |
 
 ## 13. 未決事項
 
@@ -936,10 +1083,11 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | O-032 | 最終重力と周辺調整 | 0.35G／0.5G／0.7G／1.0Gの採用値と、反発、Drag、分離Impulse、Animation、破片寿命の追加調整要否 | 空中斬り成功率、世界の重量感、テンポ、物理安定性 | T-064のプレイテスト後 |
 | O-033 | Shadow近似品質 | 両面・キャップなし近似を許容する距離／時間、Stable専用Shader分離、問題時の簡易Shadow Cap導入条件 | Shadow GPU時間、Draw、接地影、Self Shadow、実装複雑度 | T-065後 |
 | O-034 | Stencil Batch予算 | 最大Color数、OBB／Cap Bounds Margin、World Plane一致epsilon、Facing epsilon／ヒステリシス、Stencil Clear／Count方式、相殺不成立時のFallback、上限超過時にキャップを省略する距離／画面寸法 | CPU分類・彩色時間、Stencil GPU時間、Draw、仮断面品質 | T-066～T-068後 |
-| O-035 | Job実行予算 | フレームごとのSchedule数、Batch Size、Worker占有上限、複数フレームJobのNativeメモリAllocator／寿命、MeshData一括Commit数、Bake同時実行数 | 90fps安定性、投機完了率、Pending滞留、メモリ | T-069後 |
-| O-036 | Native Cook再検討閾値 | 「継続的に大きい差」の倍率、Unity Bake P99／Pending許容時間、Worker占有、Native部分置換へ進む最低改善量と保守工数上限 | Backend選択、実装規模、Unity更新追従、再現性 | T-070とPhase 4実測後 |
+| O-035 | Job実行予算 | フレームごとのSchedule数、Batch Size、Worker占有上限、複数フレームJobのNativeメモリAllocator／寿命、MeshData一括Commit数、Bake同時実行数 | 90fps安定性、投機完了率、Pending滞留、メモリ | T-069／T-076後 |
+| O-036 | Native Cook再検討閾値 | 「継続的に大きい差」の倍率、Unity Bake P99／Pending許容時間、Worker占有、Native部分置換へ進む最低改善量と保守工数上限 | Backend選択、実装規模、Unity更新追従、再現性 | T-070／T-076を比較できるPhase 4.1完了後 |
 | O-037 | Surface Projection閾値 | Trusted Exterior分類、最大距離、法線内積、包含Margin、最小厚み、Reduction前後の再Projection条件、自己交差検出精度 | Silhouette回復、Solid堅牢性、自動成功率、前処理時間 | T-071後 |
 | O-038 | Render／Convex対応閾値 | 専有Convex集合の被覆を近似する系譜、Bounds、固定数包含Sample、推定体積被覆率、境界距離、Shared Keeper Score、DebrisCandidate最大寸法・重要度、Ambiguous Margin | 誤消去、Collider欠落、共有Convexのめり込み、判定費用 | T-075後 |
+| O-039 | Geometry／Cook容量予算 | P95／P99容量式から、1フレーム当たりWorker時間、Deadline別の同時切断数、Temporary Renderer上限、Batch Size、同時Bake数、Proxy品質段階を決める | 先行計算完了率、命中後Pending時間、90fps安定性、品質低下頻度 | T-076後 |
 
 ## 14. 技術検証項目
 
@@ -1014,25 +1162,28 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | T-067 | Stencil相殺・互換Group | 整合したCut Shellの閉部分ではFront／Backがゼロへ相殺され、非ゼロ領域が可視Cap Bounds内に収まる。キャップ互換な重複対象は同一Colorで正しく和集合表示され、不一致は確実に別Groupとなる | 同一Slashの静止／共通親／別Rigidbody、追加Cut、異Material、Debug色差、偶数重なり、多重Countに加え、面向き不正、非閉形状、Near Plane、非対称clip／Depth、MSAA境界を作り、残留Stencil範囲、Key分類、World Plane epsilon、画像差、Fallback、Color削減率を検査 |
 | T-068 | 両眼Cap可視性Cull | 両眼とも裏向きの互換Groupだけが安全に早期除外され、片眼可視、面近傍、正負破片でCap欠落や点滅を起こさずStencil仕事を削減する | 左右眼でFacingが一致／不一致となる配置、面横断、頭部微動、正負Cap、Frustum外を再生し、Cull判定、ヒステリシス、Stencil Draw／GPU時間、左右眼画像差を比較 |
 | T-069 | Convex Job Pipeline | Convex分割と複数`Physics.BakeMesh`がメインスレッドを停止させず、世代不一致成果物を適用せず、Pending物理共有から安全に分裂できる | 破片数、面数、同時Slash数、Fast Cook／Fast Simulationを変え、各Job段階時間、Schedule数、Worker占有、Main Thread Commit時間、Bake P50／P95／P99、Generation Reject、物理差し替え時Impulseを測定。同一Mesh同時Bakeを不変条件として検出する |
-| T-070 | Unity／Native Cook Probe | U1／N1／N2／N3を同一入力と近似条件で再現測定し、Unity経路の実費用、Hull再計算の寄与、完全Topology／直接生成の改善上限を工程別に説明できる | 8～255頂点級、単発／Batch、Fast Cook／Fast SimulationをRelease相当で反復し、P50／P95／P99、Throughput、各工程時間、Thread占有、メモリ、失敗率、出力形状、接触／Query品質、Unity／PhysX版をRun Manifestへ保存する。版違いと非利用可能なNative生成物を明記する |
+| T-070 | Unity／Native Cook Probe | U1／N1／N2／N3を同一入力と近似条件で再現測定し、Unity経路の実費用、Hull再計算の寄与、完全Topology／直接生成の改善上限を工程別に説明できる。製品Geometry完成前の早期Probeであり、T-076の前提ではない | 8～255頂点級、単発／Batch、Fast Cook／Fast SimulationをRelease相当で反復し、P50／P95／P99、Throughput、各工程時間、Thread占有、メモリ、失敗率、出力形状、接触／Query品質を測る。Target×Stage×ExecutionMode許可規則に従い、単一DatasetCaseIdと固定規模軸を持つ各系列のManifest／Resultを作り、Suite Indexでhashと件数を固定する。N1のHullComputation、N1／N2のPhysXFormatBuild／StreamSerialize／StreamLoad、N3のDirectInsertionを独立系列として復元でき、版違いと非利用可能なNative生成物を明記する |
 | T-071 | Surface Projectionと自己交差 | Voxel形状より主要Silhouette／曲面誤差を改善しつつ、Projection／Reduction後も自己交差、面反転、退化、境界、体積異常を残さず、実Mesh切断の単純Loop前提を満たす | 車、建物、家具、薄板、近接二重面、内部装飾を含むDatasetでProjectionなし／無制約Shrinkwrap／制約付きProjectionを比較し、距離分布、Silhouette、Normal、包含、最小厚み、自己交差、投影拒否率、Triangle数、前処理時間、多方向切断Loop次数と三角形化成功率を測定する |
 | T-072 | 固定物体の即時切断 | cook遅延中も固定側が動かず、自由と証明された側だけが仮分離し、Commit後も位置・速度・Constraintが連続する | 単一Anchor、両側Anchor、面近傍Anchor、Compound Graph、連続切断、先行評価Reject、cook遅延／失敗を再生し、分類時間、誤Impulse、固定点変位、自由側軌道、Traceを検査する |
 | T-073 | Dormant Cut再可視化 | 両側固定のゼロ幅切断が即時Stencil／仮Cap／分離を起動せず、実Mesh完成後の切断痕を許容範囲に保ち、交差する後続切断でDetached部品とその全境界断面が同一フレームに現れる | 大型建物を縦1面、交差2面、3面で切り、Anchor配置を変えてDormant／Active遷移、線状亀裂、軽微なチラツキ、全面Z-fighting、Cap欠落、旧面復活、Stencil Draw／Pixel費用、背景Job完了順、再切断世代を検査する |
 | T-074 | 支持Topologyモデル | 同一物体にActive／Dormant／Suppressed境界とPending／Ready Geometryが混在しても状態を損なわず、完全決定表、FragmentGroup集約、全履歴面の再評価、物理状態遷移、世代Rejectが決定論的に動作する | 正負Supportの全9組み合わせに加え、`Anchored／Detached`のActive境界と`Unknown／Anchored`のSuppressed境界が同一Groupへ混在するFixtureを再生する。PendingSupportClassification中に旧Rigidbody、Collider、Constraint、TransformとGroup運動が変わらず、既知Active境界のclip／Stencil／仮Capだけが表示され、Suppressed境界は表示されないことを検査する。再分類後の集約遷移、同一フレームActive化、Timeout Fallback、Trace値も純粋C#テストで検査する |
 | T-075 | Render／Convex対応 | Pending／Represented／Missing／Shared／AmbiguousとNone／Keeper／DebrisCandidate／PreserveFallbackを固定値どおり決定論的に扱い、物理表現不能な小Fragmentだけをデブリ化して、大型・重要・未分類・曖昧なFragmentを誤消去しない | default初期化、全Status／Role組合せ、1 Render対1 Convex、1 Render対複数専有Convex、対応なし、複数Render対1 Convex、多対多、専有＋Shared混在、複数大型共有、閾値近傍、世代不一致を合成する。不正組合せReject、近似被覆、Keeper選択、未分裂Fallback、SharedGroupLocalIdの0予約・世代内一意性・非再利用、Trace Reasonと対応／Shared連結成分の復元を検査する |
+| T-076 | Geometry／Cook Microbenchmark | 製品の表示Mesh切断、Convex切断、T-077検証済みTemporary Low-Poly Proxy生成、`Physics.BakeMesh`を工程別に再現測定し、単発レイテンシとJob定常処理容量を分離して、入力規模からP95／P99完了時間を見積もれる。T-070の早期Probeを製品入力分布から補完・再解釈する | 公開合成DatasetをRelease Player相当／Burst有効でWarm-up後に反復する。計算KernelのSingle-Thread µs/op、Bake／Commitの直列単発Latency、Job Batchのcuts／triangles／convexes／cooks per second、Schedule／Complete latency、Worker占有、Main Thread Commit、GC／Nativeメモリ、失敗率を規模別に保存する。Target×Stage×ExecutionMode許可規則、Metric／Unit組合せ、系列一意性を検査し、`ColliderCommit + SingleThreadKernel`と`PlaneClassification + MainThreadCommit`をRejectする。ManifestのDatasetCaseIdと全規模軸をResultへjoinし、Samples／P50／P95／P99と容量式の説明変数を一意に復元する。同一Suiteへ同じDatasetId・異なるDatasetContentSha256を持つLatency／Throughput等を混在させたFixtureをjoin前にSuite Rejectし、別Suiteまたは別DatasetIdなら受理する。Bytes／Count Samples `[1,2]`からMean `1.5`を取得順binary64左畳みで再計算し、101件以上のPercent系列でもCountを範囲違反にしない。対象処理の失敗／FallbackがRejectedではなくFailureRateへ入ること、一部計測不能時の件数、全試行計測不能時のSuite Rejectを検査する。Manifest／Result相互ID・hash・件数、Aggregate再計算、Result差し替え、欠落／余分Entry、開始／終了clean検証、途中HEAD変更、Repository外一時出力、Index-last原子的確定、未知Schema／property Rejectを試験する。Manifest 64 KiB、Result 64 MiB／100万Sample、Index 64 MiB／10万Entryと呼び出し側のより小さい上限、宣言件数超過、非seek入力、過剰nesting、末尾dataを配列確保前にRejectし、全Loaderに無制限APIが存在しないことを確認する |
+| T-077 | Temporary Low-Poly Proxy正しさ | 実装した各品質段階が有限で決定的なGeometryを生成し、表示ProxyはBounds／切断側／Triangle上限、物理Proxyはwatertight／面向き／凸性またはCompound規約／PhysX上限を満たす。不正入力を成功扱いせず安全な下位Fallbackへ移す | 中央／端／非交差、薄形状、極端なAspect、複数Fragment、退化Bounds、NaN入力を合成し、同一入力Hashからの出力一致、有限頂点、退化面、Bounds逸脱、切断側分類、体積、凸性、Primitive重複、上限、Validation Reason、Fallback順を検査する。合格した品質段階だけをT-076へ渡す |
 
 ## 15. 実装ロードマップ
 
 | 段階 | 焦点 | 主要成果物 | 完了条件 |
 | --- | --- | --- | --- |
 | Phase 0 | 非VR基盤・観測 | Unity 6.3 LTS 6000.3.22f1、Universal 3D／URP、Repo・ignore・Package Lock、固定テスト、Editor更新手順、入力抽象化、WorldPhysicsProfile、ProfilerMarker、Flow、TraceLogger、最小タイムライン、FrameId同期のUnity選択的キャプチャ | 固定Editor版から非VRで再現可能な性能基準、重力Profile、Work Item／Job時系列、対応画像を取得し、一時worktreeで更新・復帰手順を確認 |
-| Phase 0.25 | Cook比較Probe | 固定Convex Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Run Manifest、結果レポート | 同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、差の原因と版・設定差を区別して記録できる。Native PhysXを製品Runtime依存にはしない |
+| Phase 0.25 | Cook比較Probe | 固定Convex Dataset、U1 Unity BakeMesh Harness、N1／N2／N3 Native PhysX Harness、工程別Timer、Repository外のManifest／Result／Suite Index Bundle、結果レポート | 製品Geometry完成前の早期Probeとして、同一入力でUnity経路の実費用とNative改善上限をP50／P95／P99まで再現測定でき、N1／N2／N3の必須Stage差、版・設定差、Manifestと実測Resultのhash対応を記録できる。T-076の前提とはせず、Native PhysXを製品Runtime依存にはしない |
 | Phase 0.5 | XRスモークテスト | OpenXR、Quest 3S有線Link、Grip Pose、Tracking State、GripToKatanaOffset、Single Pass | 空シーンで両眼90Hzと左右の刀姿勢・追跡復帰を確認 |
 | Phase 1 | 即時切断 | `NoFixedSupport`と明示されたテスト対象、共通切断入力、単一clip、分離オフセット、簡易断面、ヒット演出、事前Shard済み専用テストMeshによるVertex Pulling／Indirect Batch描画性能PoC、VFX Graph汎用Fallback | 非VR入力で、固定支持を持たないと明示した箱と代表プロップだけに即時の隙間を表示する。支持属性が不明な対象や地面・壁・基礎へ固定された対象は切断対象へ入れない。任意切断由来の微小Fragment判定やclip＋ポリゴン崩壊は行わず、全Fragmentを通常の塊としてclip表示する。事前Shard済み専用Meshだけを通常数千Triangle・少数Drawで描画し、GPU経路の性能とFallbackを確認する |
 | Phase 1.5 | 固定支持Topology | `FixedSupportAnchor`、Node／Edge、`LogicalFragment`、`CutBoundaryRecord`、Support／Exposure／Geometry／Work Result状態軸、`PendingSupportClassification`、Support→Exposure決定表、全LogicalFragment→FragmentGroup物理状態集約、Anchor到達性、Anchor／SupportGraph世代、Commit検証、純粋C#単体テスト、支持Trace契約 | 手書き／合成FixtureでT-074を満たし、Collider切断やcookなしで境界ごとのDormant／Active／Suppressed分類、複数境界混在時のGroup物理状態、分類不能時の物理完全維持と既知Active境界の描画、再分類遷移、全履歴面の再評価、世代不一致Reject、保守的Fallbackを決定論的に再現できる。完了後に固定支持対象を切断対象へ追加する |
 | Phase 2 | 仮断面・影強化 | Cut Shell、ゼロKerf、Dormant Cut Cull／再有効化、実Fragment Mesh早期公開、Temporary Render Boundary Set、Ready中の表示継続と原子的Geometry Commit、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、Front／Back相殺とResidual Stencil Support検証、CapCompatibilityKey／互換Group、可視Cap Bounds競合判定、Winding Count Stencil、左右眼Stencil Conflict Graph／Greedy Coloring、Color単位Volume／Cap Batch、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用per-instance clip／Offset、Stable片面／Pending両面Batch、XR両眼対応、Pending Cut／Stable履歴管理 | 2～4連続切断と複数対象の画面重複でStencilが混入せず、ActiveかつGeometry未Commit（PendingまたはReady）の境界だけが即時Renderer費用を発生させる。Ready到達だけでは表示を戻さず、実Mesh適用とCommitted遷移が同じ描画フレーム境界で成功した後にだけTemporary Renderer一覧から外す。両側固定のDormant Cutは大断面の即時Stencil仕事を発生させず、完成した実Meshを同一位置で公開できる。Geometry Commit後もCutBoundaryRecordと支持履歴が残る。許容する細い切断痕と禁止する全面Z-fightingを区別し、Detached化した瞬間に過去断面を欠落なく再表示する。OBBが重なってもCap非交差なら安全にBatchされ、互換Groupは統合され、両眼不可視Cap Groupは欠落や点滅なく除外される。相殺不能入力はFallbackし、Shadow MapではStencil Capなしの影近似が許容範囲に収まる |
 | Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、断面生成、RenderFragment接続成分、Triangle数／面積／体積／重要度Metadata、後続Debris Corner Stream生成用出力、メインスレッドMesh公開、世代Commit | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない。任意切断由来Fragmentは物理Convex対応が確定するまで塊として表示され、Phase 3だけでは大きさを理由にデブリ化せず、clip中の表面Triangle崩壊を起こさない |
-| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、予算管理、T-063／T-070／T-075との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Arena不足で待機・再確保せず品質低下する。分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、Native Convex B-rep、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Temporary Low-Poly Proxy生成Kernel／Validation／Fallback、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、別Mesh差し替え、Upgrade Scheduler、質量特性、速度継承、Generation Reject、Timeout品質低下、保守的な仮予算管理、T-063／T-070／T-075／T-077との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Temporary Proxyの実装済み品質段階がT-077を通り、不正入力は下位Fallbackへ移る。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリへ保守的な仮上限を設定し、Arena不足でも待機・再確保しない。分類後は固定側を動かさず自由側だけを安全に分離する。Convex分割／BakeでMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Single-Thread Kernel Harness、Job Batch Harness、表示Mesh／Convex／T-077検証済みTemporary Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装を同一入力でT-076に従って測定し、各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039の初期確定予算と斬撃波Deadlineまでに処理可能な対象数を根拠付きで決め、T-070の早期結果を再解釈できる |
 | Phase 4.5 | 飛翔斬撃と未来評価 | Gesture状態機械、Edge Direction Gate、Recovery、NonCutting素通り、Slash Latch、Span／Travel Axis、単調・一価SlashFront、逆行／自己交差Finalized、前縁VFX、帯状Sweep、Candidate Flight Bounds、評価DAG、先行切断、Commit検証 | 復路とU字軌道で二重前縁や誤斬撃を作らず、Latch直後から三日月前縁が飛翔・命中し、Extending中も前縁が成長しながら進み、遠距離対象の多くが接触時に完成Meshへ即移行 |
 | Phase 4.6 | 予測拡張 | 局所PhysicsScene、未来Animation姿勢、信頼度別フォールバック | 動的対象でも予測採用率と予測費用が基準を満たす |
 | Phase 4.7 | モブ未来計画 | Mob Future Planner、MobPlan／PlanGeneration、AI LOD、経路・Animation先行確定、時空間予約、Trace | 介入なしの遠距離モブで計画再利用率と先行切断完了率が基準を満たし、介入時は安全に無効化される |
@@ -1063,6 +1214,8 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 - バックグラウンド完成後、表示MeshとColliderが目立つポップや停止なく差し替わる。
 
 - 表示Meshと物理Convexの切断、検証、cookingはJob＋Burst主体で実行され、Main ThreadにはMesh公開とRenderer／Collider／Rigidbodyの境界Commitだけが残り、未完了Jobへの強制`Complete`によるフレーム停止がない。
+
+- 表示Mesh、Convex、T-077検証済みTemporary Low-Poly Proxy、cookの固定DatasetベンチマークがRelease／Burst環境で再現でき、Single-Thread µs/op、Job定常Throughput、End-to-End P95／P99からWorker予算、同時切断数、Batch Size、同時Bake数を説明できる。単一DatasetCaseIdの規模軸、工程別Stage、許可されたExecutionMode、Manifest／Result hash、Samples／Aggregate件数をSuite Indexから検証でき、同じManifestへのResult差し替えを拒否する。同一Suiteでは各DatasetIdが厳密に1つのDatasetContentSha256へ対応し、異なるhashの系列を容量式へ混在させない。Manifest／Result／Index Loaderはそれぞれ64 KiB、64 MiB／100万Sample、64 MiB／10万Entryのschema上限と呼び出し側のより小さい上限を配列確保前に強制する。対象処理の失敗をFailureRateへ残し、計測不能な試行だけをRejectedとする。既存TraceRunManifest／bundleのCodecとGolden Hashは変化しない。
 
 - Unity `Physics.BakeMesh`とNative PhysX比較Probeの入力、版、設定、工程別結果が再現可能に保存され、倍率差だけを理由にNative Backendが製品へ混入しない。Native再検討時はD-086のGateを満たした証拠を残す。
 
@@ -1198,6 +1351,12 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | Future Event DAG | 未来の候補接触、姿勢予測、切断、Commitを依存関係で表した評価グラフ |
 | Work Item／TaskId | Job、I/O、GPU処理等を横断して追跡する論理作業単位と相関ID。C# `Task`型に限定しない |
 | Convex Job Pipeline | Native Convex B-repをCount／Write／Validation Jobで平面分割し、MeshData公開後に`Physics.BakeMesh` Jobを接続してCollider Commitへ渡す処理列 |
+| Temporary Low-Poly Proxy | Stable Geometry／Colliderが未完成または検証失敗の間に使う、低Triangle表示形状、簡易Convex、Compound Primitive、汎用ローポリFallbackの総称。各実装品質段階の正しさをT-077、生成費用をT-076で測る |
+| Geometry／Cook Microbenchmark | 表示Mesh切断、Convex切断、Temporary Low-Poly Proxy、cookを固定Datasetで工程別に測り、計算KernelのSingle-Thread µs/op、Bake／Commit単発Latency、Job Batch Throughput／End-to-End latencyから容量式を作る性能検証 |
+| GeometryBenchmarkRunManifest | Cook ProbeとGeometry／Cook Microbenchmark専用のversion付きcanonical JSON。1 Manifestは単一DatasetCaseIdの固定規模軸と、単一Target／Stage／ExecutionMode／CookingProfile／Metric／Unitの1測定系列を表し、BenchmarkSuiteIdで複数系列を束ねる。同一SuiteではDatasetIdからDatasetContentSha256への写像を一意にする。Target×Stage×Mode、全propertyの型・値域・null条件・順序を固定し、clean Repositoryだけ保存を許可して既存TraceRunManifestを拡張しない。v1のLoader上限は64 KiB |
+| DatasetCaseId | DatasetContentSha256で固定されたDataset内の1入力caseを識別するID。同一Suiteでは1つのDatasetIdに1つのDatasetContentSha256だけを許可し、同じcaseの規模軸を不変とする。Manifestの説明変数とResultの測定値をjoinして容量式へ使用する |
+| GeometryBenchmarkResult | 1 BenchmarkRunIdの取得順Samplesと、同じSamplesから決定論的に再計算できるCount／Minimum／Maximum／Mean／P50／P95／P99を保持するcanonical JSON。対応Manifestのcontent hashを持つ。v1は100万Sample／64 MiBをschema上限とし、Loaderにはそれ以下の明示上限を必須とする。Bytes／CountのSamplesと順序統計量は整数だがMeanは取得順binary64左畳みのcanonical doubleである。Rejectedは計測不能だけを数え、対象処理失敗はFailureRateへ残す |
+| GeometryBenchmarkSuiteIndex | 1 BenchmarkSuiteId内の全RunについてManifest／Result content hashとsample／reject件数を固定するcanonical index。v1は10万Entry／64 MiBを上限とし、Loaderへそれ以下のbyte／件数上限を必須とする。Repository外の一時出力へ最後に書き、検証後にSuiteディレクトリを原子的に確定する |
 | Unity Built-in 3D Physics | GameObject／Rigidbody系で使用するUnity内蔵NVIDIA PhysX統合。DOTSの`Unity Physics`パッケージとは別物 |
 | Native Cook Probe | Unity `Physics.BakeMesh`と、別HarnessのNative PhysXによる頂点Hull／完全Topology／直接生成を同一Datasetで比較する測定専用実験。製品Backendではない |
 | Native採用Gate | Unity経路の実要件違反、Unity側最適化の枯渇、大きな継続差、実ゲーム統合Prototype成立をすべて要求する部分置換の判断条件 |
