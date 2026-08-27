@@ -18,6 +18,7 @@ namespace Zantetsu.Observability
     {
         private readonly TraceLogger _logger;
         private readonly int _postRollCapacity;
+        private readonly int _freezeTerminalTraceReserve;
         private readonly TraceRingBuffer _capture;
 
         private TraceFlightRecorderState _state = TraceFlightRecorderState.Armed;
@@ -26,6 +27,11 @@ namespace Zantetsu.Observability
         private bool _wasHistoryOverwrittenAtTrigger;
 
         public TraceFlightRecorder(TraceLogger logger, int postRollCapacity)
+            : this(logger, postRollCapacity, 0)
+        {
+        }
+
+        internal TraceFlightRecorder(TraceLogger logger, int postRollCapacity, int freezeTerminalTraceReserve)
         {
             if (logger == null)
             {
@@ -37,6 +43,16 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(postRollCapacity), postRollCapacity, "Post-roll capacity must not be negative.");
             }
 
+            if (freezeTerminalTraceReserve < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(freezeTerminalTraceReserve), freezeTerminalTraceReserve, "Freeze terminal trace reserve must not be negative.");
+            }
+
+            if (freezeTerminalTraceReserve > postRollCapacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(freezeTerminalTraceReserve), freezeTerminalTraceReserve, "Freeze terminal trace reserve must not exceed the post-roll capacity.");
+            }
+
             int historyCapacity = logger.HistoryCapacity;
             long total = (long)historyCapacity + (long)postRollCapacity;
             if (total > int.MaxValue)
@@ -46,12 +62,19 @@ namespace Zantetsu.Observability
 
             _logger = logger;
             _postRollCapacity = postRollCapacity;
+            _freezeTerminalTraceReserve = freezeTerminalTraceReserve;
             _capture = new TraceRingBuffer((int)total);
         }
 
         public TraceFlightRecorderState State => _state;
 
         public int PostRollCapacity => _postRollCapacity;
+
+        /// <summary>Number of post-roll slots reserved for the freeze terminal.</summary>
+        public int FreezeTerminalTraceReserve => _freezeTerminalTraceReserve;
+
+        /// <summary>Number of post-roll slots available to normal duplication.</summary>
+        public int NormalPostRollCapacity => _postRollCapacity - _freezeTerminalTraceReserve;
 
         /// <summary>Number of pre-trigger history events captured at trigger time.</summary>
         public int TriggerHistoryCount => _triggerHistoryCount;
@@ -120,11 +143,13 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Freezes the capture immediately, even if post-roll slots remain.
-        /// Returns false when not CapturingPostRoll.
+        /// Returns false when not CapturingPostRoll, or when a freeze terminal
+        /// reserve is configured (which must complete through the terminal API
+        /// instead of this legacy freeze).
         /// </summary>
         public bool Freeze()
         {
-            if (_state != TraceFlightRecorderState.CapturingPostRoll)
+            if (_freezeTerminalTraceReserve > 0 || _state != TraceFlightRecorderState.CapturingPostRoll)
             {
                 return false;
             }
@@ -197,17 +222,21 @@ namespace Zantetsu.Observability
 
         private int DrainCapturingPostRoll()
         {
-            int remaining = _postRollCapacity - _capturedPostRollCount;
+            int remaining = NormalPostRollCapacity - _capturedPostRollCount;
             if (remaining <= 0)
             {
-                _state = TraceFlightRecorderState.Frozen;
+                if (_freezeTerminalTraceReserve == 0)
+                {
+                    _state = TraceFlightRecorderState.Frozen;
+                }
+
                 return _logger.Drain();
             }
 
             int drained = _logger.Drain(_capture, remaining, out int captured);
             _capturedPostRollCount += captured;
 
-            if (_capturedPostRollCount >= _postRollCapacity)
+            if (_capturedPostRollCount >= NormalPostRollCapacity && _freezeTerminalTraceReserve == 0)
             {
                 _state = TraceFlightRecorderState.Frozen;
             }
