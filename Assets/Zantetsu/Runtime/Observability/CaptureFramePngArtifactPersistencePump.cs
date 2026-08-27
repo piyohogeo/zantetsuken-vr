@@ -90,6 +90,80 @@ namespace Zantetsu.Observability
             return PreparePng(pngQueue, artifactQueue, pngDestinationPath);
         }
 
+        /// <summary>
+        /// Advances persistence by one step using a correlated destination. The
+        /// destination's capture frame ID must match the FIFO head this call
+        /// would process (the artifact queue head when non-empty, otherwise the
+        /// PNG queue head), verified before any file I/O.
+        /// </summary>
+        public CaptureFramePngArtifactPersistenceStatus TryAdvanceNext(
+            CaptureFramePngQueue pngQueue,
+            CaptureFramePngArtifactQueue artifactQueue,
+            CaptureFramePngArtifactDestination destination,
+            out CaptureFramePngArtifact completedArtifact,
+            out CaptureFramePngArtifactSaveReceipt sidecarReceipt)
+        {
+            completedArtifact = null;
+            sidecarReceipt = null;
+
+            if (pngQueue == null)
+            {
+                throw new ArgumentNullException(nameof(pngQueue));
+            }
+
+            if (artifactQueue == null)
+            {
+                throw new ArgumentNullException(nameof(artifactQueue));
+            }
+
+            if (!pngQueue.IsCreated)
+            {
+                throw new ObjectDisposedException(nameof(CaptureFramePngQueue));
+            }
+
+            long headCaptureFrameId;
+            if (artifactQueue.Count > 0)
+            {
+                if (!artifactQueue.TryPeek(out CaptureFramePngArtifact queued))
+                {
+                    throw new InvalidOperationException("The artifact queue head could not be peeked.");
+                }
+
+                headCaptureFrameId = queued.CaptureFrameId;
+            }
+            else if (pngQueue.Count == 0)
+            {
+                return CaptureFramePngArtifactPersistenceStatus.None;
+            }
+            else
+            {
+                if (!pngQueue.TryPeek(out CaptureFrameRequest peekedRequest, out _))
+                {
+                    throw new InvalidOperationException("The PNG queue head could not be peeked.");
+                }
+
+                headCaptureFrameId = peekedRequest.TraceContext.CaptureFrameId;
+            }
+
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            if (destination.CaptureFrameId != headCaptureFrameId)
+            {
+                throw new ArgumentException("The destination capture frame ID does not match the queue head capture frame ID.", nameof(destination));
+            }
+
+            return TryAdvanceNext(
+                pngQueue,
+                artifactQueue,
+                destination.PngDestinationPath,
+                destination.SidecarDestinationPath,
+                out completedArtifact,
+                out sidecarReceipt);
+        }
+
         private CaptureFramePngArtifactPersistenceStatus CompleteSidecar(
             CaptureFramePngArtifactQueue artifactQueue,
             string sidecarDestinationPath,
