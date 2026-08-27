@@ -10,7 +10,8 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// This is a value type with no public constructor; instances are created
-    /// only by <see cref="CaptureFramePipelineCoordinator"/>. It owns neither the
+    /// only by <see cref="CaptureFramePipelineCoordinator"/> and
+    /// <see cref="CaptureFrameRenderTargetPipelineCoordinator"/>. It owns neither the
     /// completed artifact nor the sidecar receipt.
     /// </para>
     /// <para>
