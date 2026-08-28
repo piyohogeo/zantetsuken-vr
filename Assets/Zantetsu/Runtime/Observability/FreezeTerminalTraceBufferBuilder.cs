@@ -33,6 +33,12 @@ namespace Zantetsu.Observability
             _draftRegistry = draftRegistry;
         }
 
+        /// <summary>
+        /// Returns the registry this builder validates sets against. Exposed for
+        /// the freeze terminal coordinator's dependency identity validation only.
+        /// </summary>
+        internal CaptureFrameDraftRegistry Registry => _draftRegistry;
+
         internal FreezeTerminalTraceBuffer Build(
             ForcedDropFrameIdSet forcedDropFrameIds,
             in FreezeTerminalCheckpoint checkpoint)
