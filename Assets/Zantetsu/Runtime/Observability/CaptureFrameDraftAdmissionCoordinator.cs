@@ -66,6 +66,9 @@ namespace Zantetsu.Observability
             _traceObserver = traceObserver;
         }
 
+        /// <summary>The draft registry shared with the admission path.</summary>
+        internal CaptureFrameDraftRegistry Registry => _draftRegistry;
+
         internal bool TryAdmit(
             long timestamp,
             long unityFrameId,
