@@ -776,6 +776,83 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Returns the draft trace context of the forced-drop (reason 9) entry
+        /// identified by the issued forced-drop set. Read-only; the registry
+        /// state is never changed. Intended only for the freeze terminal trace
+        /// buffer builder.
+        /// </summary>
+        internal CaptureFrameDraftTraceContext GetForcedDropTraceContext(
+            ForcedDropFrameIdSet forcedDropFrameIds,
+            int index)
+        {
+            if (forcedDropFrameIds == null)
+            {
+                throw new ArgumentNullException(nameof(forcedDropFrameIds));
+            }
+
+            if (!ReferenceEquals(forcedDropFrameIds.IssuedBy, this))
+            {
+                throw new ArgumentException("Forced-drop set must be issued by this registry.", nameof(forcedDropFrameIds));
+            }
+
+            if (!ReferenceEquals(forcedDropFrameIds, _issuedForcedDropFrameIdSet))
+            {
+                throw new ArgumentException("Forced-drop set must be the registry's issued forced-drop set.", nameof(forcedDropFrameIds));
+            }
+
+            if (!forcedDropFrameIds.IsValid)
+            {
+                throw new ArgumentException("Forced-drop set must be valid.", nameof(forcedDropFrameIds));
+            }
+
+            if (index < 0 || index >= forcedDropFrameIds.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, "Index must be within the forced-drop set.");
+            }
+
+            long captureFrameId = forcedDropFrameIds.GetCaptureFrameId(index);
+            int entryIndex = FindEntryIndexById(captureFrameId);
+            if (entryIndex < 0)
+            {
+                throw new InvalidOperationException("The forced-drop entry is not registered in the registry.");
+            }
+
+            Entry entry = _entries[entryIndex];
+            if (entry.Status != CaptureFrameDraftStatus.Dropped)
+            {
+                throw new InvalidOperationException("The forced-drop entry is not dropped.");
+            }
+
+            if (entry.DropReason != CaptureFrameDropReason.FreezeDrainTimeout)
+            {
+                throw new InvalidOperationException("The forced-drop entry does not have the freeze-drain reason.");
+            }
+
+            if (entry.EmissionState != DraftDropTraceEmissionState.None)
+            {
+                throw new InvalidOperationException("The forced-drop entry emission state is not None.");
+            }
+
+            CaptureFrameDraft draft = entry.Draft;
+            if (draft == null)
+            {
+                throw new InvalidOperationException("The forced-drop entry draft is missing.");
+            }
+
+            if (draft.TestRunId != _run.TestRunId || draft.TestRunId != forcedDropFrameIds.TestRunId)
+            {
+                throw new InvalidOperationException("The forced-drop draft test run ID does not match the set or the registry run.");
+            }
+
+            if (draft.CaptureFrameId != captureFrameId)
+            {
+                throw new InvalidOperationException("The forced-drop draft capture frame ID does not match the set.");
+            }
+
+            return draft.TraceContext;
+        }
+
         private int FindEntryIndex(in CaptureFrameRequest request)
         {
             long testRunId = request.TraceContext.TestRunId;
