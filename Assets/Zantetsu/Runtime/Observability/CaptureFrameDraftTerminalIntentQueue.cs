@@ -119,6 +119,12 @@ namespace Zantetsu.Observability
 
         public bool IsCreated => !_disposeStarted;
 
+        /// <summary>
+        /// Returns the draft registry this queue mirrors against. Exposed for the
+        /// terminal coordinator's dependency identity validation only.
+        /// </summary>
+        internal CaptureFrameDraftRegistry Registry => _draftRegistry;
+
         public int Capacity
         {
             get
