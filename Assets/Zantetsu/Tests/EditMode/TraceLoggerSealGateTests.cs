@@ -69,9 +69,23 @@ namespace Zantetsu.Core.Tests
             return method;
         }
 
-        private static int Seal(TraceLogger logger, long testRunId, TraceFlightRecorder recorder)
+        private static object Seal(TraceLogger logger, long testRunId, TraceFlightRecorder recorder)
         {
-            return (int)GetSealMethod().Invoke(logger, new object[] { testRunId, recorder });
+            object receipt = GetSealMethod().Invoke(logger, new object[] { testRunId, recorder });
+            Assert.That(receipt, Is.Not.Null, "Seal returned no receipt.");
+            return receipt;
+        }
+
+        private static object GetReceiptProperty(object receipt, string name)
+        {
+            PropertyInfo prop = receipt.GetType().GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(prop, Is.Not.Null, name + " property not found on the seal receipt.");
+            return prop.GetValue(receipt);
+        }
+
+        private static int SealDrained(TraceLogger logger, long testRunId, TraceFlightRecorder recorder)
+        {
+            return (int)GetReceiptProperty(Seal(logger, testRunId, recorder), "FinalDrainedCount");
         }
 
         private static Exception SealException(TraceLogger logger, long testRunId, TraceFlightRecorder recorder)
@@ -79,6 +93,49 @@ namespace Zantetsu.Core.Tests
             try
             {
                 GetSealMethod().Invoke(logger, new object[] { testRunId, recorder });
+                return null;
+            }
+            catch (TargetInvocationException ex)
+            {
+                return ex.InnerException;
+            }
+        }
+
+        private static Type GetReceiptType()
+        {
+            Type type = typeof(TraceLogger).Assembly.GetType("Zantetsu.Observability.TraceRunSealReceipt");
+            Assert.That(type, Is.Not.Null, "TraceRunSealReceipt type not found.");
+            return type;
+        }
+
+        private static object CreateReceipt(TraceLogger issuedBy, TraceFlightRecorder issuedTo, long testRunId, int finalDrainedCount, int capturedPostRollCount, int traceCaptureOverflowCount, int sealedTraceEnqueueFailureCount)
+        {
+            ConstructorInfo ctor = GetReceiptType().GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                null,
+                new[] { typeof(TraceLogger), typeof(TraceFlightRecorder), typeof(long), typeof(int), typeof(int), typeof(int), typeof(int) },
+                null);
+            Assert.That(ctor, Is.Not.Null, "Receipt constructor not found.");
+            return ctor.Invoke(new object[] { issuedBy, issuedTo, testRunId, finalDrainedCount, capturedPostRollCount, traceCaptureOverflowCount, sealedTraceEnqueueFailureCount });
+        }
+
+        private static MethodInfo GetBeginFreezeTerminalAppendMethod()
+        {
+            MethodInfo method = typeof(TraceFlightRecorder).GetMethod("BeginFreezeTerminalAppend", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(method, Is.Not.Null, "BeginFreezeTerminalAppend method not found.");
+            return method;
+        }
+
+        private static void Begin(TraceFlightRecorder recorder, object sealReceipt, bool captureAdmissionStopped)
+        {
+            GetBeginFreezeTerminalAppendMethod().Invoke(recorder, new object[] { sealReceipt, captureAdmissionStopped });
+        }
+
+        private static Exception BeginException(TraceFlightRecorder recorder, object sealReceipt, bool captureAdmissionStopped)
+        {
+            try
+            {
+                GetBeginFreezeTerminalAppendMethod().Invoke(recorder, new object[] { sealReceipt, captureAdmissionStopped });
                 return null;
             }
             catch (TargetInvocationException ex)
@@ -300,7 +357,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(writerA.TryEnqueue(Event(1, 42)), Is.True);
                 Assert.That(writerB.TryEnqueue(Event(2, 42)), Is.True);
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(2));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(2));
 
                 Assert.That(writerA.TryEnqueue(Event(3, 42)), Is.False);
                 Assert.That(writerB.TryEnqueue(Event(4, 42)), Is.False);
@@ -327,7 +384,7 @@ namespace Zantetsu.Core.Tests
                 writer.TryEnqueue(Event(4, 42));
                 writer.TryEnqueue(Event(5, 42));
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(5));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(5));
                 Assert.That(logger.Drain(), Is.EqualTo(0));
                 Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(5));
                 Assert.That(recorder.GetCapturedEvent(0).Timestamp, Is.EqualTo(1));
@@ -346,7 +403,7 @@ namespace Zantetsu.Core.Tests
                 SealableTraceWriter writer = GetCaptureRunWriter(logger);
 
                 logger.Enqueue(Event(1, 42));
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(1));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(1));
 
                 Assert.That(writer.TryEnqueue(Event(999, 42)), Is.False);
 
@@ -370,7 +427,7 @@ namespace Zantetsu.Core.Tests
                     logger.Enqueue(Event(i, 42));
                 }
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(5));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(5));
                 Assert.That(logger.Drain(), Is.EqualTo(0));
                 Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(1));
                 Assert.That(recorder.TraceCaptureOverflowCount, Is.EqualTo(4));
@@ -392,7 +449,7 @@ namespace Zantetsu.Core.Tests
                 // Sealing is observed after the seal CAS, so these are accounted
                 // as mutable failures only when racing; after Sealed they are
                 // post-seal attempts. The sealed count is fixed by the seal.
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(0));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(0));
 
                 int sealedCount = GetCount(logger, "SealedTraceEnqueueFailureCount");
 
@@ -629,7 +686,7 @@ namespace Zantetsu.Core.Tests
                 TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
                 Assert.That(recorder.TryTrigger(), Is.True);
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(0));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(0));
 
                 Exception ex = SealException(logger, 42, recorder);
                 Assert.That(ex, Is.TypeOf<InvalidOperationException>());
@@ -648,7 +705,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(SealException(logger, 43, recorder), Is.TypeOf<ArgumentException>());
 
                 // The logger is still Open, so a subsequent valid seal works.
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(0));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(0));
             }
         }
 
@@ -672,7 +729,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(offThreadError, Is.TypeOf<InvalidOperationException>());
 
                 // No side effects: the run is still Open on the constructing thread.
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(0));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(0));
             }
         }
 
@@ -691,7 +748,7 @@ namespace Zantetsu.Core.Tests
                     logger.Enqueue(Event(i, 42));
                 }
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(4));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(4));
 
                 Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
                 Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(4));
@@ -751,7 +808,7 @@ namespace Zantetsu.Core.Tests
                     worker.Start();
 
                     started.Wait();
-                    int drained = Seal(logger, 42, recorder);
+                    int drained = SealDrained(logger, 42, recorder);
 
                     worker.Join();
                     Assert.That(workerError, Is.Null);
@@ -812,7 +869,7 @@ namespace Zantetsu.Core.Tests
                 // The seal runs on the constructing thread (the main thread) and
                 // must block until the releaser observes Sealing and releases the
                 // in-flight writer.
-                int drained = Seal(logger, 42, recorder);
+                int drained = SealDrained(logger, 42, recorder);
 
                 releaser.Join();
                 Assert.That(releaserError, Is.Null);
@@ -861,7 +918,7 @@ namespace Zantetsu.Core.Tests
                 TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
                 Assert.That(recorder.TryTrigger(), Is.True);
 
-                Assert.That(Seal(logger, 42, recorder), Is.EqualTo(0));
+                Assert.That(SealDrained(logger, 42, recorder), Is.EqualTo(0));
 
                 SealableTraceWriter writer = GetCaptureRunWriter(logger);
 
@@ -882,6 +939,444 @@ namespace Zantetsu.Core.Tests
                 Assert.That(logger.Drain(), Is.EqualTo(0));
                 Assert.That(GetCount(logger, "PostSealTraceEnqueueAttemptCount"), Is.EqualTo(1));
                 Assert.That(GetCount(logger, "TraceEnqueueFailureCount"), Is.EqualTo(0));
+            }
+        }
+
+        // --- Freeze terminal append boundary ------------------------------------
+
+        [Test]
+        public void Enum_ExistingValuesUnchanged_AndAwaitingFreezeTerminal_IsThree()
+        {
+            Assert.That((int)TraceFlightRecorderState.Armed, Is.EqualTo(0));
+            Assert.That((int)TraceFlightRecorderState.CapturingPostRoll, Is.EqualTo(1));
+            Assert.That((int)TraceFlightRecorderState.Frozen, Is.EqualTo(2));
+            Assert.That((int)TraceFlightRecorderState.AwaitingFreezeTerminal, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void Receipt_HasNoPublicConstructorSettersOrOwnedResources()
+        {
+            Type receiptType = GetReceiptType();
+
+            Assert.That(receiptType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            PropertyInfo[] properties = receiptType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(properties, Is.Not.Empty);
+            foreach (PropertyInfo prop in properties)
+            {
+                Assert.That(prop.CanWrite, Is.False, prop.Name + " must be read-only.");
+            }
+
+            foreach (FieldInfo field in receiptType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Type fieldType = field.FieldType;
+                bool allowed = fieldType == typeof(TraceLogger) || fieldType == typeof(TraceFlightRecorder) || fieldType == typeof(long) || fieldType == typeof(int);
+                Assert.That(allowed, Is.True, "Receipt holds an unexpected field type: " + fieldType.FullName);
+            }
+        }
+
+        [Test]
+        public void Seal_ReturnsReceipt_WithSealTimeValues()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 2);
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                logger.Enqueue(Event(1, 42));
+                logger.Enqueue(Event(2, 42));
+                logger.Enqueue(Event(3, 42));
+
+                object receipt = Seal(logger, 42, recorder);
+
+                Assert.That((long)GetReceiptProperty(receipt, "TestRunId"), Is.EqualTo(42));
+                Assert.That((int)GetReceiptProperty(receipt, "FinalDrainedCount"), Is.EqualTo(3));
+                Assert.That((int)GetReceiptProperty(receipt, "CapturedPostRollCount"), Is.EqualTo(3));
+                Assert.That((int)GetReceiptProperty(receipt, "TraceCaptureOverflowCount"), Is.EqualTo(0));
+                Assert.That((int)GetReceiptProperty(receipt, "SealedTraceEnqueueFailureCount"), Is.EqualTo(0));
+            }
+        }
+
+        [Test]
+        public void Begin_SucceedsWithSpareNormalCapacity_AndOnlyStateChanges()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 2); // NormalPostRollCapacity == 8
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                logger.Enqueue(Event(1, 42));
+                logger.Enqueue(Event(2, 42));
+                object receipt = Seal(logger, 42, recorder);
+
+                int capturedBefore = recorder.CapturedPostRollCount;
+                int overflowBefore = recorder.TraceCaptureOverflowCount;
+                int totalBefore = recorder.CapturedCount;
+                int capacityBefore = recorder.NormalPostRollCapacity;
+                int triggerBefore = recorder.TriggerHistoryCount;
+
+                Begin(recorder, receipt, true);
+
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+                Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(capturedBefore));
+                Assert.That(recorder.TraceCaptureOverflowCount, Is.EqualTo(overflowBefore));
+                Assert.That(recorder.CapturedCount, Is.EqualTo(totalBefore));
+                Assert.That(recorder.NormalPostRollCapacity, Is.EqualTo(capacityBefore));
+                Assert.That(recorder.TriggerHistoryCount, Is.EqualTo(triggerBefore));
+                Assert.That(recorder.GetCapturedEvent(0).Timestamp, Is.EqualTo(1));
+                Assert.That(recorder.GetCapturedEvent(1).Timestamp, Is.EqualTo(2));
+                Assert.That(logger.IsCreated, Is.True);
+            }
+        }
+
+        [Test]
+        public void Begin_SucceedsWhenNormalFull_WithOverflow()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 2, 1); // NormalPostRollCapacity == 1
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                for (int i = 1; i <= 5; i++)
+                {
+                    logger.Enqueue(Event(i, 42));
+                }
+
+                object receipt = Seal(logger, 42, recorder);
+
+                Assert.That((int)GetReceiptProperty(receipt, "TraceCaptureOverflowCount"), Is.EqualTo(4));
+                Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(1));
+
+                Begin(recorder, receipt, true);
+
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+                Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(1));
+                Assert.That(recorder.TraceCaptureOverflowCount, Is.EqualTo(4));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsNullReceipt_WithoutSideEffects()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                Seal(logger, 42, recorder);
+
+                Exception ex = BeginException(recorder, null, true);
+                Assert.That(ex, Is.TypeOf<ArgumentNullException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsAdmissionNotStopped()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+
+                Exception ex = BeginException(recorder, receipt, false);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsLegacyReserveZero()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 0);
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                object forged = CreateReceipt(logger, recorder, 42, 0, 0, 0, 0);
+                Exception ex = BeginException(recorder, forged, true);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsFromArmed()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+
+                object forged = CreateReceipt(logger, recorder, 42, 0, 0, 0, 0);
+                Exception ex = BeginException(recorder, forged, true);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.Armed));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsFromFrozen()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 2, 0);
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                for (int i = 1; i <= 3; i++)
+                {
+                    logger.Enqueue(Event(i, 42));
+                }
+
+                recorder.Drain(); // Fills the normal region and auto-freezes.
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.Frozen));
+
+                object forged = CreateReceipt(logger, recorder, 42, 0, 0, 0, 0);
+                Exception ex = BeginException(recorder, forged, true);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.Frozen));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsSecondCall()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+
+                Begin(recorder, receipt, true);
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+
+                Exception ex = BeginException(recorder, receipt, true);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsReceiptFromDifferentLogger()
+        {
+            using (TraceLogger loggerA = CreateCaptureLogger(4, 42))
+            using (TraceLogger loggerB = CreateCaptureLogger(4, 43))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(loggerA, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                Seal(loggerA, 42, recorder);
+
+                object forged = CreateReceipt(loggerB, recorder, 43, 0, 0, 0, 0);
+                Exception ex = BeginException(recorder, forged, true);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsReceiptIssuedToDifferentRecorder()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorderA = CreateRecorder(logger, 10, 1);
+                TraceFlightRecorder recorderB = CreateRecorder(logger, 10, 1);
+                Assert.That(recorderA.TryTrigger(), Is.True);
+                Assert.That(recorderB.TryTrigger(), Is.True);
+
+                object receiptA = Seal(logger, 42, recorderA);
+
+                Exception ex = BeginException(recorderB, receiptA, true);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(recorderB.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsForgedReceipt_EvenWithMatchingValues()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object genuine = Seal(logger, 42, recorder);
+
+                // A forged value-copy: same logger, same recorder, same counters,
+                // but a different instance.
+                object forged = CreateReceipt(
+                    logger,
+                    recorder,
+                    42,
+                    (int)GetReceiptProperty(genuine, "FinalDrainedCount"),
+                    (int)GetReceiptProperty(genuine, "CapturedPostRollCount"),
+                    (int)GetReceiptProperty(genuine, "TraceCaptureOverflowCount"),
+                    (int)GetReceiptProperty(genuine, "SealedTraceEnqueueFailureCount"));
+
+                Exception ex = BeginException(recorder, forged, true);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsNonEmptyQueue()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+
+                // Inject an event directly into the sealed logger's queue.
+                NativeQueue<TraceEvent> queue = GetQueue(logger);
+                queue.Enqueue(Event(999, 42));
+
+                Exception ex = BeginException(recorder, receipt, true);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Begin_RejectsOffThread_WithoutSideEffects()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+
+                Exception offThreadError = null;
+                Thread worker = new Thread(() =>
+                {
+                    offThreadError = BeginException(recorder, receipt, true);
+                });
+                worker.IsBackground = true;
+                worker.Start();
+                worker.Join();
+
+                Assert.That(offThreadError, Is.TypeOf<InvalidOperationException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+            }
+        }
+
+        [Test]
+        public void Awaiting_DrainResetSnapshot_Rejected()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+                Begin(recorder, receipt, true);
+
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+                Assert.Throws<InvalidOperationException>(() => recorder.Drain());
+                Assert.Throws<InvalidOperationException>(() => recorder.Reset());
+                Assert.Throws<InvalidOperationException>(() => recorder.CreateFrozenSnapshot());
+            }
+        }
+
+        [Test]
+        public void Awaiting_TryTriggerAndFreeze_ReturnFalseUnchanged()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+                Begin(recorder, receipt, true);
+
+                int captured = recorder.CapturedPostRollCount;
+
+                Assert.That(recorder.TryTrigger(), Is.False);
+                Assert.That(recorder.Freeze(), Is.False);
+
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+                Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(captured));
+            }
+        }
+
+        [Test]
+        public void Reset_AfterSeal_Rejected_NoSideEffects()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                Seal(logger, 42, recorder);
+
+                int captured = recorder.CapturedPostRollCount;
+                int overflow = recorder.TraceCaptureOverflowCount;
+                int total = recorder.CapturedCount;
+
+                Assert.Throws<InvalidOperationException>(() => recorder.Reset());
+
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+                Assert.That(recorder.CapturedPostRollCount, Is.EqualTo(captured));
+                Assert.That(recorder.TraceCaptureOverflowCount, Is.EqualTo(overflow));
+                Assert.That(recorder.CapturedCount, Is.EqualTo(total));
+            }
+        }
+
+        [Test]
+        public void SealedRecorder_CannotReuseOldReceiptInNewCaptureCycle()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object oldReceipt = Seal(logger, 42, recorder);
+
+                // The repro: reset and re-trigger to open a new capture cycle,
+                // then present the old receipt. The reset must fail, so a new
+                // cycle can never start.
+                Assert.Throws<InvalidOperationException>(() => recorder.Reset());
+                Assert.That(recorder.TryTrigger(), Is.False);
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+
+                // The old receipt still belongs to the current (original) cycle.
+                Begin(recorder, oldReceipt, true);
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+            }
+        }
+
+        [Test]
+        public void Begin_PrevalidationFailure_ThenCorrectReceiptSucceeds()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+                object receipt = Seal(logger, 42, recorder);
+
+                Assert.That(BeginException(recorder, receipt, false), Is.TypeOf<ArgumentException>());
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.CapturingPostRoll));
+
+                Begin(recorder, receipt, true);
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
+            }
+        }
+
+        [Test]
+        public void SealAndBegin_DoNotDisposeOrClearDependencies()
+        {
+            using (TraceLogger logger = CreateCaptureLogger(4, 42))
+            {
+                TraceFlightRecorder recorder = CreateRecorder(logger, 10, 1);
+                Assert.That(recorder.TryTrigger(), Is.True);
+
+                logger.Enqueue(Event(1, 42));
+                object receipt = Seal(logger, 42, recorder);
+
+                Assert.That(logger.IsCreated, Is.True);
+                int historyBefore = logger.HistoryCount;
+                int capturedBefore = recorder.CapturedCount;
+
+                Begin(recorder, receipt, true);
+
+                Assert.That(logger.IsCreated, Is.True);
+                Assert.That(logger.HistoryCount, Is.EqualTo(historyBefore));
+                Assert.That(recorder.CapturedCount, Is.EqualTo(capturedBefore));
+                Assert.That(recorder.State, Is.EqualTo(TraceFlightRecorderState.AwaitingFreezeTerminal));
             }
         }
     }

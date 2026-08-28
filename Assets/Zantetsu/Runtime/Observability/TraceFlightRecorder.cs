@@ -111,8 +111,9 @@ namespace Zantetsu.Observability
                 case TraceFlightRecorderState.CapturingPostRoll:
                     return DrainCapturingPostRoll();
 
-                case TraceFlightRecorderState.Armed:
-                case TraceFlightRecorderState.Frozen:
+                case TraceFlightRecorderState.AwaitingFreezeTerminal:
+                    throw new InvalidOperationException("The recorder is awaiting the freeze terminal append and cannot drain.");
+
                 default:
                     return _logger.Drain();
             }
@@ -170,6 +171,136 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Begins the freeze terminal append by validating the completed seal
+        /// and transitioning this recorder into
+        /// <see cref="TraceFlightRecorderState.AwaitingFreezeTerminal"/>. Must
+        /// be called from the thread that constructed the capture logger.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Every precondition is verified before the state is changed, so any
+        /// failure leaves the recorder and logger completely unchanged. The
+        /// capture, its counters, the capacities, and the logger's history and
+        /// counters are never modified by this method.
+        /// </para>
+        /// <para>
+        /// <paramref name="captureAdmissionStopped"/> is internal evidence that
+        /// the coordinator has stopped admitting new captures; this unit does
+        /// not connect to the pipeline.
+        /// </para>
+        /// </remarks>
+        internal void BeginFreezeTerminalAppend(
+            TraceRunSealReceipt sealReceipt,
+            bool captureAdmissionStopped)
+        {
+            // 1. A receipt is required.
+            if (sealReceipt == null)
+            {
+                throw new ArgumentNullException(nameof(sealReceipt));
+            }
+
+            // 2. Main-thread only.
+            if (!_logger.IsOnConstructingThread)
+            {
+                throw new InvalidOperationException("The freeze terminal append must begin on the thread that constructed the capture logger.");
+            }
+
+            // 3. The recorder must be CapturingPostRoll.
+            if (_state != TraceFlightRecorderState.CapturingPostRoll)
+            {
+                throw new InvalidOperationException("The recorder must be CapturingPostRoll to begin the freeze terminal append.");
+            }
+
+            // 4. A freeze terminal reserve is required.
+            if (_freezeTerminalTraceReserve <= 0)
+            {
+                throw new InvalidOperationException("A freeze terminal reserve is required to begin the freeze terminal append.");
+            }
+
+            // 5. Capture admission must be stopped.
+            if (!captureAdmissionStopped)
+            {
+                throw new ArgumentException("Capture admission must be stopped before beginning the freeze terminal append.", nameof(captureAdmissionStopped));
+            }
+
+            // 6. The receipt must have been issued by this recorder's logger,
+            // issued to this recorder, and be the exact instance the logger
+            // issued.
+            if (!ReferenceEquals(sealReceipt.IssuedBy, _logger))
+            {
+                throw new ArgumentException("The seal receipt was not issued by this recorder's logger.", nameof(sealReceipt));
+            }
+
+            if (!ReferenceEquals(sealReceipt.IssuedTo, this))
+            {
+                throw new ArgumentException("The seal receipt was not issued to this recorder.", nameof(sealReceipt));
+            }
+
+            if (!ReferenceEquals(sealReceipt, _logger.IssuedSealReceipt))
+            {
+                throw new ArgumentException("The seal receipt is not the exact receipt issued by the logger.", nameof(sealReceipt));
+            }
+
+            // 7. The receipt's run ID must be positive.
+            if (sealReceipt.TestRunId <= 0)
+            {
+                throw new ArgumentException("The seal receipt has an invalid test run ID.", nameof(sealReceipt));
+            }
+
+            // 8. The receipt's run ID must match the logger's bound run.
+            if (sealReceipt.TestRunId != _logger.TestRunId)
+            {
+                throw new ArgumentException("The seal receipt's test run ID does not match the logger's bound run.", nameof(sealReceipt));
+            }
+
+            // 9. The logger must be sealed.
+            if (_logger.SealState != TraceRunSealState.Sealed)
+            {
+                throw new InvalidOperationException("The capture run is not sealed.");
+            }
+
+            // 10. The logger's normal queue must be empty.
+            if (!_logger.IsQueueEmpty)
+            {
+                throw new InvalidOperationException("The capture run queue is not empty.");
+            }
+
+            // 11. The receipt's captured post-roll count must match the recorder.
+            if (sealReceipt.CapturedPostRollCount != _capturedPostRollCount)
+            {
+                throw new ArgumentException("The seal receipt's captured post-roll count does not match the recorder.", nameof(sealReceipt));
+            }
+
+            // 12. The receipt's overflow count must match the recorder.
+            if (sealReceipt.TraceCaptureOverflowCount != _traceCaptureOverflowCount)
+            {
+                throw new ArgumentException("The seal receipt's overflow count does not match the recorder.", nameof(sealReceipt));
+            }
+
+            // 13. The receipt's sealed failure count must match the logger.
+            if (sealReceipt.SealedTraceEnqueueFailureCount != _logger.SealedTraceEnqueueFailureCount)
+            {
+                throw new ArgumentException("The seal receipt's sealed failure count does not match the logger.", nameof(sealReceipt));
+            }
+
+            // 14. The recorder's count invariant must hold.
+            if ((long)_triggerHistoryCount + (long)_capturedPostRollCount != (long)_capture.Count)
+            {
+                throw new InvalidOperationException("Recorder capture counters are inconsistent with the captured event count.");
+            }
+
+            // 15. The captured post-roll count must fit the normal region.
+            if (_capturedPostRollCount > NormalPostRollCapacity)
+            {
+                throw new InvalidOperationException("The captured post-roll count exceeds the normal post-roll capacity.");
+            }
+
+            // Only after every check passes, transition the state. Nothing else
+            // changes.
+            _state = TraceFlightRecorderState.AwaitingFreezeTerminal;
+        }
+
+        /// <summary>
         /// Returns the captured event at the given chronological index, where 0
         /// is the oldest captured event.
         /// </summary>
@@ -222,8 +353,28 @@ namespace Zantetsu.Observability
         /// history, queue and counters are left untouched, and the logger is not
         /// disposed.
         /// </summary>
+        /// <remarks>
+        /// The reset is rejected without changing anything when the recorder is
+        /// <see cref="TraceFlightRecorderState.AwaitingFreezeTerminal"/>, or when
+        /// the capture logger is sealing or sealed.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the recorder is
+        /// <see cref="TraceFlightRecorderState.AwaitingFreezeTerminal"/>, or when
+        /// the capture logger is sealing or sealed.
+        /// </exception>
         public void Reset()
         {
+            if (_state == TraceFlightRecorderState.AwaitingFreezeTerminal)
+            {
+                throw new InvalidOperationException("The recorder is awaiting the freeze terminal append and cannot be reset.");
+            }
+
+            if (_logger.SealState != TraceRunSealState.Open)
+            {
+                throw new InvalidOperationException("The capture run is sealing or sealed and the recorder cannot be reset.");
+            }
+
             _capture.Clear();
             _triggerHistoryCount = 0;
             _capturedPostRollCount = 0;

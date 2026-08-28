@@ -13,5 +13,12 @@ namespace Zantetsu.Observability
 
         /// <summary>Capture is complete and immutable.</summary>
         Frozen = 2,
+
+        /// <summary>
+        /// The logger is sealed and the normal capture FIFO is closed; the
+        /// recorder is reserved for the freeze terminal append. Only the
+        /// terminal append path may proceed; normal capture APIs are rejected.
+        /// </summary>
+        AwaitingFreezeTerminal = 3,
     }
 }

@@ -25,6 +25,7 @@ namespace Zantetsu.Observability
         private readonly TraceRingBuffer _history;
         private readonly long _testRunId;
         private readonly int _mainThreadId;
+        private TraceRunSealReceipt _issuedSealReceipt;
         private bool _disposed;
 
         /// <summary>
@@ -98,6 +99,40 @@ namespace Zantetsu.Observability
 
         /// <summary>Whether this logger is bound to a capture run.</summary>
         internal bool IsCaptureRun => _testRunId != 0;
+
+        /// <summary>Whether the current thread is the thread that constructed this logger.</summary>
+        internal bool IsOnConstructingThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
+
+        /// <summary>
+        /// The exact seal receipt this logger issued, or null before the seal
+        /// completes. Used to reject forged receipts and value copies.
+        /// </summary>
+        internal TraceRunSealReceipt IssuedSealReceipt => _issuedSealReceipt;
+
+        /// <summary>
+        /// The current seal state of the capture run, or
+        /// <see cref="TraceRunSealState.Open"/> for a legacy logger.
+        /// </summary>
+        internal TraceRunSealState SealState
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return IsCaptureRun
+                    ? (TraceRunSealState)TraceRunSealGate.Read(_sealGate, TraceRunSealGate.SlotSealState)
+                    : TraceRunSealState.Open;
+            }
+        }
+
+        /// <summary>Whether the backing native queue currently holds no events.</summary>
+        internal bool IsQueueEmpty
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _queue.IsEmpty();
+            }
+        }
 
         /// <summary>Whether the backing native queue is created (and not disposed).</summary>
         public bool IsCreated => _queue.IsCreated;
@@ -349,7 +384,7 @@ namespace Zantetsu.Observability
         /// reimplements ring writes here.
         /// </para>
         /// </remarks>
-        internal int SealAndDrainRunForFreeze(long testRunId, TraceFlightRecorder recorder)
+        internal TraceRunSealReceipt SealAndDrainRunForFreeze(long testRunId, TraceFlightRecorder recorder)
         {
             // 1. Only a capture run logger can be sealed.
             ThrowIfDisposed();
@@ -429,11 +464,27 @@ namespace Zantetsu.Observability
             int sealedFailures = TraceRunSealGate.Read(_sealGate, TraceRunSealGate.SlotMutableFailures);
             TraceRunSealGate.CompareExchange(_sealGate, TraceRunSealGate.SlotSealedFailures, sealedFailures, 0);
 
-            // 12. Publish Sealed last.
+            // 12. Pre-build the seal receipt BEFORE publishing Sealed, so that
+            // publishing Sealed is the last observable mutation and nothing can
+            // allocate, validate, or throw after it.
+            TraceRunSealReceipt receipt = new TraceRunSealReceipt(
+                this,
+                recorder,
+                _testRunId,
+                drained,
+                recorder.CapturedPostRollCount,
+                recorder.TraceCaptureOverflowCount,
+                sealedFailures);
+
+            // Record the exact issued instance so BeginFreezeTerminalAppend can
+            // reject forged receipts and value copies.
+            _issuedSealReceipt = receipt;
+
+            // 13. Publish Sealed last.
             TraceRunSealGate.CompareExchange(_sealGate, TraceRunSealGate.SlotSealState, (int)TraceRunSealState.Sealed, (int)TraceRunSealState.Sealing);
 
-            // 13. Report the total drained.
-            return drained;
+            // 14. Return the pre-built receipt.
+            return receipt;
         }
 
         /// <summary>
