@@ -83,7 +83,12 @@ namespace Zantetsu.Observability
         /// <summary>Number of pre-trigger history events captured at trigger time.</summary>
         public int TriggerHistoryCount => _triggerHistoryCount;
 
-        /// <summary>Number of post-roll events duplicated into the capture so far.</summary>
+        /// <summary>
+        /// Number of events recorded into the capture after trigger, including
+        /// the freeze-terminal direct append. If only the count of normal
+        /// post-roll duplications is needed, it must be separated by verifying
+        /// the terminal tail structure.
+        /// </summary>
         public int CapturedPostRollCount => _capturedPostRollCount;
 
         /// <summary>Total number of captured events (pre-trigger + post-roll).</summary>
@@ -298,6 +303,208 @@ namespace Zantetsu.Observability
             // Only after every check passes, transition the state. Nothing else
             // changes.
             _state = TraceFlightRecorderState.AwaitingFreezeTerminal;
+        }
+
+        /// <summary>
+        /// Appends a validated freeze terminal trace buffer to the capture and
+        /// completes the <c>AwaitingFreezeTerminal → Frozen</c> transition in one
+        /// all-or-none step. Main-thread only and not thread-safe; this method
+        /// owns and disposes none of the buffer, set, checkpoint, or logger.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Every precondition and every event is verified before the capture is
+        /// modified, so any failure leaves the recorder state, the capture, all
+        /// counters, and the logger completely unchanged. After a successful
+        /// append the recorder is <see cref="TraceFlightRecorderState.Frozen"/>
+        /// and a later call is rejected without double-appending.
+        /// </para>
+        /// </remarks>
+        internal void AppendFreezeTerminalEvents(FreezeTerminalTraceBuffer terminalBuffer)
+        {
+            if (terminalBuffer == null)
+            {
+                throw new ArgumentNullException(nameof(terminalBuffer));
+            }
+
+            if (!_logger.IsOnConstructingThread)
+            {
+                throw new InvalidOperationException("The freeze terminal append must run on the thread that constructed the capture logger.");
+            }
+
+            if (_state != TraceFlightRecorderState.AwaitingFreezeTerminal)
+            {
+                throw new InvalidOperationException("The recorder must be AwaitingFreezeTerminal to append the freeze terminal events.");
+            }
+
+            if (_freezeTerminalTraceReserve <= 0)
+            {
+                throw new InvalidOperationException("A freeze terminal reserve is required to append the freeze terminal events.");
+            }
+
+            if (!_logger.IsCaptureRun)
+            {
+                throw new InvalidOperationException("The capture logger must be bound to a positive capture run.");
+            }
+
+            if (_logger.SealState != TraceRunSealState.Sealed)
+            {
+                throw new InvalidOperationException("The capture run is not sealed.");
+            }
+
+            if (!_logger.IsQueueEmpty)
+            {
+                throw new InvalidOperationException("The capture run queue is not empty.");
+            }
+
+            if (terminalBuffer.TestRunId != _logger.TestRunId)
+            {
+                throw new ArgumentException("The terminal buffer's test run ID does not match the logger's bound run.", nameof(terminalBuffer));
+            }
+
+            FreezeTerminalCheckpoint checkpoint = terminalBuffer.Checkpoint;
+            ForcedDropFrameIdSet forcedDropFrameIds = terminalBuffer.ForcedDropFrameIds;
+
+            if (forcedDropFrameIds == null)
+            {
+                throw new ArgumentException("The terminal buffer's forced-drop set is missing.", nameof(terminalBuffer));
+            }
+
+            if (!checkpoint.IsValid)
+            {
+                throw new ArgumentException("The terminal buffer's checkpoint is invalid.", nameof(terminalBuffer));
+            }
+
+            if (checkpoint.TestRunId != terminalBuffer.TestRunId || checkpoint.TestRunId != forcedDropFrameIds.TestRunId)
+            {
+                throw new ArgumentException("The terminal buffer's checkpoint test run ID does not match the buffer or the set.", nameof(terminalBuffer));
+            }
+
+            if (!forcedDropFrameIds.IsValid)
+            {
+                throw new ArgumentException("The terminal buffer's forced-drop set is invalid.", nameof(terminalBuffer));
+            }
+
+            CaptureFrameDraftRegistry registry = forcedDropFrameIds.IssuedBy;
+            if (registry == null || !ReferenceEquals(forcedDropFrameIds, registry.IssuedForcedDropFrameIdSet))
+            {
+                throw new ArgumentException("The terminal buffer's forced-drop set is not the issuing registry's canonical set.", nameof(terminalBuffer));
+            }
+
+            if (terminalBuffer.ForcedDropCount != forcedDropFrameIds.Count)
+            {
+                throw new ArgumentException("The terminal buffer's forced-drop count does not match the set.", nameof(terminalBuffer));
+            }
+
+            if (terminalBuffer.Count != checked(terminalBuffer.ForcedDropCount + 1))
+            {
+                throw new ArgumentException("The terminal buffer's event count does not equal the forced-drop count plus one.", nameof(terminalBuffer));
+            }
+
+            if (terminalBuffer.Count > _freezeTerminalTraceReserve)
+            {
+                throw new ArgumentException("The terminal buffer exceeds the freeze terminal reserve.", nameof(terminalBuffer));
+            }
+
+            if ((long)_triggerHistoryCount + (long)_capturedPostRollCount != (long)_capture.Count)
+            {
+                throw new InvalidOperationException("Recorder capture counters are inconsistent with the captured event count.");
+            }
+
+            if (_capturedPostRollCount > NormalPostRollCapacity)
+            {
+                throw new InvalidOperationException("The captured post-roll count exceeds the normal post-roll capacity.");
+            }
+
+            if ((long)_capture.Count + (long)terminalBuffer.Count > (long)_capture.Capacity)
+            {
+                throw new InvalidOperationException("The terminal buffer exceeds the remaining capture capacity.");
+            }
+
+            if ((long)_capturedPostRollCount + (long)terminalBuffer.Count > (long)_postRollCapacity)
+            {
+                throw new InvalidOperationException("The terminal buffer exceeds the post-roll capacity.");
+            }
+
+            for (int i = 0; i < terminalBuffer.ForcedDropCount; i++)
+            {
+                CaptureFrameDraftTraceContext context = registry.GetForcedDropTraceContext(forcedDropFrameIds, i);
+                if (!ForcedDropEventMatches(terminalBuffer.GetEvent(i), context))
+                {
+                    throw new ArgumentException("A forced-drop event does not match its draft trace context.", nameof(terminalBuffer));
+                }
+            }
+
+            if (!RingEventMatches(terminalBuffer.GetEvent(terminalBuffer.Count - 1), checkpoint, terminalBuffer.ForcedDropCount))
+            {
+                throw new ArgumentException("The trailing ring event does not match the checkpoint.", nameof(terminalBuffer));
+            }
+
+            // Every check passed: append with no remaining exception point.
+            for (int i = 0; i < terminalBuffer.Count; i++)
+            {
+                _capture.Write(terminalBuffer.GetEvent(i));
+            }
+
+            _capturedPostRollCount += terminalBuffer.Count;
+            _state = TraceFlightRecorderState.Frozen;
+        }
+
+        private static bool ForcedDropEventMatches(TraceEvent e, in CaptureFrameDraftTraceContext context)
+        {
+            return e.Timestamp == context.Timestamp
+                && e.FrameId == context.UnityFrameId
+                && e.FixedStepId == context.FixedStepId
+                && e.ThreadId == context.ThreadId
+                && e.SlashId == context.SlashId
+                && e.SlashGeneration == 0
+                && e.FrontEdgeId == context.FrontEdgeId
+                && e.ObjectId == context.ObjectId
+                && e.ObjectGeneration == context.ObjectGeneration
+                && e.MobId == 0
+                && e.PlanGeneration == 0
+                && e.TaskId == context.TaskId
+                && e.CaptureFrameId == context.CaptureFrameId
+                && e.OpenXRFrameId == context.OpenXRFrameId
+                && e.TestRunId == context.TestRunId
+                && e.EventType == TraceEventType.CaptureFrameDropped
+                && e.TaskType == TraceTaskType.None
+                && e.FromState == 0
+                && e.ToState == 2
+                && e.Reason == TraceReason.None
+                && IsPositiveZero(e.Value0)
+                && BitConverter.DoubleToInt64Bits(e.Value1) == BitConverter.DoubleToInt64Bits(9.0);
+        }
+
+        private static bool RingEventMatches(TraceEvent e, in FreezeTerminalCheckpoint checkpoint, int forcedDropCount)
+        {
+            return e.Timestamp == checkpoint.Timestamp
+                && e.FrameId == checkpoint.FrameId
+                && e.FixedStepId == checkpoint.FixedStepId
+                && e.ThreadId == checkpoint.ThreadId
+                && e.SlashId == 0
+                && e.SlashGeneration == 0
+                && e.FrontEdgeId == 0
+                && e.ObjectId == 0
+                && e.ObjectGeneration == 0
+                && e.MobId == 0
+                && e.PlanGeneration == 0
+                && e.TaskId == 0
+                && e.CaptureFrameId == 0
+                && e.OpenXRFrameId == 0
+                && e.TestRunId == checkpoint.TestRunId
+                && e.EventType == TraceEventType.CaptureRingFrozen
+                && e.TaskType == TraceTaskType.None
+                && e.FromState == 3
+                && e.ToState == 2
+                && e.Reason == TraceReason.None
+                && BitConverter.DoubleToInt64Bits(e.Value0) == BitConverter.DoubleToInt64Bits((double)forcedDropCount)
+                && IsPositiveZero(e.Value1);
+        }
+
+        private static bool IsPositiveZero(double value)
+        {
+            return BitConverter.DoubleToInt64Bits(value) == 0L;
         }
 
         /// <summary>

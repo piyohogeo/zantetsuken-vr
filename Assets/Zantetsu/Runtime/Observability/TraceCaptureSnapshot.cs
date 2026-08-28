@@ -65,7 +65,12 @@ namespace Zantetsu.Observability
         /// <summary>Number of pre-trigger history events.</summary>
         public int TriggerHistoryCount => _triggerHistoryCount;
 
-        /// <summary>Number of post-roll events duplicated into the capture.</summary>
+        /// <summary>
+        /// Number of events recorded into the capture after trigger, including
+        /// the freeze-terminal direct append. If only the count of normal
+        /// post-roll duplications is needed, it must be separated by verifying
+        /// the terminal tail structure.
+        /// </summary>
         public int CapturedPostRollCount => _capturedPostRollCount;
 
         /// <summary>Whether the logger history had already overwritten events at trigger time.</summary>
