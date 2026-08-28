@@ -52,5 +52,6 @@ namespace Zantetsu.Trace
         FallbackActivated = 42,
         TaskCancelled = 43,
         ResultDisposed = 44,
+        CaptureFrameAdmissionRejected = 45,
     }
 }

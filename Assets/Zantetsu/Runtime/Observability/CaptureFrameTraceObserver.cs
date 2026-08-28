@@ -60,6 +60,38 @@ namespace Zantetsu.Observability
             _logger.Enqueue(e);
         }
 
+        /// <summary>
+        /// Records a capture frame admission rejection as a dedicated
+        /// <c>CaptureFrameAdmissionRejected</c> trace event. The admission was
+        /// refused before any positive capture frame ID was issued, so the
+        /// context's capture frame ID must already be zero.
+        /// </summary>
+        internal void RecordAdmissionRejected(
+            in CaptureFrameTraceContext context,
+            CaptureFrameAdmissionRejectKind rejectKind)
+        {
+            if (context.CaptureFrameId != 0)
+            {
+                throw new ArgumentException("Capture frame ID must be zero for an admission rejection.", nameof(context));
+            }
+
+            if (context.TestRunId <= 0)
+            {
+                throw new ArgumentException("Test run ID must be greater than zero.", nameof(context));
+            }
+
+            if (rejectKind != CaptureFrameAdmissionRejectKind.PendingLimit
+                && rejectKind != CaptureFrameAdmissionRejectKind.RunEntryLimit)
+            {
+                throw new ArgumentOutOfRangeException(nameof(rejectKind), rejectKind, "Reject kind must be PendingLimit or RunEntryLimit.");
+            }
+
+            TraceEvent e = BuildEvent(context, TraceEventType.CaptureFrameAdmissionRejected);
+            e.Value0 = (int)rejectKind;
+            e.Value1 = (int)CaptureFrameDropReason.FrameDraftRegistryFull;
+            _logger.Enqueue(e);
+        }
+
         public void RecordRingFrozen(in CaptureFrameTraceContext context)
         {
             TraceEvent e = BuildEvent(context, TraceEventType.CaptureRingFrozen);
