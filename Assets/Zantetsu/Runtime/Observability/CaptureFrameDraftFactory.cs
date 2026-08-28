@@ -93,6 +93,9 @@ namespace Zantetsu.Observability
             _pixelFormat = pixelFormat;
         }
 
+        /// <summary>The run context pinned at construction.</summary>
+        internal CaptureDraftRunContext Run => _run;
+
         internal CaptureFrameDraft Create(
             long timestamp,
             long unityFrameId,
