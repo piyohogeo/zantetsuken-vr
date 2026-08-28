@@ -92,6 +92,66 @@ namespace Zantetsu.Observability
             _logger.Enqueue(e);
         }
 
+        /// <summary>
+        /// Consumes a draft's one-time drop trace from the registry and enqueues
+        /// a <see cref="TraceEventType.CaptureFrameDropped"/> event exactly once.
+        /// Returns <c>false</c> without touching the logger when there is no
+        /// consumable drop trace.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The registry's emission state is advanced to <c>Attempted</c> before
+        /// the logger is touched, so a logger enqueue exception (disposal or
+        /// capture-run seal conflict) never rolls back the dropped status, the
+        /// freed slot, or the emission state; the caller must not retry the same
+        /// frame through this method.
+        /// </para>
+        /// </remarks>
+        internal bool RecordDraftDropped(
+            CaptureFrameDraftRegistry registry,
+            long captureFrameId)
+        {
+            if (registry == null)
+            {
+                throw new ArgumentNullException(nameof(registry));
+            }
+
+            if (!registry.TryConsumeDropTrace(captureFrameId, out CaptureFrameDraftDropTracePayload payload))
+            {
+                return false;
+            }
+
+            TraceEvent e = default;
+            e.Timestamp = payload.TraceContext.Timestamp;
+            e.FrameId = payload.TraceContext.UnityFrameId;
+            e.FixedStepId = payload.TraceContext.FixedStepId;
+            e.ThreadId = payload.TraceContext.ThreadId;
+            e.CaptureFrameId = payload.TraceContext.CaptureFrameId;
+            e.OpenXRFrameId = payload.TraceContext.OpenXRFrameId;
+            e.TestRunId = payload.TraceContext.TestRunId;
+            e.SlashId = payload.TraceContext.SlashId;
+            e.FrontEdgeId = payload.TraceContext.FrontEdgeId;
+            e.ObjectId = payload.TraceContext.ObjectId;
+            e.ObjectGeneration = payload.TraceContext.ObjectGeneration;
+            e.TaskId = payload.TraceContext.TaskId;
+
+            // The draft trace context does not carry these; they stay zero.
+            e.SlashGeneration = 0;
+            e.MobId = 0;
+            e.PlanGeneration = 0;
+
+            e.EventType = TraceEventType.CaptureFrameDropped;
+            e.TaskType = TraceTaskType.None;
+            e.FromState = (int)CaptureFrameDraftStatus.Pending;
+            e.ToState = (int)CaptureFrameDraftStatus.Dropped;
+            e.Reason = TraceReason.None;
+            e.Value0 = 0.0;
+            e.Value1 = (int)payload.Reason;
+
+            _logger.Enqueue(e);
+            return true;
+        }
+
         public void RecordRingFrozen(in CaptureFrameTraceContext context)
         {
             TraceEvent e = BuildEvent(context, TraceEventType.CaptureRingFrozen);

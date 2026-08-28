@@ -254,5 +254,186 @@ namespace Zantetsu.Observability
             status = default;
             return false;
         }
+
+        /// <summary>
+        /// Atomically moves a pending draft to the terminal
+        /// <see cref="CaptureFrameDraftStatus.Dropped"/> state with one of the
+        /// three normal draft drop reasons, and schedules its one-time drop
+        /// trace for later consumption.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Only <see cref="CaptureFrameDropReason.PngEncodeFailed"/>,
+        /// <see cref="CaptureFrameDropReason.PngStagingStoreFull"/>, and
+        /// <see cref="CaptureFrameDropReason.CaptureCancelled"/> are accepted;
+        /// the legacy, admission, and freeze terminal reasons are rejected with
+        /// <see cref="ArgumentOutOfRangeException"/>.
+        /// </para>
+        /// <para>
+        /// Validation runs in a fixed order and mutates nothing until every
+        /// check passes: the request must be valid, the reason must be a normal
+        /// drop reason, the request must be fully registered (a matching ID
+        /// with a different request fails closed), the entry must still be
+        /// <see cref="CaptureFrameDraftStatus.Pending"/>, and exactly one
+        /// occupied pending slot must reference the entry. On success the
+        /// status, drop reason, and emission state are set exactly once, the
+        /// pending slot is freed, its entry index is reset, and the pending
+        /// count is decremented. The entry itself and its draft reference stay
+        /// in the append-only store and the entry count is unchanged.
+        /// </para>
+        /// <para>
+        /// This operation performs no rollback, PNG destruction, lease return,
+        /// or trace generation. A future terminal coordinator must call it only
+        /// after it has rolled back every shared resource (PNG encode/queue
+        /// work, render target lease, and readback result) for the frame, and
+        /// must never call it for a Staged or already-Dropped entry.
+        /// </para>
+        /// </remarks>
+        internal void MarkDropped(
+            in CaptureFrameRequest request,
+            CaptureFrameDropReason reason)
+        {
+            if (!request.IsValid)
+            {
+                throw new ArgumentException("Request must be valid.", nameof(request));
+            }
+
+            if (reason != CaptureFrameDropReason.PngEncodeFailed
+                && reason != CaptureFrameDropReason.PngStagingStoreFull
+                && reason != CaptureFrameDropReason.CaptureCancelled)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reason), reason, "Reason must be PngEncodeFailed, PngStagingStoreFull, or CaptureCancelled.");
+            }
+
+            int entryIndex = FindEntryIndex(request);
+            if (entryIndex < 0)
+            {
+                throw new InvalidOperationException("The draft is not registered in the registry.");
+            }
+
+            if (_entries[entryIndex].Status != CaptureFrameDraftStatus.Pending)
+            {
+                throw new InvalidOperationException("The draft is not pending.");
+            }
+
+            int slotIndex = FindSingleOccupiedSlot(entryIndex);
+
+            // Every validation succeeded: perform the terminal transition once.
+            _entries[entryIndex].Status = CaptureFrameDraftStatus.Dropped;
+            _entries[entryIndex].DropReason = reason;
+            _entries[entryIndex].EmissionState = DraftDropTraceEmissionState.Pending;
+            _slotState[slotIndex] = PendingSlotState.Free;
+            _slotEntryIndex[slotIndex] = -1;
+            _pendingCount--;
+        }
+
+        /// <summary>
+        /// Consumes the one-time drop trace emission for a dropped draft,
+        /// moving its emission state from <c>Pending</c> to <c>Attempted</c>
+        /// irreversibly before any trace is enqueued.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Only an entry that is <see cref="CaptureFrameDraftStatus.Dropped"/>
+        /// with one of the three normal drop reasons and
+        /// <see cref="DraftDropTraceEmissionState.Pending"/> is consumed. Any
+        /// other state (nonexistent ID, Pending, Staged, the freeze reason, or
+        /// an already <c>Attempted</c> emission) returns <c>false</c> with a
+        /// default payload and leaves state unchanged. A second call therefore
+        /// always fails; there is deliberately no rollback from
+        /// <c>Attempted</c> back to <c>Pending</c>.
+        /// </para>
+        /// </remarks>
+        internal bool TryConsumeDropTrace(
+            long captureFrameId,
+            out CaptureFrameDraftDropTracePayload payload)
+        {
+            if (captureFrameId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(captureFrameId), captureFrameId, "Capture frame ID must be greater than zero.");
+            }
+
+            payload = default;
+
+            int entryIndex = FindEntryIndexById(captureFrameId);
+            if (entryIndex < 0)
+            {
+                return false;
+            }
+
+            Entry entry = _entries[entryIndex];
+            if (entry.Status != CaptureFrameDraftStatus.Dropped
+                || (entry.DropReason != CaptureFrameDropReason.PngEncodeFailed
+                    && entry.DropReason != CaptureFrameDropReason.PngStagingStoreFull
+                    && entry.DropReason != CaptureFrameDropReason.CaptureCancelled)
+                || entry.EmissionState != DraftDropTraceEmissionState.Pending)
+            {
+                return false;
+            }
+
+            // Build the payload first, then advance the state irreversibly.
+            payload = new CaptureFrameDraftDropTracePayload(entry.Draft.TraceContext, entry.DropReason);
+            _entries[entryIndex].EmissionState = DraftDropTraceEmissionState.Attempted;
+            return true;
+        }
+
+        private int FindEntryIndex(in CaptureFrameRequest request)
+        {
+            long testRunId = request.TraceContext.TestRunId;
+            long captureFrameId = request.TraceContext.CaptureFrameId;
+
+            for (int i = 0; i < _entryCount; i++)
+            {
+                CaptureFrameDraft entryDraft = _entries[i].Draft;
+                if (entryDraft.CaptureFrameId == captureFrameId && entryDraft.TestRunId == testRunId)
+                {
+                    if (!entryDraft.HasIdenticalRequest(request))
+                    {
+                        throw new InvalidOperationException("A matching capture frame ID has a different request.");
+                    }
+
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private int FindEntryIndexById(long captureFrameId)
+        {
+            for (int i = 0; i < _entryCount; i++)
+            {
+                if (_entries[i].Draft.CaptureFrameId == captureFrameId)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private int FindSingleOccupiedSlot(int entryIndex)
+        {
+            int slotIndex = -1;
+            for (int i = 0; i < _slotState.Length; i++)
+            {
+                if (_slotState[i] == PendingSlotState.Occupied && _slotEntryIndex[i] == entryIndex)
+                {
+                    if (slotIndex >= 0)
+                    {
+                        throw new InvalidOperationException("Multiple pending slots reference the same entry.");
+                    }
+
+                    slotIndex = i;
+                }
+            }
+
+            if (slotIndex < 0)
+            {
+                throw new InvalidOperationException("No occupied pending slot references the entry.");
+            }
+
+            return slotIndex;
+        }
     }
 }
