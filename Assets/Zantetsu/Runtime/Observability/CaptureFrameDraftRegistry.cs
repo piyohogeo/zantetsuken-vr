@@ -256,6 +256,129 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Registers a caller-owned staging entry into the staging store and,
+        /// only after that registration succeeds, moves the matching pending
+        /// draft to <see cref="CaptureFrameDraftStatus.Staged"/> and releases
+        /// its pending slot in one terminal operation.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is a main-thread primitive reserved for the future single
+        /// terminal coordinator. Validation runs in a fixed order and touches
+        /// neither the staging store nor the registry until every check passes.
+        /// The linearization point for staging publication and pending slot
+        /// release is the registry state update performed only after
+        /// <see cref="CaptureFramePngStagingStore.TryRegister"/> returns
+        /// <c>true</c>; after that point only fixed-array and primitive field
+        /// writes remain, so no rollback point exists.
+        /// </para>
+        /// <para>
+        /// A <c>false</c> result is a temporary staging capacity shortage, not
+        /// a drop: the draft stays <see cref="CaptureFrameDraftStatus.Pending"/>,
+        /// its pending slot is not released, and no registry counter, drop
+        /// reason, emission state, or trace is changed. The staging entry stays
+        /// caller-owned. The future terminal coordinator performs the drop
+        /// separately via
+        /// <see cref="MarkDropped(in CaptureFrameRequest, CaptureFrameDropReason)"/>
+        /// with <see cref="CaptureFrameDropReason.PngStagingStoreFull"/> after
+        /// it has released the entry.
+        /// </para>
+        /// <para>
+        /// After a successful return the staging store owns the entry; the
+        /// caller must not dispose or roll it back, and
+        /// <see cref="CaptureFramePngStagingStore.RollbackRegistration"/> must
+        /// never be called after staging has been published. This operation
+        /// never disposes the staging entry and never touches a logger, a
+        /// lease, a readback, or a PNG queue.
+        /// </para>
+        /// </remarks>
+        internal bool TryMarkStaged(
+            in CaptureFrameRequest request,
+            CaptureFramePngStagingStore stagingStore,
+            CaptureFramePngStagingEntry stagingEntry)
+        {
+            if (!request.IsValid)
+            {
+                throw new ArgumentException("Request must be valid.", nameof(request));
+            }
+
+            if (stagingStore == null)
+            {
+                throw new ArgumentNullException(nameof(stagingStore));
+            }
+
+            if (stagingEntry == null)
+            {
+                throw new ArgumentNullException(nameof(stagingEntry));
+            }
+
+            if (!stagingStore.IsCreated)
+            {
+                throw new ObjectDisposedException(stagingStore.GetType().Name);
+            }
+
+            if (!stagingEntry.IsCreated)
+            {
+                throw new ObjectDisposedException(stagingEntry.GetType().Name);
+            }
+
+            if (!ReferenceEquals(stagingStore.Run, _run))
+            {
+                throw new ArgumentException("Staging store run must match the registry run.", nameof(stagingStore));
+            }
+
+            if (stagingEntry.TestRunId != request.TraceContext.TestRunId)
+            {
+                throw new ArgumentException("Staging entry test run ID must match the request.", nameof(stagingEntry));
+            }
+
+            if (stagingEntry.CaptureFrameId != request.TraceContext.CaptureFrameId)
+            {
+                throw new ArgumentException("Staging entry capture frame ID must match the request.", nameof(stagingEntry));
+            }
+
+            int entryIndex = FindEntryIndex(request);
+            if (entryIndex < 0)
+            {
+                throw new InvalidOperationException("The draft is not registered in the registry.");
+            }
+
+            if (_entries[entryIndex].Status != CaptureFrameDraftStatus.Pending)
+            {
+                throw new InvalidOperationException("The draft is not pending.");
+            }
+
+            if (_entries[entryIndex].DropReason != CaptureFrameDropReason.None)
+            {
+                throw new InvalidOperationException("The draft drop reason is not None.");
+            }
+
+            if (_entries[entryIndex].EmissionState != DraftDropTraceEmissionState.None)
+            {
+                throw new InvalidOperationException("The draft drop trace emission state is not None.");
+            }
+
+            int slotIndex = FindSingleOccupiedSlot(entryIndex);
+
+            if (_pendingCount <= 0)
+            {
+                throw new InvalidOperationException("No pending slots remain.");
+            }
+
+            if (!stagingStore.TryRegister(stagingEntry))
+            {
+                return false;
+            }
+
+            // Staging publication succeeded; only primitive state writes follow.
+            _entries[entryIndex].Status = CaptureFrameDraftStatus.Staged;
+            _slotState[slotIndex] = PendingSlotState.Free;
+            _slotEntryIndex[slotIndex] = -1;
+            _pendingCount--;
+            return true;
+        }
+
+        /// <summary>
         /// Atomically moves a pending draft to the terminal
         /// <see cref="CaptureFrameDraftStatus.Dropped"/> state with one of the
         /// three normal draft drop reasons, and schedules its one-time drop
