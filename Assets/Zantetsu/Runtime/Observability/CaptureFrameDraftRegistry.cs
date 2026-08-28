@@ -55,6 +55,7 @@ namespace Zantetsu.Observability
         private int _entryCount;
         private int _pendingCount;
         private int _reservationCount;
+        private ForcedDropFrameIdSet _issuedForcedDropFrameIdSet;
 
         internal CaptureFrameDraftRegistry(
             CaptureDraftRunContext run,
@@ -98,6 +99,12 @@ namespace Zantetsu.Observability
         internal int PendingCount => _pendingCount;
 
         internal int ReservationCount => _reservationCount;
+
+        /// <summary>
+        /// Returns the forced-drop frame ID set issued by this registry, or
+        /// <c>null</c> before any set has been issued.
+        /// </summary>
+        internal ForcedDropFrameIdSet IssuedForcedDropFrameIdSet => _issuedForcedDropFrameIdSet;
 
         internal bool TryReserve(
             out CaptureFrameDraftReservation reservation,
@@ -498,6 +505,275 @@ namespace Zantetsu.Observability
             payload = new CaptureFrameDraftDropTracePayload(entry.Draft.TraceContext, entry.DropReason);
             _entries[entryIndex].EmissionState = DraftDropTraceEmissionState.Attempted;
             return true;
+        }
+
+        /// <summary>
+        /// Main-thread only. After the ownership snapshot is issued, moves every
+        /// remaining pending draft to <see cref="CaptureFrameDraftStatus.Dropped"/>
+        /// with <see cref="CaptureFrameDropReason.FreezeDrainTimeout"/> in one
+        /// all-or-none operation, and issues the immutable
+        /// <see cref="ForcedDropFrameIdSet"/> of their capture frame IDs.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Dependency and snapshot identity are verified before any registry
+        /// state is read or changed. Once a canonical set has been issued, this
+        /// returns the same instance without rescanning or re-terminating.
+        /// </para>
+        /// <para>
+        /// The full entry store and pending slot pool are scanned for invariant
+        /// violations before any mutation; any violation throws
+        /// <see cref="InvalidOperationException"/> leaving the registry, slots,
+        /// counters, and traces completely unchanged.
+        /// </para>
+        /// <para>
+        /// Reason 9 never schedules a normal drop trace:
+        /// <see cref="MarkDropped"/> continues to accept only reasons 6-8,
+        /// <see cref="TryConsumeDropTrace"/> keeps returning <c>false</c> for
+        /// reason 9, and reason 9 entries keep
+        /// <see cref="DraftDropTraceEmissionState.None"/>. This method never
+        /// touches a logger or trace observer; freeze terminal event generation
+        /// is the future freeze terminal builder's responsibility.
+        /// </para>
+        /// </remarks>
+        internal ForcedDropFrameIdSet ForceDropPendingForFreeze(
+            CaptureFrameDraftTerminalIntentQueue intentQueue,
+            TerminalIntentOwnershipSnapshot ownershipSnapshot)
+        {
+            if (intentQueue == null)
+            {
+                throw new ArgumentNullException(nameof(intentQueue));
+            }
+
+            if (ownershipSnapshot == null)
+            {
+                throw new ArgumentNullException(nameof(ownershipSnapshot));
+            }
+
+            if (!ReferenceEquals(intentQueue.Registry, this))
+            {
+                throw new ArgumentException("Intent queue registry must match this registry.", nameof(intentQueue));
+            }
+
+            if (!ReferenceEquals(ownershipSnapshot.IssuedBy, intentQueue))
+            {
+                throw new ArgumentException("Ownership snapshot must be issued by the intent queue.", nameof(ownershipSnapshot));
+            }
+
+            if (!ReferenceEquals(ownershipSnapshot, intentQueue.IssuedOwnershipSnapshot))
+            {
+                throw new ArgumentException("Ownership snapshot must be the queue's issued ownership snapshot.", nameof(ownershipSnapshot));
+            }
+
+            if (!ownershipSnapshot.IsValid)
+            {
+                throw new ArgumentException("Ownership snapshot must be valid.", nameof(ownershipSnapshot));
+            }
+
+            if (ownershipSnapshot.TestRunId != _run.TestRunId)
+            {
+                throw new ArgumentException("Ownership snapshot test run ID must match the registry run.", nameof(ownershipSnapshot));
+            }
+
+            if (_issuedForcedDropFrameIdSet != null)
+            {
+                return _issuedForcedDropFrameIdSet;
+            }
+
+            ValidateFreezePreconditions(out int pendingCount);
+
+            long[] captureFrameIds = new long[pendingCount];
+            int written = 0;
+            for (int i = 0; i < _entryCount; i++)
+            {
+                if (_entries[i].Status == CaptureFrameDraftStatus.Pending)
+                {
+                    captureFrameIds[written] = _entries[i].Draft.CaptureFrameId;
+                    written++;
+                }
+            }
+
+            ForcedDropFrameIdSet set = new ForcedDropFrameIdSet(this, _run.TestRunId, captureFrameIds);
+
+            // Linearization point: only fixed-array and primitive writes follow.
+            for (int i = 0; i < _entryCount; i++)
+            {
+                if (_entries[i].Status == CaptureFrameDraftStatus.Pending)
+                {
+                    _entries[i].Status = CaptureFrameDraftStatus.Dropped;
+                    _entries[i].DropReason = CaptureFrameDropReason.FreezeDrainTimeout;
+                    _entries[i].EmissionState = DraftDropTraceEmissionState.None;
+                }
+            }
+
+            for (int s = 0; s < _slotState.Length; s++)
+            {
+                if (_slotState[s] == PendingSlotState.Occupied)
+                {
+                    _slotState[s] = PendingSlotState.Free;
+                    _slotEntryIndex[s] = -1;
+                }
+            }
+
+            _pendingCount = 0;
+            _issuedForcedDropFrameIdSet = set;
+            return set;
+        }
+
+        private void ValidateFreezePreconditions(out int pendingCount)
+        {
+            if (_reservationCount != 0)
+            {
+                throw new InvalidOperationException("Reservation count must be zero before freeze.");
+            }
+
+            if (_pendingCount < 0)
+            {
+                throw new InvalidOperationException("Pending count must not be negative.");
+            }
+
+            pendingCount = 0;
+            long previousCaptureFrameId = 0;
+
+            for (int i = 0; i < _entryCount; i++)
+            {
+                Entry entry = _entries[i];
+                CaptureFrameDraft draft = entry.Draft;
+
+                if (draft == null)
+                {
+                    throw new InvalidOperationException("Entry draft must not be null.");
+                }
+
+                if (draft.TestRunId != _run.TestRunId)
+                {
+                    throw new InvalidOperationException("Entry test run ID must match the registry run.");
+                }
+
+                long captureFrameId = draft.CaptureFrameId;
+                if (captureFrameId <= 0)
+                {
+                    throw new InvalidOperationException("Entry capture frame ID must be positive.");
+                }
+
+                if (i > 0 && captureFrameId <= previousCaptureFrameId)
+                {
+                    throw new InvalidOperationException("Capture frame IDs must be strictly increasing.");
+                }
+
+                previousCaptureFrameId = captureFrameId;
+
+                switch (entry.Status)
+                {
+                    case CaptureFrameDraftStatus.Pending:
+                        if (entry.DropReason != CaptureFrameDropReason.None)
+                        {
+                            throw new InvalidOperationException("Pending entry must have drop reason None.");
+                        }
+
+                        if (entry.EmissionState != DraftDropTraceEmissionState.None)
+                        {
+                            throw new InvalidOperationException("Pending entry must have emission state None.");
+                        }
+
+                        pendingCount++;
+                        break;
+
+                    case CaptureFrameDraftStatus.Staged:
+                        if (entry.DropReason != CaptureFrameDropReason.None)
+                        {
+                            throw new InvalidOperationException("Staged entry must have drop reason None.");
+                        }
+
+                        if (entry.EmissionState != DraftDropTraceEmissionState.None)
+                        {
+                            throw new InvalidOperationException("Staged entry must have emission state None.");
+                        }
+
+                        break;
+
+                    case CaptureFrameDraftStatus.Dropped:
+                        if (entry.DropReason != CaptureFrameDropReason.PngEncodeFailed
+                            && entry.DropReason != CaptureFrameDropReason.PngStagingStoreFull
+                            && entry.DropReason != CaptureFrameDropReason.CaptureCancelled)
+                        {
+                            throw new InvalidOperationException("Dropped entry must have a normal drop reason before freeze.");
+                        }
+
+                        if (entry.EmissionState != DraftDropTraceEmissionState.Pending
+                            && entry.EmissionState != DraftDropTraceEmissionState.Attempted)
+                        {
+                            throw new InvalidOperationException("Dropped entry must have emission state Pending or Attempted.");
+                        }
+
+                        break;
+
+                    default:
+                        throw new InvalidOperationException("Entry has an undefined status.");
+                }
+            }
+
+            if (pendingCount != _pendingCount)
+            {
+                throw new InvalidOperationException("Scanned pending count does not match PendingCount.");
+            }
+
+            if (pendingCount > _slotState.Length)
+            {
+                throw new InvalidOperationException("Pending count exceeds pending slot capacity.");
+            }
+
+            int occupiedCount = 0;
+            for (int s = 0; s < _slotState.Length; s++)
+            {
+                switch (_slotState[s])
+                {
+                    case PendingSlotState.Free:
+                        if (_slotEntryIndex[s] != -1)
+                        {
+                            throw new InvalidOperationException("Free slot must have entry index -1.");
+                        }
+
+                        break;
+
+                    case PendingSlotState.Reserved:
+                        throw new InvalidOperationException("A reserved slot remains before freeze.");
+
+                    case PendingSlotState.Occupied:
+                    {
+                        occupiedCount++;
+                        int entryIndex = _slotEntryIndex[s];
+                        if (entryIndex < 0 || entryIndex >= _entryCount)
+                        {
+                            throw new InvalidOperationException("Occupied slot entry index is out of range.");
+                        }
+
+                        if (_entries[entryIndex].Status != CaptureFrameDraftStatus.Pending)
+                        {
+                            throw new InvalidOperationException("Occupied slot does not reference a pending entry.");
+                        }
+
+                        break;
+                    }
+
+                    default:
+                        throw new InvalidOperationException("Slot has an undefined state.");
+                }
+            }
+
+            if (occupiedCount != _pendingCount)
+            {
+                throw new InvalidOperationException("Occupied slot count does not match PendingCount.");
+            }
+
+            // Each pending entry must be referenced by exactly one occupied slot.
+            for (int i = 0; i < _entryCount; i++)
+            {
+                if (_entries[i].Status == CaptureFrameDraftStatus.Pending)
+                {
+                    FindSingleOccupiedSlot(i);
+                }
+            }
         }
 
         private int FindEntryIndex(in CaptureFrameRequest request)
