@@ -60,6 +60,7 @@ namespace Zantetsu.Observability
         private int _queueOwnedPrivateBufferCount;
         private bool _disposeStarted;
         private bool _disposed;
+        private TerminalIntentOwnershipSnapshot _issuedOwnershipSnapshot;
 
         internal CaptureFrameDraftTerminalIntentQueue(
             CaptureFrameDraftRegistry draftRegistry,
@@ -124,6 +125,24 @@ namespace Zantetsu.Observability
         /// terminal coordinator's dependency identity validation only.
         /// </summary>
         internal CaptureFrameDraftRegistry Registry => _draftRegistry;
+
+        /// <summary>
+        /// Returns the ownership snapshot issued by this queue, or <c>null</c>
+        /// before any snapshot has been issued. Follows the normal disposed
+        /// contract and is intended for a future freeze barrier to compare by
+        /// reference while the queue is still alive.
+        /// </summary>
+        internal TerminalIntentOwnershipSnapshot IssuedOwnershipSnapshot
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    ThrowIfDisposed();
+                    return _issuedOwnershipSnapshot;
+                }
+            }
+        }
 
         public int Capacity
         {
@@ -406,6 +425,70 @@ namespace Zantetsu.Observability
                 }
 
                 _state = CaptureFrameDraftTerminalIntentQueueState.Closed;
+            }
+        }
+
+        /// <summary>
+        /// Main-thread only. Issues an immutable ownership snapshot proving the
+        /// queue was finally drained after producer join. Validates a fixed
+        /// sequence of preconditions inside the queue gate; on any failure no
+        /// queue, mirror, counter, intent, or entry ownership changes.
+        /// </summary>
+        /// <remarks>
+        /// The first successful call builds the snapshot and caches it; later
+        /// successful calls return the same instance. After issue the queue is
+        /// closed and empty, so the represented counters never change.
+        /// </remarks>
+        internal TerminalIntentOwnershipSnapshot CreateOwnershipSnapshot(
+            int producerRetainedPrivateBufferCount)
+        {
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+
+                if (producerRetainedPrivateBufferCount < 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(producerRetainedPrivateBufferCount), producerRetainedPrivateBufferCount, "Producer retained private buffer count must not be negative.");
+                }
+
+                if (_state != CaptureFrameDraftTerminalIntentQueueState.Closed)
+                {
+                    throw new InvalidOperationException("The queue is not closed.");
+                }
+
+                if (_count != 0)
+                {
+                    throw new InvalidOperationException("The queue is not empty.");
+                }
+
+                if (_runAcceptedIntentCount != _runProcessedIntentCount)
+                {
+                    throw new InvalidOperationException("Accepted and processed intent counts must match.");
+                }
+
+                if (_queueOwnedPrivateBufferCount != 0)
+                {
+                    throw new InvalidOperationException("Queue-owned private buffer count must be zero.");
+                }
+
+                if (producerRetainedPrivateBufferCount != 0)
+                {
+                    throw new InvalidOperationException("Producer retained private buffer count must be zero.");
+                }
+
+                if (_issuedOwnershipSnapshot == null)
+                {
+                    _issuedOwnershipSnapshot = new TerminalIntentOwnershipSnapshot(
+                        this,
+                        _runTestRunId,
+                        _count,
+                        _runAcceptedIntentCount,
+                        _runProcessedIntentCount,
+                        _queueOwnedPrivateBufferCount,
+                        producerRetainedPrivateBufferCount);
+                }
+
+                return _issuedOwnershipSnapshot;
             }
         }
 
