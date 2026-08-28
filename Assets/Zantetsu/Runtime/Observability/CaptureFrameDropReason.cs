@@ -19,6 +19,32 @@ namespace Zantetsu.Observability
         EncodedPngQueueFull = 3,
 
         /// <summary>The capture frame record registry was full.</summary>
-        FrameRecordRegistryFull = 4
+        FrameRecordRegistryFull = 4,
+
+        /// <summary>
+        /// A draft could not be admitted before an ID was issued because the
+        /// draft registry was full. Never used for a dropped draft that already
+        /// has a positive capture frame ID.
+        /// </summary>
+        FrameDraftRegistryFull = 5,
+
+        /// <summary>Encoding a pending draft to PNG failed.</summary>
+        PngEncodeFailed = 6,
+
+        /// <summary>
+        /// The encoded PNG could not be admitted to durable staging because its
+        /// capacity was full.
+        /// </summary>
+        PngStagingStoreFull = 7,
+
+        /// <summary>An explicit or shutdown cancellation.</summary>
+        CaptureCancelled = 8,
+
+        /// <summary>
+        /// A pending draft remaining after the freeze deadline was forcibly
+        /// dropped. Never enqueued to the normal logger queue; only the future
+        /// freeze terminal builder uses this reason.
+        /// </summary>
+        FreezeDrainTimeout = 9
     }
 }
