@@ -119,15 +119,21 @@ namespace Zantetsu.Core.Tests
             return array;
         }
 
-        private static Array MakeManyEntries(int count)
+        private static Array MakeManyEntriesFixed(int count, long baseId)
         {
             Array array = Array.CreateInstance(GetEntryType(), count);
             for (int i = 0; i < count; i++)
             {
-                array.SetValue(MakeEntry(i + 1, 16, 32), i);
+                array.SetValue(MakeEntry(baseId + i, 16, 32), i);
             }
 
             return array;
+        }
+
+        private static long TotalSerializedBytes(int entryCount, int header1, int entryBytes)
+        {
+            int digits = entryCount.ToString(CultureInfo.InvariantCulture).Length;
+            return (long)header1 + (digits - 1) + (long)entryCount * entryBytes + (entryCount - 1L) + 2L;
         }
 
         private static object MakePlanRaw(long testRunId, string initId, string hash, Array entries)
@@ -557,22 +563,51 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Codec_Within16MiB_Accepted()
+        public void Codec_LimitConstant_IsExactly16MiB()
         {
-            object plan = MakePlan(entries: MakeManyEntries(1000));
-
-            byte[] bytes = Serialize(plan);
-
-            Assert.That(bytes.Length, Is.LessThan(16 * 1024 * 1024));
+            FieldInfo field = GetCodecType().GetField("MaximumCanonicalByteCount", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(field, Is.Not.Null, "MaximumCanonicalByteCount constant not found.");
+            Assert.That((int)field.GetValue(null), Is.EqualTo(16 * 1024 * 1024));
         }
 
         [Test]
-        public void Codec_Exceeds16MiB_Rejected()
+        public void Codec_16MiBBoundary_MaxAcceptedAndNextRejected()
         {
-            object plan = MakePlan(entries: MakeManyEntries(50000));
+            const long baseId = 1000000000L; // 10-digit IDs keep every entry the same fixed size.
 
-            Exception ex = SerializeException(plan);
-            Assert.That(ex, Is.TypeOf<InvalidOperationException>());
+            // Derive the fixed per-entry byte size and single-digit header size
+            // from the serializer itself, then confirm the two-entry arithmetic.
+            object empty = MakePlan(1, InitId, Hash64, MakeEntryArray());
+            object one = MakePlan(1, InitId, Hash64, MakeEntryArray(MakeEntry(baseId)));
+            object two = MakePlan(1, InitId, Hash64, MakeEntryArray(MakeEntry(baseId), MakeEntry(baseId + 1)));
+
+            int emptyBytes = Serialize(empty).Length;
+            int oneBytes = Serialize(one).Length;
+            int twoBytes = Serialize(two).Length;
+
+            int header1 = emptyBytes - 2;           // head up to "Entries":[" plus the "]}" tail
+            int entryBytes = oneBytes - emptyBytes; // one entry, no separator
+            Assert.That(twoBytes, Is.EqualTo(header1 + 2 * entryBytes + 3)); // one "," + "]"
+
+            int limit = 16 * 1024 * 1024;
+            int maxAccepted = 0;
+            for (int n = 1; n <= 100000; n++)
+            {
+                if (TotalSerializedBytes(n, header1, entryBytes) > limit)
+                {
+                    break;
+                }
+
+                maxAccepted = n;
+            }
+
+            Assert.That(maxAccepted, Is.GreaterThan(0));
+
+            byte[] accepted = Serialize(MakePlan(1, InitId, Hash64, MakeManyEntriesFixed(maxAccepted, baseId)));
+            Assert.That(accepted.Length, Is.LessThanOrEqualTo(limit));
+
+            object rejected = MakePlan(1, InitId, Hash64, MakeManyEntriesFixed(maxAccepted + 1, baseId));
+            Assert.That(SerializeException(rejected), Is.TypeOf<InvalidOperationException>());
         }
 
         [Test]
