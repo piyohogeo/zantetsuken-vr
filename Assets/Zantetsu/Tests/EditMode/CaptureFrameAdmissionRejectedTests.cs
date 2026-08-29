@@ -147,20 +147,20 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void TraceEventType_HasNoAliasesOrGaps_0To45()
+        public void TraceEventType_HasNoAliasesOrGaps_0To46()
         {
             Type type = typeof(TraceEventType);
 
-            Assert.That(Enum.GetNames(type).Length, Is.EqualTo(46));
-            Assert.That(Enum.GetValues(type).Length, Is.EqualTo(46));
+            Assert.That(Enum.GetNames(type).Length, Is.EqualTo(47));
+            Assert.That(Enum.GetValues(type).Length, Is.EqualTo(47));
 
-            for (int i = 0; i <= 45; i++)
+            for (int i = 0; i <= 46; i++)
             {
                 Assert.That(Enum.GetName(type, i), Is.Not.Null, "Missing name for value " + i);
                 Assert.That(Enum.IsDefined(type, i), Is.True, "Value " + i + " is not defined.");
             }
 
-            Assert.That(Enum.IsDefined(type, 46), Is.False);
+            Assert.That(Enum.IsDefined(type, 47), Is.False);
             Assert.That(Enum.IsDefined(type, -1), Is.False);
         }
 

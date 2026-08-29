@@ -53,5 +53,6 @@ namespace Zantetsu.Trace
         TaskCancelled = 43,
         ResultDisposed = 44,
         CaptureFrameAdmissionRejected = 45,
+        TraceIntegritySummary = 46,
     }
 }

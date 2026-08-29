@@ -7,5 +7,11 @@ namespace Zantetsu.Trace
     public enum TraceReason : int
     {
         None = 0,
+
+        /// <summary>A sealed trace enqueue failure was observed for the run.</summary>
+        TraceWriteFailureObserved = 1,
+
+        /// <summary>A trace capture overflow was observed for the run.</summary>
+        TraceCaptureOverflowObserved = 2,
     }
 }
