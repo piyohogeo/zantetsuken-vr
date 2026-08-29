@@ -114,6 +114,54 @@ namespace Zantetsu.Observability
 
         internal string FinalReadyPath => _finalReadyPath;
 
+        internal bool IsValid
+        {
+            get
+            {
+                if (_rootLayout == null)
+                {
+                    return false;
+                }
+
+                string stagingRunRoot = _rootLayout.StagingRunRoot;
+                string finalRunRoot = _rootLayout.FinalRunRoot;
+
+                if (string.IsNullOrEmpty(stagingRunRoot) || string.IsNullOrEmpty(finalRunRoot))
+                {
+                    return false;
+                }
+
+                return MatchesFixed(stagingRunRoot, "run.init.tmp", _stagingInitializationTemporaryPath)
+                    && MatchesFixed(stagingRunRoot, "run.init", _stagingInitializationPath)
+                    && MatchesFixed(stagingRunRoot, "run.ready.tmp", _stagingReadyTemporaryPath)
+                    && MatchesFixed(stagingRunRoot, "run.ready", _stagingReadyPath)
+                    && MatchesFixed(finalRunRoot, "run.init.tmp", _finalInitializationTemporaryPath)
+                    && MatchesFixed(finalRunRoot, "run.init", _finalInitializationPath)
+                    && MatchesFixed(finalRunRoot, "run.ready.tmp", _finalReadyTemporaryPath)
+                    && MatchesFixed(finalRunRoot, "run.ready", _finalReadyPath);
+            }
+        }
+
+        private static bool MatchesFixed(string runRoot, string basename, string storedPath)
+        {
+            if (storedPath == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                string derived = Path.GetFullPath(Path.Combine(runRoot, basename));
+                return string.Equals(storedPath, derived, StringComparison.Ordinal)
+                    && string.Equals(Path.GetDirectoryName(derived), runRoot, StringComparison.Ordinal)
+                    && string.Equals(Path.GetFileName(derived), basename, StringComparison.Ordinal);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is IOException)
+            {
+                return false;
+            }
+        }
+
         private static string RequireMarkerPath(string runRoot, string basename)
         {
             string path = Path.GetFullPath(Path.Combine(runRoot, basename));
