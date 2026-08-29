@@ -106,6 +106,46 @@ namespace Zantetsu.Observability
         /// </summary>
         internal ForcedDropFrameIdSet IssuedForcedDropFrameIdSet => _issuedForcedDropFrameIdSet;
 
+        /// <summary>
+        /// Returns the immutable draft stored at the given append-order entry
+        /// index without changing any registry state, counter, or slot. The
+        /// entry array is never exposed and no mutable reference leaves the
+        /// registry: the returned draft is deeply immutable and caller-owned.
+        /// </summary>
+        internal CaptureFrameDraft GetEntryDraft(int index)
+        {
+            ValidateEntryIndex(index);
+            return _entries[index].Draft;
+        }
+
+        /// <summary>
+        /// Returns the status of the entry at the given append-order index.
+        /// </summary>
+        internal CaptureFrameDraftStatus GetEntryStatus(int index)
+        {
+            ValidateEntryIndex(index);
+            return _entries[index].Status;
+        }
+
+        /// <summary>
+        /// Returns the drop reason of the entry at the given append-order index.
+        /// </summary>
+        internal CaptureFrameDropReason GetEntryDropReason(int index)
+        {
+            ValidateEntryIndex(index);
+            return _entries[index].DropReason;
+        }
+
+        /// <summary>
+        /// Returns the drop trace emission state of the entry at the given
+        /// append-order index.
+        /// </summary>
+        internal DraftDropTraceEmissionState GetEntryEmissionState(int index)
+        {
+            ValidateEntryIndex(index);
+            return _entries[index].EmissionState;
+        }
+
         internal bool TryReserve(
             out CaptureFrameDraftReservation reservation,
             out CaptureFrameAdmissionRejectKind rejectKind)
@@ -873,6 +913,14 @@ namespace Zantetsu.Observability
             }
 
             return -1;
+        }
+
+        private void ValidateEntryIndex(int index)
+        {
+            if (index < 0 || index >= _entryCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, "Entry index must be within the registered entry count.");
+            }
         }
 
         private int FindEntryIndexById(long captureFrameId)
