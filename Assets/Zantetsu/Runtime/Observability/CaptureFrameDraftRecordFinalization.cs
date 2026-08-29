@@ -10,8 +10,10 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The record at an index and the staging entry at the same index always
-    /// share the same <c>CaptureFrameId</c>. Both arrays are owned privately
-    /// and never exposed; only <see cref="GetRecord"/> and
+    /// share the same <c>CaptureFrameId</c>. The constructor validates every
+    /// element, the shared run instance, and the strict ascending order, then
+    /// defensively copies both arrays so a later mutation of the caller's
+    /// arrays cannot change this result. Only <see cref="GetRecord"/> and
     /// <see cref="GetStagingEntry"/> provide access, with out-of-range indices
     /// rejected by <see cref="ArgumentOutOfRangeException"/>.
     /// </para>
@@ -60,9 +62,60 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(droppedCount), droppedCount, "Dropped count must not be negative.");
             }
 
+            long previousCaptureFrameId = 0;
+            for (int i = 0; i < records.Length; i++)
+            {
+                CaptureFrameRecord record = records[i];
+                if (record == null)
+                {
+                    throw new ArgumentException("Record array must not contain null elements.", nameof(records));
+                }
+
+                if (!ReferenceEquals(record.Run, run))
+                {
+                    throw new ArgumentException("Every record must reference the run instance.", nameof(records));
+                }
+
+                long captureFrameId = record.CaptureFrameId;
+                if (captureFrameId <= 0)
+                {
+                    throw new ArgumentException("Record capture frame IDs must be positive.", nameof(records));
+                }
+
+                if (i > 0 && captureFrameId <= previousCaptureFrameId)
+                {
+                    throw new ArgumentException("Record capture frame IDs must be strictly ascending.", nameof(records));
+                }
+
+                previousCaptureFrameId = captureFrameId;
+
+                CaptureFramePngStagingEntry stagingEntry = stagingEntries[i];
+                if (stagingEntry == null)
+                {
+                    throw new ArgumentException("Staging entry array must not contain null elements.", nameof(stagingEntries));
+                }
+
+                if (stagingEntry.CaptureFrameId != captureFrameId)
+                {
+                    throw new ArgumentException("The record and staging entry at the same index must share the same capture frame ID.", nameof(stagingEntries));
+                }
+
+                if (stagingEntry.TestRunId != run.TestRunId)
+                {
+                    throw new ArgumentException("Staging entry test run ID must match the run.", nameof(stagingEntries));
+                }
+            }
+
+            // Defensive copy: the result owns its own reference arrays, so a
+            // later mutation of the caller's arrays cannot change this result.
+            CaptureFrameRecord[] recordCopy = new CaptureFrameRecord[records.Length];
+            CaptureFramePngStagingEntry[] entryCopy = new CaptureFramePngStagingEntry[stagingEntries.Length];
+            Array.Copy(records, recordCopy, records.Length);
+            Array.Copy(stagingEntries, entryCopy, stagingEntries.Length);
+
             _run = run;
-            _records = records;
-            _stagingEntries = stagingEntries;
+            _records = recordCopy;
+            _stagingEntries = entryCopy;
             _droppedCount = droppedCount;
         }
 

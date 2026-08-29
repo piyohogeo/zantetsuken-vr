@@ -542,6 +542,53 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private static CaptureFrameRecord MakeRecord(CaptureRunReference run, long captureFrameId, int commitPathId = 1)
+        {
+            CaptureFrameRequest request = MakeRequest(captureFrameId, run.TestRunId);
+            return new CaptureFrameRecord(
+                run, request,
+                new CaptureFrameTiming(0.5, 0.01, true, 3.5, 1.25, 7L),
+                new CapturePoseSample(new Vector3(0f, 0f, 0f), Quaternion.identity),
+                new CapturePoseSample(new Vector3(0f, 0f, 0f), Quaternion.identity),
+                new CapturePoseSample(new Vector3(0f, 0f, 0f), Quaternion.identity),
+                commitPathId);
+        }
+
+        private static Array MakeEntryArray(params object[] entries)
+        {
+            Array array = Array.CreateInstance(GetEntryType(), entries.Length);
+            for (int i = 0; i < entries.Length; i++)
+            {
+                array.SetValue(entries[i], i);
+            }
+
+            return array;
+        }
+
+        private static object CreateFinalizationRaw(CaptureRunReference run, CaptureFrameRecord[] records, Array stagingEntries, int droppedCount)
+        {
+            ConstructorInfo ctor = GetFinalizationType().GetConstructor(
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                null,
+                new[] { typeof(CaptureRunReference), typeof(CaptureFrameRecord[]), GetEntryType().MakeArrayType(), typeof(int) },
+                null);
+            Assert.That(ctor, Is.Not.Null, "Finalization constructor not found.");
+            return ctor.Invoke(new object[] { run, records, stagingEntries, droppedCount });
+        }
+
+        private static Exception CreateFinalizationRawException(CaptureRunReference run, CaptureFrameRecord[] records, Array stagingEntries, int droppedCount)
+        {
+            try
+            {
+                CreateFinalizationRaw(run, records, stagingEntries, droppedCount);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return Unwrap(ex);
+            }
+        }
+
         // ---- Cleanup helpers ----
 
         private static Exception[] AppendCleanupException(Exception[] cleanupExceptions, Exception ex)
@@ -1560,6 +1607,135 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("TraceLogger"));
             Assert.That(source, Does.Not.Contain("System.Linq"));
             Assert.That(source, Does.Not.Contain("UnityEngine"));
+        }
+
+        [Test]
+        public void FinalizationCtor_DefensiveCopy_InputMutationDoesNotAffectResult()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord record10 = MakeRecord(run, 10);
+                CaptureFrameRecord record20 = MakeRecord(run, 20);
+                object entry10 = MakeEntryTracked(scope, 10, run.TestRunId, 16);
+                object entry20 = MakeEntryTracked(scope, 20, run.TestRunId, 16);
+
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { record10, record20 };
+                Array entries = MakeEntryArray(entry10, entry20);
+
+                object finalization = CreateFinalizationRaw(run, records, entries, 0);
+
+                // Mutating the caller's arrays after construction must not
+                // change the result.
+                records[0] = null;
+                records[1] = MakeRecord(run, 99);
+                entries.SetValue(null, 0);
+                entries.SetValue(null, 1);
+
+                Assert.That(GetRecord(finalization, 0).CaptureFrameId, Is.EqualTo(10));
+                Assert.That(GetRecord(finalization, 1).CaptureFrameId, Is.EqualTo(20));
+                Assert.That(ReferenceEquals(GetStagingEntry(finalization, 0), entry10), Is.True);
+                Assert.That(ReferenceEquals(GetStagingEntry(finalization, 1), entry20), Is.True);
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_RecordEntryIdMismatch_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { MakeRecord(run, 10) };
+                Array entries = MakeEntryArray(MakeEntryTracked(scope, 20, run.TestRunId, 16));
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingEntries"));
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_NullRecordElement_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { null };
+                Array entries = MakeEntryArray(MakeEntryTracked(scope, 10, run.TestRunId, 16));
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("records"));
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_NullEntryElement_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { MakeRecord(run, 10) };
+                Array entries = Array.CreateInstance(GetEntryType(), 1); // all null
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingEntries"));
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_RecordRunMismatch_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { MakeRecord(MakeReference(testCaseId: 101), 10) };
+                Array entries = MakeEntryArray(MakeEntryTracked(scope, 10, run.TestRunId, 16));
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("records"));
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_NonAscendingIds_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { MakeRecord(run, 20), MakeRecord(run, 10) };
+                Array entries = MakeEntryArray(
+                    MakeEntryTracked(scope, 20, run.TestRunId, 16),
+                    MakeEntryTracked(scope, 10, run.TestRunId, 16));
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("records"));
+            });
+        }
+
+        [Test]
+        public void FinalizationCtor_EntryTestRunIdMismatch_Rejected()
+        {
+            Scope scope = NewScope();
+            RunBody(scope, () =>
+            {
+                CaptureRunReference run = MakeReference();
+                CaptureFrameRecord[] records = new CaptureFrameRecord[] { MakeRecord(run, 10) };
+                Array entries = MakeEntryArray(MakeEntryTracked(scope, 10, run.TestRunId + 1, 16));
+
+                Exception ex = CreateFinalizationRawException(run, records, entries, 0);
+                Assert.That(ex, Is.TypeOf<ArgumentException>());
+                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingEntries"));
+            });
         }
     }
 }
