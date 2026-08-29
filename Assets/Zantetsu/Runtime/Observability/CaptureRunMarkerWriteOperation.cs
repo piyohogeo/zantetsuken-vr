@@ -140,11 +140,66 @@ namespace Zantetsu.Observability
 
         internal int ByteCount => _canonicalBytes.Length;
 
+        internal bool IsValid
+        {
+            get
+            {
+                if (_rootRole != CaptureRunRootRole.Staging && _rootRole != CaptureRunRootRole.Final)
+                {
+                    return false;
+                }
+
+                if (_markerKind != CaptureRunMarkerKind.Initialization && _markerKind != CaptureRunMarkerKind.Ready)
+                {
+                    return false;
+                }
+
+                if (_temporaryPath == null || _finalPath == null)
+                {
+                    return false;
+                }
+
+                if (!Path.IsPathFullyQualified(_temporaryPath) || !Path.IsPathFullyQualified(_finalPath))
+                {
+                    return false;
+                }
+
+                if (!string.Equals(_temporaryPath, _finalPath + ".tmp", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                string temporaryBasename = _markerKind == CaptureRunMarkerKind.Initialization ? "run.init.tmp" : "run.ready.tmp";
+                string finalBasename = _markerKind == CaptureRunMarkerKind.Initialization ? "run.init" : "run.ready";
+
+                if (!string.Equals(LastSegment(_temporaryPath), temporaryBasename, StringComparison.Ordinal)
+                    || !string.Equals(LastSegment(_finalPath), finalBasename, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (_canonicalBytes == null)
+                {
+                    return false;
+                }
+
+                return _canonicalBytes.Length >= 1 && _canonicalBytes.Length <= 4 * 1024;
+            }
+        }
+
         internal byte[] GetCanonicalBytes()
         {
             byte[] copy = new byte[_canonicalBytes.Length];
             Array.Copy(_canonicalBytes, copy, _canonicalBytes.Length);
             return copy;
+        }
+
+        private static string LastSegment(string path)
+        {
+            int slash = path.LastIndexOf(Path.DirectorySeparatorChar);
+            int altSlash = path.LastIndexOf(Path.AltDirectorySeparatorChar);
+            int last = slash >= altSlash ? slash : altSlash;
+            return last < 0 ? path : path.Substring(last + 1);
         }
     }
 }
