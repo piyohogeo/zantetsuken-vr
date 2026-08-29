@@ -218,7 +218,7 @@ namespace Zantetsu.Observability
             sb.Append('"');
         }
 
-        private static string ToLowerHex(byte[] bytes)
+        internal static string ToLowerHex(byte[] bytes)
         {
             const string hex = "0123456789abcdef";
             char[] chars = new char[bytes.Length * 2];

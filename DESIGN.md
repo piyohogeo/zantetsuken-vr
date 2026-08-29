@@ -2398,6 +2398,8 @@ Planのcanonical JSONはUTF-8、BOMなし、末尾改行なし、余分な空白
 
 `CaptureStagingBaseRoot`と`CaptureFinalBaseRoot`はPlan外の信頼済み設定とし、互いに同一または祖先／子孫となる構成をRun開始前にRejectする。先頭0なし10進の`TestRunId`を`{runId}`として、Run専用rootをそれぞれ`CaptureStagingBaseRoot/runs/run-{runId}`と`CaptureFinalBaseRoot/runs/run-{runId}`へ決定論的に固定する。
 
+両baseは完全修飾されたlocal absolute pathであることを要求し、relative path、drive-relative path、UNC、device path、extended pathを拒否する。baseのcanonicalizationは`Path.GetFullPath`で`.`／`..`を解決し、`AltDirectorySeparatorChar`を`DirectorySeparatorChar`へ統一し、filesystem root自身のseparatorを除く末尾separatorを除去する。stored pathとroot hash入力にはcase foldingとUnicode normalizationを行わない。baseの同一・祖先判定だけはsegment境界を尊重する`OrdinalIgnoreCase`で行い、caseだけ異なるbaseや祖先関係を保守的に拒否する。filesystem alias、reparse point、実体の存在確認は後続のlock／filesystem層の責務とし、この値契約では行わない。
+
 新規開始とRecoveryは、rootを作成／列挙する前に`CaptureStagingBaseRoot/.locks/run-{runId}.lock`と`CaptureFinalBaseRoot/.locks/run-{runId}.lock`の2本をno-followでopenし、各OS handleを`FileShare.None`相当の排他共有Modeで取得する。両lockのabsolute pathをOSの正規化済みfull pathへ変換し、まず`OrdinalIgnoreCase`、同値時はordinalで比較した昇順へsortして、すべてのCoordinatorが同じ順で取得する。正規化後に同一となるlock pathは構成不正としてRun開始前にRejectし、暗黙に1本へ縮約しない。lock directory／fileは各信頼base root直下の固定名だけを許し、reparse pointを拒否する。
 
 取得は非待機とし、2本目を含む途中の取得に失敗した場合は取得済みhandleを逆順に直ちに解放し、staging／finalのどちらのRun rootも作成、列挙、変更しないで`RunAlreadyOwned`としてbackpressureする。両handleの取得成功だけがRun root一組の排他的所有権を与える。Coordinatorは初期化からCaptureComplete後のstaging cleanupまたは明示abortまで両handleを保持するため、異なるstaging baseから同じfinal base／TestRunIdを狙うCoordinatorもfinal側lockで排除される。lock fileの存在や内容は所有権の証拠にせず、取得中handle集合だけを正本とする。プロセス終了／crashではOSが両handleを解放し、残った固定lock fileは次回同じ順序で再openできる。
