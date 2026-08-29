@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Unity.Collections;
 
@@ -21,11 +20,21 @@ namespace Zantetsu.Observability
     /// results (after reading their buffer), while the router releases errored
     /// results itself.
     /// </para>
+    /// <para>
+    /// PNG-producing compatibility APIs route successful results through a
+    /// fixed-capacity encode submission, the synchronous Phase 1 service,
+    /// immutable completion collection, and main-thread completion application
+    /// during the same call. The service never observes Registry, Draft, or
+    /// Trace state; this router retains the existing public API and externally
+    /// visible ordering.
+    /// </para>
     /// </remarks>
     public sealed class CaptureFrameReadbackCompletionRouter
     {
         private readonly UnityRenderTextureReadbackDispatcher _dispatcher;
         private readonly CaptureFrameTraceObserver _observer;
+        private readonly ICaptureFrameEncodeService _encodeService;
+        private readonly CaptureFrameEncodeCompletionCoordinator _encodeCompletionCoordinator;
 
         public CaptureFrameReadbackCompletionRouter(
             UnityRenderTextureReadbackDispatcher dispatcher,
@@ -43,6 +52,8 @@ namespace Zantetsu.Observability
 
             _dispatcher = dispatcher;
             _observer = observer;
+            _encodeService = new SynchronousCaptureFrameEncodeService(1);
+            _encodeCompletionCoordinator = new CaptureFrameEncodeCompletionCoordinator(_encodeService, observer);
         }
 
         public int ActiveReadbackCount => _dispatcher.ActiveCount;
@@ -120,38 +131,9 @@ namespace Zantetsu.Observability
                 return CaptureFramePngCollectStatus.Dropped;
             }
 
-            NativeArray<byte> encoded = default;
-            try
-            {
-                try
-                {
-                    NativeArray<byte> buffer = _dispatcher.GetBuffer(result);
-
-                    long startTimestamp = Stopwatch.GetTimestamp();
-                    encoded = CaptureFramePngEncoder.Encode(buffer, result.FrameRequest.PixelLayout);
-                    long endTimestamp = Stopwatch.GetTimestamp();
-                    double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
-
-                    _observer.RecordEncoded(result.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
-                }
-                finally
-                {
-                    _dispatcher.Release(result);
-                }
-            }
-            catch
-            {
-                if (encoded.IsCreated)
-                {
-                    encoded.Dispose();
-                }
-
-                throw;
-            }
-
+            NativeArray<byte> encoded = SubmitCollectAndApply(result, out _);
             frameRequest = result.FrameRequest;
             pngBytes = encoded;
-            encoded = default;
             return CaptureFramePngCollectStatus.Encoded;
         }
 
@@ -571,58 +553,63 @@ namespace Zantetsu.Observability
             in CaptureFrameReadbackResult collected,
             out bool released)
         {
+            return SubmitCollectAndApply(collected, out released);
+        }
+
+        private NativeArray<byte> SubmitCollectAndApply(
+            in CaptureFrameReadbackResult collected,
+            out bool released)
+        {
             released = false;
-            NativeArray<byte> encoded = default;
+            CaptureFrameReadbackPayloadLease payload = new CaptureFrameReadbackPayloadLease(_dispatcher, collected);
+            CaptureFrameEncodeSubmission submission = new CaptureFrameEncodeSubmission(payload);
 
+            CaptureFrameEncodeSubmitStatus submitStatus;
+            CaptureFrameWorkToken acceptedToken;
             try
             {
-                NativeArray<byte> buffer = _dispatcher.GetBuffer(collected);
-
-                long startTimestamp = Stopwatch.GetTimestamp();
-                encoded = CaptureFramePngEncoder.Encode(buffer, collected.FrameRequest.PixelLayout);
-                long endTimestamp = Stopwatch.GetTimestamp();
-                double elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
-
-                _observer.RecordEncoded(collected.FrameRequest.TraceContext, elapsedMilliseconds, encoded.Length);
+                submitStatus = _encodeService.TrySubmit(submission, out acceptedToken);
             }
             catch
             {
-                if (encoded.IsCreated)
+                // Validation and pre-acceptance failures leave caller ownership.
+                if (payload.IsCallerOwned)
                 {
-                    encoded.Dispose();
-                    encoded = default;
-                }
-
-                try
-                {
-                    _dispatcher.Release(collected);
-                    released = true;
-                }
-                catch
-                {
-                    throw;
+                    payload.ReleaseByCaller();
+                    released = payload.ReleaseSucceeded;
                 }
 
                 throw;
             }
 
+            if (submitStatus != CaptureFrameEncodeSubmitStatus.Accepted)
+            {
+                payload.ReleaseByCaller();
+                released = payload.ReleaseSucceeded;
+                throw new InvalidOperationException("The synchronous encode service did not accept a collected readback.");
+            }
+
+            if (!_encodeService.TryCollect(out CaptureFrameEncodeCompletion completion))
+            {
+                throw new InvalidOperationException("The synchronous encode service accepted work without publishing its completion.");
+            }
+
+            if (!completion.WorkToken.IdenticalTo(acceptedToken))
+            {
+                throw new InvalidOperationException("The collected encode completion does not match the accepted work token.");
+            }
+
             try
             {
-                _dispatcher.Release(collected);
-                released = true;
+                CaptureFrameEncodeApplyResult applied = _encodeCompletionCoordinator.Apply(completion);
+                released = payload.ReleaseSucceeded;
+                return applied.PngBytes;
             }
             catch
             {
-                if (encoded.IsCreated)
-                {
-                    encoded.Dispose();
-                    encoded = default;
-                }
-
+                released = payload.ReleaseSucceeded;
                 throw;
             }
-
-            return encoded;
         }
 
         private bool EnqueueOrRecordQueueFull(

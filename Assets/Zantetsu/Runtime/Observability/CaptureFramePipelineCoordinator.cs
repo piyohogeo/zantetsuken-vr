@@ -36,6 +36,14 @@ namespace Zantetsu.Observability
     /// main-thread only.
     /// </para>
     /// <para>
+    /// Readback completion routing internally crosses the Phase 1 encode
+    /// submission, synchronous service, completion collection, and main-thread
+    /// application boundaries in sequence during the same call. This does not
+    /// add a thread, task, job, raw-buffer copy, or an additional item per tick;
+    /// it preserves this coordinator's existing ordering and limits while
+    /// allowing a future service implementation to replace the encode stage.
+    /// </para>
+    /// <para>
     /// Main-thread only and <b>not</b> thread-safe.
     /// </para>
     /// <para>
