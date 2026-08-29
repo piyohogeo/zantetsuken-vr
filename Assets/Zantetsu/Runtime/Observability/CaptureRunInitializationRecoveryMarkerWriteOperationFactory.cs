@@ -80,37 +80,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Expected binding must be present for a write step.", nameof(actionPlan));
             }
 
-            string temporaryPath;
-            string finalPath;
-            byte[] canonicalBytes;
-
-            if (step.RootRole == CaptureRunRootRole.Staging)
-            {
-                if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
-                {
-                    canonicalBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(expectedBinding.StagingInitialization);
-                    temporaryPath = markerPaths.StagingInitializationTemporaryPath;
-                    finalPath = markerPaths.StagingInitializationPath;
-                }
-                else
-                {
-                    canonicalBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(expectedBinding.StagingReady);
-                    temporaryPath = markerPaths.StagingReadyTemporaryPath;
-                    finalPath = markerPaths.StagingReadyPath;
-                }
-            }
-            else if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
-            {
-                canonicalBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(expectedBinding.FinalInitialization);
-                temporaryPath = markerPaths.FinalInitializationTemporaryPath;
-                finalPath = markerPaths.FinalInitializationPath;
-            }
-            else
-            {
-                canonicalBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(expectedBinding.FinalReady);
-                temporaryPath = markerPaths.FinalReadyTemporaryPath;
-                finalPath = markerPaths.FinalReadyPath;
-            }
+            SelectMarkerAndPaths(step, markerPaths, expectedBinding, out string temporaryPath, out string finalPath, out byte[] canonicalBytes);
 
             CaptureRunMarkerWriteOperation operation = new CaptureRunMarkerWriteOperation(
                 step.RootRole,
@@ -125,6 +95,115 @@ namespace Zantetsu.Observability
             }
 
             return operation;
+        }
+
+        internal static bool IsOperationFor(
+            CaptureRunInitializationRecoveryActionPlan actionPlan,
+            CaptureRunMarkerPathSet markerPaths,
+            int stepIndex,
+            CaptureRunMarkerWriteOperation operation)
+        {
+            if (actionPlan == null || !actionPlan.IsValid || markerPaths == null || operation == null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(markerPaths.RootLayout, actionPlan.RootLayout) || !markerPaths.IsValid)
+            {
+                return false;
+            }
+
+            if (stepIndex < 0 || stepIndex >= actionPlan.Count)
+            {
+                return false;
+            }
+
+            CaptureRunInitializationRecoveryStep step = actionPlan.GetStep(stepIndex);
+            if (step == null || !step.IsValid || step.Action != CaptureRunInitializationRecoveryAction.WriteMarker)
+            {
+                return false;
+            }
+
+            if (operation.RootRole != step.RootRole || operation.MarkerKind != step.MarkerKind)
+            {
+                return false;
+            }
+
+            CaptureRunMarkerBinding expectedBinding = actionPlan.Decision.ExpectedBinding;
+            if (expectedBinding == null)
+            {
+                return false;
+            }
+
+            SelectMarkerAndPaths(step, markerPaths, expectedBinding, out string temporaryPath, out string finalPath, out byte[] expectedBytes);
+
+            if (!string.Equals(operation.TemporaryPath, temporaryPath, StringComparison.Ordinal)
+                || !string.Equals(operation.FinalPath, finalPath, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!operation.IsValid)
+            {
+                return false;
+            }
+
+            return ByteArraysEqual(operation.GetCanonicalBytes(), expectedBytes);
+        }
+
+        private static void SelectMarkerAndPaths(
+            CaptureRunInitializationRecoveryStep step,
+            CaptureRunMarkerPathSet markerPaths,
+            CaptureRunMarkerBinding binding,
+            out string temporaryPath,
+            out string finalPath,
+            out byte[] canonicalBytes)
+        {
+            if (step.RootRole == CaptureRunRootRole.Staging)
+            {
+                if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
+                {
+                    canonicalBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
+                    temporaryPath = markerPaths.StagingInitializationTemporaryPath;
+                    finalPath = markerPaths.StagingInitializationPath;
+                }
+                else
+                {
+                    canonicalBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
+                    temporaryPath = markerPaths.StagingReadyTemporaryPath;
+                    finalPath = markerPaths.StagingReadyPath;
+                }
+            }
+            else if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
+            {
+                canonicalBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization);
+                temporaryPath = markerPaths.FinalInitializationTemporaryPath;
+                finalPath = markerPaths.FinalInitializationPath;
+            }
+            else
+            {
+                canonicalBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.FinalReady);
+                temporaryPath = markerPaths.FinalReadyTemporaryPath;
+                finalPath = markerPaths.FinalReadyPath;
+            }
+        }
+
+        private static bool ByteArraysEqual(byte[] left, byte[] right)
+        {
+            if (left.Length != right.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < left.Length; i++)
+            {
+                if (left[i] != right[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }
