@@ -9,13 +9,16 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The record at an index and the staging entry at the same index always
-    /// share the same <c>CaptureFrameId</c>. The constructor validates every
-    /// element, the shared run instance, and the strict ascending order, then
-    /// defensively copies both arrays so a later mutation of the caller's
-    /// arrays cannot change this result. Only <see cref="GetRecord"/> and
-    /// <see cref="GetStagingEntry"/> provide access, with out-of-range indices
-    /// rejected by <see cref="ArgumentOutOfRangeException"/>.
+    /// This type is the sole allocator and builder of its own record and
+    /// staging entry reference arrays: it allocates each array exactly once
+    /// inside the constructor and never receives or returns them, so no
+    /// external alias to either array can exist. The record at an index and the
+    /// staging entry at the same index always share the same
+    /// <c>CaptureFrameId</c>; the constructor validates every built element
+    /// (created entry and matching IDs) before returning. Only
+    /// <see cref="GetRecord"/> and <see cref="GetStagingEntry"/> expose the
+    /// arrays, with out-of-range indices rejected by
+    /// <see cref="ArgumentOutOfRangeException"/>.
     /// </para>
     /// <para>
     /// This type owns, disposes, and registers nothing: the run reference, the
@@ -33,8 +36,8 @@ namespace Zantetsu.Observability
 
         internal CaptureFrameDraftRecordFinalization(
             CaptureRunReference run,
-            CaptureFrameRecord[] records,
-            CaptureFramePngStagingEntry[] stagingEntries,
+            CaptureFrameDraftRegistry draftRegistry,
+            CaptureFramePngStagingStore stagingStore,
             int droppedCount)
         {
             if (run == null)
@@ -42,19 +45,24 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(run));
             }
 
-            if (records == null)
+            if (draftRegistry == null)
             {
-                throw new ArgumentNullException(nameof(records));
+                throw new ArgumentNullException(nameof(draftRegistry));
             }
 
-            if (stagingEntries == null)
+            if (stagingStore == null)
             {
-                throw new ArgumentNullException(nameof(stagingEntries));
+                throw new ArgumentNullException(nameof(stagingStore));
             }
 
-            if (records.Length != stagingEntries.Length)
+            if (!stagingStore.IsCreated)
             {
-                throw new ArgumentException("Record and staging entry arrays must have the same length.", nameof(stagingEntries));
+                throw new ObjectDisposedException(stagingStore.GetType().Name);
+            }
+
+            if (!ReferenceEquals(stagingStore.Run, draftRegistry.Run))
+            {
+                throw new ArgumentException("Staging store run must match the draft registry run.", nameof(stagingStore));
             }
 
             if (droppedCount < 0)
@@ -62,60 +70,77 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(droppedCount), droppedCount, "Dropped count must not be negative.");
             }
 
-            long previousCaptureFrameId = 0;
-            for (int i = 0; i < records.Length; i++)
+            // Sole allocator: count staged entries first, then allocate each
+            // array exactly once and fill it from the registry and store. No
+            // array is received from or returned to a caller, so no external
+            // alias to these arrays can exist.
+            int entryCount = draftRegistry.EntryCount;
+            int stagedCount = 0;
+            for (int i = 0; i < entryCount; i++)
             {
-                CaptureFrameRecord record = records[i];
-                if (record == null)
+                if (draftRegistry.GetEntryStatus(i) == CaptureFrameDraftStatus.Staged)
                 {
-                    throw new ArgumentException("Record array must not contain null elements.", nameof(records));
+                    stagedCount++;
+                }
+            }
+
+            CaptureFrameRecord[] records = new CaptureFrameRecord[stagedCount];
+            CaptureFramePngStagingEntry[] stagingEntries = new CaptureFramePngStagingEntry[stagedCount];
+
+            int recordIndex = 0;
+            for (int i = 0; i < entryCount; i++)
+            {
+                CaptureFrameDraftStatus status = draftRegistry.GetEntryStatus(i);
+                if (status == CaptureFrameDraftStatus.Dropped)
+                {
+                    continue;
                 }
 
-                if (!ReferenceEquals(record.Run, run))
+                if (status != CaptureFrameDraftStatus.Staged)
                 {
-                    throw new ArgumentException("Every record must reference the run instance.", nameof(records));
+                    throw new InvalidOperationException("Entry has an undefined status.");
                 }
 
-                long captureFrameId = record.CaptureFrameId;
-                if (captureFrameId <= 0)
+                CaptureFrameDraft draft = draftRegistry.GetEntryDraft(i);
+                long captureFrameId = draft.CaptureFrameId;
+
+                if (!stagingStore.TryGet(captureFrameId, out CaptureFramePngStagingEntry stagingEntry))
                 {
-                    throw new ArgumentException("Record capture frame IDs must be positive.", nameof(records));
+                    throw new InvalidOperationException("A staged draft has no staging entry.");
                 }
 
-                if (i > 0 && captureFrameId <= previousCaptureFrameId)
+                if (stagingEntry == null || !stagingEntry.IsCreated)
                 {
-                    throw new ArgumentException("Record capture frame IDs must be strictly ascending.", nameof(records));
-                }
-
-                previousCaptureFrameId = captureFrameId;
-
-                CaptureFramePngStagingEntry stagingEntry = stagingEntries[i];
-                if (stagingEntry == null)
-                {
-                    throw new ArgumentException("Staging entry array must not contain null elements.", nameof(stagingEntries));
+                    throw new InvalidOperationException("A staged draft's staging entry is missing or disposed.");
                 }
 
                 if (stagingEntry.CaptureFrameId != captureFrameId)
                 {
-                    throw new ArgumentException("The record and staging entry at the same index must share the same capture frame ID.", nameof(stagingEntries));
+                    throw new InvalidOperationException("A staged draft's staging entry capture frame ID does not match.");
                 }
 
                 if (stagingEntry.TestRunId != run.TestRunId)
                 {
-                    throw new ArgumentException("Staging entry test run ID must match the run.", nameof(stagingEntries));
+                    throw new InvalidOperationException("A staged draft's staging entry test run ID does not match the run.");
                 }
+
+                CaptureFrameRecord record = new CaptureFrameRecord(
+                    run,
+                    draft.Request,
+                    draft.Timing,
+                    draft.HeadPose,
+                    draft.LeftControllerPose,
+                    draft.RightControllerPose,
+                    draft.CommitPathId);
+
+                records[recordIndex] = record;
+                stagingEntries[recordIndex] = stagingEntry;
+                recordIndex++;
             }
 
-            // Defensive copy: the result owns its own reference arrays, so a
-            // later mutation of the caller's arrays cannot change this result.
-            CaptureFrameRecord[] recordCopy = new CaptureFrameRecord[records.Length];
-            CaptureFramePngStagingEntry[] entryCopy = new CaptureFramePngStagingEntry[stagingEntries.Length];
-            Array.Copy(records, recordCopy, records.Length);
-            Array.Copy(stagingEntries, entryCopy, stagingEntries.Length);
-
             _run = run;
-            _records = recordCopy;
-            _stagingEntries = entryCopy;
+            _records = records;
+            _stagingEntries = stagingEntries;
             _droppedCount = droppedCount;
         }
 

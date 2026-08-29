@@ -172,40 +172,11 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Staging store total byte count does not match the staged entries.");
             }
 
-            // Promotion: exactly one record array and one entry reference array.
-            CaptureFrameRecord[] records = new CaptureFrameRecord[stagedCount];
-            CaptureFramePngStagingEntry[] stagingEntries = new CaptureFramePngStagingEntry[stagedCount];
-
-            int recordIndex = 0;
-            for (int i = 0; i < entryCount; i++)
-            {
-                if (_draftRegistry.GetEntryStatus(i) != CaptureFrameDraftStatus.Staged)
-                {
-                    continue;
-                }
-
-                CaptureFrameDraft draft = _draftRegistry.GetEntryDraft(i);
-
-                if (!_stagingStore.TryGet(draft.CaptureFrameId, out CaptureFramePngStagingEntry stagingEntry))
-                {
-                    throw new InvalidOperationException("A staged draft has no staging entry.");
-                }
-
-                CaptureFrameRecord record = new CaptureFrameRecord(
-                    finalRun,
-                    draft.Request,
-                    draft.Timing,
-                    draft.HeadPose,
-                    draft.LeftControllerPose,
-                    draft.RightControllerPose,
-                    draft.CommitPathId);
-
-                records[recordIndex] = record;
-                stagingEntries[recordIndex] = stagingEntry;
-                recordIndex++;
-            }
-
-            return new CaptureFrameDraftRecordFinalization(finalRun, records, stagingEntries, droppedCount);
+            // The finalization is the sole allocator and builder of its own
+            // record and entry arrays; this finalizer allocates nothing and
+            // only delegates, so no record is built before every validation
+            // above succeeds and no external alias to those arrays can exist.
+            return new CaptureFrameDraftRecordFinalization(finalRun, _draftRegistry, _stagingStore, droppedCount);
         }
 
         private static void ValidateFinalRun(CaptureRunReference finalRun, CaptureDraftRunContext registryRun)
