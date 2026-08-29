@@ -76,7 +76,7 @@ namespace Zantetsu.Observability
             CaptureRunInitializationMarker sourceInit = stagingInit ? staging.InitializationMarker : final.InitializationMarker;
             CaptureRunRootRole sourceRole = stagingInit ? CaptureRunRootRole.Staging : CaptureRunRootRole.Final;
 
-            if (!MatchesRootLayout(sourceInit, sourceRole, rootLayout))
+            if (!IsCanonicalInitializationMarker(sourceInit) || !MatchesRootLayout(sourceInit, sourceRole, rootLayout))
             {
                 expectedBinding = null;
                 return CaptureRunInitializationRecoveryDisposition.RunRootCollision;
@@ -338,6 +338,35 @@ namespace Zantetsu.Observability
                 && marker.RunInitializationId != null
                 && marker.StagingInitSha256 != null
                 && marker.FinalInitSha256 != null;
+        }
+
+        private static bool IsCanonicalInitializationMarker(CaptureRunInitializationMarker marker)
+        {
+            return marker != null
+                && marker.TestRunId > 0
+                && IsLowercaseHex(marker.RunInitializationId, 32)
+                && (marker.RootRole == CaptureRunRootRole.Staging || marker.RootRole == CaptureRunRootRole.Final)
+                && IsLowercaseHex(marker.StagingRunRootSha256, 64)
+                && IsLowercaseHex(marker.FinalRunRootSha256, 64);
+        }
+
+        private static bool IsLowercaseHex(string value, int length)
+        {
+            if (value == null || value.Length != length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < length; i++)
+            {
+                char c = value[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }
