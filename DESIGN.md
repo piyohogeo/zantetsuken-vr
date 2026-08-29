@@ -7,9 +7,9 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・固定Capture Profile／同期映像／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-08-27 |
+| 最終更新 | 2026-08-29 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
-| 採用アセット | Synty POLYGON City Pack |
+| 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
 | 検証用HMD | Meta Quest 3SをQuest LinkでPCVR接続 |
 
@@ -27,7 +27,7 @@
 
 - 斬撃入力に対する見た目の反応を、幾何切断完了より先に提示する。
 
-- 表示と物理の不一致時間を短くし、プレイヤー身体や周辺破片が透明な旧Colliderへ接触する状態を最小化する。刀は物理衝突させず、切断可能時の論理Sweepだけを使用する。
+- 表示と物理の不一致時間を短くし、周辺破片が透明な旧Colliderへ接触する状態を最小化する。プレイヤー身体・手は初期仕様ではプロップ／破片とPhysX接触せず、刀も物理衝突させず切断可能時の論理Sweepだけを使用する。プレイヤー移動可能域とカメラ壁内侵入防止は簡易Occupancy判定へ分離する。
 
 - 生涯切断数や全Pending Cut数ではなく、実際にBatchへ投入する`TemporaryRenderCapRecordSet`の件数と対象Cut Shellが一時描画コストを決める構造にする。意味上の`ActiveTemporaryBoundarySet`とは分離し、`HasDetached`またはCull失効済み操作で実装簡略化のため残す補助Dormant Capも描画費用と枚数上限へ数える。Suppressed Cap、Fully Fixed Cullされた操作、Committed済み境界は費用へ含めない。
 
@@ -402,7 +402,7 @@ Count／Write後は、入力全体のSolid妥当性ではなくcut-local不変�
 
 ColliderのBake／cookingは視覚切断のクリティカルパスに含めない。`Active`な切断境界は命中フレームからclipと仮断面を表示し、物理状態が許可する場合は相対移動による隙間も表示する。ConvexとBakeが間に合わなくても視覚応答を待たせない。`Dormant`境界は単独では即時表示を要求しないが、Operation規則による補助Cap描画を妨げない。補助Capが描かれてもDormant側の運動は起動しない。切断直後の物理状態はFragmentGroup内の全LogicalFragmentの支持分類を集約し、`PendingPhysicsSplit`、`PendingAnchoredSplit`、`PendingSupportClassification`のいずれかへ一意に決める。いずれも旧Convexを支持用として持つ1つの`FragmentGroup`を維持し、旧Convexを複製して双方へ付与しない。複製すると、不自然な押し出しや存在しない中央部への接触が発生する。
 
-- 刀は旧Colliderを含む物理Colliderへ接触させず、Edge Direction Gate成立中の論理SweepだけでHitを判定する。プレイヤーの手・身体が旧Colliderへ触れる場合の例外方針は別途T-005で評価する。
+- 刀は旧Colliderを含む物理Colliderへ接触させず、Edge Direction Gate成立中の論理SweepだけでHitを判定する。プレイヤーの手・身体も初期仕様ではプロップ／破片へ接触Impulseを与えず、移動制限と視界保護は7.2.3の非接触Locomotion経路で扱う。
 
 - `PendingPhysicsSplit`中は原則1つのRigidbodyと旧Colliderを物理状態の正本とし、左右の表示破片は独立した接触、落下、回転を行わない。外部から受けた力と接触ImpulseはFragmentGroup全体へ作用する。
 
@@ -507,6 +507,56 @@ ColliderのBake／cookingは視覚切断のクリティカルパスに含めな�
 - 検証済み左右ConvexをWritable `MeshData`へ出力し、メインスレッドで別々の`UnityEngine.Mesh`へ一括適用する。そのMesh ID列を`IJobParallelFor`へ渡し、`Physics.BakeMesh(meshId, true, cookingOptions)`をバックグラウンド実行する。同一Meshを複数Jobから同時にBakeしない。
 
 - Bake Job完了後も即時適用せず、`SlashId`、`ObjectGeneration`、入力Physics Proxy世代、Cooking ProfileをCommit Controllerで検証する。有効な成果物だけを物理ステップ境界で左右の`MeshCollider.sharedMesh`へ設定し、Rigidbody分裂と運動継承を行う。Schedule済みJobは中断せず、古い成果物は回収する。
+
+#### 7.2.2 大型固定プロップとSafety Tether Tree
+
+建物、巨大看板、塔、大型機械など、完全倒壊させるとレベル、Nav、カメラ安全性、物理予算を破綻させやすい対象は`LargeStructuralProp`として分類する。構造的な固定支持を表す`FixedSupportGraph`と、切断後の移動量だけをゲーム的に制限する`SafetyTetherTree`を別の正本として保持する。前者では切断をまたぐEdgeを除去してAnchored／Detachedを判定する一方、後者ではDetached化した大型Fragment間にも切断面をまたぐ安全テザーを残す。Safety Tetherは支持判定、Dormant／Active判定、質量配分を変更せず、切断済みFragmentをFixedへ戻さない。
+
+- `SafetyTetherTree`は地面から生える有向非循環木とする。論理的なGround Rootの直下には、`SupportState == Anchored`かつ1個以上の生存`FixedSupportAnchor`へ到達する全Fixed Fragmentを置く。この集合を`LogicalFragmentLocalId`昇順に列挙し、Ground Rootから各FragmentへTopology専用のRoot Linkを厳密に1本ずつ持たせる。複数Fixed Fragmentから代表1個だけを選ばない。Root LinkはJoint、Spring、Anchor対、`SafetyTetherLevel`、移動Limitを生成しない。各動的大型Fragmentは親方向の物理`SafetyTetherEdge`を厳密に1本、子方向を0本以上持つ。すべての動的大型Fragmentから親Edge／Root Linkを辿るとFixed Fragmentを経由してGround Rootへ到達しなければならない。通常経路では動的Root用のワールド並進テザーを追加しない。
+
+- 物理分裂Commit時に新しい大型Rigidbodyを公開する直前、旧Tree、切断後LogicalFragment、CutBoundaryRecord、FixedSupport分類から新Treeを原子的に構築する。Geometry Commit、Collider再cook、Fast Simulation昇格、Shared Convex精密化、同じ論理物理GroupのUnity Rigidbody再生成だけではTree、Level、制限をリセットしない。
+
+- 大型Fragmentの即時解析Offsetを開始する前にも、cook不要の同じTopology規則から`PendingSafetyTetherPlan`を作る。確定予定の親、Anchor、Level、相対並進上限、World回転上限の範囲だけで仮運動を表示し、物理Commit時のTreeと一致させる。Planが未確定または世代不一致ならActiveなclip／Capは表示できるが、大型Fragmentの解析Offsetと回転を0に保ち、同期Joint構築やcookを視覚クリティカルパスへ入れない。
+
+- 既存物理Edgeは、その親側／子側AnchorをTopology系譜から含む切断後Fragmentへ継承する。AnchorがCut Plane上または複数子へ曖昧に対応する場合は、Anchorを含む有効Convex、Anchorからの距離、PhysicsConvexMassWeight、Fragment Local IDの固定優先順位で一意に選ぶ。選択を証明できない大型Fragmentでは推測して部分Commitせず、旧FragmentGroup維持または`SafetyFrozen`へ送る。
+
+- Tree構築順は固定する。最初に全root-linked Fixed FragmentとRoot Linkを`LogicalFragmentLocalId`昇順で挿入する。次に、旧Treeの物理Edgeを`SafetyTetherEdgeLocalId`昇順で上記Topology系譜へ写像し、検証済み継承Edgeとして新Forestへ先に挿入する。継承Edgeの子が今回root-linked Fixed Fragmentになった場合だけ、Root LinkをIncoming Edgeの正本として旧物理Edgeを決定的に退役させる。それ以外で同じ子へのIncoming Edge重複、親子同一化、Endpoint／Anchorの曖昧化、Edge ID重複、Cycle、世代不一致が1件でもあれば、どちらかを恣意的に落とさずTree計画全体をRejectして旧FragmentGroup維持または`SafetyFrozen`へ送る。
+
+- Root Linkと継承Edgeの挿入後、親Linkを辿ってSynthetic Ground Rootへ到達する全Nodeを初期接続済み集合とする。まだ到達しない継承Forestの各成分は、Incoming Edgeを持たない成分Rootを厳密に1個持たなければならず、成分内Edgeを分解・付け替えない。一回の切断で3個以上へ分かれる場合も全BoundaryへJointを作らず、未接続成分Rootと接続済み集合の間にある新規候補から「共有する切断面Patch面積が最大、同値ならCutBoundaryLocalId、親Fragment Local ID、成分Root Fragment Local ID順」で1本を選ぶ。そのEdgeで成分全体を接続済みへ加える処理を全成分が尽きるまで繰り返す。候補なし、成分Rootが0個または複数、Incoming Edge二重化、Cycle発生時はfail-closedとする。複数Fixed Fragmentから単一の優先Rootを再選択しない。
+
+- 新規`SafetyTetherEdge`のAnchorは、対応する正負Fragment間の切断面と切断前Physics Convexまたは保守的OBBの交差Polygonから求める。複数Patchでは最大面積Patchを採用し、同値はCutBoundaryLocalId／Patch Local ID順、Anchor位置はその面積重心をWorld Cut Planeへ投影した点とする。実Fragment Mesh完成後に精密Cap重心へ動かさず、Commit時の正負Anchor位置を固定する。Anchor再配置による後発Impulseを発生させない。
+
+- 相対並進制限はEdgeの`SafetyTetherLevel`へ属し、`limit(level) = initialLimit * decay^level`とする。`initialLimit`はfiniteかつ0以上、`decay`はfiniteかつ`0 < decay < 1`を要求し、正の`minLimit`は設けない。Ground Root直下の固定Fragmentから最初の動的子へ向かうEdgeをLevel 0とし、その子から新しく生えるEdgeをLevel 1として深さごとに増やす。初期候補は`initialLimit = 0.4 m`、`decay = 0.5`とし、Level 0から任意の有限深度までの累積追加並進を幾何級数`initialLimit * (1 - decay^(depth + 1)) / (1 - decay)`、無限深度の上限を`initialLimit / (1 - decay) = 0.8 m`とする。binary32／binary64で深いLevelの値が0へunderflowした場合は0を維持し、正の下限へClampしない。数値はProfile化しT-087後に決める。
+
+- 回転は相対Treeへ伝播させず、各大型Rigidbodyの論理的な物理分裂Commit時のWorld姿勢を`WorldRotationOrigin`として制限する。`StructuralSplitGeneration`は実際にFragmentGroupが複数物理Groupへ分裂した場合だけ子へ`parent + 1`で継承し、Engine Object再生成では進めない。親Generationが`uint.MaxValue`で新たな物理分裂が必要な場合は0へwrap／再利用せず、`StructuralSplitGenerationExhausted`としてCut Operation全体をRejectして旧FragmentGroupを維持し、維持不能なら`SafetyFrozen`へ送る。角度上限も`angleLimit(generation) = initialAngle * angleDecay^generation`、`0 < angleDecay < 1`とし、正の`minAngle`を設けず、少しずつ曲がるが横倒ししにくい挙動を優先する。
+
+- テザーは移動を完全固定するものではなく、制限近傍でSpring／Damperを強め、Hard Limitを越えない候補構成とする。Tether接続SiblingはKerf 0の一致面や重複Convexから大Impulseを生じないよう相互衝突を無効化してよい。外部物体との衝突は維持するが、Playerとは7.2.3により接触しない。Joint解法、独自Force／Clamp、Spring値、Damper値はT-087で比較し、ProjectionやTransform Snapは常用しない。
+
+- Tree再構築失敗、Ground Root到達不能、制限値非finite、Edge／Anchor世代不一致、Constraint予算超過では、新しい大型Rigidbodyを自由落下状態で部分公開しない。Tree内容が変わらないNo-op再評価は現Generationを維持し、再構築成功として数えない。Tree変更が必要な時点で現`SafetyTetherTreeGeneration == uint.MaxValue`ならGenerationをwrap／再利用せず`SafetyTetherGenerationExhausted`としてRejectする。旧FragmentGroupを維持できるならCommitを遅延し、すでに公開済みで維持不能なら現在の安全姿勢で速度を0にして`SafetyFrozen`へ移す。空中静止や構造的不自然さは許容し、レベル全体の倒壊より安全性を優先する。
+
+#### 7.2.3 プレイヤー非接触Locomotion
+
+初期仕様ではPlayer Body／Hand用Layerとプロップ／破片のPhysics Layer間の接触を無効化し、プレイヤーは物体を押さず、物体もプレイヤーを押しやらない。床移動、壁侵入防止、Camera安全性はRigidbody接触ではなく、建物壁板、固定大型プロップ、レベル境界から作る低複雑度`PlayerLocomotionOccupancy`に対する次姿勢Queryで制御する。斬撃は従来どおりBlade／SlashFrontの論理Sweepで成立するため、非接触化しても主要Interactionを失わない。
+
+- Occupancyは表示Triangleや切断前の旧Colliderをそのまま使用せず、現在のStructural Slab OBB／少数Primitiveとレベル固定境界から作る。Tethered Fragmentの確定物理姿勢へFixed Step後に追従し、Pending中は保守的な旧領域を維持する。切断開口を移動可能域へ反映する時期はStable Geometryと確定物理姿勢が揃った後とし、即時Rendererだけを根拠に通行を許可しない。
+
+- スティック移動や人工移動では、Player Rootと予測HMD Capsuleの次姿勢が禁止Occupancyへ新規侵入する操作を止める。実空間の6DoF頭部移動を仮想Camera Clampや物理Impulseで押し戻さず、HMDが壁内へ入った場合はNear-Wall Fade／視界マスクを安全Fallbackにする。
+
+- `PlayerLocomotionPolicy`は`NewEntryReject=1`、`PushOut=2`、`ExitOnly=3`の固定候補とし、0を未設定、未知値をRejectする。すでに禁止領域へ入ったPlayerを外へ押し出す`PushOut`と、「侵入深度を増やす移動だけ拒否し、減らす移動は許可する」`ExitOnly`はプレイテスト後に選ぶ。それまでは接触Impulseを導入せず、`NewEntryReject`と視界保護をPoC正本とする。
+
+- PoCの`NewEntryReject`中に、静止中のPlayerへTethered Fragment側のOccupancy更新が重なった場合は`ForcedOccupancyOverlap`へ入る。Slab／Tetherの物理CommitをPlayer位置だけを理由にRejectまたは巻き戻さず、PlayerをImpulseや強制位置補正で押し出さない。Episode開始時にはLocomotion Upに直交する2次元`AllowedLocomotionPlane`と`ExitSearchMaxHorizontalExpansion = 2.0 m`という寸法上限だけを固定し、world-space `ExitSearchBounds`の位置は固定しない。各Fixed Stepの候補生成前に、現在Player Capsuleと、人工移動要求の平面内長さ`s`を全方向へ適用し得る保守的`CandidateSweepEnvelope`とのunionを現在Player位置基準で一度だけ求める。全Line Search候補は長さ`<= s`なのでこのEnvelopeへ含まれなければならない。必要な水平拡張がProfile上限を超える、またはBoundsが非finiteならVolume Queryや部分候補評価を行わず`OccupancyExitBlocked(SearchBoundsExceeded)`へ移る。
+
+- 上限内なら、そのFixed Stepの`ExitSearchBounds`を上記unionへ確定し、このBoundsと保守的Boundsが交差する全Occupancy Primitiveを先に収集して全候補共通のVolume集合とする。候補ごとにBoundsやVolume集合を変えず、現在／候補姿勢で非Overlapなら深度0として評価する。これにより通常LocomotionでEpisode開始地点から任意距離移動済みでも、現在Playerへ侵入しているVolumeは収集対象になる。単一の最深Volumeだけを正本にせず、垂直法線をAllowed Planeへ射影してzeroになる場合はその法線を退出候補に使用しない。PoC Profileの初期値は`MaxExitVolumeCount = 8`、`ExitLineSearchSteps = 4`、`MaxExitCandidateCount = 192`、`ExitBlockedFixedStepLimit = 15`、`MaxForcedOverlapFixedSteps = 180`とし、T-088後に校正する。
+
+- Volume収集、法線、方向、展開済み候補、Depth Vector、MetricはProfile上限で初期化時に一度だけ確保する固定長Native／unmanaged作業領域へ格納し、Episode中のManaged allocation、Buffer成長、GCを禁止する。Broadphaseは`MaxExitVolumeCount + 1`件の固定長NonAlloc Bufferまたは同等のoverflow flag付きQueryを使い、上限超過を無制限列挙せず検出する。結果が`MaxExitVolumeCount`を超えた場合はID順の先頭だけを使わず、深度計算とPlayer移動を開始する前に`OccupancyExitBlocked(VolumeCapacityExceeded)`へ移る。非zeroな人工移動要求の平面内長さを`s`とする。有限候補方向は、平面へ射影した要求方向、各Overlap Volumeの解析的外向き法線の非zero射影、全有効法線の正規化和、全ての非zeroな法線2本の正規化和をこの順で生成し、Volume組はLocal ID辞書順、同じcanonical binary32方向は最初の1件だけ残す。各方向について固定`ExitLineSearchSteps`の`stepLength = s * 2^-k`、`k = 0..ExitLineSearchSteps-1`を評価する。中心一致等で法線が一意でないPrimitiveはlocal `+X, -X, +Y, -Y, +Z, -Z`順の軸をWorld／Allowed Planeへ射影し、最初の非zero方向だけを候補にする。要求量`s > 0`以外の最小進捗量を設けない。
+
+- 方向生成前に、収集Volume数から`1 + V + 1 + V * (V - 1) / 2`のchecked整数上限を求め、`ExitLineSearchSteps`を掛けた展開候補上限が`MaxExitCandidateCount`以下であることを検証する。deduplicateによる減少を容量成立の前提にしない。checked overflowまたは上限超過では候補を途中まで生成・評価せず`OccupancyExitBlocked(CandidateCapacityExceeded)`へ移り、そのTickまでに作った部分候補の移動を適用しない。
+
+- 同一Fixed Step Snapshot上の各候補について、収集済み全Volumeの非負binary64侵入深度を固定長領域へ求める。`ExitMetric = (MaxDepth, SumDepth, DepthByVolumeId[])`とし、`MaxDepth`は全値の最大、`SumDepth`はLocal ID昇順のbinary64左畳み、末尾VectorもLocal ID昇順とする。非Overlapは0、非finiteは候補Rejectとする。現在姿勢よりこのTupleがIEEE 754数値順で辞書式に厳密減少する候補だけを許可し、最小Metric、同値なら要求方向とのdotが最大、さらに同値なら候補生成順が早いものを適用する。このためPlayer自身の適用移動が同一Snapshot上で過去姿勢へ周期的に戻ることはない。適用後は次Fixed Stepの更新済みSnapshotで再評価する。
+
+- `ForcedOccupancyOverlap`へ入ったFixed Stepを0として、候補の有無やMetric進捗にかかわらずEpisode経過をsaturating counterで数える。全深度が`occupancyExitEpsilon`以下になる前に`MaxForcedOverlapFixedSteps`へ到達した場合は`OccupancyExitBlocked(EpisodeTimeout)`へ移る。減少候補がないTickではPlayerを動かさず、物理Impulseや任意軸Fallbackで押し出さない。非zero入力が`ExitBlockedFixedStepLimit`回連続しても減少候補を得られない場合は`OccupancyExitBlocked(NoDecreasingCandidate)`へfail-closedする。Candidate SweepがBounds寸法上限を超える場合は前述の`SearchBoundsExceeded`を使用する。Blocked後は人工並進を停止してNear-Wall Fade／視界マスクを維持し、明示的なユーザー操作による最後の安全なLocomotion Poseへの復帰、Level Reset、またはOccupancy側が移動して減少候補が再出現した場合だけ再開する。全侵入深度がfiniteかつ`<= occupancyExitEpsilon`になれば重なりなしへSnapして通常の`NewEntryReject`へ復帰する。実空間HMD 6DoFは常にClampしない。これは`ExitOnly`を最終Policyとして採用したことを意味せず、移動Occupancy起因の安全Fallbackに限定する。
+
+- Player接触を物理世界から除外することで、プレイヤーの身体接触による未来Physics結果の無効化を発生させない。Player位置と斬撃は依然として介入条件だが、Fragmentの投機物理Commit条件へPlayer接触Impulse履歴を追加しない。
 
 ### 7.3 Collider Cooking Profile
 
@@ -905,7 +955,15 @@ Blender側の共通変換工程として、Transform適用、原点・単位統�
 
 これらは論理的な役割であり、役割ごとにUnity Meshを必ず複製するという意味ではない。Display GeometryがStencil／Closed Component契約も満たす場合は同じVertex／Index BufferとTopology Metadataを参照する。Strict Solidは明示的なAsset Profileで必要な場合だけ非公開生成物として保存し、通常Buildへ含めず、標準PlayerでDisplay／Stencil／Strictの3形状を同時常駐させない。
 
-#### 10.2.1 早期Licensed Fixture選抜
+#### 10.2.1 建物用Structural Slab候補
+
+Poly Pro Universe実AssetのBlender人力調査から、典型的な建物を装飾付きの厚い壁板4枚以上で外周構成する近似は、Boolean Unionや建築構造解析を要求せず自動化しやすい候補とする。各`StructuralSlabComponent`は独立して閉鎖・切断・CapできるRender／Stencil Componentと、原則1個の直方体Physics Convexを持ち、建物1周分を同じ固定FragmentGroup／Compound Rigidbodyへまとめる。入口や通行可能な開口を1箱で塞ぐ場合だけ、左右と上部等の少数箱へ分割する。窓枠、柱、モールド、看板等はVisualOnlyMicroまたはPhysicsSignificantAttachmentとしてSlabへ接続し、装飾Geometryを構造Convexへ忠実に反映しない。
+
+各Slabの下端両側を初期`FixedSupportAnchor`候補とし、外周角や意図した構造接続だけを少数Attachment Linkで結ぶ。同じSlabを完全横断する2切断によって両Ground Anchorおよび外周Linkから切り離された中間成分はDetachedとなり、Collider Bake後に動的大型Fragmentへ移行できる。1回の切断で必ず落下する、または任意の2平面で必ず分離するとは保証せず、実際のCutConnectivityGraph到達性を正本とする。
+
+Phase 0.2では個別建物の最終Recipeを作らず、大きな平面状閉Component、保守的OBB、外周配置を共通Presetで抽出できた少数を`StructuralSlabCandidate`としてT-087の非公開Fixtureへ利用してよい。製品用のGround Anchor、入口保持、角Link、装飾分類、Safety Tether MetadataはPhase 5.5のAsset Recipeで確定し、早期成功を全建物へ一般化しない。
+
+#### 10.2.2 早期Licensed Fixture選抜
 
 Phase 5.5の全Asset対応前に、Phase 0.2でSyntyおよびPoly Pro Universe等のライセンスAssetから多数のモデルを固定版Blenderへ一括投入し、簡易処理だけで成功した少数を表示テストと性能測定へ使用する。これは製品用Asset前処理の前倒しではなく、手作業、Asset別Recipe、最終外観調整を原則行わない使い捨て可能な選抜工程である。失敗Assetを個別修理して網羅率を上げず、時間上限または検証失敗で即Rejectして次の候補へ進む。Poly Pro Universeの人力調査で、元MeshへBlenderの`Select All by Trait -> Non Manifold`相当を適用して`F`で封鎖する操作が多くの単純開口へ有効だったため、この操作を一般解ではなく共通簡易Presetの探索候補として含める。
 
@@ -1510,6 +1568,10 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | D-120 | Convex由来の質量特性 | Runtimeの質量・重心・慣性は表示Mesh／Strict Solid／Convex UnionではなくPhysics Convex B-repから求める。重複Compoundはfiniteかつ正和の`PhysicsConvexMassWeight`をLocal ID順binary64左畳みで正規化して親質量を保存し、交差ConvexのWeightだけを子体積比で継承する。各物理Commit対象Fragmentもfiniteかつ正のWeight和を必須とし、Weight 0 Convexだけの子は安全条件を満たす場合だけ質量移送なしで非物理デブリとして消去し、それ以外はCut Operation全体の物理Commitを拒否して旧FragmentGroupを維持する。密度1慣性は`assignedMass / convexVolume`でscaleし、失敗時は規定OBB／AABBまたは旧物理維持へ低下する | 技術検証付き確定 |
 | D-121 | 非Union標準Asset表現 | Strict Solid Cut Meshを任意のオフライン品質基準／高品質Fallbackへ降格し、標準Runtimeを`ClosedCutComponentSet + CutConnectivityGraph + Compound Physics Proxy`とする。交差Componentを独立切断・Capし、Topology Anchor付き固定少数Attachment Linkの完全決定表とGraph connected-componentsで2個以上の出力Fragmentを決め、同一Cut条件のCapはStencil非ゼロ和集合として描く。小部品はVisualOnlyMicroまたはPhysicsSignificantAttachmentへ分類し、前者へ専用Convexを作らない | 技術検証付き確定 |
 | D-122 | Phase 0.2簡易Boundary Fill | Poly Pro Universeで有効性を確認したBlenderのNon-Manifold選択＋`F`相当を早期Fixture候補へ加える。本命は次数2のBoundary Loopを個別封鎖する`BoundaryLoopFill`、人手操作に近い`BlindNonManifoldFill`は厳格な事後Gate付きBenchmarkOnly探索とする。元Geometryを上書きせず、別Object／Componentの結合やBoolean Unionを行わず、失敗VariantだけをRejectする | 技術検証付き確定 |
+| D-123 | 大型建物の構造近似 | 典型建物を独立して閉鎖・切断できる外周Structural Slab 4枚以上と少数Attachment Linkで近似し、Slabごとに原則1個、入口等では少数の直方体Convexを同一固定Compoundへ持たせる。装飾は別Componentとして接続し、厳密な建築構造解析とBoolean Unionを要求しない | 技術検証付き確定 |
+| D-124 | Player非接触 | 初期仕様ではPlayer Body／Handとプロップ／破片のPhysX接触を無効化し、刀と斬撃波だけを論理SweepでInteractionさせる。移動可能域とCamera壁内侵入防止は簡易Occupancy Queryと視界保護へ分離する | 技術検証付き確定 |
+| D-125 | Safety Tether Tree | LargeStructuralPropの構造Support Graphとは別に、Ground Anchorを持つ固定FragmentをRootとする非循環Safety Tether Treeを保持する。Detachedな大型Fragmentも切断面Anchorの相対並進テザーで親へ接続し、全動的Nodeから地面へ一意なPathを要求する。通常のワールド並進テザーは使用しない | 技術検証付き確定 |
+| D-126 | Tether制限と回転安全 | 相対並進上限をSafetyTetherLevelに応じて指数減衰させ、回転は論理物理分裂時のWorld姿勢を原点としてStructuralSplitGenerationに応じて指数制限する。cook／Collider差し替えで世代を進めず、Tree再構築不能時は旧Group維持またはSafetyFrozenへFallbackする | 技術検証付き確定 |
 
 ## 13. 未決事項
 
@@ -1521,13 +1583,13 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | O-004 | 断面表現 | 共通トゥーン＋粘土色グレーは確定。機械内部や人体で追加記号・部品表現を使う範囲 | 年齢区分とアート制作 | アート検証時 |
 | O-005 | 切断可能範囲 | 建物・道路まで切断対象に含めるか | レベル設計とメモリ | 垂直スライス後 |
 | O-006 | 破片寿命 | 最大動的破片数、消去時間、スリープ規則 | 物理CPUと視覚密度 | T-010後 |
-| O-007 | Collider仮状態 | 旧Collider維持時間とプレイヤー手・身体／周辺破片の例外判定。刀は論理Sweepのみ | 違和感と実装複雑度 | T-005後 |
+| O-007 | Collider仮状態 | 旧Collider維持時間と周辺破片の例外判定。Player Body／Handと刀は物理接触せず、刀は論理Sweepのみ | 違和感と実装複雑度 | T-005後 |
 | O-008 | NPC構成 | Synty人物をそのまま使う範囲と顔・体型改造量 | 独自性と制作工数 | アート検証時 |
 | O-009 | データ保存 | 切断状態をセーブ対象とするか | 再現性・容量・ロード時間 | ゲームループ決定時 |
 | O-010 | ネットワーク | 将来的なマルチプレイ要否 | 切断イベント同期設計 | 企画判断 |
 | O-011 | Trace保存量 | リングバッファ秒数、最大イベント数、書き出し形式の最終値 | メモリ、調査可能時間、ツール工数 | T-020後 |
 | O-012 | Voxel品質 | Asset分類別のVoxel Size、Adaptivity、穴封鎖閾値 | 輪郭精度、面数、処理時間 | T-022後 |
-| O-013 | 建物分割 | 建物チャンクの標準寸法と意味境界の指定方法 | 局所切断性能とアート破綻 | T-024後 |
+| O-013 | 建物分割 | Structural Slabの標準寸法、入口用Compound分割、Ground Anchor／角LinkのRecipe指定方法 | 局所切断性能とアート破綻 | T-024／T-087後 |
 | O-014 | 自動修復閾値 | 自動封鎖径、平面誤差、Solidify厚、Voxel Closing半径 | 誤封鎖、輪郭誤差、処理成功率 | T-027～T-029後 |
 | O-015 | Blender更新方針 | 4.5.12 LTSから次版へ更新する判断基準と更新頻度 | API互換性、生成差分、保守期間 | LTS更新候補発生時 |
 | O-016 | Unity CLI再評価 | 実験的CLIとUnity PipelineをCIへ採用するか | 保守性、自動導入、外部依存 | CI構築時 |
@@ -1554,6 +1616,9 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 | O-037 | Surface Projection閾値 | Trusted Exterior分類、最大距離、法線内積、包含Margin、最小厚み、Reduction前後の再Projection条件、自己交差検出精度 | Silhouette回復、Solid堅牢性、自動成功率、前処理時間 | T-071後 |
 | O-038 | Render／Convex対応閾値 | 専有Convex集合の被覆を近似する系譜、Bounds、固定数包含Sample、推定体積被覆率、境界距離、Shared Keeper Score、DebrisCandidate最大寸法・重要度、Ambiguous Margin | 誤消去、Collider欠落、共有Convexのめり込み、判定費用 | T-075後 |
 | O-039 | Geometry／Cook容量予算 | P95／P99容量式から、1フレーム当たりWorker時間、Deadline別の同時切断数、Temporary Renderer上限、Batch Size、同時Bake数、Proxy品質段階を決める | 先行計算完了率、命中後Pending時間、90fps安定性、品質低下頻度 | T-076後 |
+| O-040 | Player壁境界応答 | 禁止Occupancy侵入時にPlayer Rootを押し戻すか、侵入深度を増やす移動だけ拒否して退出を許すか。finiteかつ0以上の`occupancyExitEpsilon`、ExitSearchMaxHorizontalExpansion、MaxExitVolumeCount、MaxExitCandidateCount、ExitLineSearchSteps、ExitBlockedFixedStepLimit、MaxForcedOverlapFixedSteps、Near-Wall Fadeの開始距離と強度 | VR快適性、壁抜け、Fixed Step予算、予測単純性 | T-088プレイテスト後 |
+| O-041 | Safety Tether Profile | initial並進上限、並進／角度減衰率、初期World角度上限、Spring／Damper、Hard Limit、最大Node／Edge数、SafetyFrozen閾値。正のminimum並進／角度上限は設けない | 大型破片の浮遊感、倒壊防止、Solver費用 | T-087後 |
+| O-042 | Structural Slab自動化 | 大型平面Component抽出、OBB厚み、入口認識、外周順、Anchor／角Link生成を共通PresetとAsset Recipeのどちらへ置くか | Blender自動成功率、建物品質、前処理工数 | Phase 0.2候補調査／T-087後 |
 
 ## 14. 技術検証項目
 
@@ -1656,6 +1721,11 @@ T-082ではFailure Count cutoff直前／同時／直後にSealable writerを競�
 
 T-082ではTerminal Intent Queue容量を`checked(2 * MaxInFlightDraftCount)`の直前／一致／1件超過で検査し、同一Draftの未処理Intent上限2件と同一DraftについてRun中に受理される総数上限2件、3件目の拒否、Queue全体満杯、Coordinator drainとの競合を試験する。`TerminalIntentEnqueueStatus`の全固定値について、`Accepted`だけが私有Buffer所有権をCoordinatorへ移し、`Backpressured`だけがproducer所有のまま再試行可能、`DraftAlreadyTerminal`／`IntentLimitExceeded`／`RunNotAccepting`はproducerが私有Bufferを解放して再試行しないこと、`InvalidIntent`は所有権を移さずRunをFail Fastすることを検査する。Queue満杯後はdrainでAcceptedへ進む一方、受理総数2件到達後の3件目は何度待ってもBackpressuredへ変化せず、無限再試行しないことを固定する。複数条件が同時成立する場合のstatus優先順も1件ずつ試験する。freeze取消時はBackpressured Intentを再試行して受理させるか、`RunNotAccepting`を受けてproducer自身が私有Bufferを解放し所有数0をacknowledgeするまでjoin成功とみなさない。join直前の最後のenqueue、join後Queue非空、最終drain途中を個別に停止し、最終drain後だけQueue件数0、受理数と処理数一致、Queue所有Buffer数0、producer保持Buffer数0となること、その後の残存Pendingだけが理由9になることを確認する。
 
+| ID | 対象 | 合格の考え方 | 方法 |
+| --- | --- | --- | --- |
+| T-087 | LargeStructuralProp／Safety Tether Tree | 外周Structural Slabを連続切断して構造的にDetachedな大型Fragmentを作っても、Safety Tether Treeが循環せず全動的NodeからGround Rootへ到達し、下側の移動へ上側が追従しつつ累積並進とWorld回転がProfile上限内に留まる | 4面建物、入口用Compound、1 Slab 2切断、凹Slabの1切断3子、2個Fixed＋1個Detached、複数Ground Anchor、外周Cycle、複数断面Patchを合成する。全Fixed FragmentがID順でRoot Link化され初期接続済み集合へ入ること、Root Link IDの継承と新規発行順、継承物理EdgeをID順で先にForestへ挿入してから未接続成分だけを新規Patchで接続すること、Incoming Edge競合／Cycle／複数成分Rootをfail-closedにすること、最大Patch重心Anchor、同値ID規則、Level 0／1／2の0.4／0.2／0.1 m候補、有限深度の幾何級数和と無限上限0.8 m、極深Levelの0 underflow、StructuralSplitGeneration、World角度制限を検査する。`SafetyTetherTreeGeneration`が`uint.MaxValue - 1`から`uint.MaxValue`へ進む最後の成功、Max値でのNo-op維持、次のTree変更Reject、非wrap／非再利用を試す。`StructuralSplitGeneration`も`uint.MaxValue - 1`の親からMax値の子を作る最後の成功と、Max値の親をさらに分裂させるOperation全体のReject、旧Group維持、角度上限が初期値へ戻らないことを試す。cook／Collider Upgrade／同一Group再生成でLevelと世代が変わらず、下側Fragment移動へ上側が相対制限内で追従すること、Tether Sibling overlapが大Impulseを作らないことを確認する。Anchor曖昧、世代不一致、Cycle、Ground Root喪失、Joint予算超過、Generation枯渇では自由落下の部分Commitをせず旧Group維持またはSafetyFrozenになる。成功Traceはsynthetic Ground Rootを0とする`Rebuilt → EdgeLinked×EdgeCount → TraceCompleted`束から同じTreeを一意に復元でき、欠落、重複、余分、順序違反、Generation混在、Reject候補の混入を不完全として拒否する。Unity Jointと独自制約候補のFixed Step CPU、Solver iteration、振動、Sleep率も比較する |
+| T-088 | Player非接触Locomotion | Player Body／Handが切断前後のプロップへImpulseを与えず、簡易Occupancyだけで人工移動の新規壁内侵入とCamera埋没を抑え、刀／斬撃波Interactionと未来物理の再利用性を維持する | Player／Prop Layer接触を監視し、静止壁、Episode開始地点から2 m超を通常移動した後にPlayerへ侵入するTethered Slab、対向する2 Volume、角での3個以上のOverlap、中心一致、回転Primitiveの垂直法線、周期振動を誘発する交互最深Volume、Pending旧Collider、切断開口、HMDの実空間Leanを試す。各Fixed StepのExitSearchBoundsが現在Capsuleと最大候補Sweepのunionへ再配置され、遠方Slabを漏らさず、同一Tickの全候補でBounds／Volume集合が不変であることを確認する。最大候補Sweepが`ExitSearchMaxHorizontalExpansion`ちょうどなら評価でき、1 ULPまたは規定Fixtureで超えた場合はVolume Query、部分候補、Player移動なしで`SearchBoundsExceeded`となることも検査する。移動Slab起因では物理Commitを巻き戻さず`ForcedOccupancyOverlap`へ入り、AllowedLocomotionPlane上の有限候補を全関連Volumeで評価すること、適用ごとに`(MaxDepth, SumDepth, DepthByVolumeId[])`が厳密減少して同一Snapshot内の周期を作らないこと、epsilon未満の入力にも最小量を要求しないことを確認する。Volume数と展開候補数は各上限ちょうどで固定長領域内に収まり、1件超過、checked count overflow、候補容量超過では部分Volume／部分候補を評価せず、Playerを1 Tickも動かさず対応Reasonの`OccupancyExitBlocked`へ入ること、Episode中にManaged allocation／Buffer成長がないことを検査する。有効な平面内減少方向がないFixtureは振動や任意軸移動をせずBlockedへ移り、毎Tick厳密減少する極小進捗Fixtureも`MaxForcedOverlapFixedSteps`で`EpisodeTimeout`になることを確認する。Fade、明示的な安全Pose復帰、Occupancy移動後の再開、全深度がexit epsilon以下での通常Policy復帰、HMD非Clamp、Player接触Impulseによる物理予測Reject 0、SlashFront命中と切断Commitも検査する |
+
 T-081では追加で、`BoundaryLoopFill`／`BlindNonManifoldFill`の入力Originalがcanonical化後のSolid Gateを通る場合だけ比較可能なSource Solidとして`VolumeError`を算出し、open Originalでは`VolumeError = null`のままHard Volume Gateを省略することを検査する。`null`を0または自動合格へ変換せず、正の有限体積、Hard Bounds、中心移動量、surface distanceなど残りのGateを維持する。`ConvexBuild`では親の`ParentTier`、`ParentVariantId`、`ParentDatasetCaseId`、`ParentGeometrySha256`をReportとDataset Indexの双方から一意に復元し、親不在、別Source、hash不一致、循環、Convex親をRejectする。`BlindNonManifoldFill`を祖先に持つ全派生Convexへ`BenchmarkOnly`が伝播し、`Selected`への昇格をRejectする。Early Fixture canonical schema v1は未実装の初期正本を本記述で置換したものとして最初のGolden Fixtureを作成し、1件でもv1 artifactを生成した後のproperty／enum変更ではSchemaVersionを上げ、旧v1 LoaderとGolden Fixtureを維持する。
 
 ## 15. 実装ロードマップ
@@ -1672,6 +1742,7 @@ T-081では追加で、`BoundaryLoopFill`／`BlindNonManifoldFill`の入力Origi
 | Phase 3 | 表示ジオメトリ | Job＋Burst三角形切断、Count／Write Job、ReadOnly／Writable MeshData、`RenderCutTopologyMap`、Topology系譜の交点共有／Contour Track、共通signed-distance分類、Simple Contour Fast Path、局所2D Arrangement、Boundary Fan／Open Chain／Degenerate fallback、cut-local閉鎖検証、RenderFragment接続成分、Triangle数／面積／任意体積／重要度Metadata、後続Debris Corner Stream生成用出力、メインスレッドMesh公開、世代Commit、T-083 | 仮表示から実Meshへ無停止で置換し、重い頂点処理がMain Threadへ戻らない。公開合成Fixtureと選抜済みSynty Render／Solid Fixtureに加え、skinning後self-intersection、duplicate／coincident face、nested shell、winding不整合、局所non-manifold、既存boundary、cut固有退化を含むT-083 Fixtureで切断由来Boundaryを塞ぐ。位置近傍だけで別Topology Trackを誤接続せず、全Mesh self-intersection／inside-outside／shell分類を同期前処理しない。任意切断由来Fragmentは物理Convex対応が確定するまで塊として表示され、Phase 3だけでは大きさを理由にデブリ化せず、clip中の表面Triangle崩壊を起こさない |
 | Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingSupportClassification／PendingAnchoredSplit、全LogicalFragmentの物理状態集約、Phase 1.5支持モデルとの接続、分類不能時の旧物理完全維持とTimeout Fallback、Active境界描画とGroup運動の分離、固定側Impulse禁止、自由側解析仮運動、`ClosedCutComponentSet`／`CutConnectivityGraph`、SurfaceAdjacency／AttachmentPatch、Graph connected-components、Native Convex B-rep、Compound内Overlap許容、Count／Write／Validation Job、RenderFragment／LogicalConvexFragment対応グラフ、近似被覆、Represented／Missing／Shared／Ambiguous、SharedResolutionRole、cook前デブリ判定、Temporary Low-Poly Proxy生成Kernel／Validation／Fallback、Runtime Debris Geometry Arenaと後追いGPU崩壊、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、Sibling Collider一時衝突抑止、別Mesh差し替え、Upgrade Scheduler、`PhysicsConvexMassWeight`、Convex由来の体積／重心／慣性とOBB／AABB Fallback、質量保存、速度継承、Generation Reject、Timeout品質低下、保守的な仮予算管理、Phase 0.2 Convex Fixture回帰、T-063／T-070／T-075／T-077／T-085／T-086との差分再確認 | cook遅延中も既知Active境界の即時表示を維持し、分類不能時は旧物理とGroup運動を変えない。交差する独立ComponentをUnionせず、凹Componentの3個以上の子もGraph成分として決める。1 Render対複数専有Convexを正常にRepresentedとし、物理表現不能な小Fragmentだけをデブリ化する。重複Compoundでも生体積を質量として二重計上せず、Weight継承で切断前後の質量和を保存する。大型・重要・Ambiguous、明確なKeeperのないSharedは共有またはProxy再構築Fallbackへ残す。Temporary Proxyの実装済み品質段階がT-077を通り、不正入力は下位Fallbackへ移る。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリへ保守的な仮上限を設定し、Arena不足でも待機・再確保しない。分類後は固定側を動かさず自由側だけを安全に分離する。公開合成Fixtureと選抜済みLicensed Convex Fixtureの両方で、Graph分割／Convex分割／質量特性／BakeがMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
 | Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Phase 0.2 LicensedRepresentative補助Dataset、Single-Thread Kernel Harness、Job Batch Harness、表示Mesh／Convex／T-077検証済みTemporary Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装をT-076に従い、公開合成Datasetをcanonical正本、選抜済みLicensed Fixtureを別の非公開補助Suiteとして測定する。各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039の初期確定予算と斬撃波Deadlineまでに処理可能な対象数を根拠付きで決め、T-070の早期結果を再解釈できる |
+| Phase 4.2 | 大型構造物安全制約／Player非接触 | `LargeStructuralProp`、`StructuralSlabComponent`、Ground Root、`SafetyTetherTree`／Edge／Level、切断面OBB／Convex Patch Anchor、決定論的Spanning Tree、相対並進Limit、World回転Limit、`StructuralSplitGeneration`、Sibling衝突抑止、`SafetyFrozen`、Player Layer非接触、`PlayerLocomotionOccupancy`、Near-Wall Fade、T-087／T-088 | 4面建物を2回以上切断しても全大型動的Fragmentが循環なしでGround Rootへ到達し、下側の移動へ上側が追従して累積移動・回転上限を守る。Tree不成立を自由落下の部分Commitで隠さず旧Group維持またはSafetyFrozenへ送る。Playerは物体へImpulseを与えず、簡易Occupancyと視界保護で壁内事故を抑えながら刀／斬撃波で切断できる。押し戻し対一方向退出は計測して未決事項へ根拠を残す |
 | Phase 4.5 | 飛翔斬撃と未来評価 | Gesture状態機械、Edge Direction Gate、Recovery、NonCutting素通り、Slash Latch、Span／Travel Axis、単調・一価SlashFront、逆行／自己交差Finalized、前縁VFX、帯状Sweep、Candidate Flight Bounds、評価DAG、先行切断、Commit検証 | 復路とU字軌道で二重前縁や誤斬撃を作らず、Latch直後から三日月前縁が飛翔・命中し、Extending中も前縁が成長しながら進み、遠距離対象の多くが接触時に完成Meshへ即移行 |
 | Phase 4.6 | 予測拡張 | 局所PhysicsScene、未来Animation姿勢、信頼度別フォールバック | 動的対象でも予測採用率と予測費用が基準を満たす |
 | Phase 4.7 | モブ未来計画 | Mob Future Planner、MobPlan／PlanGeneration、AI LOD、経路・Animation先行確定、時空間予約、Trace | 介入なしの遠距離モブで計画再利用率と先行切断完了率が基準を満たし、介入時は安全に無効化される |
@@ -1680,6 +1751,8 @@ T-081では追加で、`BoundaryLoopFill`／`BlindNonManifoldFill`の入力Origi
 | Phase 5.5 | Asset自動前処理 | Phase 0.2の選抜Report／失敗例を入力に、完全なPortable Blender Manifest／Bootstrap、固定版ヘッドレス実行、Asset別Recipe、Render Mesh用`RenderCutTopologyMap`、`ClosedCutComponentSet`、SurfaceAdjacency／AttachmentPatch／1～8件のTopology Anchor付きAttachmentLink、Stencil Cut Shell Base用Topology／`OrientedShellValidator`／UniformWindingSignCertificate／StencilPolarity／MaxAbsoluteWindingBound証明、Component単位の開放修復、見た目を保つReduction、UV／Material再構成、VisualOnlyMicro／PhysicsSignificantAttachment分類、AttachmentId／Anchor／対象Triangle／ShardId生成、実Asset用FixedSupportGraph生成、Compound Physics Proxy／finite正和MassWeight／Debris Atlas生成、任意Profile用Voxel／SDF内部充填・Projection・Strict Solid、検証、キャッシュを実装する | Phase 0.2でRejectした複雑Assetも対象に含め、古いシステム版と共存しながら代表家具・車・建物を別PCでもGUIなしで再現生成する。相互に食い込む閉ComponentをBoolean Unionせず標準経路へ通し、接続はParent関係ではなくAttachment Link付きGraphへ固定する。各Link EndpointをTopology系譜へ追跡し、共通epsilonの完全決定表で同側Linkだけを残す。Render MeshはFBX control point／Import topologyからattribute seamを越える安定IDとNon-manifold fan／lane hintを生成し、skinning後も位置だけを更新してD-117へ渡す。Stencil Cut Shell Baseは同じTopology Vertexからcanonical posed positionを生成し、自己交差検出なしの線形有向incidence GateでD-118へ渡す。Uniform Sign証明を持つTopology Componentだけをsigned volumeでPositive正規化し、未証明PolarityまたはWinding BoundをUnknownとして保存する。VisualOnlyMicroには専用Convexを作らず、重要部品だけをPhysicsSignificantAttachmentとしてCompoundへ含める。Strict Solid生成は明示Profileだけに限定し、標準Runtime Buildへ常駐させない。Phase 1.5の合成Fixtureを実Asset由来Graphへ置き換えて同じ契約テストを通し、Phase 0.2より広いAsset範囲と製品品質を達成する |
 | Phase 6 | コンテンツ | Synty City街区、10プロップ、シェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 最適化 | 端末別品質、破片LOD、ジョブ優先度、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす |
+
+Phase 5.5の建物Recipeでは、外周Structural Slab候補、入口回避用少数Compound Box、下端両側Ground Anchor、外周角Attachment Link、VisualOnlyMicro／PhysicsSignificantAttachment分類、Safety Tether用Patch／Topology系譜Metadataを生成する。Phase 0.2では共通Presetで成功した少数のStructuralSlabCandidateだけをT-087 Fixtureへ固定し、製品品質や全建物対応を要求しない。
 
 ## 16. 垂直スライス受け入れ基準
 
@@ -1767,6 +1840,10 @@ T-081では追加で、`BoundaryLoopFill`／`BlindNonManifoldFill`の入力Origi
 
 - OpenXR API Layerを有効にした検証では、D3D11固定Capture Profile上でProjection画像と`predictedDisplayTime`、Pose、TestRunId、Slash／Object／Task IDを一意に関連付け、API Layer自身のGPU／CPU負荷も別計測できる。Profile逸脱時はゲームを止めず録画だけをFail Fastし、Run Manifestへ理由と実構成を残す。
 
+- 大型建物は外周Structural Slabと少数Compound Convexで切断でき、同じSlabを2回切ってGround Anchor／角Linkから隔離した中間Fragmentが動的化する。Safety Tether TreeはSupport Graphから独立して地面RootへのPathを保ち、連続切断後も循環、無制限落下、横倒しを発生させず、失敗時は旧Group維持またはSafetyFrozenへ移る。
+
+- Player Body／Handはプロップ／破片へ物理Impulseを与えず、人工移動はPlayerLocomotionOccupancyへ新規侵入せず、HMDの実空間壁内侵入ではCamera位置を強制変更せず視界保護が働く。刀とSlashFrontによる切断Interactionは非接触化後も成立する。
+
 ## 17. Codexでの継続更新ルール
 
 - 決定が変わった場合は既存行を消さず、状態を『廃止』にして代替決定IDを記録する。
@@ -1806,6 +1883,23 @@ T-081では追加で、`BoundaryLoopFill`／`BlindNonManifoldFill`の入力Origi
 | PendingPhysicsSplit | 見た目と論理状態は切断済みだが、左右のBake済みColliderが未完成でFragmentGroupの物理モデルを共有している状態 |
 | FixedSupportAnchor | 地面、壁、基礎、固定Constraintなど、切断後も動かしてはいけない支持位置を表す点または小領域。Micro AttachmentのAnchorとは別概念 |
 | FixedSupportGraph | CutConnectivityGraphへ構造接続とFixedSupportAnchor Rootを付加した軽量View。切断後に生存SurfaceAdjacency／AttachmentLinkを通って固定Anchorから到達可能なGraph成分を判定する |
+| LargeStructuralProp | 完全倒壊を許すとレベル、安全性、物理予算を破綻させやすいため、Structural Slab近似、Safety Tether Tree、World回転制限、SafetyFrozen Fallbackを適用する大型固定プロップ分類 |
+| StructuralSlabComponent | 建物外周等を構成する独立閉鎖可能な厚い壁板Component。装飾付きDisplay／Stencil Geometryと原則1個、入口等では少数の直方体Physics Convexを対応させ、下端Ground Anchorと外周Attachment Linkを持てる |
+| Synthetic Ground Root | Safety Tether Treeだけが持つ非物理・非Fragmentの論理Root。LogicalFragmentLocalIdを持たず、Tree構造とTraceの親Node IDでは予約値0で表す。直下にはGround Anchorへ到達する固定Fragmentだけを接続する |
+| SafetyTetherTree | FixedSupportGraphとは独立したゲーム安全用の有向非循環木。Ground Rootから固定Fragmentを経て全動的大型Fragmentへ到達し、切断で構造的にDetachedとなったFragmentも相対並進制限だけで親へ接続する。支持状態やExposureStateを変更しない |
+| SafetyTetherEdge | Safety Tether Treeの親子Fragmentを、対応Cut Boundary上の固定Anchor対で接続する相対並進制約。各動的FragmentはIncoming Edgeを厳密に1本持ち、回転制限は含まない。Synthetic Ground Rootから直下Fixed FragmentへのRoot Linkも同じTree Edge ID空間とTraceへ含めるが、Cut Boundary、Anchor対、SafetyTetherLevel、物理Constraint、Spring、移動Limitを持たない。Root Linkかどうかは親Node IDが0であることから一意に導出する |
+| SafetyTetherEdgeLocalId | 0を未設定用に予約し、物理EdgeとTopology専用Root Linkで共有する正の32bit int。ObjectIdの生存期間全体で一意かつ非再利用とする。再構築後も同じ親子とTopology系譜を保つ物理Edge、および同じFixed子を持つRoot Linkは同じIDを継承する。消滅IDは再利用しない。継承後の新規IDはObject単位の単調増加Allocatorから、まず新規Root Linkを子LogicalFragmentLocalId昇順、次に新規物理EdgeをSpanning Treeへの追加順で発行する。overflow時は部分Treeを公開せず旧Tree維持またはSafetyFrozenとする |
+| SafetyTetherTreeGeneration | Safety Tether Treeの内容を変更する原子的な再構築成功時だけ進むuint世代。Geometry／Collider差し替えとTree No-opでは進めず、Tree Work Resultと物理分裂Commitの検証条件に含める。`uint.MaxValue`を有効な最後の世代とし、その後はwrap／再利用せずTree変更をRejectする |
+| PendingSafetyTetherPlan | LargeStructuralPropの即時解析運動前に、cookなしの切断Topologyから求める予定Tree。親、切断面Anchor、Level、相対並進／World回転上限を保持し、未確定時は表示clip／Capだけを許可して大型Fragmentの仮運動を止める |
+| SafetyTetherLevel | Ground Root直下の固定Fragmentから最初の動的子へ向かうEdgeを0としてTree深さごとに増える非負整数。相対並進上限を`initialLimit * decay^level`で導出し、正の下限へClampしない。cookやEngine Object再生成では変化しない |
+| StructuralSplitGeneration | FragmentGroupが実際に複数物理Groupへ分裂した論理Commitだけで子へ`parent + 1`継承するuint世代。各大型RigidbodyのWorldRotationOriginと指数減衰角度上限に使用し、Geometry／Collider差し替えでは進めない。`uint.MaxValue`を最後の有効値とし、その親をさらに分裂させるOperationはwrap／再利用せず全体をRejectする |
+| PlayerLocomotionOccupancy | PlayerとプロップのPhysX接触を使わず、Player Root／予測HMD Capsuleの人工移動可能域と壁内侵入を判定する低複雑度Volume集合。押し戻し対一方向退出のPolicyとは分離する |
+| OccupancyVolumeLocalId | 0を未設定用に予約し、1つのLevel実行期間中にPlayerLocomotionOccupancyのPrimitiveへ一意かつ非再利用で割り当てる正の32bit int。有限退出候補の生成順、ExitMetricのDepth Vector順、同値判定を決定論的にするために使用する |
+| PlayerLocomotionPolicy | 非接触Locomotionが禁止領域との重なりを扱う固定方針。`NewEntryReject=1`、`PushOut=2`、`ExitOnly=3`とし、0は未設定、未知値はRejectする。PoCは`NewEntryReject`を正本とし、`PushOut`対`ExitOnly`はプレイテスト後に決める |
+| ForcedOccupancyOverlap | Player自身の操作ではなく移動するOccupancyが現在姿勢へ侵入した一時状態。物理CommitやHMD姿勢を巻き戻さず、Profile上限の固定長作業領域でAllowedLocomotionPlane上の有限候補を全関連Volumeについて評価し、決定論的ExitMetricが厳密減少する人工移動だけを量の下限なしで適用する。全侵入深度が`occupancyExitEpsilon`以下になれば通常Policyへ戻り、Episode期限内に戻らなければfail-closedする |
+| OccupancyExitBlocked | ForcedOccupancyOverlapで容量、探索範囲、減少候補またはEpisode期限の契約を満たせないfail-closed状態。人工並進と物理的押し出しを止めてFadeを維持し、明示的な安全Pose復帰、Level Reset、またはOccupancy変化だけで再開する。`OccupancyExitBlockReason`を保持する |
+| OccupancyExitBlockReason | 固定値`None=0`、`NoDecreasingCandidate=1`、`SearchBoundsExceeded=2`、`VolumeCapacityExceeded=3`、`CandidateCapacityExceeded=4`、`EpisodeTimeout=5`、`NonFiniteDepth=6`。0と未知値でBlocked状態を公開せず、容量超過を部分評価成功へ読み替えない |
+| SafetyFrozen | Safety Tether Tree、Anchor、世代またはConstraint予算を安全に確定できない公開済み大型Fragmentを、現在の安全姿勢で速度0・Kinematic相当に固定する品質低下状態。空中静止を許容し自由落下や部分Commitを避ける |
 | PendingSupportClassification | FragmentGroup内にUnknownなLogicalFragmentが1つ以上あり、旧Rigidbody、Collider、Constraint、TransformとGroup運動を完全維持したまま支持再分類と背景Geometry処理を進める物理状態。既知のActive境界はclip／Stencil／仮Capだけを表示でき、Timeout時も未分裂Fallbackを維持する |
 | PendingAnchoredSplit | FixedSupport分類は完了したがCollider切断／Bakeは未完了で、旧Colliderを固定したまま自由側だけを衝突なしで仮表示する状態 |
 | LogicalFragment | 蓄積された切断面で区切られた論理的な連結成分。Colliderや表示Meshの完成前から存在し、Anchor到達性と後続切断の基底になる |
@@ -2208,9 +2302,9 @@ EventType / TaskType / FromState / ToState / Reason
 Value0 / Value1
 ```
 
-最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。支持判定実装時にはappend-onlyで`SupportClassificationPending`、`SupportClassificationRetried`、`SupportClassificationTimedOut`、`SupportClassified`、`AnchoredSplitStarted`、`AnchoredSplitCommitted`、`CutBoundaryDormant`、`CutBoundaryActivated`、`CutBoundarySuppressed`、`SupportResultRejected`、`SupportFallbackActivated`、`LogicalCutOperationCreated`、`LogicalCutOperationChildLinked`、`LogicalCutOperationBoundaryLinked`、`LogicalCutOperationBoundaryEndpointLinked`、`LogicalCutOperationTraceCompleted`、`OperationSupportStateChanged`、`FullyFixedCullInvalidated`、`LogicalCutOperationRejected`を追加する。Trace完全性実装時には`TraceIntegritySummary`をappend-onlyで追加する。Render／Convex対応実装時には`FragmentPhysicsRepresentationClassified`、`FragmentConvexMappingEdge`、`FragmentSharedRoleAssigned`、`FragmentDebrisPromoted`、`FragmentDebrisRejected`、`FragmentPhysicsFallbackActivated`をappend-onlyで追加する。Runtime Arena実装時には`RuntimeDebrisSliceAllocated`、`RuntimeDebrisSliceActivated`、`RuntimeDebrisSliceRetiring`、`RuntimeDebrisSliceReclaimed`をappend-onlyで追加する。既存Event名の`Task`は論理Work Itemを指し、`TaskId`をFragment識別子へ流用しない。`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用し、Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
+最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`ReservationCreated`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。支持判定実装時にはappend-onlyで`SupportClassificationPending`、`SupportClassificationRetried`、`SupportClassificationTimedOut`、`SupportClassified`、`AnchoredSplitStarted`、`AnchoredSplitCommitted`、`CutBoundaryDormant`、`CutBoundaryActivated`、`CutBoundarySuppressed`、`SupportResultRejected`、`SupportFallbackActivated`、`LogicalCutOperationCreated`、`LogicalCutOperationChildLinked`、`LogicalCutOperationBoundaryLinked`、`LogicalCutOperationBoundaryEndpointLinked`、`LogicalCutOperationTraceCompleted`、`OperationSupportStateChanged`、`FullyFixedCullInvalidated`、`LogicalCutOperationRejected`を追加する。Trace完全性実装時には`TraceIntegritySummary`をappend-onlyで追加する。Render／Convex対応実装時には`FragmentPhysicsRepresentationClassified`、`FragmentConvexMappingEdge`、`FragmentSharedRoleAssigned`、`FragmentDebrisPromoted`、`FragmentDebrisRejected`、`FragmentPhysicsFallbackActivated`をappend-onlyで追加する。Runtime Arena実装時には`RuntimeDebrisSliceAllocated`、`RuntimeDebrisSliceActivated`、`RuntimeDebrisSliceRetiring`、`RuntimeDebrisSliceReclaimed`をappend-onlyで追加する。Safety Tether実装時には`SafetyTetherTreeRebuilt`、`SafetyTetherEdgeLinked`、`SafetyTetherTreeTraceCompleted`、`SafetyTetherCommitRejected`、`SafetyFrozenEntered`、Player非接触移動実装時には`PlayerLocomotionRejected`をappend-onlyで追加する。既存Event名の`Task`は論理Work Itemを指し、`TaskId`をFragment識別子へ流用しない。`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用し、Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
 
-`RenderFragmentLocalId`と`LogicalConvexFragmentLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId + ObjectGeneration`をスコープとして種別ごとに一意かつ同一世代内で再利用しない。`SharedGroupLocalId`も0を未設定用に予約した正の32bit `int`とし、同じ`ObjectId + ObjectGeneration`内で一意かつ、連結成分の解体後も同一世代内では再利用しない。`CutOperationId`、`LogicalFragmentLocalId`、`CutBoundaryLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId`の生存期間全体で種別ごとに一意かつ非再利用とする。`LogicalCutOperationCreated`の共通`ObjectGeneration`は`ParentObjectGeneration`、`Value1`は作成時`SupportGraphGeneration`を格納し、どちらも宣言型`uint`の全域を許可する。その他のOperation系Eventの共通`ObjectGeneration`はEvent発生時の現世代を記録する。Traceの`ObjectId`と各Cut系LocalId、または`ObjectId`／`ObjectGeneration`とRender／Convex系LocalIdを組み合わせて対象を一意に復元する。doubleへ格納するID、序数、件数は非負int範囲、Generationは`uint`全域とし、いずれもIEEE 754 binary64で整数精度を失わない。イベント別の固定フィールド割当は次を正本とし、汎用的なFrom／To State遷移と混同しない。
+`RenderFragmentLocalId`と`LogicalConvexFragmentLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId + ObjectGeneration`をスコープとして種別ごとに一意かつ同一世代内で再利用しない。`SharedGroupLocalId`も0を未設定用に予約した正の32bit `int`とし、同じ`ObjectId + ObjectGeneration`内で一意かつ、連結成分の解体後も同一世代内では再利用しない。`CutOperationId`、`LogicalFragmentLocalId`、`CutBoundaryLocalId`、`SafetyTetherEdgeLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId`の生存期間全体で種別ごとに一意かつ非再利用とする。`LogicalCutOperationCreated`の共通`ObjectGeneration`は`ParentObjectGeneration`、`Value1`は作成時`SupportGraphGeneration`を格納し、どちらも宣言型`uint`の全域を許可する。その他のOperation系Eventの共通`ObjectGeneration`はEvent発生時の現世代を記録する。`SafetyTetherTreeGeneration`と`StructuralSplitGeneration`も`uint`全域を許可し、同じ`ObjectId`と組み合わせてTree／分裂履歴を復元する。Traceの`ObjectId`と各Cut／Tether系LocalId、または`ObjectId`／`ObjectGeneration`とRender／Convex系LocalIdを組み合わせて対象を一意に復元する。doubleへ格納するID、序数、件数は非負int範囲、Generationは`uint`全域とし、いずれもIEEE 754 binary64で整数精度を失わない。イベント別の固定フィールド割当は次を正本とし、汎用的なFrom／To State遷移と混同しない。
 
 | EventType | FromState | ToState | Reason | Value0 | Value1 |
 | --- | --- | --- | --- | --- | --- |
@@ -2236,10 +2330,23 @@ Value0 / Value1
 | `RuntimeDebrisSliceActivated` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Active` | `None` | DebrisEventId | 0（予約） |
 | `RuntimeDebrisSliceRetiring` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Retiring` | `None` | DebrisEventId | 0（予約） |
 | `RuntimeDebrisSliceReclaimed` | RenderFragmentLocalId | `RuntimeDebrisSliceState.Reusable` | `None` | DebrisEventId | Retiringから回収までのFrame数 |
+| `SafetyTetherTreeRebuilt` | Synthetic Ground Root = 0 | TreeNodeCount。Synthetic Rootを除く固定＋動的Fragment数 | `None` | SafetyTetherTreeGeneration | EdgeCount |
+| `SafetyTetherEdgeLinked` | 親Node ID。Synthetic Ground Rootは0、それ以外はLogicalFragmentLocalId | 子LogicalFragmentLocalId | `None` | SafetyTetherTreeGeneration | SafetyTetherEdgeLocalId |
+| `SafetyTetherTreeTraceCompleted` | TreeNodeCount | EdgeCount | `None` | SafetyTetherTreeGeneration | 期待Event数=`2 + EdgeCount` |
+| `SafetyTetherCommitRejected` | 0 | 0 | 専用Reject理由。`None`禁止 | 候補SafetyTetherTreeGeneration | 候補Edge数 |
+| `CommitRejected`（Structural Split世代枯渇） | ParentLogicalFragmentLocalId | 0 | `StructuralSplitGenerationExhausted` | 現StructuralSplitGeneration=`uint.MaxValue` | 候補DirectChildCount |
+| `SafetyFrozenEntered` | LogicalFragmentLocalId | 1 | 専用Fallback理由。`None`禁止 | SafetyTetherTreeGeneration | StructuralSplitGeneration |
+| `PlayerLocomotionRejected` | `PlayerLocomotionPolicy` | 0 | `None` | 次姿勢の侵入深度 | 現姿勢の侵入深度 |
+
+`PlayerLocomotionRejected`の侵入深度は同一の`PlayerLocomotionOccupancy`と距離単位で評価したfiniteかつ0以上のbinary64とする。拒否判定に用いた現姿勢と候補次姿勢の値をそのまま格納し、表示Mesh Triangleや旧Colliderから事後再計算した値へ置き換えない。
+
+Safety Tether Treeの成功Traceは、同じ`ObjectId`について成功束3種だけを抽出した順序において、`SafetyTetherTreeRebuilt`、`SafetyTetherEdgeLocalId`昇順の`SafetyTetherEdgeLinked`を厳密に`EdgeCount`件、`SafetyTetherTreeTraceCompleted`の固定束として連続させる。`Rebuilt`と`TraceCompleted`のGeneration、TreeNodeCount、EdgeCountは完全一致し、両者の期待Event数は`2 + EdgeCount`と一致しなければならない。Synthetic Ground RootはFragmentではなく親Node ID 0だけで表し、子ID 0を禁止する。全LinkのGenerationは束のGenerationと一致し、Edge IDと子IDはそれぞれ正かつ束内一意、親IDは0または同じ束のNode集合に含まれる値とする。全Nodeは子として厳密に1回現れ、親0のLinkはTopology専用Root Linkとして1件以上存在し、全Nodeが親Linkを辿って0へ到達し、Cycleがなく、`TreeNodeCount == EdgeCount`であることを検証する。物理`SafetyTetherLevel`はRoot Linkを数えず、復元したTreeで最初の動的子へ入るEdgeを0として決定論的に再計算し、Traceへ重複保存しない。欠落、重複、余分なLink、順序違反、未知Node、件数不一致、Generation混在、未完了束は`IncompleteSafetyTetherTreeTrace`としてTimeline表示だけに留め、状態再現、Golden比較、T-087合格根拠に使用しない。
+
+`SafetyTetherTreeGeneration`はTreeの構築と物理Commitが成功した場合だけゲーム状態の正規Generationとして原子的に公開する。成功後のTrace束はbest effortの観測記録であり、途中のTrace enqueue失敗で公開済みTreeを巻き戻さないが、そのRunを不完全として完全な束がないGenerationをTrace再現・Golden比較へ使用しない。`SafetyTetherCommitRejected`の`Value0`は試行した候補Generationであり、それ自体は現行Generationを進めず、対応する`Rebuilt`／`TraceCompleted`成功束の代用にならない。同じ数値を再試行後に正規化する場合も、後続する完全な成功束だけがTrace上の成功証拠となり、Timelineは直前のRejectを成功履歴へ読み替えない。現Generationが`uint.MaxValue`でTree変更を拒否した場合は`Reason=SafetyTetherGenerationExhausted`、`Value0=uint.MaxValue`とし、存在しない`MaxValue + 1`を表現しない。
 
 Capture Draft Registry実装時には`CaptureFrameAdmissionRejected`を`TraceEventType`へappend-onlyで追加する。これはID発行前の受付拒否専用であり、正のIDを発行済みの処理だけを表す`CaptureFrameDropped`と同じID相関として解釈しない。共通`CaptureFrameId=0`、`Value0=CaptureFrameAdmissionRejectKind`、`Value1=FrameDraftRegistryFull(5)`へ固定する。`CaptureFrameAdmissionRejectKind`は固定値`None=0`、`PendingLimit=1`、`RunEntryLimit=2`とし、0および未知値をEvent生成時にRejectする。
 
-支持判定のReasonには`AnchorGenerationMismatch`、`SupportGraphGenerationMismatch`、`SupportClassificationUnavailable`、`SupportConnectivityAmbiguous`、`InvalidLogicalCutOperation`を追加し、Trace完全性には`TraceWriteFailureObserved`と`TraceCaptureOverflowObserved`を追加する。Render／Convex対応とRuntime Debrisには`FragmentCoverageBelowThreshold`、`FragmentMappingAmbiguous`、`FragmentSharedKeeperUnavailable`、`FragmentProtectedByImportance`、`FragmentProtectedBySize`、`FragmentGenerationMismatch`、`InvalidPhysicsRepresentationState`、`RuntimeDebrisArenaFull`、`RuntimeDebrisFenceUnavailable`、`RuntimeDebrisUploadRejected`を追加する。いずれも既存`TraceReason`の次の未使用値へappend-onlyで明示値を割り当て、既存値を変更・再利用しない。Reject／Fallbackイベントは専用Reasonを必須とし、Reason enumを`Value0`／`Value1`へ重複保存しない。
+支持判定のReasonには`AnchorGenerationMismatch`、`SupportGraphGenerationMismatch`、`SupportClassificationUnavailable`、`SupportConnectivityAmbiguous`、`InvalidLogicalCutOperation`を追加し、Trace完全性には`TraceWriteFailureObserved`と`TraceCaptureOverflowObserved`を追加する。Render／Convex対応とRuntime Debrisには`FragmentCoverageBelowThreshold`、`FragmentMappingAmbiguous`、`FragmentSharedKeeperUnavailable`、`FragmentProtectedByImportance`、`FragmentProtectedBySize`、`FragmentGenerationMismatch`、`InvalidPhysicsRepresentationState`、`RuntimeDebrisArenaFull`、`RuntimeDebrisFenceUnavailable`、`RuntimeDebrisUploadRejected`を追加する。Safety Tether／大型分裂には`SafetyTetherCycleDetected`、`SafetyTetherGroundRootMissing`、`SafetyTetherAnchorAmbiguous`、`SafetyTetherGenerationMismatch`、`SafetyTetherGenerationExhausted`、`StructuralSplitGenerationExhausted`、`SafetyTetherBudgetExceeded`を追加する。いずれも既存`TraceReason`の次の未使用値へappend-onlyで明示値を割り当て、既存値を変更・再利用しない。Reject／Fallbackイベントは専用Reasonを必須とし、Reason enumを`Value0`／`Value1`へ重複保存しない。
 
 `CullInvalidationTrigger`は固定値`None=0`、`DirectChildReplaced=1`、`BoundaryActivated=2`とする。`LogicalCutOperationValidationError`は固定bit `InvalidId=1<<0`、`InvalidGeneration=1<<1`、`ChildCountOutOfRange=1<<2`、`BoundaryCountOutOfRange=1<<3`、`DuplicateChildId=1<<4`、`DuplicateBoundaryId=1<<5`、`ParentChildAlias=1<<6`、`UnknownReference=1<<7`、`SelfBoundary=1<<8`、`BoundaryOutsideDirectChildren=1<<9`、`UnconnectedDirectChild=1<<10`とし、複数違反をORして記録する。未知bitはRejectし、同じ入力から同じmaskを得る。Operation作成成功時のTrace束は`Created`、全Child Linkを序数順、各Boundary Linkとその正負Endpoint LinkをBoundary序数順、最後に`TraceCompleted`の順とする。期待Event数は`2 + DirectChildCount + 3 * CutBoundaryCount`であり、EndpointSlotは各Boundaryにつき0と1をちょうど1件ずつ要求する。`TraceCompleted`があり、期待Event数、ID、序数、両端、Generationがすべて一致する束だけを復元可能な完全Operation Traceとして扱う。以後の三値変化を`OperationSupportStateChanged`、最初の不可逆Cull失効を`FullyFixedCullInvalidated`で一度だけ記録する。不正構築時は作成Trace束を発行せず`LogicalCutOperationRejected`だけを記録する。
 
