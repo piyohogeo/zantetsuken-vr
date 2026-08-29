@@ -542,22 +542,22 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static object CreateFinalizationRaw(CaptureRunReference run, object draftRegistry, object stagingStore, int droppedCount)
+        private static object CreateFinalizationRaw(CaptureRunReference run, object draftRegistry, object stagingStore)
         {
             ConstructorInfo ctor = GetFinalizationType().GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance,
                 null,
-                new[] { typeof(CaptureRunReference), GetRegistryType(), GetStoreType(), typeof(int) },
+                new[] { typeof(CaptureRunReference), GetRegistryType(), GetStoreType() },
                 null);
             Assert.That(ctor, Is.Not.Null, "Finalization constructor not found.");
-            return ctor.Invoke(new object[] { run, draftRegistry, stagingStore, droppedCount });
+            return ctor.Invoke(new object[] { run, draftRegistry, stagingStore });
         }
 
-        private static Exception CreateFinalizationRawException(CaptureRunReference run, object draftRegistry, object stagingStore, int droppedCount)
+        private static Exception CreateFinalizationRawException(CaptureRunReference run, object draftRegistry, object stagingStore)
         {
             try
             {
-                CreateFinalizationRaw(run, draftRegistry, stagingStore, droppedCount);
+                CreateFinalizationRaw(run, draftRegistry, stagingStore);
                 return null;
             }
             catch (Exception ex)
@@ -1587,14 +1587,14 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void FinalizationCtor_NullRun_Rejected()
+        public void FinalizationCtor_NullFinalRun_Rejected()
         {
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                Exception ex = CreateFinalizationRawException(null, scope.Registry, scope.Store, 0);
+                Exception ex = CreateFinalizationRawException(null, scope.Registry, scope.Store);
                 Assert.That(ex, Is.TypeOf<ArgumentNullException>());
-                Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("run"));
+                Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("finalRun"));
             });
         }
 
@@ -1604,7 +1604,7 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                Exception ex = CreateFinalizationRawException(MakeReference(), null, scope.Store, 0);
+                Exception ex = CreateFinalizationRawException(MakeReference(), null, scope.Store);
                 Assert.That(ex, Is.TypeOf<ArgumentNullException>());
                 Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("draftRegistry"));
             });
@@ -1616,7 +1616,7 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, null, 0);
+                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, null);
                 Assert.That(ex, Is.TypeOf<ArgumentNullException>());
                 Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("stagingStore"));
             });
@@ -1630,7 +1630,7 @@ namespace Zantetsu.Core.Tests
             {
                 ((IDisposable)scope.Store).Dispose();
 
-                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store, 0);
+                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store);
                 Assert.That(ex, Is.TypeOf<ObjectDisposedException>());
             });
         }
@@ -1645,7 +1645,7 @@ namespace Zantetsu.Core.Tests
                 object otherStore = CreateStore(otherRun, scope.MaxDraftPerRun, 4096);
                 try
                 {
-                    Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, otherStore, 0);
+                    Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, otherStore);
                     Assert.That(ex, Is.TypeOf<ArgumentException>());
                     Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingStore"));
                 }
@@ -1657,14 +1657,17 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void FinalizationCtor_NegativeDroppedCount_Rejected()
+        public void FinalizationCtor_PreFreezeRegistry_Rejected()
         {
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store, -1);
-                Assert.That(ex, Is.TypeOf<ArgumentOutOfRangeException>());
-                Assert.That(((ArgumentOutOfRangeException)ex).ParamName, Is.EqualTo("droppedCount"));
+                StageDraft(scope, 10);
+                // No FreezeRemaining: the canonical forced-drop set is not
+                // issued, so the constructor must fail closed.
+
+                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store);
+                Assert.That(ex, Is.TypeOf<InvalidOperationException>());
             });
         }
 
@@ -1680,8 +1683,9 @@ namespace Zantetsu.Core.Tests
                 Assert.That(TryMarkStaged(scope.Registry, request, scope.Store, entry), Is.True);
 
                 ((IDisposable)entry).Dispose();
+                FreezeRemaining(scope);
 
-                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store, 0);
+                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store);
                 Assert.That(ex, Is.TypeOf<InvalidOperationException>());
             });
         }
@@ -1693,9 +1697,10 @@ namespace Zantetsu.Core.Tests
             RunBody(scope, () =>
             {
                 StageDraft(scope, 10);
+                FreezeRemaining(scope);
                 SetEntryEnumField(scope.Registry, 0, "Status", 99);
 
-                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store, 0);
+                Exception ex = CreateFinalizationRawException(MakeReference(), scope.Registry, scope.Store);
                 Assert.That(ex, Is.TypeOf<InvalidOperationException>());
             });
         }
@@ -1709,9 +1714,10 @@ namespace Zantetsu.Core.Tests
                 StageDraft(scope, 10, commitPathId: 11);
                 DropDraftNormal(scope, 20, CaptureFrameDropReason.PngEncodeFailed);
                 StageDraft(scope, 30, commitPathId: 33);
+                FreezeRemaining(scope);
 
                 CaptureRunReference run = MakeReference();
-                object finalization = CreateFinalizationRaw(run, scope.Registry, scope.Store, 1);
+                object finalization = CreateFinalizationRaw(run, scope.Registry, scope.Store);
 
                 Assert.That(GetRecordCount(finalization), Is.EqualTo(2));
                 Assert.That(GetDroppedCount(finalization), Is.EqualTo(1));
