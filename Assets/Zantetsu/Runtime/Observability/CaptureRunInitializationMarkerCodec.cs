@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -71,6 +72,123 @@ namespace Zantetsu.Observability
             {
                 return ToLowerHex(sha.ComputeHash(canonical));
             }
+        }
+
+        internal static CaptureRunInitializationMarker DeserializeCanonical(byte[] utf8Json, int maxMarkerBytes)
+        {
+            if (utf8Json == null)
+            {
+                throw new ArgumentNullException(nameof(utf8Json));
+            }
+
+            CaptureRunMarkerDecoderSupport.ValidateMaxMarkerBytes(maxMarkerBytes);
+
+            if (utf8Json.Length > maxMarkerBytes)
+            {
+                throw new InvalidDataException("Marker bytes exceed the caller limit.");
+            }
+
+            return Decode(utf8Json);
+        }
+
+        internal static CaptureRunInitializationMarker DeserializeCanonical(Stream input, int maxMarkerBytes)
+        {
+            if (input == null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            CaptureRunMarkerDecoderSupport.ValidateMaxMarkerBytes(maxMarkerBytes);
+
+            byte[] document = CaptureRunMarkerDecoderSupport.ReadBoundedStream(input, maxMarkerBytes);
+            return Decode(document);
+        }
+
+        private static CaptureRunInitializationMarker Decode(byte[] document)
+        {
+            CaptureRunMarkerDecoderSupport.ValidateDocument(document);
+
+            CaptureRunMarkerDecoderSupport.Reader reader = new CaptureRunMarkerDecoderSupport.Reader(document);
+
+            reader.Expect((byte)'{');
+            reader.Expect("\"SchemaVersion\"");
+            reader.Expect((byte)':');
+            long schemaVersion = reader.ReadInteger();
+            if (schemaVersion != 1)
+            {
+                throw new InvalidDataException("SchemaVersion must be 1.");
+            }
+
+            reader.Expect((byte)',');
+            reader.Expect("\"TestRunId\"");
+            reader.Expect((byte)':');
+            long testRunId = reader.ReadInteger();
+
+            reader.Expect((byte)',');
+            reader.Expect("\"RunInitializationId\"");
+            reader.Expect((byte)':');
+            string runInitializationId = reader.ReadString(32);
+
+            reader.Expect((byte)',');
+            reader.Expect("\"RootRole\"");
+            reader.Expect((byte)':');
+            string rootRole = reader.ReadString(7);
+            CaptureRunRootRole role = ParseRootRole(rootRole);
+
+            reader.Expect((byte)',');
+            reader.Expect("\"StagingRunRootSha256\"");
+            reader.Expect((byte)':');
+            string stagingRunRootSha256 = reader.ReadString(64);
+
+            reader.Expect((byte)',');
+            reader.Expect("\"FinalRunRootSha256\"");
+            reader.Expect((byte)':');
+            string finalRunRootSha256 = reader.ReadString(64);
+
+            reader.Expect((byte)'}');
+            reader.ExpectEnd();
+
+            CaptureRunInitializationMarker marker;
+            try
+            {
+                marker = new CaptureRunInitializationMarker(testRunId, runInitializationId, role, stagingRunRootSha256, finalRunRootSha256);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidDataException("Marker values are invalid.", ex);
+            }
+
+            byte[] canonical;
+            try
+            {
+                canonical = SerializeCanonical(marker);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidDataException("Decoded marker cannot be represented within the canonical size limit.", ex);
+            }
+
+            if (!CaptureRunMarkerDecoderSupport.BytesEqual(canonical, document))
+            {
+                throw new InvalidDataException("Canonical JSON is not in canonical form.");
+            }
+
+            return marker;
+        }
+
+        private static CaptureRunRootRole ParseRootRole(string role)
+        {
+            if (string.Equals(role, "Staging", StringComparison.Ordinal))
+            {
+                return CaptureRunRootRole.Staging;
+            }
+
+            if (string.Equals(role, "Final", StringComparison.Ordinal))
+            {
+                return CaptureRunRootRole.Final;
+            }
+
+            throw new InvalidDataException("RootRole must be 'Staging' or 'Final'.");
         }
 
         private static string RootRoleLiteral(CaptureRunRootRole role)

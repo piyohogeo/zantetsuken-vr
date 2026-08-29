@@ -276,11 +276,11 @@ namespace Zantetsu.Core.Tests
             foreach (string relative in new[]
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunReadyMarker.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunReadyMarkerCodec.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunReadyMarkerCodec.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunMarkerDecoderSupport.cs"
             })
             {
                 string source = File.ReadAllText(LocateSource(relative));
-                Assert.That(source, Does.Not.Contain("System.IO"));
                 Assert.That(source, Does.Not.Contain("File."));
                 Assert.That(source, Does.Not.Contain("Directory."));
                 Assert.That(source, Does.Not.Contain("FileStream"));

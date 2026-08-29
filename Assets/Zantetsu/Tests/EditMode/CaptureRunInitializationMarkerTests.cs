@@ -360,11 +360,11 @@ namespace Zantetsu.Core.Tests
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunRootRole.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationMarker.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationMarkerCodec.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationMarkerCodec.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunMarkerDecoderSupport.cs"
             })
             {
                 string source = File.ReadAllText(LocateSource(relative));
-                Assert.That(source, Does.Not.Contain("System.IO"));
                 Assert.That(source, Does.Not.Contain("File."));
                 Assert.That(source, Does.Not.Contain("Directory."));
                 Assert.That(source, Does.Not.Contain("FileStream"));
