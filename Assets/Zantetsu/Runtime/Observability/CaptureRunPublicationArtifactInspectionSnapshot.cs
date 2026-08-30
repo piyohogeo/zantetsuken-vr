@@ -129,6 +129,17 @@ namespace Zantetsu.Observability
             return _entries[index];
         }
 
+        /// <summary>
+        /// O(1), exception-safe check that the index-local core structure this
+        /// snapshot exposes — its entry observation array — is present, so a
+        /// stale validation token cannot navigate a partially corrupted
+        /// snapshot.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            return _entries != null;
+        }
+
         internal bool IsValid
         {
             get

@@ -198,7 +198,10 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsIndexLocalStructureIntact()
         {
-            return _steps != null && _decision != null && _decision.Snapshot != null;
+            return _steps != null
+                && _decision != null
+                && _decision.Snapshot != null
+                && _decision.Snapshot.IsIndexLocalStructureIntact();
         }
 
         internal bool IsValid

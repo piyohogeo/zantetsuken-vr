@@ -1434,6 +1434,21 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompletedStep_IsValidIndexLocal_StaleToken_NullSnapshotEntries_False()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan.Decision.Snapshot, "_entries", null);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
         public void ForgedBrokenReceipt_IsValidFalse_WithoutException()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
