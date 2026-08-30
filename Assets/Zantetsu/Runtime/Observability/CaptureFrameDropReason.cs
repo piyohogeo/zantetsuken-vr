@@ -45,6 +45,20 @@ namespace Zantetsu.Observability
         /// dropped. Never enqueued to the normal logger queue; only the future
         /// freeze terminal builder uses this reason.
         /// </summary>
-        FreezeDrainTimeout = 9
+        FreezeDrainTimeout = 9,
+        /// <summary>Format-independent capture surface or readback failure.</summary>
+        CaptureInputFailed = 10,
+
+        /// <summary>Format-independent backend media processing failure.</summary>
+        MediaProcessingFailed = 11,
+
+        /// <summary>Format-independent backend processing backpressure.</summary>
+        MediaProcessingBackpressured = 12,
+
+        /// <summary>Format-independent artifact staging capacity failure.</summary>
+        ArtifactStagingFull = 13,
+
+        /// <summary>Format-independent artifact durable write failure.</summary>
+        ArtifactWriteFailed = 14
     }
 }

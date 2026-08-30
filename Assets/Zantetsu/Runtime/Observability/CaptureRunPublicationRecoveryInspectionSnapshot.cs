@@ -214,7 +214,7 @@ namespace Zantetsu.Observability
             }
         }
 
-        private static bool PlanWithinLimits(CapturePublicationPlan plan, int maximumEntryCount, int maximumPathBytes)
+        private static bool PlanWithinLimits(PngJsonCapturePublicationPlan plan, int maximumEntryCount, int maximumPathBytes)
         {
             if (plan == null || !plan.IsValid || plan.EntryCount > maximumEntryCount)
             {
@@ -223,7 +223,7 @@ namespace Zantetsu.Observability
 
             for (int i = 0; i < plan.EntryCount; i++)
             {
-                CapturePublicationPlanEntry entry = plan.GetEntry(i);
+                PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(i);
                 if (entry == null
                     || Utf8ByteCount(entry.PngStagingRelativePath) > maximumPathBytes
                     || Utf8ByteCount(entry.SidecarStagingRelativePath) > maximumPathBytes

@@ -11,7 +11,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameReadbackCompletionRouterLeaseTests
+    public class PngJsonCaptureFrameReadbackCompletionRouterLeaseTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -164,7 +164,7 @@ namespace Zantetsu.Core.Tests
             public CaptureFrameReadbackBufferPool BufferPool;
             public UnityRenderTextureReadbackDispatcher Dispatcher;
             public CaptureFrameTraceObserver Observer;
-            public CaptureFrameReadbackCompletionRouter Router;
+            public PngJsonCaptureFrameReadbackCompletionRouter Router;
             public CaptureFramePngQueue Queue;
             public CaptureFrameRecordRegistry RecordRegistry;
             public CaptureFrameRenderTargetPool Pool;
@@ -220,7 +220,7 @@ namespace Zantetsu.Core.Tests
             scope.BufferPool = new CaptureFrameReadbackBufferPool(2, 64);
             scope.Dispatcher = new UnityRenderTextureReadbackDispatcher(scope.BufferPool);
             scope.Observer = new CaptureFrameTraceObserver(scope.Logger);
-            scope.Router = new CaptureFrameReadbackCompletionRouter(scope.Dispatcher, scope.Observer);
+            scope.Router = new PngJsonCaptureFrameReadbackCompletionRouter(scope.Dispatcher, scope.Observer);
             scope.Queue = new CaptureFramePngQueue(queueCapacity);
             scope.RecordRegistry = new CaptureFrameRecordRegistry(recordCapacity);
             scope.Pool = new CaptureFrameRenderTargetPool(poolCapacity, MakeProfile());
@@ -839,7 +839,7 @@ namespace Zantetsu.Core.Tests
 
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
             CaptureFrameRecordRegistry recordRegistry = new CaptureFrameRecordRegistry(1);
 

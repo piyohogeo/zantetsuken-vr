@@ -110,10 +110,10 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(long captureFrameId)
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(long captureFrameId)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -125,16 +125,16 @@ namespace Zantetsu.Core.Tests
                 StagingHash);
         }
 
-        private static CapturePublicationPlan MakePlan(long testRunId = 1, string initId = InitId)
+        private static PngJsonCapturePublicationPlan MakePlan(long testRunId = 1, string initId = InitId)
         {
-            return new CapturePublicationPlan(testRunId, initId, StagingHash, new[] { MakeEntry(10) });
+            return new PngJsonCapturePublicationPlan(testRunId, initId, StagingHash, new[] { MakeEntry(10) });
         }
 
         private static CaptureRunPublicationDocumentObservation MakeDoc(
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -414,7 +414,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_AllNormalCombinations()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
 
             foreach (CaptureRunPublicationDocumentKind kind in new[]
             {
@@ -448,7 +448,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_Contradictions_Rejected()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
 
             Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocAbsent, 1, null));
             Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocAbsent, 0, plan));
@@ -495,8 +495,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PlanAndEntry_Uninitialized_IsInvalid()
         {
-            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
-            CapturePublicationPlanEntry entry = (CapturePublicationPlanEntry)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlanEntry));
+            PngJsonCapturePublicationPlan plan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
+            PngJsonCapturePublicationPlanEntry entry = (PngJsonCapturePublicationPlanEntry)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlanEntry));
 
             Assert.That(plan.IsValid, Is.False);
             Assert.That(entry.IsValid, Is.False);
@@ -505,7 +505,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_CanonicalInvalidPlan_Rejected()
         {
-            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan plan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 1, plan));
             Assert.That(ex.ParamName, Is.EqualTo("plan"));
@@ -920,7 +920,7 @@ namespace Zantetsu.Core.Tests
             FakePublicationInspector inspector = new FakePublicationInspector();
             CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation();
 
-            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan plan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
             Assert.That(plan.IsValid, Is.False);
 
             Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 10, plan));
@@ -929,7 +929,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Snapshot_EntryArrayCorruption_Rejected()
         {
-            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan plan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
             SetField(plan, "_testRunId", 1L);
             SetField(plan, "_runInitializationId", InitId);
             SetField(plan, "_runManifestContentSha256", StagingHash);
@@ -945,7 +945,7 @@ namespace Zantetsu.Core.Tests
             FakePublicationInspector inspector = new FakePublicationInspector();
             CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation(maximumEntryCount: 2);
 
-            CapturePublicationPlan plan = new CapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(1), MakeEntry(2), MakeEntry(3) });
+            PngJsonCapturePublicationPlan plan = new PngJsonCapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(1), MakeEntry(2), MakeEntry(3) });
             Assert.That(plan.IsValid, Is.True);
 
             CaptureRunPublicationDocumentObservation observation = MakeDoc(PublicationPlan, DocCanonical, 10, plan);
@@ -961,7 +961,7 @@ namespace Zantetsu.Core.Tests
             FakePublicationInspector inspector = new FakePublicationInspector();
             CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation(maximumPathBytes: 16);
 
-            CapturePublicationPlan plan = new CapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(999999999999999999L) });
+            PngJsonCapturePublicationPlan plan = new PngJsonCapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(999999999999999999L) });
             Assert.That(plan.IsValid, Is.True);
 
             CaptureRunPublicationDocumentObservation observation = MakeDoc(PublicationPlan, DocCanonical, 100, plan);
@@ -987,11 +987,11 @@ namespace Zantetsu.Core.Tests
 
             foreach (string pathField in pathFields)
             {
-                CapturePublicationPlanEntry entry = MakeEntry(10);
+                PngJsonCapturePublicationPlanEntry entry = MakeEntry(10);
                 SetField(entry, pathField, "frames/very-long-path-exceeding-limit/" + pathField + ".png");
                 Assert.That(entry.IsValid, Is.False, pathField);
 
-                CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+                PngJsonCapturePublicationPlan plan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
                 SetField(plan, "_testRunId", 1L);
                 SetField(plan, "_runInitializationId", InitId);
                 SetField(plan, "_runManifestContentSha256", StagingHash);

@@ -358,7 +358,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Contain("SerializeCanonical"));
 
             Assert.That(source, Does.Not.Contain("CaptureFramePngArtifactCodec"));
-            Assert.That(source, Does.Not.Contain("CapturePublicationPlanCodec"));
+            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
             Assert.That(source, Does.Not.Contain("TraceRunManifestCodec"));
             Assert.That(source, Does.Not.Contain("TraceBinaryCodec"));
             Assert.That(source, Does.Not.Contain("DeserializeCanonical"));

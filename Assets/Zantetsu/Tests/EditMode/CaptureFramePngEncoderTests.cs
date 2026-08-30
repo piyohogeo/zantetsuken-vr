@@ -328,7 +328,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             NativeArray<byte> png = default;
             CaptureFrameReadbackResult result = default;

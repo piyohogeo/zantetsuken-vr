@@ -42,7 +42,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal static CaptureRunPublicationRecoveryDisposition ComputeDisposition(
             CaptureRunPublicationRecoveryInspectionSnapshot snapshot,
-            out CapturePublicationPlan authoritativePlan)
+            out PngJsonCapturePublicationPlan authoritativePlan)
         {
             authoritativePlan = null;
 
@@ -85,7 +85,7 @@ namespace Zantetsu.Observability
 
             if (index.Status == CaptureRunPublicationDocumentObservationStatus.Canonical)
             {
-                CapturePublicationPlan indexPlan = index.Plan;
+                PngJsonCapturePublicationPlan indexPlan = index.Plan;
 
                 if (plan.Status == CaptureRunPublicationDocumentObservationStatus.Canonical
                     && !PlansEqual(plan.Plan, indexPlan))
@@ -111,7 +111,7 @@ namespace Zantetsu.Observability
 
             if (plan.Status == CaptureRunPublicationDocumentObservationStatus.Canonical)
             {
-                CapturePublicationPlan planValue = plan.Plan;
+                PngJsonCapturePublicationPlan planValue = plan.Plan;
 
                 if (planTemporary.Status == CaptureRunPublicationDocumentObservationStatus.Canonical
                     && !PlansEqual(planTemporary.Plan, planValue))
@@ -148,7 +148,7 @@ namespace Zantetsu.Observability
                 return true;
             }
 
-            CapturePublicationPlan plan = observation.Plan;
+            PngJsonCapturePublicationPlan plan = observation.Plan;
             if (plan == null || !plan.IsValid)
             {
                 return false;
@@ -158,7 +158,7 @@ namespace Zantetsu.Observability
                 && string.Equals(plan.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal);
         }
 
-        internal static bool PlansEqual(CapturePublicationPlan left, CapturePublicationPlan right)
+        internal static bool PlansEqual(PngJsonCapturePublicationPlan left, PngJsonCapturePublicationPlan right)
         {
             if (ReferenceEquals(left, right))
             {
@@ -190,7 +190,7 @@ namespace Zantetsu.Observability
             return true;
         }
 
-        private static bool EntriesEqual(CapturePublicationPlanEntry left, CapturePublicationPlanEntry right)
+        private static bool EntriesEqual(PngJsonCapturePublicationPlanEntry left, PngJsonCapturePublicationPlanEntry right)
         {
             if (ReferenceEquals(left, right))
             {

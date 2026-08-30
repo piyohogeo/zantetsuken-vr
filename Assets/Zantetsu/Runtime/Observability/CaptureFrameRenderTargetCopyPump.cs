@@ -45,7 +45,7 @@ namespace Zantetsu.Observability
     /// dequeued, the lease stays registered, the render target stays rented, and
     /// the source and target are never released, destroyed, disposed, or
     /// cleared. A successful copy is followed by
-    /// <see cref="CaptureFrameRenderTargetPipelineCoordinator.TryStartNextReadback"/>,
+    /// <see cref="PngJsonCaptureFrameRenderTargetPipelineCoordinator.TryStartNextReadback"/>,
     /// which dequeues the head and starts the readback.
     /// </para>
     /// <para>

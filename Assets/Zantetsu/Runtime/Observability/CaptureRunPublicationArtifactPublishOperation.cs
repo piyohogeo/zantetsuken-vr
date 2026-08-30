@@ -78,7 +78,7 @@ namespace Zantetsu.Observability
             int entryIndex = step.EntryIndex;
             CaptureRunPublicationArtifactKind kind = step.ArtifactKind;
 
-            CapturePublicationPlan plan = actionPlan.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = actionPlan.AuthoritativePlan;
             if (entryIndex < 0 || entryIndex >= plan.EntryCount)
             {
                 throw new ArgumentOutOfRangeException(nameof(stepIndex), entryIndex, "Publish entry index must be within the authoritative plan entry count.");
@@ -132,7 +132,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactPathSet artifactPaths,
             string artifactPathsParamName)
         {
-            CapturePublicationPlanEntry entry = artifactPaths.Entry;
+            PngJsonCapturePublicationPlanEntry entry = artifactPaths.Entry;
 
             if (kind == CaptureRunPublicationArtifactKind.Png)
             {
@@ -184,7 +184,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationArtifactKind ArtifactKind => Step.ArtifactKind;
 
-        internal CapturePublicationPlanEntry Entry => _artifactPaths.Entry;
+        internal PngJsonCapturePublicationPlanEntry Entry => _artifactPaths.Entry;
 
         internal long CaptureFrameId => Entry.CaptureFrameId;
 
@@ -267,7 +267,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CapturePublicationPlanEntry entry = _artifactPaths.Entry;
+                PngJsonCapturePublicationPlanEntry entry = _artifactPaths.Entry;
 
                 if (kind == CaptureRunPublicationArtifactKind.Png)
                 {
@@ -345,7 +345,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CapturePublicationPlanEntry entry = _artifactPaths.Entry;
+            PngJsonCapturePublicationPlanEntry entry = _artifactPaths.Entry;
             if (entry == null)
             {
                 return false;

@@ -28,13 +28,13 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationDocumentKind _kind;
         private readonly CaptureRunPublicationDocumentObservationStatus _status;
         private readonly int _probedByteCount;
-        private readonly CapturePublicationPlan _plan;
+        private readonly PngJsonCapturePublicationPlan _plan;
 
         internal CaptureRunPublicationDocumentObservation(
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount,
-            CapturePublicationPlan plan)
+            PngJsonCapturePublicationPlan plan)
         {
             if (!IsDefinedKind(kind))
             {
@@ -60,7 +60,7 @@ namespace Zantetsu.Observability
 
         internal int ProbedByteCount => _probedByteCount;
 
-        internal CapturePublicationPlan Plan => _plan;
+        internal PngJsonCapturePublicationPlan Plan => _plan;
 
         internal bool IsValid
         {
@@ -110,7 +110,7 @@ namespace Zantetsu.Observability
         private static void RequireCombination(
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount,
-            CapturePublicationPlan plan)
+            PngJsonCapturePublicationPlan plan)
         {
             switch (status)
             {

@@ -120,7 +120,7 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(
             long captureFrameId,
             long pngByteLength = PngBytes,
             long sidecarByteLength = SidecarBytes,
@@ -128,7 +128,7 @@ namespace Zantetsu.Core.Tests
             string sidecarHash = null)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -140,9 +140,9 @@ namespace Zantetsu.Core.Tests
                 sidecarHash ?? StagingHash);
         }
 
-        private static CapturePublicationPlanEntry[] MakeEntries(int count)
+        private static PngJsonCapturePublicationPlanEntry[] MakeEntries(int count)
         {
-            CapturePublicationPlanEntry[] entries = new CapturePublicationPlanEntry[count];
+            PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[count];
             for (int i = 0; i < count; i++)
             {
                 entries[i] = MakeEntry(i + 1);
@@ -151,13 +151,13 @@ namespace Zantetsu.Core.Tests
             return entries;
         }
 
-        private static CapturePublicationPlan MakePlan(
+        private static PngJsonCapturePublicationPlan MakePlan(
             long testRunId = 1,
             string initId = null,
             string manifestHash = null,
-            CapturePublicationPlanEntry[] entries = null)
+            PngJsonCapturePublicationPlanEntry[] entries = null)
         {
-            return new CapturePublicationPlan(
+            return new PngJsonCapturePublicationPlan(
                 testRunId,
                 initId ?? InitId,
                 manifestHash ?? StagingHash,
@@ -168,7 +168,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -228,7 +228,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunPublicationArtifactInspectionOperation MakeOperation(
             List<string> disposeLog = null,
             bool indexAuthoritative = false,
-            CapturePublicationPlan plan = null,
+            PngJsonCapturePublicationPlan plan = null,
             int maximumEntryCount = 4,
             CaptureRunPublicationDocumentObservation captureIndexTemporary = null)
         {
@@ -290,7 +290,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactRecoveryDecision Classify(
             bool indexAuthoritative = false,
-            CapturePublicationPlan plan = null,
+            PngJsonCapturePublicationPlan plan = null,
             CaptureRunPublicationEvidenceStatus traceStatus = CaptureRunPublicationEvidenceStatus.Absent,
             long traceCount = 0,
             CaptureRunPublicationArtifactEntryObservation[] entries = null,
@@ -604,7 +604,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TraceAbsentOneFinalMatches_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan, 4);
 
@@ -636,7 +636,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TraceAbsentCanonicalIndexTemporary_Collision()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
                 null, false, plan, 4,
                 MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
@@ -651,7 +651,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TraceAbsentInvalidIndexTemporary_Collision()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
                 null, false, plan, 4,
                 MakeDoc(CaptureIndexTemporary, DocInvalid, 0));
@@ -715,7 +715,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanMultiplePublishableMissing_PublishMissingArtifacts()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan, 4);
 
@@ -747,7 +747,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanMixedPublishableAndSourceMissing_ArtifactSourceMissing()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan, 4);
 
@@ -780,7 +780,7 @@ namespace Zantetsu.Core.Tests
         public void Classify_PlanEmptyEntries_CommitCaptureIndex()
         {
             CaptureRunPublicationArtifactRecoveryDecision decision = Classify(
-                plan: MakePlan(entries: new CapturePublicationPlanEntry[0]),
+                plan: MakePlan(entries: new PngJsonCapturePublicationPlanEntry[0]),
                 traceStatus: EvMatchesExpected,
                 traceCount: 100);
 
@@ -833,7 +833,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Decision_HoldsSnapshotAndForwards()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan);
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = MakeArtifactSnapshot(inspector, operation, EvMatchesExpected, 100, null);
@@ -973,7 +973,7 @@ namespace Zantetsu.Core.Tests
         public void Classify_LargePlan_LinearAndCorrect()
         {
             int count = 1000;
-            CapturePublicationPlan plan = MakePlan(entries: MakeEntries(count));
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: MakeEntries(count));
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan, count);
 

@@ -59,7 +59,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
             }
 
-            CapturePublicationPlan plan = decision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = decision.AuthoritativePlan;
             if (plan == null || !plan.IsValid)
             {
                 throw new ArgumentException("Decision must hold a valid authoritative plan.", nameof(decision));
@@ -96,7 +96,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Decision, operation, and publication path set must share the same root layout.", nameof(decision));
             }
 
-            CapturePublicationPlanEntry entry = plan.GetEntry(entryIndex);
+            PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(entryIndex);
             if (entry == null || !entry.IsValid)
             {
                 throw new ArgumentException("Target plan entry must be valid.", nameof(decision));
@@ -143,9 +143,9 @@ namespace Zantetsu.Observability
 
         internal int EntryIndex => _entryIndex;
 
-        internal CapturePublicationPlan Plan => _decision.AuthoritativePlan;
+        internal PngJsonCapturePublicationPlan Plan => _decision.AuthoritativePlan;
 
-        internal CapturePublicationPlanEntry Entry => Plan.GetEntry(_entryIndex);
+        internal PngJsonCapturePublicationPlanEntry Entry => Plan.GetEntry(_entryIndex);
 
         internal long CaptureFrameId => Entry.CaptureFrameId;
 
@@ -179,7 +179,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CapturePublicationPlan plan = _decision.AuthoritativePlan;
+                PngJsonCapturePublicationPlan plan = _decision.AuthoritativePlan;
                 if (plan == null || !plan.IsValid)
                 {
                     return false;
@@ -216,7 +216,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CapturePublicationPlanEntry entry = plan.GetEntry(_entryIndex);
+                PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(_entryIndex);
                 if (entry == null || !entry.IsValid)
                 {
                     return false;
@@ -339,7 +339,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
             }
 
-            CapturePublicationPlan plan = decision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = decision.AuthoritativePlan;
             if (plan == null)
             {
                 throw new ArgumentException("Decision must hold an authoritative plan.", nameof(decision));
@@ -358,7 +358,7 @@ namespace Zantetsu.Observability
             CaptureRunRootLayout rootLayout = decision.RootLayout;
             CaptureRunPublicationPathSet publicationPaths = decision.Snapshot.Operation.PublicationPaths;
 
-            CapturePublicationPlanEntry entry = plan.GetEntry(entryIndex);
+            PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(entryIndex);
             if (entry == null || !entry.IsValid)
             {
                 throw new ArgumentException("Target plan entry must be valid.", nameof(decision));
@@ -410,7 +410,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CapturePublicationPlan plan = _decision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = _decision.AuthoritativePlan;
             if (plan == null)
             {
                 return false;
@@ -429,7 +429,7 @@ namespace Zantetsu.Observability
             CaptureRunRootLayout rootLayout = _decision.RootLayout;
             CaptureRunPublicationPathSet publicationPaths = _decision.Snapshot.Operation.PublicationPaths;
 
-            CapturePublicationPlanEntry entry = plan.GetEntry(_entryIndex);
+            PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(_entryIndex);
             if (entry == null || !entry.IsValid)
             {
                 return false;

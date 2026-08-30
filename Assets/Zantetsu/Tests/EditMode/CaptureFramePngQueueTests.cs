@@ -460,7 +460,7 @@ namespace Zantetsu.Core.Tests
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(TraceLogger)), "Field references TraceLogger: " + field.Name);
-                Assert.That(field.FieldType, Is.Not.EqualTo(typeof(CaptureFrameReadbackCompletionRouter)), "Field references Router: " + field.Name);
+                Assert.That(field.FieldType, Is.Not.EqualTo(typeof(PngJsonCaptureFrameReadbackCompletionRouter)), "Field references Router: " + field.Name);
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(UnityRenderTextureReadbackDispatcher)), "Field references Dispatcher: " + field.Name);
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(CaptureFrameReadbackBufferPool)), "Field references Pool: " + field.Name);
             }

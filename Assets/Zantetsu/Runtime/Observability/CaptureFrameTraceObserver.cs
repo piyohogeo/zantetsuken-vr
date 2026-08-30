@@ -45,6 +45,23 @@ namespace Zantetsu.Observability
             _logger.Enqueue(e);
         }
 
+        /// <summary>
+        /// Format-independent success observation used by capture evidence
+        /// backends. The fixed Phase 0 trace event remains wire-compatible.
+        /// </summary>
+        internal void RecordMediaProcessed(
+            in CaptureFrameTraceContext context,
+            double processingDurationMilliseconds,
+            long artifactByteCount)
+        {
+            if (artifactByteCount <= 0 || artifactByteCount > int.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(nameof(artifactByteCount));
+            }
+
+            RecordEncoded(context, processingDurationMilliseconds, (int)artifactByteCount);
+        }
+
         public void RecordDropped(in CaptureFrameTraceContext context, CaptureFrameDropReason reason)
         {
             if (reason != CaptureFrameDropReason.RequestQueueFull

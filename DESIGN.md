@@ -2671,6 +2671,24 @@ Capture Profile Version / API Layer BuildId
 
 Run Manifestを正規化してHash化し、Hashが異なるRunは同一環境の回帰比較へ自動投入しない。固定Profileに一致していてもRuntimeやDriverが変わった場合は別環境の測定として保存する。
 
+### 21.15 Capture Evidence Backend 境界（Phase 0 正本）
+
+Phase 0 の映像証拠は引き続き「1 Capture Frame につき PNG 1 件と canonical JSON metadata 1 件」を生成する。ただし、これは共通 Capture API の成果物モデルではなく、最初の実装である `PngJsonCaptureEvidenceBackend` の契約である。共通境界は GPU readback より前に置き、Producer は codec 非依存の `CaptureFrameEnvelope` と caller-owned の `CaptureSurfaceLease` を `ICaptureEvidenceSession.TrySubmit` へ渡す。共通 Coordinator は `AsyncGPUReadback`、raw `NativeArray<byte>`、PNG encode、JSON schema、拡張子、backend 固有 queue を参照しない。
+
+`CaptureFrameEnvelope` は TestRunId、CaptureFrameId、Unity/OpenXR frame ID、display timing、head/controller pose、Slash/Object/Task 相関、CaptureSource、Eye、ImageRect、PixelLayout、ColorSpace、TestCase/Build/Scene/RandomSeed、CommitPathId、CaptureProfileId を保持する。encoded bytes、PNG/JSON path、byte count、content hash、encoder 設定、将来形式の packet/segment 情報は保持しない。
+
+Submission の所有権は線形とする。`Accepted` のときだけ Surface 所有権を backend へ移し、有効な Work Token を返す。`Backpressured` または `NotAccepting`、および例外では caller が同じ Surface を所有したままとする。Backend は固定 capacity の slot と generation を使い、stale/foreign/duplicate token を拒否する。受理した token ごとに、Surface を再利用可能にする `CaptureFrameCompletion` を exactly once で先に通知し、その後に 0 件以上の `CaptureArtifactCompletion` を exactly once で通知する。Frame completion、Artifact completion、Run publication completion は別概念であり、単一 completion へ混在させない。
+
+Phase 0 backend は backend 内部で `AsyncGPUReadback -> PNG encode -> JSON metadata -> generic artifact staging` を行う。PNG と JSON の内容、FrameId/Trace 相関、pose/timing/run 意味情報は維持する。旧 `ICaptureFrameEncodeService`、`CaptureFrameEncodeSubmission`、`CaptureFrameEncodeCompletion`、`CaptureFrameEncodeCompletionCoordinator` という共通名は廃止し、互換経路を残す場合も `PngJson*` 実装詳細として隔離する。既存 `CaptureFramePng*` 型は Phase 0 backend の内部互換部品としてのみ再利用でき、共通 Coordinator、共通 Publication、共通 Recovery の型へ露出させない。
+
+永続成果物の正本は `CaptureArtifactDescriptor` とする。Descriptor は ArtifactId、append-only の ArtifactKind、FormatId/Version、staging/final relative path、ByteLength、ContentHash を持つ。`CapturePublicationPlan` は Run 相関、Descriptor 集合、CaptureFrameId と 0 件以上の ArtifactId の関係だけを canonical に保持し、`.png`/`.json` 固定 field や「1 frame = 1 encoded file」を要求しない。Phase 0 では FrameImage と FrameMetadata の 2 Artifact を関連付けるが、別 backend は 0/1/複数 Artifact を生成できる。
+
+`ICaptureArtifactStore` は形式を解釈せず、staging write、長さ/hash 検証、非上書き publish、staging/final verification を担当する。形式固有妥当性は backend または形式別 verifier の責務とする。Recovery は Descriptor 集合を走査して final 一致、staging 一致、欠落、不一致を分類し、不一致を collision として停止し、正しい staging がある欠落 final だけを publish する。CaptureComplete は全 Descriptor の final verification 合格後に限る。OS 固有 no-follow と directory metadata durability は Store backend の capability であり、path 文字列だけで保証済みと扱わない。
+
+Draft、Registry、Trace の状態遷移は main thread の共通 Coordinator だけが反映する。Backend はこれらを変更しない。Draft の外部状態は `Pending / Staged / Dropped` を維持し、backend 内部状態を追加しない。形式非依存 Drop Reason は既存 enum へ append-only で追加し、既存 0～9 を再番号しない。Freeze は新規受付停止、Backend `BeginDrain`、Frame/Artifact completion の完全回収、queued cancellation、`TryJoin`、main-thread terminal intent 反映、残存 Pending の timeout Drop、Trace seal、Publication の順とする。Join 前に backend-owned Surface/buffer/artifact payload を外部から Dispose しない。
+
+今回の境界は将来 backend を差し替えられる責務分離だけを確定する。ハードウェア encoder、特定動画 codec、profile/bitrate/rate control、packet/GOP/keyframe、PTS/DTS/reorder、container/segment、GPU native handle/zero-copy、独自 binary schema、MessagePack/CBOR/Protobuf、worker thread/Job/Burst、queue 実測調整は未決であり、本作業では設計・実装・比較・Spike を行わない。将来 backend 追加時の差し込みは `ICaptureEvidenceSession`、形式別 Artifact 生成/verification、`ICaptureArtifactStore` 実装に限定し、Envelope、Frame/Artifact completion、Publication Plan の共通契約を変更しないことを優先する。
+
 ## 22. 参考資料
 
 Unity Packageの正確な採用版は`Packages/manifest.json`と`Packages/packages-lock.json`を正本とする。以下のXR Interaction Toolkit／Animation Riggingリンクは設計参照であり、実装開始時にPackage Lockの版へ合わせて更新する。

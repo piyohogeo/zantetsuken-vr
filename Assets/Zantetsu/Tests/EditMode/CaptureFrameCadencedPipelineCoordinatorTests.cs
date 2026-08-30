@@ -12,7 +12,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameCadencedPipelineCoordinatorTests
+    public class PngJsonCaptureFrameCadencedPipelineCoordinatorTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -372,9 +372,9 @@ namespace Zantetsu.Core.Tests
             public CaptureFramePngArtifactQueue ArtifactQueue;
             public CaptureFrameIdSequence Sequence;
             public CaptureFrameCadenceSelector Selector;
-            public CaptureFramePipelineCoordinator PipelineCoordinator;
+            public PngJsonCaptureFramePipelineCoordinator PipelineCoordinator;
             public CaptureFrameCadencedSubmissionCoordinator SubmissionCoordinator;
-            public CaptureFrameCadencedPipelineCoordinator Coordinator;
+            public PngJsonCaptureFrameCadencedPipelineCoordinator Coordinator;
         }
 
         private static Harness MakeHarness(double targetFps, int queueCapacity, int registryCapacity, int poolSlotCount, int pngQueueCapacity = 4)
@@ -397,14 +397,14 @@ namespace Zantetsu.Core.Tests
             CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(poolSlotCount, 64);
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             CaptureFrameReadbackPump readbackPump = new CaptureFrameReadbackPump(queue, dispatcher);
-            CaptureFrameReadbackCompletionRouter completionRouter = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter completionRouter = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             CaptureFramePngQueue pngQueue = new CaptureFramePngQueue(pngQueueCapacity);
             CaptureFramePngArtifactQueue artifactQueue = new CaptureFramePngArtifactQueue(4);
             CaptureFramePngArtifactPersistenceCoordinator persistenceCoordinator = MakePersistenceCoordinator(registry, dir);
 
-            CaptureFramePipelineCoordinator pipeline = new CaptureFramePipelineCoordinator(readbackPump, completionRouter, persistenceCoordinator, pngQueue, artifactQueue, registry);
-            CaptureFrameCadencedPipelineCoordinator coordinator = new CaptureFrameCadencedPipelineCoordinator(pipeline, cadencedSubmission, queue);
+            PngJsonCaptureFramePipelineCoordinator pipeline = new PngJsonCaptureFramePipelineCoordinator(readbackPump, completionRouter, persistenceCoordinator, pngQueue, artifactQueue, registry);
+            PngJsonCaptureFrameCadencedPipelineCoordinator coordinator = new PngJsonCaptureFrameCadencedPipelineCoordinator(pipeline, cadencedSubmission, queue);
 
             return new Harness
             {
@@ -425,7 +425,7 @@ namespace Zantetsu.Core.Tests
         }
 
         private static CaptureFrameCadencedPipelineResult Submit(
-            CaptureFrameCadencedPipelineCoordinator coordinator,
+            PngJsonCaptureFrameCadencedPipelineCoordinator coordinator,
             double predictedDisplayTimeSeconds,
             RenderTexture source,
             bool shouldRender = true,
@@ -456,7 +456,7 @@ namespace Zantetsu.Core.Tests
                 BindingFlags.NonPublic | BindingFlags.Instance, null,
                 new[]
                 {
-                    typeof(CaptureFramePipelineAdvanceResult),
+                    typeof(PngJsonCaptureFramePipelineAdvanceResult),
                     typeof(CaptureFrameCadencedSubmissionStatus),
                     typeof(bool),
                     typeof(CaptureFrameRecord)
@@ -470,7 +470,7 @@ namespace Zantetsu.Core.Tests
         {
             try
             {
-                GetResultCtor().Invoke(new object[] { default(CaptureFramePipelineAdvanceResult), status, readbackStarted, record });
+                GetResultCtor().Invoke(new object[] { default(PngJsonCaptureFramePipelineAdvanceResult), status, readbackStarted, record });
                 return null;
             }
             catch (TargetInvocationException ex)
@@ -482,7 +482,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureFrameCadencedPipelineResult MakeResult(CaptureFrameCadencedSubmissionStatus status, bool readbackStarted, CaptureFrameRecord record)
         {
             return (CaptureFrameCadencedPipelineResult)GetResultCtor().Invoke(
-                new object[] { default(CaptureFramePipelineAdvanceResult), status, readbackStarted, record });
+                new object[] { default(PngJsonCaptureFramePipelineAdvanceResult), status, readbackStarted, record });
         }
 
         // ---- Result tests ----
@@ -553,9 +553,9 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameCadencedPipelineCoordinator(null, h.SubmissionCoordinator, h.Queue));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameCadencedPipelineCoordinator(h.PipelineCoordinator, null, h.Queue));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameCadencedPipelineCoordinator(h.PipelineCoordinator, h.SubmissionCoordinator, null));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameCadencedPipelineCoordinator(null, h.SubmissionCoordinator, h.Queue));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameCadencedPipelineCoordinator(h.PipelineCoordinator, null, h.Queue));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameCadencedPipelineCoordinator(h.PipelineCoordinator, h.SubmissionCoordinator, null));
             }
             catch (Exception ex)
             {
@@ -990,7 +990,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void HoldsNoRecordOrTexture()
         {
-            foreach (FieldInfo field in typeof(CaptureFrameCadencedPipelineCoordinator).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            foreach (FieldInfo field in typeof(PngJsonCaptureFrameCadencedPipelineCoordinator).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(CaptureFrameRecord)), "Must not retain a produced record.");
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(RenderTexture)));
@@ -1002,9 +1002,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void SealedNotIDisposableNotMonoBehaviour()
         {
-            Assert.That(typeof(CaptureFrameCadencedPipelineCoordinator).IsSealed, Is.True);
-            Assert.That(typeof(IDisposable).IsAssignableFrom(typeof(CaptureFrameCadencedPipelineCoordinator)), Is.False);
-            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(typeof(CaptureFrameCadencedPipelineCoordinator)), Is.False);
+            Assert.That(typeof(PngJsonCaptureFrameCadencedPipelineCoordinator).IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(typeof(PngJsonCaptureFrameCadencedPipelineCoordinator)), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(typeof(PngJsonCaptureFrameCadencedPipelineCoordinator)), Is.False);
         }
 
         [Test]

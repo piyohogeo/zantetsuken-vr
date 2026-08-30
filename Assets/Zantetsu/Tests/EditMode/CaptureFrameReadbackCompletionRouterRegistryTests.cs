@@ -9,7 +9,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameReadbackCompletionRouterRegistryTests
+    public class PngJsonCaptureFrameReadbackCompletionRouterRegistryTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -157,7 +157,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
 
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -191,7 +191,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -225,7 +225,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
@@ -261,7 +261,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -293,7 +293,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -348,7 +348,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(4);
 
@@ -394,7 +394,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(4);
 
@@ -444,7 +444,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(4, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(4);
 
@@ -490,7 +490,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -526,7 +526,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -564,7 +564,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
             CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -603,7 +603,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
             CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -643,7 +643,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
             CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -683,7 +683,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -729,7 +729,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(2);
 
@@ -768,7 +768,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
 
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -809,7 +809,7 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, 64);
                 UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
                 CaptureFrameRecordRegistry registry = new CaptureFrameRecordRegistry(4);
 

@@ -706,7 +706,7 @@ namespace Zantetsu.Core.Tests
                 CapturePixelFormat.Rgba32);
             CaptureFrameRenderTargetRecordSubmissionCoordinator coordinator = new CaptureFrameRenderTargetRecordSubmissionCoordinator(factory, leaseScheduler);
 
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
 
             CaptureFrameRenderTargetLease lease = default;

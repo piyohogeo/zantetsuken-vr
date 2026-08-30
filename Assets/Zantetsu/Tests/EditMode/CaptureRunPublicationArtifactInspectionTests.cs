@@ -101,7 +101,7 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(
             long captureFrameId,
             long pngByteLength = 16,
             long sidecarByteLength = 32,
@@ -109,7 +109,7 @@ namespace Zantetsu.Core.Tests
             string sidecarHash = null)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -121,13 +121,13 @@ namespace Zantetsu.Core.Tests
                 sidecarHash ?? StagingHash);
         }
 
-        private static CapturePublicationPlan MakePlan(
+        private static PngJsonCapturePublicationPlan MakePlan(
             long testRunId = 1,
             string initId = null,
             string manifestHash = null,
-            CapturePublicationPlanEntry[] entries = null)
+            PngJsonCapturePublicationPlanEntry[] entries = null)
         {
-            return new CapturePublicationPlan(
+            return new PngJsonCapturePublicationPlan(
                 testRunId,
                 initId ?? InitId,
                 manifestHash ?? StagingHash,
@@ -138,7 +138,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -208,7 +208,7 @@ namespace Zantetsu.Core.Tests
         }
 
         private static CaptureRunPublicationRecoveryDecision MakeDecision(
-            CapturePublicationPlan plan = null,
+            PngJsonCapturePublicationPlan plan = null,
             bool indexAuthoritative = false)
         {
             plan = plan ?? MakePlan();
@@ -496,7 +496,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_MaxPngByteCountBoundaries()
         {
-            CapturePublicationPlan tinyPlan = MakePlan(entries: new[] { MakeEntry(10, pngByteLength: 1) });
+            PngJsonCapturePublicationPlan tinyPlan = MakePlan(entries: new[] { MakeEntry(10, pngByteLength: 1) });
             CaptureRunPublicationRecoveryDecision tinyDecision = MakeDecision(tinyPlan);
             Assert.That(new CaptureRunPublicationArtifactInspectionOperation(tinyDecision, 1).IsValid, Is.True);
 
@@ -515,7 +515,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_EntryPngLengthExceedsMax_Rejected()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10, pngByteLength: 2000) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10, pngByteLength: 2000) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
 
             Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactInspectionOperation(decision, 1000));
@@ -524,7 +524,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_EntrySidecarLengthExceedsMax_Rejected()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10, sidecarByteLength: 70000) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10, sidecarByteLength: 70000) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
 
             Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactInspectionOperation(decision, 1000));
@@ -537,7 +537,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(outcome, 1000, 4, 64);
             FakePublicationInspector inspector = new FakePublicationInspector();
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryInspectionSnapshot snapshot = MakeRecoverySnapshot(
                 inspector, recoveryOperation, publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
             CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(snapshot);
@@ -561,7 +561,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void GetArtifactPaths_AllIndices_AndOutOfRange()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2), MakeEntry(3) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2), MakeEntry(3) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
 
@@ -586,13 +586,13 @@ namespace Zantetsu.Core.Tests
             // elapsed bound below pins the full-graph validation to a single
             // pass per boundary.
             const int entryCount = 10000;
-            CapturePublicationPlanEntry[] entries = new CapturePublicationPlanEntry[entryCount];
+            PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[entryCount];
             for (int i = 0; i < entryCount; i++)
             {
                 entries[i] = MakeEntry(i + 1);
             }
 
-            CapturePublicationPlan plan = MakePlan(entries: entries);
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: entries);
 
             FakePublicationInspector inspector = new FakePublicationInspector();
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(
@@ -727,7 +727,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_ForgedIndexMismatch_IsValidFalse()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
 
@@ -760,7 +760,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_OtherIndexPathSetMissing_Invalid_NoException()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
             CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
@@ -781,7 +781,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_PathSetArrayLengthMismatch_Invalid_NoException()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
             CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
@@ -819,7 +819,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Observation_PlanEntriesNull_Invalid_NoException()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
             CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
@@ -968,7 +968,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Snapshot_OrderSwapAndDuplicateIndex_Rejected()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
             CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
             CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
             FakeArtifactInspector inspector = new FakeArtifactInspector();
@@ -1111,7 +1111,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(outcome, 1000, 4, 64);
             FakePublicationInspector inspector = new FakePublicationInspector();
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryInspectionSnapshot recoverySnapshot = MakeRecoverySnapshot(
                 inspector, recoveryOperation, publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
             CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(recoverySnapshot);

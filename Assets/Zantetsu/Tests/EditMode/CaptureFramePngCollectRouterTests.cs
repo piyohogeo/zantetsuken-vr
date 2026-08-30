@@ -78,7 +78,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 Assert.That(router.TryCollectAndEncodePng(out CaptureFrameRequest request, out NativeArray<byte> png), Is.EqualTo(CaptureFramePngCollectStatus.None));
                 Assert.That(request.IsValid, Is.False);
@@ -97,7 +97,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -134,7 +134,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 NativeArray<byte> png = default;
@@ -188,7 +188,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 NativeArray<byte> png = default;
@@ -227,7 +227,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             RenderTexture rt = CreateTex2D(2, 2);
             try
@@ -258,7 +258,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 NativeArray<byte> png1 = default;

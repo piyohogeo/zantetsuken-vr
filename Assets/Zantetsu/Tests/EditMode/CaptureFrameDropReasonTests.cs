@@ -85,25 +85,35 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Enum_HasNoAliasesOrGaps_0To9()
+        public void Enum_HasNoAliasesOrGaps_0To14()
         {
             Type type = typeof(CaptureFrameDropReason);
 
             Array names = Enum.GetNames(type);
             Array values = Enum.GetValues(type);
 
-            // Ten members (None + nine reasons), no gaps and no aliases.
-            Assert.That(names.Length, Is.EqualTo(10));
-            Assert.That(values.Length, Is.EqualTo(10));
+            // Fifteen members (None + fourteen reasons), no gaps and no aliases.
+            Assert.That(names.Length, Is.EqualTo(15));
+            Assert.That(values.Length, Is.EqualTo(15));
 
-            for (int i = 0; i <= 9; i++)
+            for (int i = 0; i <= 14; i++)
             {
                 Assert.That(Enum.GetName(type, i), Is.Not.Null, "Missing name for value " + i);
                 Assert.That(Enum.IsDefined(type, i), Is.True, "Value " + i + " is not defined.");
             }
 
-            Assert.That(Enum.IsDefined(type, 10), Is.False);
+            Assert.That(Enum.IsDefined(type, 15), Is.False);
             Assert.That(Enum.IsDefined(type, -1), Is.False);
+        }
+
+        [Test]
+        public void Enum_FormatIndependentValues_10To14_MatchExactly()
+        {
+            Assert.That((int)CaptureFrameDropReason.CaptureInputFailed, Is.EqualTo(10));
+            Assert.That((int)CaptureFrameDropReason.MediaProcessingFailed, Is.EqualTo(11));
+            Assert.That((int)CaptureFrameDropReason.MediaProcessingBackpressured, Is.EqualTo(12));
+            Assert.That((int)CaptureFrameDropReason.ArtifactStagingFull, Is.EqualTo(13));
+            Assert.That((int)CaptureFrameDropReason.ArtifactWriteFailed, Is.EqualTo(14));
         }
 
         [Test]

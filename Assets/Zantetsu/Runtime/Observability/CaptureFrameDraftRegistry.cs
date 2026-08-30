@@ -426,6 +426,60 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Marks a pending draft staged after a format-independent evidence
+        /// coordinator has durably staged every artifact. Artifact ownership is
+        /// held by that coordinator/store and is not transferred here.
+        /// </summary>
+        internal void MarkEvidenceStaged(in CaptureFrameRequest request)
+        {
+            ValidatePendingTerminalRequest(request, out int entryIndex, out int slotIndex);
+            _entries[entryIndex].Status = CaptureFrameDraftStatus.Staged;
+            _slotState[slotIndex] = PendingSlotState.Free;
+            _slotEntryIndex[slotIndex] = -1;
+            _pendingCount--;
+        }
+
+        /// <summary>Terminates a pending draft with a format-independent backend reason.</summary>
+        internal void MarkEvidenceDropped(in CaptureFrameRequest request, CaptureFrameDropReason reason)
+        {
+            if (reason != CaptureFrameDropReason.CaptureInputFailed
+                && reason != CaptureFrameDropReason.MediaProcessingFailed
+                && reason != CaptureFrameDropReason.MediaProcessingBackpressured
+                && reason != CaptureFrameDropReason.ArtifactStagingFull
+                && reason != CaptureFrameDropReason.ArtifactWriteFailed
+                && reason != CaptureFrameDropReason.CaptureCancelled)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reason));
+            }
+
+            ValidatePendingTerminalRequest(request, out int entryIndex, out int slotIndex);
+            _entries[entryIndex].Status = CaptureFrameDraftStatus.Dropped;
+            _entries[entryIndex].DropReason = reason;
+            _entries[entryIndex].EmissionState = DraftDropTraceEmissionState.Pending;
+            _slotState[slotIndex] = PendingSlotState.Free;
+            _slotEntryIndex[slotIndex] = -1;
+            _pendingCount--;
+        }
+
+        private void ValidatePendingTerminalRequest(
+            in CaptureFrameRequest request,
+            out int entryIndex,
+            out int slotIndex)
+        {
+            if (!request.IsValid) throw new ArgumentException("Request must be valid.", nameof(request));
+            entryIndex = FindEntryIndex(request);
+            if (entryIndex < 0) throw new InvalidOperationException("The draft is not registered in the registry.");
+            if (_entries[entryIndex].Status != CaptureFrameDraftStatus.Pending) throw new InvalidOperationException("The draft is not pending.");
+            if (_entries[entryIndex].DropReason != CaptureFrameDropReason.None
+                || _entries[entryIndex].EmissionState != DraftDropTraceEmissionState.None)
+            {
+                throw new InvalidOperationException("The pending draft already has terminal state.");
+            }
+            slotIndex = FindSingleOccupiedSlot(entryIndex);
+            if (_pendingCount <= 0) throw new InvalidOperationException("No pending slots remain.");
+        }
+
+        /// <summary>
         /// Atomically moves a pending draft to the terminal
         /// <see cref="CaptureFrameDraftStatus.Dropped"/> state with one of the
         /// three normal draft drop reasons, and schedules its one-time drop
@@ -533,9 +587,7 @@ namespace Zantetsu.Observability
 
             Entry entry = _entries[entryIndex];
             if (entry.Status != CaptureFrameDraftStatus.Dropped
-                || (entry.DropReason != CaptureFrameDropReason.PngEncodeFailed
-                    && entry.DropReason != CaptureFrameDropReason.PngStagingStoreFull
-                    && entry.DropReason != CaptureFrameDropReason.CaptureCancelled)
+                || !IsNormalDropReason(entry.DropReason)
                 || entry.EmissionState != DraftDropTraceEmissionState.Pending)
             {
                 return false;
@@ -733,9 +785,7 @@ namespace Zantetsu.Observability
                         break;
 
                     case CaptureFrameDraftStatus.Dropped:
-                        if (entry.DropReason != CaptureFrameDropReason.PngEncodeFailed
-                            && entry.DropReason != CaptureFrameDropReason.PngStagingStoreFull
-                            && entry.DropReason != CaptureFrameDropReason.CaptureCancelled)
+                        if (!IsNormalDropReason(entry.DropReason))
                         {
                             throw new InvalidOperationException("Dropped entry must have a normal drop reason before freeze.");
                         }
@@ -814,6 +864,18 @@ namespace Zantetsu.Observability
                     FindSingleOccupiedSlot(i);
                 }
             }
+        }
+
+        private static bool IsNormalDropReason(CaptureFrameDropReason reason)
+        {
+            return reason == CaptureFrameDropReason.PngEncodeFailed
+                || reason == CaptureFrameDropReason.PngStagingStoreFull
+                || reason == CaptureFrameDropReason.CaptureCancelled
+                || reason == CaptureFrameDropReason.CaptureInputFailed
+                || reason == CaptureFrameDropReason.MediaProcessingFailed
+                || reason == CaptureFrameDropReason.MediaProcessingBackpressured
+                || reason == CaptureFrameDropReason.ArtifactStagingFull
+                || reason == CaptureFrameDropReason.ArtifactWriteFailed;
         }
 
         /// <summary>

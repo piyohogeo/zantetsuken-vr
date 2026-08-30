@@ -24,7 +24,7 @@ namespace Zantetsu.Observability
     {
         private readonly CaptureRunPublicationRecoveryInspectionSnapshot _snapshot;
         private readonly CaptureRunPublicationRecoveryDisposition _disposition;
-        private readonly CapturePublicationPlan _authoritativePlan;
+        private readonly PngJsonCapturePublicationPlan _authoritativePlan;
 
         internal CaptureRunPublicationRecoveryDecision(
             CaptureRunPublicationRecoveryInspectionSnapshot snapshot)
@@ -40,7 +40,7 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationRecoveryDisposition disposition = CaptureRunPublicationRecoveryClassifier.ComputeDisposition(
-                snapshot, out CapturePublicationPlan authoritativePlan);
+                snapshot, out PngJsonCapturePublicationPlan authoritativePlan);
 
             _snapshot = snapshot;
             _disposition = disposition;
@@ -51,7 +51,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationRecoveryDisposition Disposition => _disposition;
 
-        internal CapturePublicationPlan AuthoritativePlan => _authoritativePlan;
+        internal PngJsonCapturePublicationPlan AuthoritativePlan => _authoritativePlan;
 
         internal CaptureRunRootLayout RootLayout => _snapshot.Operation.RootLayout;
 
@@ -69,7 +69,7 @@ namespace Zantetsu.Observability
                 }
 
                 CaptureRunPublicationRecoveryDisposition expected = CaptureRunPublicationRecoveryClassifier.ComputeDisposition(
-                    _snapshot, out CapturePublicationPlan expectedPlan);
+                    _snapshot, out PngJsonCapturePublicationPlan expectedPlan);
 
                 return _disposition == expected && ReferenceEquals(_authoritativePlan, expectedPlan);
             }

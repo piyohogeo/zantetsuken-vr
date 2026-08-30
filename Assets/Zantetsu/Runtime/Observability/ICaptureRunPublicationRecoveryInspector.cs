@@ -14,7 +14,7 @@ namespace Zantetsu.Observability
     /// the bound is recorded in the snapshot and enumeration stops. Document
     /// reads are bounded to each limit plus one byte, and canonical documents
     /// are decoded only through the existing
-    /// <c>CapturePublicationPlanCodec.DeserializeCanonical</c>. Any stream the
+    /// <c>PngJsonCapturePublicationPlanCodec.DeserializeCanonical</c>. Any stream the
     /// inspector opens is owned by the inspector and is always closed; no
     /// stream, handle, or operation is retained in backend fields, queues, or
     /// caches.

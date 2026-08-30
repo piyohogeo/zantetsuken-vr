@@ -640,7 +640,7 @@ namespace Zantetsu.Core.Tests
             CaptureFrameRecordScheduler recordScheduler = new CaptureFrameRecordScheduler(requestScheduler, recordRegistry, observer);
             CaptureFrameRenderTargetRecordScheduler scheduler = new CaptureFrameRenderTargetRecordScheduler(recordScheduler, leaseRegistry);
 
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
 
             CaptureFrameRecord record = MakeRecord(request);

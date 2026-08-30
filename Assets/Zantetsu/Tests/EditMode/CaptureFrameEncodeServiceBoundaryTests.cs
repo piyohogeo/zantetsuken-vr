@@ -23,7 +23,7 @@ namespace Zantetsu.Core.Tests
         private static object NewService(int capacity)
         {
             return Activator.CreateInstance(
-                RuntimeType("SynchronousCaptureFrameEncodeService"),
+                RuntimeType("PngJsonSynchronousCaptureFrameEncodeService"),
                 BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null,
                 args: new object[] { capacity },
@@ -45,7 +45,7 @@ namespace Zantetsu.Core.Tests
         private static object NewSubmission(object payload)
         {
             return Activator.CreateInstance(
-                RuntimeType("CaptureFrameEncodeSubmission"),
+                RuntimeType("PngJsonCaptureFrameEncodeSubmission"),
                 BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null,
                 args: new[] { payload },
@@ -55,7 +55,7 @@ namespace Zantetsu.Core.Tests
         private static object NewCoordinator(object service, CaptureFrameTraceObserver observer)
         {
             return Activator.CreateInstance(
-                RuntimeType("CaptureFrameEncodeCompletionCoordinator"),
+                RuntimeType("PngJsonCaptureFrameEncodeCompletionCoordinator"),
                 BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null,
                 args: new object[] { service, observer },
@@ -168,7 +168,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ServiceContract_HasBoundedLifecycleAndNoDraftRegistryTraceFields()
         {
-            Type serviceType = RuntimeType("SynchronousCaptureFrameEncodeService");
+            Type serviceType = RuntimeType("PngJsonSynchronousCaptureFrameEncodeService");
             Assert.That(serviceType.GetMethod("TrySubmit", InstanceFlags), Is.Not.Null);
             Assert.That(serviceType.GetMethod("TryCollect", InstanceFlags), Is.Not.Null);
             Assert.That(serviceType.GetMethod("BeginDrain", InstanceFlags), Is.Not.Null);
@@ -184,7 +184,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(System.Threading.Thread)));
             }
 
-            Type completionType = RuntimeType("CaptureFrameEncodeCompletion");
+            Type completionType = RuntimeType("PngJsonCaptureFrameEncodeCompletion");
             Assert.That(completionType.IsValueType, Is.True);
             Assert.That(completionType.IsByRefLike, Is.False);
             foreach (FieldInfo field in completionType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic))

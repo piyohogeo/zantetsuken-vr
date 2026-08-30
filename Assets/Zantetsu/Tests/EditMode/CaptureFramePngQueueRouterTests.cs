@@ -137,7 +137,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -167,7 +167,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 queue.Dispose();
@@ -200,7 +200,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 try
@@ -229,7 +229,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -268,7 +268,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -315,7 +315,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
                 RenderTexture rt = CreateTex2D(2, 2);
@@ -371,7 +371,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 CaptureFramePngQueue queue = new CaptureFramePngQueue(2);
                 RenderTexture rt = CreateTex2D(2, 2);

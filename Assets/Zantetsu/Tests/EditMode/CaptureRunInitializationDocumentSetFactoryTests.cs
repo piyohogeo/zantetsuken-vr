@@ -309,7 +309,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("CaptureRunReadyMarker"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationMarkerCodec"));
             Assert.That(source, Does.Not.Contain("CaptureRunReadyMarkerCodec"));
-            Assert.That(source, Does.Not.Contain("CapturePublicationPlanCodec"));
+            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
             Assert.That(source, Does.Not.Contain("CaptureFramePngArtifactCodec"));
             Assert.That(source, Does.Not.Contain("TraceRunManifestCodec"));
             Assert.That(source, Does.Not.Contain("TraceBinaryCodec"));

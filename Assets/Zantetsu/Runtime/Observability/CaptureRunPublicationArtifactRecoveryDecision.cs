@@ -49,7 +49,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationRecoveryDecision PublicationDecision => _snapshot.Decision;
 
-        internal CapturePublicationPlan AuthoritativePlan => _snapshot.Plan;
+        internal PngJsonCapturePublicationPlan AuthoritativePlan => _snapshot.Plan;
 
         internal CaptureRunRootLayout RootLayout => _snapshot.Operation.RootLayout;
 

@@ -100,7 +100,7 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(
             long captureFrameId,
             long pngByteLength = PngBytes,
             long sidecarByteLength = SidecarBytes,
@@ -108,7 +108,7 @@ namespace Zantetsu.Core.Tests
             string sidecarHash = null)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -120,13 +120,13 @@ namespace Zantetsu.Core.Tests
                 sidecarHash ?? StagingHash);
         }
 
-        private static CapturePublicationPlan MakePlan(
+        private static PngJsonCapturePublicationPlan MakePlan(
             long testRunId = 1,
             string initId = null,
             string manifestHash = null,
-            CapturePublicationPlanEntry[] entries = null)
+            PngJsonCapturePublicationPlanEntry[] entries = null)
         {
-            return new CapturePublicationPlan(
+            return new PngJsonCapturePublicationPlan(
                 testRunId,
                 initId ?? InitId,
                 manifestHash ?? StagingHash,
@@ -137,7 +137,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -196,7 +196,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactInspectionOperation MakeOperation(
             List<string> disposeLog = null,
-            CapturePublicationPlan plan = null,
+            PngJsonCapturePublicationPlan plan = null,
             CaptureRunPublicationDocumentObservation publicationPlanTemporary = null,
             CaptureRunPublicationDocumentObservation publicationPlan = null,
             CaptureRunPublicationDocumentObservation captureIndexTemporary = null,
@@ -278,7 +278,7 @@ namespace Zantetsu.Core.Tests
             out CaptureRunPublicationArtifactInspectionOperation operation,
             out CaptureRunPublicationArtifactEntryObservation observation,
             CaptureRunPublicationDocumentObservation captureIndexTemporary = null,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             operation = MakeOperation(captureIndexTemporary: captureIndexTemporary, plan: plan);
             observation = MakeEntryObservation(
@@ -319,7 +319,7 @@ namespace Zantetsu.Core.Tests
         }
 
         private static CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken MintBytesToken(
-            CapturePublicationPlan plan)
+            PngJsonCapturePublicationPlan plan)
         {
             return CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan);
         }
@@ -492,7 +492,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_CanonicalTemporary_ReuseMode()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = BuildCommitPlan(
                 out _, out _,
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan),
@@ -549,7 +549,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
 
             CaptureRunPublicationDocumentObservation tmp = actionPlan.Decision.PublicationDecision.Snapshot.CaptureIndexTemporary;
-            CapturePublicationPlan authoritativePlan = actionPlan.AuthoritativePlan;
+            PngJsonCapturePublicationPlan authoritativePlan = actionPlan.AuthoritativePlan;
 
             // Invalid status with a negative probed byte count is inconsistent.
             SetField(tmp, "_status", DocInvalid);
@@ -619,7 +619,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = BuildCommitPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
             CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = actionPlan.Decision.PublicationDecision.Snapshot;
-            CapturePublicationPlan plan = actionPlan.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = actionPlan.AuthoritativePlan;
 
             CaptureRunPublicationDocumentObservation[] forged = new[]
             {
@@ -642,7 +642,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_CanonicalTemporaryMismatch_Rejected()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = BuildCommitPlan(
                 out _, out _,
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan),
@@ -776,7 +776,7 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
 
-            byte[] expected = CapturePublicationPlanCodec.SerializeCanonical(commit.AuthoritativePlan);
+            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(commit.AuthoritativePlan);
             Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
             Assert.That(commit.ByteCount, Is.EqualTo((long)expected.Length));
         }
@@ -790,7 +790,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
 
             CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan.AuthoritativePlan);
-            byte[] expected = CapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
+            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
 
             CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken);
 
@@ -853,7 +853,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(bytesToken.IsIssuedFor(plan.AuthoritativePlan), Is.True);
             Assert.That(bytesToken.IsIssuedFor(MakePlan()), Is.False);
 
-            byte[] expected = CapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
+            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
             Assert.That(bytesToken.TakeBytes(), Is.EqualTo(expected));
 
             // After TakeBytes the token is no longer issued for any plan.
@@ -894,7 +894,7 @@ namespace Zantetsu.Core.Tests
 
             ParameterInfo[] parameters = acquire.GetParameters();
             Assert.That(parameters.Length, Is.EqualTo(1));
-            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CapturePublicationPlan)));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationPlan)));
 
             Assert.That(
                 typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken).GetConstructors(BindingFlags.Public | BindingFlags.Instance),

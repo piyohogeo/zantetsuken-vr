@@ -107,7 +107,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationArtifactRecoveryDisposition Disposition => _decision.Disposition;
 
-        internal CapturePublicationPlan AuthoritativePlan => _decision.AuthoritativePlan;
+        internal PngJsonCapturePublicationPlan AuthoritativePlan => _decision.AuthoritativePlan;
 
         internal CaptureRunRootLayout RootLayout => _decision.RootLayout;
 

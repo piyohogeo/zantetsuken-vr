@@ -78,7 +78,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Action plan must hold a publication decision.", nameof(actionPlan));
             }
 
-            CapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
             if (authoritativePlan == null)
             {
                 throw new ArgumentException("Publication decision must hold an authoritative plan.", nameof(actionPlan));

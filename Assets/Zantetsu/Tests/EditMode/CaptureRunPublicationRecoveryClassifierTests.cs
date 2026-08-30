@@ -111,7 +111,7 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(
             long captureFrameId,
             long pngByteLength = 16,
             long sidecarByteLength = 32,
@@ -119,7 +119,7 @@ namespace Zantetsu.Core.Tests
             string sidecarHash = null)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -131,13 +131,13 @@ namespace Zantetsu.Core.Tests
                 sidecarHash ?? StagingHash);
         }
 
-        private static CapturePublicationPlan MakePlan(
+        private static PngJsonCapturePublicationPlan MakePlan(
             long testRunId = 1,
             string initId = null,
             string manifestHash = null,
-            CapturePublicationPlanEntry[] entries = null)
+            PngJsonCapturePublicationPlanEntry[] entries = null)
         {
-            return new CapturePublicationPlan(
+            return new PngJsonCapturePublicationPlan(
                 testRunId,
                 initId ?? InitId,
                 manifestHash ?? StagingHash,
@@ -148,7 +148,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -489,7 +489,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanOnly_PlanAuthoritative()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryDecision decision = Classify(publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
 
             Assert.That(decision.Disposition, Is.EqualTo(PublicationPlanAuthoritative));
@@ -499,7 +499,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_IndexOnly_IndexAuthoritative()
         {
-            CapturePublicationPlan indexPlan = MakePlan();
+            PngJsonCapturePublicationPlan indexPlan = MakePlan();
             CaptureRunPublicationRecoveryDecision decision = Classify(captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, indexPlan));
 
             Assert.That(decision.Disposition, Is.EqualTo(CaptureIndexAuthoritative));
@@ -509,8 +509,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanAndIndexEqual_IndexPriority()
         {
-            CapturePublicationPlan planValue = MakePlan();
-            CapturePublicationPlan indexValue = MakePlan();
+            PngJsonCapturePublicationPlan planValue = MakePlan();
+            PngJsonCapturePublicationPlan indexValue = MakePlan();
 
             CaptureRunPublicationRecoveryDecision decision = Classify(
                 publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, planValue),
@@ -532,7 +532,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TmpOnly_NotAuthoritative()
         {
-            CapturePublicationPlan tmpPlan = MakePlan();
+            PngJsonCapturePublicationPlan tmpPlan = MakePlan();
 
             Assert.That(Classify(publicationPlanTemporary: MakeDoc(PublicationPlanTemporary, DocCanonical, 100, tmpPlan)).Disposition, Is.EqualTo(NoAuthoritativeDocument));
             Assert.That(Classify(captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, tmpPlan)).Disposition, Is.EqualTo(NoAuthoritativeDocument));
@@ -541,7 +541,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_ConsistentTmpPair_NotAuthoritative()
         {
-            CapturePublicationPlan tmpPlan = MakePlan();
+            PngJsonCapturePublicationPlan tmpPlan = MakePlan();
 
             Assert.That(Classify(
                 publicationPlanTemporary: MakeDoc(PublicationPlanTemporary, DocCanonical, 100, tmpPlan),
@@ -551,7 +551,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_InvalidTmp_DoesNotBlock()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryDecision decision = Classify(
                 publicationPlanTemporary: MakeDoc(PublicationPlanTemporary, DocInvalid, 0),
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocInvalid, 0),
@@ -566,22 +566,22 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TestRunIdMismatch_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(testRunId: 2);
+            PngJsonCapturePublicationPlan plan = MakePlan(testRunId: 2);
             Assert.That(Classify(publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan)).Disposition, Is.EqualTo(RunRootCollision));
         }
 
         [Test]
         public void Classify_InitIdMismatch_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(initId: OtherInitId);
+            PngJsonCapturePublicationPlan plan = MakePlan(initId: OtherInitId);
             Assert.That(Classify(publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan)).Disposition, Is.EqualTo(RunRootCollision));
         }
 
         [Test]
         public void Classify_ManifestHashMismatch_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(manifestHash: StagingHash);
-            CapturePublicationPlan index = MakePlan(manifestHash: FinalHash);
+            PngJsonCapturePublicationPlan plan = MakePlan(manifestHash: StagingHash);
+            PngJsonCapturePublicationPlan index = MakePlan(manifestHash: FinalHash);
 
             Assert.That(Classify(
                 publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan),
@@ -591,8 +591,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanVsIndexMismatch_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10) });
-            CapturePublicationPlan index = MakePlan(entries: new[] { MakeEntry(20) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10) });
+            PngJsonCapturePublicationPlan index = MakePlan(entries: new[] { MakeEntry(20) });
 
             Assert.That(Classify(
                 publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan),
@@ -602,8 +602,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_PlanVsEachTmpMismatch_Collision()
         {
-            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10) });
-            CapturePublicationPlan tmp = MakePlan(entries: new[] { MakeEntry(20) });
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(10) });
+            PngJsonCapturePublicationPlan tmp = MakePlan(entries: new[] { MakeEntry(20) });
 
             Assert.That(Classify(
                 publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan),
@@ -617,8 +617,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_IndexVsEachTmpMismatch_Collision()
         {
-            CapturePublicationPlan index = MakePlan(entries: new[] { MakeEntry(10) });
-            CapturePublicationPlan tmp = MakePlan(entries: new[] { MakeEntry(20) });
+            PngJsonCapturePublicationPlan index = MakePlan(entries: new[] { MakeEntry(10) });
+            PngJsonCapturePublicationPlan tmp = MakePlan(entries: new[] { MakeEntry(20) });
 
             Assert.That(Classify(
                 captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, index),
@@ -632,8 +632,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_TmpPairMismatch_Collision()
         {
-            CapturePublicationPlan planTmp = MakePlan(entries: new[] { MakeEntry(10) });
-            CapturePublicationPlan indexTmp = MakePlan(entries: new[] { MakeEntry(20) });
+            PngJsonCapturePublicationPlan planTmp = MakePlan(entries: new[] { MakeEntry(10) });
+            PngJsonCapturePublicationPlan indexTmp = MakePlan(entries: new[] { MakeEntry(20) });
 
             Assert.That(Classify(
                 publicationPlanTemporary: MakeDoc(PublicationPlanTemporary, DocCanonical, 100, planTmp),
@@ -679,7 +679,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Decision_HoldsAuthoritativePlanByReference()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationRecoveryDecision decision = Classify(publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
 
             Assert.That(decision.Snapshot.PublicationPlan.Plan, Is.SameAs(plan));
@@ -721,24 +721,24 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Classify_ForgedNestedCorruption_NoException()
         {
-            CapturePublicationPlan uninitializedPlan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan uninitializedPlan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
             Assert.That(uninitializedPlan.IsValid, Is.False);
 
-            CapturePublicationPlan nullArrayPlan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan nullArrayPlan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
             SetField(nullArrayPlan, "_testRunId", 1L);
             SetField(nullArrayPlan, "_runInitializationId", InitId);
             SetField(nullArrayPlan, "_runManifestContentSha256", StagingHash);
             SetField(nullArrayPlan, "_entries", null);
             Assert.That(nullArrayPlan.IsValid, Is.False);
 
-            CapturePublicationPlan nullEntryPlan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            PngJsonCapturePublicationPlan nullEntryPlan = (PngJsonCapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlan));
             SetField(nullEntryPlan, "_testRunId", 1L);
             SetField(nullEntryPlan, "_runInitializationId", InitId);
             SetField(nullEntryPlan, "_runManifestContentSha256", StagingHash);
-            SetField(nullEntryPlan, "_entries", new CapturePublicationPlanEntry[] { null });
+            SetField(nullEntryPlan, "_entries", new PngJsonCapturePublicationPlanEntry[] { null });
             Assert.That(nullEntryPlan.IsValid, Is.False);
 
-            CapturePublicationPlanEntry uninitializedEntry = (CapturePublicationPlanEntry)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlanEntry));
+            PngJsonCapturePublicationPlanEntry uninitializedEntry = (PngJsonCapturePublicationPlanEntry)FormatterServices.GetUninitializedObject(typeof(PngJsonCapturePublicationPlanEntry));
             Assert.That(uninitializedEntry.IsValid, Is.False);
         }
 
@@ -755,11 +755,11 @@ namespace Zantetsu.Core.Tests
 
             foreach (string pathField in pathFields)
             {
-                CapturePublicationPlanEntry forgedEntry = MakeEntry(10);
+                PngJsonCapturePublicationPlanEntry forgedEntry = MakeEntry(10);
                 SetField(forgedEntry, pathField, "frames/forged.png");
                 Assert.That(forgedEntry.IsValid, Is.False, pathField);
 
-                CapturePublicationPlan plan = MakePlan(entries: new[] { forgedEntry });
+                PngJsonCapturePublicationPlan plan = MakePlan(entries: new[] { forgedEntry });
                 Assert.That(plan.IsValid, Is.False, pathField);
 
                 CaptureRunPublicationDocumentObservation forgedObservation = (CaptureRunPublicationDocumentObservation)FormatterServices.GetUninitializedObject(
@@ -807,7 +807,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
             CaptureRunPublicationRecoveryInspectionOperation operation = new CaptureRunPublicationRecoveryInspectionOperation(outcome, 1000, 4, 64);
             FakePublicationInspector inspector = new FakePublicationInspector();
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationDocumentObservation observation = MakeDoc(PublicationPlan, DocCanonical, 100, plan);
             CaptureRunPublicationRecoveryInspectionSnapshot snapshot = MakeSnapshot(inspector, operation, publicationPlan: observation);
 

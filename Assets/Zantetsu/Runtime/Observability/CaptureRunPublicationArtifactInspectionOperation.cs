@@ -111,7 +111,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
                 }
 
-                CapturePublicationPlan plan = decision.AuthoritativePlan;
+                PngJsonCapturePublicationPlan plan = decision.AuthoritativePlan;
                 if (plan == null || !plan.IsValid)
                 {
                     throw new ArgumentException("Decision must hold a valid authoritative plan.", nameof(decision));
@@ -142,12 +142,12 @@ namespace Zantetsu.Observability
         {
             ConstructionToken token = ConstructionToken.Acquire(decision, maximumPngByteCount);
 
-            CapturePublicationPlan plan = decision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan plan = decision.AuthoritativePlan;
 
             CaptureRunPublicationArtifactPathSet[] paths = new CaptureRunPublicationArtifactPathSet[plan.EntryCount];
             for (int i = 0; i < plan.EntryCount; i++)
             {
-                CapturePublicationPlanEntry entry = plan.GetEntry(i);
+                PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(i);
 
                 if (entry.PngByteLength > maximumPngByteCount)
                 {
@@ -169,7 +169,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationRecoveryDecision Decision => _decision;
 
-        internal CapturePublicationPlan Plan => _decision.AuthoritativePlan;
+        internal PngJsonCapturePublicationPlan Plan => _decision.AuthoritativePlan;
 
         internal int EntryCount => Plan.EntryCount;
 
@@ -238,7 +238,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CapturePublicationPlan plan = _decision.AuthoritativePlan;
+                PngJsonCapturePublicationPlan plan = _decision.AuthoritativePlan;
                 if (plan == null || !plan.IsValid)
                 {
                     return false;
@@ -267,7 +267,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    CapturePublicationPlanEntry entry = plan.GetEntry(i);
+                    PngJsonCapturePublicationPlanEntry entry = plan.GetEntry(i);
                     if (entry.PngByteLength > _maximumPngByteCount
                         || entry.SidecarByteLength > CaptureFramePngArtifactCodec.MaximumCanonicalByteCount)
                     {

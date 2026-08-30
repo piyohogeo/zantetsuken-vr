@@ -12,7 +12,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameRenderTargetPipelineCoordinatorTests
+    public class PngJsonCaptureFrameRenderTargetPipelineCoordinatorTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -244,7 +244,7 @@ namespace Zantetsu.Core.Tests
             public CaptureFrameRecordRegistry RecordRegistry;
             public CaptureFramePngQueue PngQueue;
             public CaptureFramePngArtifactQueue ArtifactQueue;
-            public CaptureFrameRenderTargetPipelineCoordinator Pipeline;
+            public PngJsonCaptureFrameRenderTargetPipelineCoordinator Pipeline;
             public string TempDir;
             public readonly List<RegisteredEntry> Registered = new List<RegisteredEntry>();
             public readonly List<CaptureFrameRenderTargetLease> Held = new List<CaptureFrameRenderTargetLease>();
@@ -304,7 +304,7 @@ namespace Zantetsu.Core.Tests
             dispatcher = new UnityRenderTextureReadbackDispatcher(bufferPool);
             logger = new TraceLogger(16);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter completionRouter = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter completionRouter = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             requestQueue = new CaptureFrameRequestQueue(4);
             pool = new CaptureFrameRenderTargetPool(4, MakeProfile());
@@ -326,7 +326,7 @@ namespace Zantetsu.Core.Tests
             scope.RecordRegistry = recordRegistry;
             scope.PngQueue = pngQueue;
             scope.ArtifactQueue = artifactQueue;
-            scope.Pipeline = new CaptureFrameRenderTargetPipelineCoordinator(
+            scope.Pipeline = new PngJsonCaptureFrameRenderTargetPipelineCoordinator(
                 readbackPump,
                 completionRouter,
                 persistenceCoordinator,
@@ -501,17 +501,17 @@ namespace Zantetsu.Core.Tests
 
                 CaptureFrameRenderTargetReadbackPump pump = new CaptureFrameRenderTargetReadbackPump(requestQueue, scope.Dispatcher, leaseRegistry, pool);
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(scope.Logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(scope.Dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(scope.Dispatcher, observer);
                 CaptureFramePngArtifactPersistenceCoordinator persistence = MakePersistenceCoordinator(recordRegistry, scope.TempDir);
 
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(null, router, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, null, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, null, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, null, artifactQueue, recordRegistry, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, null, recordRegistry, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, null, leaseRegistry, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, recordRegistry, null, pool));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, null));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(null, router, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, null, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, null, pngQueue, artifactQueue, recordRegistry, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, null, artifactQueue, recordRegistry, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, null, recordRegistry, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, null, leaseRegistry, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, recordRegistry, null, pool));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetPipelineCoordinator(pump, router, persistence, pngQueue, artifactQueue, recordRegistry, leaseRegistry, null));
             });
         }
 
@@ -537,7 +537,7 @@ namespace Zantetsu.Core.Tests
                 TraceRunManifest manifest = MakeManifest();
                 scope.RentAndSchedule(manifest, 42, out _);
 
-                CaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
 
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
                 Assert.That(scope.RequestQueue.Count, Is.EqualTo(1));
@@ -618,7 +618,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(scope.Pipeline.TryStartNextReadback(), Is.True);
                 AsyncGPUReadback.WaitAllRequests();
 
-                CaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
 
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                 Assert.That(scope.PngQueue.Count, Is.EqualTo(1));
@@ -641,7 +641,7 @@ namespace Zantetsu.Core.Tests
                 AsyncGPUReadback.WaitAllRequests();
                 SetForceNextError(scope.Dispatcher);
 
-                CaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
 
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Dropped));
                 Assert.That(scope.RecordRegistry.Count, Is.EqualTo(0));
@@ -683,7 +683,7 @@ namespace Zantetsu.Core.Tests
                 // Frame 4: persistence completes frame 1's sidecar (leaving the
                 // PNG queue full), then frame 3's completed readback is dropped
                 // because the PNG queue is full.
-                CaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult result = scope.Pipeline.AdvancePendingWork();
 
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Dropped));
                 Assert.That(scope.PngQueue.Count, Is.EqualTo(1));
@@ -702,7 +702,7 @@ namespace Zantetsu.Core.Tests
                 TraceRunManifest manifest = MakeManifest();
                 scope.RentAndSchedule(manifest, 42, out _);
 
-                CaptureFramePipelineTickResult result = scope.Pipeline.Tick();
+                PngJsonCaptureFramePipelineTickResult result = scope.Pipeline.Tick();
 
                 Assert.That(result.ReadbackStarted, Is.True);
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -728,7 +728,7 @@ namespace Zantetsu.Core.Tests
                 scope.RentAndSchedule(manifest, 2, out _);
 
                 // One tick: advance (collect frame 1, freeing the dispatcher slot), then start frame 2.
-                CaptureFramePipelineTickResult result = scope.Pipeline.Tick();
+                PngJsonCaptureFramePipelineTickResult result = scope.Pipeline.Tick();
 
                 Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                 Assert.That(result.ReadbackStarted, Is.True);
@@ -740,7 +740,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TypeShape_SealedNonDisposableNonMonoBehaviour()
         {
-            Type type = typeof(CaptureFrameRenderTargetPipelineCoordinator);
+            Type type = typeof(PngJsonCaptureFrameRenderTargetPipelineCoordinator);
 
             Assert.That(type.IsSealed, Is.True);
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
@@ -804,13 +804,13 @@ namespace Zantetsu.Core.Tests
                 scope.TrackRegistered(accepted.Request, lease);
 
                 // Tick: start the readback.
-                CaptureFramePipelineTickResult start = scope.Pipeline.Tick();
+                PngJsonCaptureFramePipelineTickResult start = scope.Pipeline.Tick();
                 Assert.That(start.ReadbackStarted, Is.True);
 
                 AsyncGPUReadback.WaitAllRequests();
 
                 // Advance: collect → PNG enqueue + lease return.
-                CaptureFramePipelineAdvanceResult collected = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult collected = scope.Pipeline.AdvancePendingWork();
                 Assert.That(collected.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                 Assert.That(leaseRegistry.Count, Is.EqualTo(0));
                 Assert.That(pool.RentedCount, Is.EqualTo(0));
@@ -820,7 +820,7 @@ namespace Zantetsu.Core.Tests
                 scope.Pipeline.AdvancePendingWork();
 
                 // Advance: sidecar complete.
-                CaptureFramePipelineAdvanceResult completed = scope.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult completed = scope.Pipeline.AdvancePendingWork();
                 Assert.That(completed.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
                 Assert.That(completed.CompletedArtifact, Is.Not.Null);
                 Assert.That(completed.SidecarReceipt, Is.Not.Null);

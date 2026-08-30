@@ -467,7 +467,7 @@ namespace Zantetsu.Core.Tests
         {
             object traceContext = MakeDraftTraceContext(MakeRequest(7).TraceContext);
 
-            foreach (int reason in new[] { 6, 7, 8 })
+            foreach (int reason in new[] { 6, 7, 8, 10, 11, 12, 13, 14 })
             {
                 object payload = CreatePayload(traceContext, (CaptureFrameDropReason)reason);
                 Assert.That((bool)GetProperty(payload, "IsValid"), Is.True, "Reason " + reason + " should be valid.");
@@ -480,7 +480,7 @@ namespace Zantetsu.Core.Tests
         {
             object traceContext = MakeDraftTraceContext(MakeRequest(7).TraceContext);
 
-            foreach (int reason in new[] { 0, 1, 2, 3, 4, 5, 9, -1, 10, int.MaxValue })
+            foreach (int reason in new[] { 0, 1, 2, 3, 4, 5, 9, -1, 15, int.MaxValue })
             {
                 Exception ex = CreatePayloadException(traceContext, (CaptureFrameDropReason)reason);
                 Assert.That(ex, Is.TypeOf<ArgumentOutOfRangeException>(), "Reason " + reason + " must be rejected.");

@@ -8,7 +8,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameReadbackCompletionRouterTests
+    public class PngJsonCaptureFrameReadbackCompletionRouterTests
     {
         private static CaptureFrameTraceContext MakeContext()
         {
@@ -121,8 +121,8 @@ namespace Zantetsu.Core.Tests
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
 
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameReadbackCompletionRouter(null, observer));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameReadbackCompletionRouter(dispatcher, null));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameReadbackCompletionRouter(null, observer));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, null));
             }
         }
 
@@ -134,7 +134,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 Assert.That(router.TryCollect(out CaptureFrameReadbackResult result), Is.EqualTo(CaptureFrameReadbackCollectStatus.None));
                 Assert.That(result.IsValid, Is.False);
@@ -153,7 +153,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -184,7 +184,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -213,7 +213,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -253,7 +253,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -284,7 +284,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -316,7 +316,7 @@ namespace Zantetsu.Core.Tests
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             TraceLogger logger = new TraceLogger(8);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             RenderTexture rt = CreateTex2D(2, 2);
             try
@@ -348,7 +348,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
@@ -376,7 +376,7 @@ namespace Zantetsu.Core.Tests
             using (TraceLogger logger = new TraceLogger(8))
             {
                 CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-                CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+                PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
                 RenderTexture rt = CreateTex2D(2, 2);
                 try

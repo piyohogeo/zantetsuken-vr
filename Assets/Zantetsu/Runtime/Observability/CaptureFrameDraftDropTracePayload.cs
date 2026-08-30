@@ -32,17 +32,13 @@ namespace Zantetsu.Observability
         public bool IsValid =>
             TraceContext.CaptureFrameId > 0
             && TraceContext.TestRunId > 0
-            && (Reason == CaptureFrameDropReason.PngEncodeFailed
-                || Reason == CaptureFrameDropReason.PngStagingStoreFull
-                || Reason == CaptureFrameDropReason.CaptureCancelled);
+            && IsNormalReason(Reason);
 
         internal CaptureFrameDraftDropTracePayload(
             in CaptureFrameDraftTraceContext traceContext,
             CaptureFrameDropReason reason)
         {
-            if (reason != CaptureFrameDropReason.PngEncodeFailed
-                && reason != CaptureFrameDropReason.PngStagingStoreFull
-                && reason != CaptureFrameDropReason.CaptureCancelled)
+            if (!IsNormalReason(reason))
             {
                 throw new ArgumentOutOfRangeException(nameof(reason), reason, "Reason must be PngEncodeFailed, PngStagingStoreFull, or CaptureCancelled.");
             }
@@ -59,6 +55,18 @@ namespace Zantetsu.Observability
 
             TraceContext = traceContext;
             Reason = reason;
+        }
+
+        private static bool IsNormalReason(CaptureFrameDropReason reason)
+        {
+            return reason == CaptureFrameDropReason.PngEncodeFailed
+                || reason == CaptureFrameDropReason.PngStagingStoreFull
+                || reason == CaptureFrameDropReason.CaptureCancelled
+                || reason == CaptureFrameDropReason.CaptureInputFailed
+                || reason == CaptureFrameDropReason.MediaProcessingFailed
+                || reason == CaptureFrameDropReason.MediaProcessingBackpressured
+                || reason == CaptureFrameDropReason.ArtifactStagingFull
+                || reason == CaptureFrameDropReason.ArtifactWriteFailed;
         }
     }
 }

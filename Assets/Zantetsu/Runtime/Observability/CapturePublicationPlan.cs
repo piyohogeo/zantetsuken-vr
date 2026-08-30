@@ -1,183 +1,156 @@
 using System;
+using System.Collections.Generic;
 
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Immutable Schema v1 Capture Publication Plan: the expected capture frame
-    /// ID set and its PNG/sidecar paths, lengths, and hashes, fixed before any
-    /// file I/O so the durable staging and publication steps can consume an
-    /// unchanging expectation. No public constructor is provided.
+    /// Canonical format-independent publication expectation. Artifact
+    /// descriptors are the authority; frame entries only express relations.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <see cref="SchemaVersion"/> is fixed at 1. The entry array is
-    /// defensively copied at construction so later mutation of the caller's
-    /// array cannot change this plan. Entries are caller-owned and must outlive
-    /// this plan. This type owns, disposes, registers, and generates nothing
-    /// (no ID, initialization ID, hash, or path is produced here), and is not
-    /// an <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
-    /// </para>
-    /// </remarks>
     internal sealed class CapturePublicationPlan
     {
         private readonly long _testRunId;
         private readonly string _runInitializationId;
-        private readonly string _runManifestContentSha256;
-        private readonly CapturePublicationPlanEntry[] _entries;
+        private readonly string _runManifestContentHash;
+        private readonly CaptureArtifactDescriptor[] _artifactDescriptors;
+        private readonly CaptureFrameEvidenceEntry[] _captureFrameEvidenceEntries;
 
         internal CapturePublicationPlan(
             long testRunId,
             string runInitializationId,
-            string runManifestContentSha256,
-            CapturePublicationPlanEntry[] entries)
+            string runManifestContentHash,
+            CaptureArtifactDescriptor[] artifactDescriptors,
+            CaptureFrameEvidenceEntry[] captureFrameEvidenceEntries)
         {
-            if (testRunId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(testRunId), testRunId, "Test run ID must be greater than zero.");
-            }
+            if (testRunId <= 0) throw new ArgumentOutOfRangeException(nameof(testRunId));
+            if (!IsLowerHex(runInitializationId, 32)) throw new ArgumentException("Initialization ID must be 32 lowercase hex characters.", nameof(runInitializationId));
+            if (!IsLowerHex(runManifestContentHash, 64)) throw new ArgumentException("Manifest hash must be 64 lowercase hex characters.", nameof(runManifestContentHash));
+            if (artifactDescriptors == null) throw new ArgumentNullException(nameof(artifactDescriptors));
+            if (captureFrameEvidenceEntries == null) throw new ArgumentNullException(nameof(captureFrameEvidenceEntries));
+            if (artifactDescriptors.Length > 200000) throw new ArgumentOutOfRangeException(nameof(artifactDescriptors));
+            if (captureFrameEvidenceEntries.Length > 100000) throw new ArgumentOutOfRangeException(nameof(captureFrameEvidenceEntries));
 
-            if (runInitializationId == null)
-            {
-                throw new ArgumentNullException(nameof(runInitializationId));
-            }
-
-            if (!IsLowercaseHex(runInitializationId, 32))
-            {
-                throw new ArgumentException("Run initialization ID must be 32 lowercase ASCII hex characters.", nameof(runInitializationId));
-            }
-
-            if (runManifestContentSha256 == null)
-            {
-                throw new ArgumentNullException(nameof(runManifestContentSha256));
-            }
-
-            if (!IsLowercaseHex(runManifestContentSha256, 64))
-            {
-                throw new ArgumentException("Run manifest content SHA-256 must be 64 lowercase ASCII hex characters.", nameof(runManifestContentSha256));
-            }
-
-            if (entries == null)
-            {
-                throw new ArgumentNullException(nameof(entries));
-            }
-
-            if (entries.Length > 100000)
-            {
-                throw new ArgumentOutOfRangeException(nameof(entries), entries.Length, "Entry count must not exceed 100000.");
-            }
-
-            long previousCaptureFrameId = 0;
-            for (int i = 0; i < entries.Length; i++)
-            {
-                CapturePublicationPlanEntry entry = entries[i];
-                if (entry == null)
-                {
-                    throw new ArgumentException("Entry array must not contain null elements.", nameof(entries));
-                }
-
-                long captureFrameId = entry.CaptureFrameId;
-                if (i > 0 && captureFrameId <= previousCaptureFrameId)
-                {
-                    throw new ArgumentException("Capture frame IDs must be strictly ascending without duplicates.", nameof(entries));
-                }
-
-                previousCaptureFrameId = captureFrameId;
-            }
-
-            CapturePublicationPlanEntry[] copy = new CapturePublicationPlanEntry[entries.Length];
-            Array.Copy(entries, copy, entries.Length);
+            ValidateDescriptors(artifactDescriptors);
+            ValidateEvidence(captureFrameEvidenceEntries, artifactDescriptors);
 
             _testRunId = testRunId;
             _runInitializationId = runInitializationId;
-            _runManifestContentSha256 = runManifestContentSha256;
-            _entries = copy;
+            _runManifestContentHash = runManifestContentHash;
+            _artifactDescriptors = new CaptureArtifactDescriptor[artifactDescriptors.Length];
+            _captureFrameEvidenceEntries = new CaptureFrameEvidenceEntry[captureFrameEvidenceEntries.Length];
+            Array.Copy(artifactDescriptors, _artifactDescriptors, artifactDescriptors.Length);
+            Array.Copy(captureFrameEvidenceEntries, _captureFrameEvidenceEntries, captureFrameEvidenceEntries.Length);
         }
 
-        internal int SchemaVersion => 1;
-
+        internal int SchemaVersion => 2;
         internal long TestRunId => _testRunId;
-
         internal string RunInitializationId => _runInitializationId;
+        internal string RunManifestContentHash => _runManifestContentHash;
+        internal int ArtifactCount => _artifactDescriptors.Length;
+        internal int CaptureFrameEvidenceCount => _captureFrameEvidenceEntries.Length;
 
-        internal string RunManifestContentSha256 => _runManifestContentSha256;
-
-        internal int EntryCount => _entries.Length;
-
-        /// <summary>
-        /// Returns the entry at the given index in capture frame ID ascending
-        /// order. Out-of-range indices throw
-        /// <see cref="ArgumentOutOfRangeException"/>.
-        /// </summary>
-        internal CapturePublicationPlanEntry GetEntry(int index)
+        internal CaptureArtifactDescriptor GetArtifact(int index)
         {
-            if (index < 0 || index >= _entries.Length)
-            {
-                throw new ArgumentOutOfRangeException(nameof(index), index, "Index must be within the entry count.");
-            }
-
-            return _entries[index];
+            if (index < 0 || index >= _artifactDescriptors.Length) throw new ArgumentOutOfRangeException(nameof(index));
+            return _artifactDescriptors[index];
         }
 
-        /// <summary>
-        /// Exception-safe recomputation of every invariant this plan
-        /// guarantees. Returns <c>false</c> for any corrupted or partially
-        /// populated instance without throwing.
-        /// </summary>
+        internal CaptureFrameEvidenceEntry GetCaptureFrameEvidence(int index)
+        {
+            if (index < 0 || index >= _captureFrameEvidenceEntries.Length) throw new ArgumentOutOfRangeException(nameof(index));
+            return _captureFrameEvidenceEntries[index];
+        }
+
         internal bool IsValid
         {
             get
             {
-                if (_testRunId <= 0
-                    || !IsLowercaseHex(_runInitializationId, 32)
-                    || !IsLowercaseHex(_runManifestContentSha256, 64)
-                    || _entries == null)
+                if (_testRunId <= 0 || !IsLowerHex(_runInitializationId, 32) || !IsLowerHex(_runManifestContentHash, 64)
+                    || _artifactDescriptors == null || _captureFrameEvidenceEntries == null
+                    || _artifactDescriptors.Length > 200000 || _captureFrameEvidenceEntries.Length > 100000)
                 {
                     return false;
                 }
 
-                if (_entries.Length > 100000)
+                try
+                {
+                    ValidateDescriptors(_artifactDescriptors);
+                    ValidateEvidence(_captureFrameEvidenceEntries, _artifactDescriptors);
+                    return true;
+                }
+                catch (ArgumentException)
                 {
                     return false;
                 }
-
-                long previousCaptureFrameId = 0;
-                for (int i = 0; i < _entries.Length; i++)
-                {
-                    CapturePublicationPlanEntry entry = _entries[i];
-                    if (entry == null || !entry.IsValid)
-                    {
-                        return false;
-                    }
-
-                    long captureFrameId = entry.CaptureFrameId;
-                    if (i > 0 && captureFrameId <= previousCaptureFrameId)
-                    {
-                        return false;
-                    }
-
-                    previousCaptureFrameId = captureFrameId;
-                }
-
-                return true;
             }
         }
 
-        private static bool IsLowercaseHex(string value, int length)
+        private static void ValidateDescriptors(CaptureArtifactDescriptor[] descriptors)
         {
-            if (value == null || value.Length != length)
+            string previousId = null;
+            HashSet<string> stagingPaths = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> finalPaths = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < descriptors.Length; i++)
             {
-                return false;
-            }
+                CaptureArtifactDescriptor descriptor = descriptors[i];
+                if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptors must be valid.", nameof(descriptors));
+                if (previousId != null && string.CompareOrdinal(previousId, descriptor.ArtifactId) >= 0) throw new ArgumentException("Descriptors must be ordered by unique artifact ID.", nameof(descriptors));
 
-            for (int i = 0; i < length; i++)
+                if (!stagingPaths.Add(descriptor.StagingRelativePath)
+                    || !finalPaths.Add(descriptor.FinalRelativePath))
+                {
+                    throw new ArgumentException("Artifact paths must be unique.", nameof(descriptors));
+                }
+
+                previousId = descriptor.ArtifactId;
+            }
+        }
+
+        private static void ValidateEvidence(CaptureFrameEvidenceEntry[] entries, CaptureArtifactDescriptor[] descriptors)
+        {
+            long previousFrameId = 0;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                CaptureFrameEvidenceEntry entry = entries[i];
+                if (entry == null || !entry.IsValid || (i > 0 && entry.CaptureFrameId <= previousFrameId))
+                {
+                    throw new ArgumentException("Frame evidence must be valid and strictly ordered.", nameof(entries));
+                }
+
+                for (int j = 0; j < entry.ArtifactCount; j++)
+                {
+                    if (!ContainsArtifact(descriptors, entry.GetArtifactId(j)))
+                    {
+                        throw new ArgumentException("Frame evidence references an unknown artifact.", nameof(entries));
+                    }
+                }
+
+                previousFrameId = entry.CaptureFrameId;
+            }
+        }
+
+        private static bool ContainsArtifact(CaptureArtifactDescriptor[] descriptors, string id)
+        {
+            int lo = 0;
+            int hi = descriptors.Length - 1;
+            while (lo <= hi)
+            {
+                int mid = lo + ((hi - lo) / 2);
+                int compare = string.CompareOrdinal(descriptors[mid].ArtifactId, id);
+                if (compare == 0) return true;
+                if (compare < 0) lo = mid + 1; else hi = mid - 1;
+            }
+            return false;
+        }
+
+        private static bool IsLowerHex(string value, int length)
+        {
+            if (value == null || value.Length != length) return false;
+            for (int i = 0; i < value.Length; i++)
             {
                 char c = value[i];
-                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-                {
-                    return false;
-                }
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
             }
-
             return true;
         }
     }

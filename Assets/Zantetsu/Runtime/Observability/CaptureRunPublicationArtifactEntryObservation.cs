@@ -107,7 +107,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Artifact path set must be the operation's path set for its entry index.", nameof(artifactPaths));
             }
 
-            CapturePublicationPlanEntry entry = artifactPaths.Entry;
+            PngJsonCapturePublicationPlanEntry entry = artifactPaths.Entry;
             long pngLimit = Min(entry.PngByteLength, operation.MaximumPngByteCount);
             long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
 
@@ -244,7 +244,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationEvidenceStatus finalSidecarStatus,
             long finalSidecarProbedByteCount)
         {
-            CapturePublicationPlanEntry entry = artifactPaths.Entry;
+            PngJsonCapturePublicationPlanEntry entry = artifactPaths.Entry;
             long pngLimit = Min(entry.PngByteLength, operation.MaximumPngByteCount);
             long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
 

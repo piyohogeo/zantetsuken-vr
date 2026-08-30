@@ -12,7 +12,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFramePipelineCoordinatorTests
+    public class PngJsonCaptureFramePipelineCoordinatorTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         private const string FixedPngHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -258,7 +258,7 @@ namespace Zantetsu.Core.Tests
 
         private static ConstructorInfo GetTickResultCtor()
         {
-            ConstructorInfo ctor = typeof(CaptureFramePipelineTickResult).GetConstructor(
+            ConstructorInfo ctor = typeof(PngJsonCaptureFramePipelineTickResult).GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance, null,
                 new[]
                 {
@@ -291,20 +291,20 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static CaptureFramePipelineTickResult MakeTickResult(
+        private static PngJsonCaptureFramePipelineTickResult MakeTickResult(
             CaptureFramePngArtifactPersistenceStatus persistenceStatus,
             CaptureFramePngQueueStatus readbackCompletionStatus,
             bool readbackStarted,
             CaptureFramePngArtifact completedArtifact,
             CaptureFramePngArtifactSaveReceipt sidecarReceipt)
         {
-            return (CaptureFramePipelineTickResult)GetTickResultCtor().Invoke(
+            return (PngJsonCaptureFramePipelineTickResult)GetTickResultCtor().Invoke(
                 new object[] { persistenceStatus, readbackCompletionStatus, readbackStarted, completedArtifact, sidecarReceipt });
         }
 
         private static ConstructorInfo GetAdvanceResultCtor()
         {
-            ConstructorInfo ctor = typeof(CaptureFramePipelineAdvanceResult).GetConstructor(
+            ConstructorInfo ctor = typeof(PngJsonCaptureFramePipelineAdvanceResult).GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance, null,
                 new[]
                 {
@@ -335,13 +335,13 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static CaptureFramePipelineAdvanceResult MakeAdvanceResult(
+        private static PngJsonCaptureFramePipelineAdvanceResult MakeAdvanceResult(
             CaptureFramePngArtifactPersistenceStatus persistenceStatus,
             CaptureFramePngQueueStatus readbackCompletionStatus,
             CaptureFramePngArtifact completedArtifact,
             CaptureFramePngArtifactSaveReceipt sidecarReceipt)
         {
-            return (CaptureFramePipelineAdvanceResult)GetAdvanceResultCtor().Invoke(
+            return (PngJsonCaptureFramePipelineAdvanceResult)GetAdvanceResultCtor().Invoke(
                 new object[] { persistenceStatus, readbackCompletionStatus, completedArtifact, sidecarReceipt });
         }
 
@@ -442,7 +442,7 @@ namespace Zantetsu.Core.Tests
             return combined;
         }
 
-        private static CaptureFramePipelineCoordinator MakePipeline(
+        private static PngJsonCaptureFramePipelineCoordinator MakePipeline(
             string dir,
             int poolSlotCount,
             out CaptureFrameReadbackBufferPool pool,
@@ -458,7 +458,7 @@ namespace Zantetsu.Core.Tests
             dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
             logger = new TraceLogger(16);
             CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            CaptureFrameReadbackCompletionRouter completionRouter = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter completionRouter = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             requestQueue = new CaptureFrameRequestQueue(4);
             CaptureFrameReadbackPump readbackPump = new CaptureFrameReadbackPump(requestQueue, dispatcher);
@@ -469,7 +469,7 @@ namespace Zantetsu.Core.Tests
 
             CaptureFramePngArtifactPersistenceCoordinator persistenceCoordinator = MakePersistenceCoordinator(recordRegistry, dir);
 
-            return new CaptureFramePipelineCoordinator(readbackPump, completionRouter, persistenceCoordinator, pngQueue, artifactQueue, recordRegistry);
+            return new PngJsonCaptureFramePipelineCoordinator(readbackPump, completionRouter, persistenceCoordinator, pngQueue, artifactQueue, recordRegistry);
         }
 
         // ---- Result tests ----
@@ -477,7 +477,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Result_DefaultValues()
         {
-            CaptureFramePipelineTickResult result = default;
+            PngJsonCaptureFramePipelineTickResult result = default;
 
             Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
             Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -490,7 +490,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Result_None_HasNullArtifactReceipt()
         {
-            CaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, false, null, null);
+            PngJsonCaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, false, null, null);
 
             Assert.That(result.CompletedArtifact, Is.Null);
             Assert.That(result.SidecarReceipt, Is.Null);
@@ -500,7 +500,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Result_PngPrepared_HasNullArtifactReceipt()
         {
-            CaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.PngPrepared, CaptureFramePngQueueStatus.None, false, null, null);
+            PngJsonCaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.PngPrepared, CaptureFramePngQueueStatus.None, false, null, null);
 
             Assert.That(result.CompletedArtifact, Is.Null);
             Assert.That(result.SidecarReceipt, Is.Null);
@@ -515,7 +515,7 @@ namespace Zantetsu.Core.Tests
             CaptureFramePngArtifact artifact = new CaptureFramePngArtifact(record, request, MakePngReceipt("C:\\x\\out.png", 32, FixedPngHash));
             CaptureFramePngArtifactSaveReceipt receipt = MakeSidecarReceipt("C:\\x\\out.json", 123, FixedPngHash);
 
-            CaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
+            PngJsonCaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
 
             Assert.That(result.CompletedArtifact, Is.Not.Null);
             Assert.That(result.SidecarReceipt, Is.Not.Null);
@@ -530,9 +530,9 @@ namespace Zantetsu.Core.Tests
             CaptureFramePngArtifact artifact = new CaptureFramePngArtifact(record, request, MakePngReceipt("C:\\x\\out.png", 32, FixedPngHash));
             CaptureFramePngArtifactSaveReceipt receipt = MakeSidecarReceipt("C:\\x\\out.json", 123, FixedPngHash);
 
-            CaptureFramePipelineTickResult completed = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
-            CaptureFramePipelineTickResult none = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, false, null, null);
-            CaptureFramePipelineTickResult prepared = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.PngPrepared, CaptureFramePngQueueStatus.None, false, null, null);
+            PngJsonCaptureFramePipelineTickResult completed = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
+            PngJsonCaptureFramePipelineTickResult none = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.None, CaptureFramePngQueueStatus.None, false, null, null);
+            PngJsonCaptureFramePipelineTickResult prepared = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.PngPrepared, CaptureFramePngQueueStatus.None, false, null, null);
 
             Assert.That(completed.HasCompletedArtifact, Is.EqualTo(completed.PersistenceStatus == CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
             Assert.That(none.HasCompletedArtifact, Is.EqualTo(none.PersistenceStatus == CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
@@ -559,7 +559,7 @@ namespace Zantetsu.Core.Tests
             CaptureFramePngArtifact artifact = new CaptureFramePngArtifact(record, request, MakePngReceipt("C:\\x\\out.png", 32, FixedPngHash));
             CaptureFramePngArtifactSaveReceipt receipt = MakeSidecarReceipt("C:\\x\\out.json", 123, FixedPngHash);
 
-            CaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
+            PngJsonCaptureFramePipelineTickResult result = MakeTickResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, false, artifact, receipt);
 
             Assert.That(result.CompletedArtifact, Is.SameAs(artifact));
             Assert.That(result.SidecarReceipt, Is.SameAs(receipt));
@@ -575,19 +575,19 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 try
                 {
                     CaptureFrameReadbackPump readbackPump = new CaptureFrameReadbackPump(requestQueue, dispatcher);
-                    CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, new CaptureFrameTraceObserver(logger));
+                    PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, new CaptureFrameTraceObserver(logger));
                     CaptureFramePngArtifactPersistenceCoordinator persistence = MakePersistenceCoordinator(registry, dir);
 
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(null, router, persistence, pngQueue, artifactQueue, registry));
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(readbackPump, null, persistence, pngQueue, artifactQueue, registry));
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(readbackPump, router, null, pngQueue, artifactQueue, registry));
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(readbackPump, router, persistence, null, artifactQueue, registry));
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(readbackPump, router, persistence, pngQueue, null, registry));
-                    Assert.Throws<ArgumentNullException>(() => new CaptureFramePipelineCoordinator(readbackPump, router, persistence, pngQueue, artifactQueue, null));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(null, router, persistence, pngQueue, artifactQueue, registry));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(readbackPump, null, persistence, pngQueue, artifactQueue, registry));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(readbackPump, router, null, pngQueue, artifactQueue, registry));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(readbackPump, router, persistence, null, artifactQueue, registry));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(readbackPump, router, persistence, pngQueue, null, registry));
+                    Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFramePipelineCoordinator(readbackPump, router, persistence, pngQueue, artifactQueue, null));
                 }
                 catch (Exception ex)
                 {
@@ -614,10 +614,10 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out _, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out _, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 try
                 {
-                    CaptureFramePipelineTickResult result = pipeline.Tick(null);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(null);
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -649,13 +649,13 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
                     RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackStarted, Is.True);
                     Assert.That(requestQueue.Count, Is.EqualTo(0));
@@ -686,13 +686,13 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
                     RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackStarted, Is.True);
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -723,7 +723,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -731,7 +731,7 @@ namespace Zantetsu.Core.Tests
                     pipeline.Tick(rt); // start readback
                     AsyncGPUReadback.WaitAllRequests();
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                     Assert.That(pngQueue.Count, Is.EqualTo(1));
@@ -762,7 +762,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -771,7 +771,7 @@ namespace Zantetsu.Core.Tests
                     AsyncGPUReadback.WaitAllRequests();
                     pipeline.Tick(rt); // collect → PNG queued
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
                     Assert.That(artifactQueue.Count, Is.EqualTo(1));
@@ -802,7 +802,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -812,7 +812,7 @@ namespace Zantetsu.Core.Tests
                     pipeline.Tick(rt); // collect
                     pipeline.Tick(rt); // prepare
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
                     Assert.That(result.HasCompletedArtifact, Is.True);
@@ -843,7 +843,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -853,7 +853,7 @@ namespace Zantetsu.Core.Tests
                     pipeline.Tick(rt);
                     pipeline.Tick(rt);
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.CompletedArtifact, Is.Not.Null);
                     Assert.That(result.SidecarReceipt, Is.Not.Null);
@@ -885,7 +885,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -929,7 +929,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -945,7 +945,7 @@ namespace Zantetsu.Core.Tests
 
                     // One tick: persistence prepares A (frees the PNG slot), then
                     // collect enqueues B into that slot.
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
@@ -978,7 +978,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -988,7 +988,7 @@ namespace Zantetsu.Core.Tests
                     RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
 
                     // One tick: collect frees A's slot, then B starts in it.
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                     Assert.That(result.ReadbackStarted, Is.True);
@@ -1020,7 +1020,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1029,7 +1029,7 @@ namespace Zantetsu.Core.Tests
                     RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
 
                     // B cannot start because the dispatcher is full and A is not done.
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackStarted, Is.False);
                     Assert.That(requestQueue.Count, Is.EqualTo(1));
@@ -1060,7 +1060,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger, pngQueueCapacity: 1);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 1, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger, pngQueueCapacity: 1);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1081,7 +1081,7 @@ namespace Zantetsu.Core.Tests
                     // full), then C's completed readback is dropped because the PNG
                     // queue is full.
                     RegisterAndSchedule(registry, requestQueue, manifest, 4, out _);
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Dropped));
                     Assert.That(registry.TryGet(request3, out _), Is.False);
@@ -1126,7 +1126,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1135,7 +1135,7 @@ namespace Zantetsu.Core.Tests
                     AsyncGPUReadback.WaitAllRequests();
                     SetForceNextError(dispatcher);
 
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Dropped));
                     Assert.That(registry.TryGet(request, out _), Is.False);
@@ -1179,7 +1179,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1225,7 +1225,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1233,7 +1233,7 @@ namespace Zantetsu.Core.Tests
                     RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
 
                     // Two pending requests: one tick starts only one readback.
-                    CaptureFramePipelineTickResult result = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult result = pipeline.Tick(rt);
 
                     Assert.That(result.ReadbackStarted, Is.True);
                     Assert.That(requestQueue.Count, Is.EqualTo(1));
@@ -1264,7 +1264,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1278,7 +1278,7 @@ namespace Zantetsu.Core.Tests
                     pipeline.Tick(rt); // prepare 1, collect 2
                     pipeline.Tick(rt); // sidecar 1
                     pipeline.Tick(rt); // prepare 2
-                    CaptureFramePipelineTickResult last = pipeline.Tick(rt); // sidecar 2
+                    PngJsonCaptureFramePipelineTickResult last = pipeline.Tick(rt); // sidecar 2
 
                     Assert.That(last.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
                     Assert.That(File.Exists(Path.Combine(dir, ExpectedSidecarName(1))), Is.True);
@@ -1313,28 +1313,28 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
                     RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
 
                     // schedule → Tick: readback started
-                    CaptureFramePipelineTickResult r1 = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult r1 = pipeline.Tick(rt);
                     Assert.That(r1.ReadbackStarted, Is.True);
 
                     AsyncGPUReadback.WaitAllRequests();
 
                     // → Tick: PNG queued
-                    CaptureFramePipelineTickResult r2 = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult r2 = pipeline.Tick(rt);
                     Assert.That(r2.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
 
                     // → Tick: PNG prepared
-                    CaptureFramePipelineTickResult r3 = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult r3 = pipeline.Tick(rt);
                     Assert.That(r3.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
 
                     // → Tick: sidecar completed
-                    CaptureFramePipelineTickResult r4 = pipeline.Tick(rt);
+                    PngJsonCaptureFramePipelineTickResult r4 = pipeline.Tick(rt);
                     Assert.That(r4.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
                     Assert.That(r4.HasCompletedArtifact, Is.True);
                     Assert.That(r4.CompletedArtifact, Is.Not.Null);
@@ -1374,7 +1374,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1414,7 +1414,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void AdvanceResult_DefaultValues()
         {
-            CaptureFramePipelineAdvanceResult result = default;
+            PngJsonCaptureFramePipelineAdvanceResult result = default;
 
             Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
             Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -1434,7 +1434,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, null, receipt), Is.InstanceOf<ArgumentNullException>());
             Assert.That(GetAdvanceResultCtorException(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, artifact, null), Is.InstanceOf<ArgumentNullException>());
 
-            CaptureFramePipelineAdvanceResult result = MakeAdvanceResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, artifact, receipt);
+            PngJsonCaptureFramePipelineAdvanceResult result = MakeAdvanceResult(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted, CaptureFramePngQueueStatus.None, artifact, receipt);
 
             Assert.That(result.CompletedArtifact, Is.SameAs(artifact));
             Assert.That(result.SidecarReceipt, Is.SameAs(receipt));
@@ -1472,7 +1472,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1481,7 +1481,7 @@ namespace Zantetsu.Core.Tests
                     AsyncGPUReadback.WaitAllRequests();
                     pipeline.Tick(rt); // collect → PNG queue 1
 
-                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+                    PngJsonCaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
                     Assert.That(artifactQueue.Count, Is.EqualTo(1));
@@ -1513,7 +1513,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1523,7 +1523,7 @@ namespace Zantetsu.Core.Tests
                     pipeline.Tick(rt); // start 2
                     AsyncGPUReadback.WaitAllRequests();
 
-                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+                    PngJsonCaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
 
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                     Assert.That(pngQueue.Count, Is.EqualTo(1));
@@ -1554,13 +1554,13 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
                     RegisterAndSchedule(registry, requestQueue, manifest, 42, out _);
 
-                    CaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
+                    PngJsonCaptureFramePipelineAdvanceResult result = pipeline.AdvancePendingWork();
 
                     Assert.That(result.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.None));
                     Assert.That(result.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.None));
@@ -1593,7 +1593,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1632,7 +1632,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1673,7 +1673,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out _, out _, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out _, out _, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 try
                 {
                     Assert.That(pipeline.TryStartNextReadback(null), Is.False);
@@ -1704,7 +1704,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out _, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 RenderTexture uncreated = null;
                 RenderTexture small = null;
@@ -1769,7 +1769,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1782,7 +1782,7 @@ namespace Zantetsu.Core.Tests
                     // B pending.
                     RegisterAndSchedule(registry, requestQueue, manifest, 2, out _);
 
-                    CaptureFramePipelineAdvanceResult advance = pipeline.AdvancePendingWork();
+                    PngJsonCaptureFramePipelineAdvanceResult advance = pipeline.AdvancePendingWork();
                     Assert.That(advance.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.PngPrepared));
 
                     Assert.Throws<ArgumentNullException>(() => pipeline.TryStartNextReadback(null));
@@ -1819,8 +1819,8 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline1 = MakePipeline(dir1, 2, out CaptureFrameReadbackBufferPool pool1, out UnityRenderTextureReadbackDispatcher dispatcher1, out CaptureFrameRequestQueue requestQueue1, out CaptureFrameRecordRegistry registry1, out CaptureFramePngQueue pngQueue1, out CaptureFramePngArtifactQueue artifactQueue1, out TraceLogger logger1);
-                CaptureFramePipelineCoordinator pipeline2 = MakePipeline(dir2, 2, out CaptureFrameReadbackBufferPool pool2, out UnityRenderTextureReadbackDispatcher dispatcher2, out CaptureFrameRequestQueue requestQueue2, out CaptureFrameRecordRegistry registry2, out CaptureFramePngQueue pngQueue2, out CaptureFramePngArtifactQueue artifactQueue2, out TraceLogger logger2);
+                PngJsonCaptureFramePipelineCoordinator pipeline1 = MakePipeline(dir1, 2, out CaptureFrameReadbackBufferPool pool1, out UnityRenderTextureReadbackDispatcher dispatcher1, out CaptureFrameRequestQueue requestQueue1, out CaptureFrameRecordRegistry registry1, out CaptureFramePngQueue pngQueue1, out CaptureFramePngArtifactQueue artifactQueue1, out TraceLogger logger1);
+                PngJsonCaptureFramePipelineCoordinator pipeline2 = MakePipeline(dir2, 2, out CaptureFrameReadbackBufferPool pool2, out UnityRenderTextureReadbackDispatcher dispatcher2, out CaptureFrameRequestQueue requestQueue2, out CaptureFrameRecordRegistry registry2, out CaptureFramePngQueue pngQueue2, out CaptureFramePngArtifactQueue artifactQueue2, out TraceLogger logger2);
                 RenderTexture rt1 = CreateTex2D(2, 2);
                 RenderTexture rt2 = CreateTex2D(2, 2);
                 try
@@ -1828,9 +1828,9 @@ namespace Zantetsu.Core.Tests
                     RegisterAndSchedule(registry1, requestQueue1, manifest, 42, out _);
                     RegisterAndSchedule(registry2, requestQueue2, manifest, 42, out _);
 
-                    CaptureFramePipelineTickResult tick = pipeline1.Tick(rt1);
+                    PngJsonCaptureFramePipelineTickResult tick = pipeline1.Tick(rt1);
 
-                    CaptureFramePipelineAdvanceResult advance = pipeline2.AdvancePendingWork();
+                    PngJsonCaptureFramePipelineAdvanceResult advance = pipeline2.AdvancePendingWork();
                     bool started = pipeline2.TryStartNextReadback(rt2);
 
                     Assert.That(advance.PersistenceStatus, Is.EqualTo(tick.PersistenceStatus));
@@ -1873,7 +1873,7 @@ namespace Zantetsu.Core.Tests
             Exception[] cleanupExceptions = null;
             try
             {
-                CaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
+                PngJsonCaptureFramePipelineCoordinator pipeline = MakePipeline(dir, 2, out CaptureFrameReadbackBufferPool pool, out UnityRenderTextureReadbackDispatcher dispatcher, out CaptureFrameRequestQueue requestQueue, out CaptureFrameRecordRegistry registry, out CaptureFramePngQueue pngQueue, out CaptureFramePngArtifactQueue artifactQueue, out TraceLogger logger);
                 RenderTexture rt = CreateTex2D(2, 2);
                 try
                 {
@@ -1908,7 +1908,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void NotIDisposable()
         {
-            Assert.That(typeof(IDisposable).IsAssignableFrom(typeof(CaptureFramePipelineCoordinator)), Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(typeof(PngJsonCaptureFramePipelineCoordinator)), Is.False);
         }
     }
 }

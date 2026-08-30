@@ -12,7 +12,7 @@ using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureFrameRenderTargetCadencedPipelineCoordinatorTests
+    public class PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinatorTests
     {
         private const string ValidSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -338,13 +338,13 @@ namespace Zantetsu.Core.Tests
             public CaptureFrameRenderTargetCadencedSubmissionCoordinator CadencedSubmission;
             public CaptureFrameReadbackBufferPool BufferPool;
             public UnityRenderTextureReadbackDispatcher Dispatcher;
-            public CaptureFrameReadbackCompletionRouter Router;
+            public PngJsonCaptureFrameReadbackCompletionRouter Router;
             public CaptureFrameRenderTargetReadbackPump Pump;
-            public CaptureFrameRenderTargetPipelineCoordinator Pipeline;
+            public PngJsonCaptureFrameRenderTargetPipelineCoordinator Pipeline;
             public CaptureFramePngQueue PngQueue;
             public CaptureFramePngArtifactQueue ArtifactQueue;
             public CaptureFramePngArtifactPersistenceCoordinator Persistence;
-            public CaptureFrameRenderTargetCadencedPipelineCoordinator Coordinator;
+            public PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator Coordinator;
             public readonly List<CaptureFrameRenderTargetLease> Held = new List<CaptureFrameRenderTargetLease>();
             public readonly List<RegisteredEntry> Registered = new List<RegisteredEntry>();
 
@@ -416,14 +416,14 @@ namespace Zantetsu.Core.Tests
 
             h.BufferPool = new CaptureFrameReadbackBufferPool(bufferPoolCapacity, 64);
             h.Dispatcher = new UnityRenderTextureReadbackDispatcher(h.BufferPool);
-            h.Router = new CaptureFrameReadbackCompletionRouter(h.Dispatcher, h.Observer);
+            h.Router = new PngJsonCaptureFrameReadbackCompletionRouter(h.Dispatcher, h.Observer);
             h.Pump = new CaptureFrameRenderTargetReadbackPump(h.Queue, h.Dispatcher, h.LeaseRegistry, h.Pool);
 
             h.PngQueue = new CaptureFramePngQueue(pngQueueCapacity);
             h.ArtifactQueue = new CaptureFramePngArtifactQueue(4);
             h.Persistence = MakePersistenceCoordinator(h.RecordRegistry, h.Dir);
 
-            h.Pipeline = new CaptureFrameRenderTargetPipelineCoordinator(
+            h.Pipeline = new PngJsonCaptureFrameRenderTargetPipelineCoordinator(
                 h.Pump,
                 h.Router,
                 h.Persistence,
@@ -433,7 +433,7 @@ namespace Zantetsu.Core.Tests
                 h.LeaseRegistry,
                 h.Pool);
 
-            h.Coordinator = new CaptureFrameRenderTargetCadencedPipelineCoordinator(
+            h.Coordinator = new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(
                 h.Pipeline,
                 h.CadencedSubmission,
                 h.Queue,
@@ -589,7 +589,7 @@ namespace Zantetsu.Core.Tests
         }
 
         private static CaptureFrameCadencedPipelineResult Submit(
-            CaptureFrameRenderTargetCadencedPipelineCoordinator coordinator,
+            PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator coordinator,
             in CaptureFrameRenderTargetLease lease,
             double predictedDisplayTimeSeconds,
             bool shouldRender,
@@ -620,10 +620,10 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(45.0, 4, 4, 4, 4, 2);
             RunHarnessBody(h, () =>
             {
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetCadencedPipelineCoordinator(null, h.CadencedSubmission, h.Queue, h.LeaseRegistry));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, null, h.Queue, h.LeaseRegistry));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, null, h.LeaseRegistry));
-                Assert.Throws<ArgumentNullException>(() => new CaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, h.Queue, null));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(null, h.CadencedSubmission, h.Queue, h.LeaseRegistry));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, null, h.Queue, h.LeaseRegistry));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, null, h.LeaseRegistry));
+                Assert.Throws<ArgumentNullException>(() => new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, h.Queue, null));
             });
         }
 
@@ -852,8 +852,8 @@ namespace Zantetsu.Core.Tests
             RunHarnessBody(h, () =>
             {
                 CaptureFrameRequestQueue altQueue = new CaptureFrameRequestQueue(4);
-                CaptureFrameRenderTargetCadencedPipelineCoordinator coordinator =
-                    new CaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, altQueue, h.LeaseRegistry);
+                PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator coordinator =
+                    new PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator(h.Pipeline, h.CadencedSubmission, altQueue, h.LeaseRegistry);
 
                 CaptureFrameRenderTargetLease lease = h.RentHeld();
                 Assert.Throws<InvalidOperationException>(() => Submit(coordinator, lease, 0.0, true));
@@ -964,7 +964,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TypeShape_SealedNonDisposableNonMonoBehaviour()
         {
-            Type type = typeof(CaptureFrameRenderTargetCadencedPipelineCoordinator);
+            Type type = typeof(PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator);
 
             Assert.That(type.IsSealed, Is.True);
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
@@ -999,7 +999,7 @@ namespace Zantetsu.Core.Tests
 
                 AsyncGPUReadback.WaitAllRequests();
 
-                CaptureFramePipelineAdvanceResult collected = h.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult collected = h.Pipeline.AdvancePendingWork();
                 Assert.That(collected.ReadbackCompletionStatus, Is.EqualTo(CaptureFramePngQueueStatus.Queued));
                 Assert.That(h.LeaseRegistry.Count, Is.EqualTo(0));
                 Assert.That(h.Pool.RentedCount, Is.EqualTo(0));
@@ -1031,7 +1031,7 @@ namespace Zantetsu.Core.Tests
                     UnityEngine.Object.DestroyImmediate(decoded);
                 }
 
-                CaptureFramePipelineAdvanceResult completed = h.Pipeline.AdvancePendingWork();
+                PngJsonCaptureFramePipelineAdvanceResult completed = h.Pipeline.AdvancePendingWork();
                 Assert.That(completed.PersistenceStatus, Is.EqualTo(CaptureFramePngArtifactPersistenceStatus.SidecarCompleted));
                 Assert.That(completed.CompletedArtifact, Is.Not.Null);
                 Assert.That(completed.SidecarReceipt, Is.Not.Null);

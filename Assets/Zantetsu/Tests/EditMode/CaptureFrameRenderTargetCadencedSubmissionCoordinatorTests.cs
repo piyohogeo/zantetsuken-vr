@@ -885,7 +885,7 @@ namespace Zantetsu.Core.Tests
             CaptureFrameCadenceSelector selector = new CaptureFrameCadenceSelector(CaptureFrameCadenceSelector.PhaseZeroTargetFramesPerSecond);
             CaptureFrameRenderTargetCadencedSubmissionCoordinator coordinator = new CaptureFrameRenderTargetCadencedSubmissionCoordinator(selector, submission);
 
-            CaptureFrameReadbackCompletionRouter router = new CaptureFrameReadbackCompletionRouter(dispatcher, observer);
+            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
             CaptureFramePngQueue queue = new CaptureFramePngQueue(1);
 
             CaptureFrameRenderTargetLease lease = default;

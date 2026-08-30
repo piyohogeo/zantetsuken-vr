@@ -10,8 +10,8 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// This is a value type with no public constructor; instances are created
-    /// only by <see cref="CaptureFrameCadencedPipelineCoordinator"/> and
-    /// <see cref="CaptureFrameRenderTargetCadencedPipelineCoordinator"/>. It
+    /// only by <see cref="PngJsonCaptureFrameCadencedPipelineCoordinator"/> and
+    /// <see cref="PngJsonCaptureFrameRenderTargetCadencedPipelineCoordinator"/>. It
     /// owns neither the advance result's artifact/receipt nor the accepted
     /// record.
     /// </para>
@@ -33,7 +33,7 @@ namespace Zantetsu.Observability
     /// </remarks>
     public readonly struct CaptureFrameCadencedPipelineResult
     {
-        public CaptureFramePipelineAdvanceResult AdvanceResult { get; }
+        public PngJsonCaptureFramePipelineAdvanceResult AdvanceResult { get; }
 
         public CaptureFrameCadencedSubmissionStatus SubmissionStatus { get; }
 
@@ -45,7 +45,7 @@ namespace Zantetsu.Observability
             SubmissionStatus == CaptureFrameCadencedSubmissionStatus.Submitted;
 
         internal CaptureFrameCadencedPipelineResult(
-            CaptureFramePipelineAdvanceResult advanceResult,
+            PngJsonCaptureFramePipelineAdvanceResult advanceResult,
             CaptureFrameCadencedSubmissionStatus submissionStatus,
             bool readbackStarted,
             CaptureFrameRecord acceptedRecord)

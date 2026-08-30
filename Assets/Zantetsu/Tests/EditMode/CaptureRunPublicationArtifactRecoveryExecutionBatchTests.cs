@@ -110,7 +110,7 @@ namespace Zantetsu.Core.Tests
             return MakeObservation(role, true, Canonical, init, Canonical, ready);
         }
 
-        private static CapturePublicationPlanEntry MakeEntry(
+        private static PngJsonCapturePublicationPlanEntry MakeEntry(
             long captureFrameId,
             long pngByteLength = PngBytes,
             long sidecarByteLength = SidecarBytes,
@@ -118,7 +118,7 @@ namespace Zantetsu.Core.Tests
             string sidecarHash = null)
         {
             string id = captureFrameId.ToString(CultureInfo.InvariantCulture);
-            return new CapturePublicationPlanEntry(
+            return new PngJsonCapturePublicationPlanEntry(
                 captureFrameId,
                 "frames/" + id + ".png.stage",
                 "frames/" + id + ".json.stage",
@@ -130,9 +130,9 @@ namespace Zantetsu.Core.Tests
                 sidecarHash ?? StagingHash);
         }
 
-        private static CapturePublicationPlanEntry[] MakeEntries(int count)
+        private static PngJsonCapturePublicationPlanEntry[] MakeEntries(int count)
         {
-            CapturePublicationPlanEntry[] entries = new CapturePublicationPlanEntry[count];
+            PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[count];
             for (int i = 0; i < count; i++)
             {
                 entries[i] = MakeEntry(i + 1);
@@ -141,13 +141,13 @@ namespace Zantetsu.Core.Tests
             return entries;
         }
 
-        private static CapturePublicationPlan MakePlan(
+        private static PngJsonCapturePublicationPlan MakePlan(
             long testRunId = 1,
             string initId = null,
             string manifestHash = null,
-            CapturePublicationPlanEntry[] entries = null)
+            PngJsonCapturePublicationPlanEntry[] entries = null)
         {
-            return new CapturePublicationPlan(
+            return new PngJsonCapturePublicationPlan(
                 testRunId,
                 initId ?? InitId,
                 manifestHash ?? StagingHash,
@@ -158,7 +158,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationDocumentKind kind,
             CaptureRunPublicationDocumentObservationStatus status,
             int probedByteCount = 0,
-            CapturePublicationPlan plan = null)
+            PngJsonCapturePublicationPlan plan = null)
         {
             return new CaptureRunPublicationDocumentObservation(kind, status, probedByteCount, plan);
         }
@@ -217,7 +217,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactInspectionOperation MakeOperation(
             List<string> disposeLog = null,
-            CapturePublicationPlan plan = null,
+            PngJsonCapturePublicationPlan plan = null,
             CaptureRunPublicationDocumentObservation publicationPlanTemporary = null,
             CaptureRunPublicationDocumentObservation publicationPlan = null,
             CaptureRunPublicationDocumentObservation captureIndexTemporary = null,
@@ -346,7 +346,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactRecoveryActionPlan BuildCaptureCompletePlan()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
                 captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, plan), plan: plan);
             CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
@@ -382,7 +382,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishedArtifactMissingPlan()
         {
-            CapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationPlan plan = MakePlan();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
                 captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, plan), plan: plan);
             CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
@@ -978,7 +978,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_LargePlan_LinearBuild()
         {
             int count = 500;
-            CapturePublicationPlan planEntries = MakePlan(entries: MakeEntries(count));
+            PngJsonCapturePublicationPlan planEntries = MakePlan(entries: MakeEntries(count));
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(plan: planEntries, maximumEntryCount: count);
 
             CaptureRunPublicationArtifactEntryObservation[] entries = new CaptureRunPublicationArtifactEntryObservation[count];

@@ -11,7 +11,7 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The canonical bytes are exactly the output of
-    /// <see cref="CapturePublicationPlanCodec.SerializeCanonical"/> for the
+    /// <see cref="PngJsonCapturePublicationPlanCodec.SerializeCanonical"/> for the
     /// authoritative plan. The constructor requires a
     /// <see cref="CanonicalBytesToken"/> that privately owns the byte array;
     /// on success it takes the array from the token by reference and nulls the
@@ -42,16 +42,16 @@ namespace Zantetsu.Observability
         /// </summary>
         internal sealed class CanonicalBytesToken
         {
-            private readonly CapturePublicationPlan _plan;
+            private readonly PngJsonCapturePublicationPlan _plan;
             private byte[] _bytes;
 
-            private CanonicalBytesToken(CapturePublicationPlan plan, byte[] bytes)
+            private CanonicalBytesToken(PngJsonCapturePublicationPlan plan, byte[] bytes)
             {
                 _plan = plan;
                 _bytes = bytes;
             }
 
-            internal bool IsIssuedFor(CapturePublicationPlan plan)
+            internal bool IsIssuedFor(PngJsonCapturePublicationPlan plan)
             {
                 return plan != null
                     && _bytes != null
@@ -71,7 +71,7 @@ namespace Zantetsu.Observability
                 return bytes;
             }
 
-            internal static CanonicalBytesToken Acquire(CapturePublicationPlan plan)
+            internal static CanonicalBytesToken Acquire(PngJsonCapturePublicationPlan plan)
             {
                 if (plan == null)
                 {
@@ -83,7 +83,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Plan must be valid.", nameof(plan));
                 }
 
-                byte[] canonicalBytes = CapturePublicationPlanCodec.SerializeCanonical(plan);
+                byte[] canonicalBytes = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan);
                 return new CanonicalBytesToken(plan, canonicalBytes);
             }
         }
@@ -171,7 +171,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Publication decision must be authoritative for the publication plan.", nameof(actionPlan));
             }
 
-            CapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
             if (authoritativePlan == null || !authoritativePlan.IsValid)
             {
                 throw new ArgumentException("Publication decision must hold a valid authoritative plan.", nameof(actionPlan));
@@ -270,7 +270,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationRecoveryDecision PublicationDecision => _actionPlan.Decision.PublicationDecision;
 
-        internal CapturePublicationPlan AuthoritativePlan => _actionPlan.AuthoritativePlan;
+        internal PngJsonCapturePublicationPlan AuthoritativePlan => _actionPlan.AuthoritativePlan;
 
         internal CaptureRunCaptureIndexCommitMode Mode => _mode;
 
@@ -363,7 +363,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CapturePublicationPlan authoritativePlan = AuthoritativePlan;
+            PngJsonCapturePublicationPlan authoritativePlan = AuthoritativePlan;
             if (authoritativePlan == null)
             {
                 return false;
@@ -372,7 +372,7 @@ namespace Zantetsu.Observability
             byte[] expected;
             try
             {
-                expected = CapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
+                expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
             }
             catch (InvalidOperationException)
             {
@@ -459,7 +459,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
+            PngJsonCapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
             if (authoritativePlan == null)
             {
                 return false;

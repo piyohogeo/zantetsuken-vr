@@ -111,7 +111,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationRecoveryDecision Decision => _operation.Decision;
 
-        internal CapturePublicationPlan Plan => _operation.Plan;
+        internal PngJsonCapturePublicationPlan Plan => _operation.Plan;
 
         internal CaptureRunPublicationEvidenceStatus TraceManifestStatus => _traceManifestStatus;
 
