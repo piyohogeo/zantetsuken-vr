@@ -327,6 +327,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(decision));
             }
 
+            if (!token.IsIssuedFor(decision))
+            {
+                throw new ArgumentException("Token must be issued for the same decision.", nameof(token));
+            }
+
             CaptureRunPublicationRecoveryDisposition disposition = decision.Disposition;
             if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
                 && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)

@@ -836,6 +836,85 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths0));
         }
 
+        [Test]
+        public void Observation_CrossOperationToken_TrustedConstructorRejected()
+        {
+            CaptureRunPublicationArtifactInspectionOperation operationA = MakeArtifactOperation();
+            CaptureRunPublicationArtifactInspectionOperation operationB = MakeArtifactOperation();
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken tokenA = operationA.AcquireValidationToken();
+            CaptureRunPublicationArtifactPathSet pathsB = operationB.GetArtifactPaths(0);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactEntryObservation(
+                operationB, tokenA, pathsB,
+                EvAbsent, 0, EvAbsent, 0, EvAbsent, 0, EvAbsent, 0));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void Observation_CrossOperationToken_IsValidIndexLocalFalse()
+        {
+            CaptureRunPublicationArtifactInspectionOperation operationA = MakeArtifactOperation();
+            CaptureRunPublicationArtifactInspectionOperation operationB = MakeArtifactOperation();
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken tokenA = operationA.AcquireValidationToken();
+
+            CaptureRunPublicationArtifactEntryObservation observationB = MakeEntryObservation(operationB, operationB.GetArtifactPaths(0));
+            Assert.That(observationB.IsValid, Is.True);
+            Assert.That(observationB.IsValidIndexLocal(tokenA), Is.False);
+        }
+
+        [Test]
+        public void PathSet_CrossDecisionToken_Rejected()
+        {
+            CaptureRunPublicationRecoveryDecision decisionA = MakeDecision();
+            CaptureRunPublicationRecoveryDecision decisionB = MakeDecision();
+            CaptureRunPublicationArtifactInspectionOperation.ConstructionToken tokenA =
+                CaptureRunPublicationArtifactInspectionOperation.ConstructionToken.Acquire(decisionA, 1000);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+                CaptureRunPublicationArtifactPathSet.CreateIndexLocal(tokenA, decisionB, 0));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void Observation_TokenStaleAfterLeaseRelease_RejectedOrFalse()
+        {
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeArtifactOperation();
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token = operation.AcquireValidationToken();
+
+            Assert.That(observation.IsValidIndexLocal(token), Is.True);
+
+            operation.LockLease.Dispose();
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+
+            Assert.That(observation.IsValidIndexLocal(token), Is.False);
+
+            Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactEntryObservation(
+                operation, token, paths0,
+                EvAbsent, 0, EvAbsent, 0, EvAbsent, 0, EvAbsent, 0));
+        }
+
+        [Test]
+        public void Observation_SameTargetToken_LinearSuccess()
+        {
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeArtifactOperation();
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token = operation.AcquireValidationToken();
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            Assert.That(observation.IsValid, Is.True);
+            Assert.That(observation.IsValidIndexLocal(token), Is.True);
+
+            CaptureRunPublicationArtifactEntryObservation trusted = new CaptureRunPublicationArtifactEntryObservation(
+                operation, token, paths0,
+                EvAbsent, 0, EvAbsent, 0, EvAbsent, 0, EvAbsent, 0);
+            Assert.That(trusted.IsValidIndexLocal(token), Is.True);
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = MakeArtifactSnapshot(new FakeArtifactInspector(), operation);
+            Assert.That(snapshot.IsValid, Is.True);
+        }
+
         // ---- Snapshot ----
 
         [Test]

@@ -32,8 +32,21 @@ namespace Zantetsu.Observability
         /// </summary>
         internal sealed class ValidationToken
         {
-            private ValidationToken()
+            private readonly CaptureRunPublicationArtifactInspectionOperation _operation;
+
+            private ValidationToken(CaptureRunPublicationArtifactInspectionOperation operation)
             {
+                _operation = operation;
+            }
+
+            /// <summary>
+            /// Reports whether this token was issued for the given operation.
+            /// The binding is reference-identical; the token carries no other
+            /// state and exposes no reference back to its operation.
+            /// </summary>
+            internal bool IsIssuedFor(CaptureRunPublicationArtifactInspectionOperation operation)
+            {
+                return operation != null && ReferenceEquals(_operation, operation);
             }
 
             internal static ValidationToken Acquire(CaptureRunPublicationArtifactInspectionOperation operation)
@@ -48,7 +61,7 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Operation must be fully valid before issuing a validation token.");
                 }
 
-                return new ValidationToken();
+                return new ValidationToken(operation);
             }
         }
 
@@ -60,8 +73,21 @@ namespace Zantetsu.Observability
         /// </summary>
         internal sealed class ConstructionToken
         {
-            private ConstructionToken()
+            private readonly CaptureRunPublicationRecoveryDecision _decision;
+
+            private ConstructionToken(CaptureRunPublicationRecoveryDecision decision)
             {
+                _decision = decision;
+            }
+
+            /// <summary>
+            /// Reports whether this token was issued for the given decision.
+            /// The binding is reference-identical; the token carries no other
+            /// state and exposes no reference back to its decision.
+            /// </summary>
+            internal bool IsIssuedFor(CaptureRunPublicationRecoveryDecision decision)
+            {
+                return decision != null && ReferenceEquals(_decision, decision);
             }
 
             internal static ConstructionToken Acquire(
@@ -102,7 +128,7 @@ namespace Zantetsu.Observability
                         "Maximum PNG byte count must be between 1 and " + MaximumAllowedPngByteCount + ".");
                 }
 
-                return new ConstructionToken();
+                return new ConstructionToken(decision);
             }
         }
 

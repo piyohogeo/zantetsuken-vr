@@ -81,6 +81,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(token));
             }
 
+            if (!token.IsIssuedFor(operation))
+            {
+                throw new ArgumentException("Token must be issued for this operation.", nameof(token));
+            }
+
             if (artifactPaths == null)
             {
                 throw new ArgumentNullException(nameof(artifactPaths));
@@ -198,7 +203,12 @@ namespace Zantetsu.Observability
 
         internal bool IsValidIndexLocal(CaptureRunPublicationArtifactInspectionOperation.ValidationToken token)
         {
-            if (token == null || _operation == null || _artifactPaths == null || !_artifactPaths.IsValidIndexLocal())
+            if (token == null || !token.IsIssuedFor(_operation))
+            {
+                return false;
+            }
+
+            if (_operation == null || _artifactPaths == null || !_artifactPaths.IsValidIndexLocal())
             {
                 return false;
             }
