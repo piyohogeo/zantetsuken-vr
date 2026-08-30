@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
 using NUnit.Framework;
@@ -36,6 +37,13 @@ namespace Zantetsu.Core.Tests
             PropertyInfo prop = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(prop, Is.Not.Null, target.GetType().Name + "." + name + " property not found.");
             return prop.GetValue(target);
+        }
+
+        private static void SetField(object target, string fieldName, object value)
+        {
+            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
+            field.SetValue(target, value);
         }
 
         private static Exception Unwrap(Exception ex)
@@ -317,6 +325,102 @@ namespace Zantetsu.Core.Tests
             object b = MakeLayout(StagingBaseRoot() + "2", FinalBaseRoot());
 
             Assert.That((string)GetProperty(a, "StagingRunRootSha256"), Is.Not.EqualTo((string)GetProperty(b, "StagingRunRootSha256")));
+        }
+
+        // ---- IsValid recomputation ----
+
+        [Test]
+        public void IsValid_True_ForNormalLayout()
+        {
+            object layout = MakeLayout();
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.True);
+        }
+
+        [Test]
+        public void IsValid_False_WhenFieldsNull_NoException()
+        {
+            object layout = FormatterServices.GetUninitializedObject(GetLayoutType());
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenTestRunIdNotPositive()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_testRunId", 0L);
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenTrustedBaseNotNormalized()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_stagingTrustedBaseRoot", StagingBaseRoot() + Separator);
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenBasesIdentical()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_finalTrustedBaseRoot", GetProperty(layout, "StagingTrustedBaseRoot"));
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenStagingAncestorOfFinal()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_finalTrustedBaseRoot", StagingBaseRoot() + Separator + "child");
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenRunRelativePathChanged()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_runRelativePath", "runs/run-999");
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenRunRootOutsideBase()
+        {
+            string outside = IsWindows ? "X:\\outside-run" : "/outside-run";
+
+            object staging = MakeLayout();
+            SetField(staging, "_stagingRunRoot", outside);
+            Assert.That((bool)GetProperty(staging, "IsValid"), Is.False);
+
+            object final = MakeLayout();
+            SetField(final, "_finalRunRoot", outside);
+            Assert.That((bool)GetProperty(final, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenRootHashChanged()
+        {
+            object layout = MakeLayout();
+            SetField(layout, "_stagingRunRootSha256", new string('0', 64));
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
+        }
+
+        [Test]
+        public void IsValid_False_WhenBaseUncOrDevice()
+        {
+            if (!IsWindows)
+            {
+                Assert.Ignore("Windows-specific path forms.");
+                return;
+            }
+
+            object unc = MakeLayout();
+            SetField(unc, "_stagingTrustedBaseRoot", "\\\\server\\share");
+            Assert.That((bool)GetProperty(unc, "IsValid"), Is.False);
+
+            object device = MakeLayout();
+            SetField(device, "_stagingTrustedBaseRoot", "\\\\?\\C:\\device");
+            Assert.That((bool)GetProperty(device, "IsValid"), Is.False);
         }
 
         // ---- Purity / shape ----

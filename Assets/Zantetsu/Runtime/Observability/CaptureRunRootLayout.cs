@@ -144,6 +144,101 @@ namespace Zantetsu.Observability
 
         internal string FinalRunRootSha256 => _finalRunRootSha256;
 
+        /// <summary>
+        /// Exception-safe recomputation of every invariant this layout
+        /// guarantees. Returns <c>false</c> for any corrupted or partially
+        /// populated instance without throwing.
+        /// </summary>
+        internal bool IsValid
+        {
+            get
+            {
+                try
+                {
+                    return IsValidCore();
+                }
+                catch (Exception ex) when (ex is ArgumentException
+                    || ex is NotSupportedException
+                    || ex is IOException
+                    || ex is EncoderFallbackException)
+                {
+                    return false;
+                }
+            }
+        }
+
+        private bool IsValidCore()
+        {
+            if (_testRunId <= 0)
+            {
+                return false;
+            }
+
+            string stagingBase = _stagingTrustedBaseRoot;
+            string finalBase = _finalTrustedBaseRoot;
+            string runRelativePath = _runRelativePath;
+            string stagingRunRoot = _stagingRunRoot;
+            string finalRunRoot = _finalRunRoot;
+            string stagingHash = _stagingRunRootSha256;
+            string finalHash = _finalRunRootSha256;
+
+            if (stagingBase == null || finalBase == null
+                || runRelativePath == null || stagingRunRoot == null || finalRunRoot == null
+                || stagingHash == null || finalHash == null)
+            {
+                return false;
+            }
+
+            if (!IsFullyQualifiedLocalAbsolutePath(stagingBase) || !IsFullyQualifiedLocalAbsolutePath(finalBase))
+            {
+                return false;
+            }
+
+            string stagingNormalized = NormalizeBaseRoot(stagingBase, "stagingTrustedBaseRoot");
+            string finalNormalized = NormalizeBaseRoot(finalBase, "finalTrustedBaseRoot");
+
+            if (!string.Equals(stagingBase, stagingNormalized, StringComparison.Ordinal)
+                || !string.Equals(finalBase, finalNormalized, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (string.Equals(stagingNormalized, finalNormalized, StringComparison.OrdinalIgnoreCase)
+                || IsAncestor(stagingNormalized, finalNormalized)
+                || IsAncestor(finalNormalized, stagingNormalized))
+            {
+                return false;
+            }
+
+            string expectedRunRelativePath = "runs/run-" + _testRunId.ToString(CultureInfo.InvariantCulture);
+            if (!string.Equals(runRelativePath, expectedRunRelativePath, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string expectedStagingRunRoot = CombineRoot(stagingNormalized, runRelativePath);
+            string expectedFinalRunRoot = CombineRoot(finalNormalized, runRelativePath);
+
+            if (!string.Equals(stagingRunRoot, expectedStagingRunRoot, StringComparison.Ordinal)
+                || !string.Equals(finalRunRoot, expectedFinalRunRoot, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!IsAncestor(stagingNormalized, stagingRunRoot) || !IsAncestor(finalNormalized, finalRunRoot))
+            {
+                return false;
+            }
+
+            if (!string.Equals(stagingHash, ComputeRootSha256(stagingRunRoot), StringComparison.Ordinal)
+                || !string.Equals(finalHash, ComputeRootSha256(finalRunRoot), StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private static string NormalizeBaseRoot(string baseRoot, string paramName)
         {
             if (!IsFullyQualifiedLocalAbsolutePath(baseRoot))

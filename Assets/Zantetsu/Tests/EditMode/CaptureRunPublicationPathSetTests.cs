@@ -226,10 +226,10 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunRootLayout layout = MakeInvalidLayoutWithEqualRunRoots(runRoot);
 
+            Assert.That(layout.IsValid, Is.False);
             InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
                 () => new CaptureRunPublicationPathSet(layout));
-
-            Assert.That(ex.Message, Does.Contain("differ"));
+            Assert.That(ex.Message, Does.Contain("valid"));
             Assert.That(Directory.Exists(runRoot), Is.False);
             Assert.That(File.Exists(runRoot), Is.False);
         }
@@ -328,6 +328,87 @@ namespace Zantetsu.Core.Tests
 
             SetField(layout, "_stagingRunRoot", "relative");
             Assert.That(pathSet.IsValid, Is.False);
+        }
+
+        // ---- Corrupted RootLayout trust boundary ----
+
+        private static void AssertCorruptedLayoutRejected(Action<CaptureRunRootLayout> mutate)
+        {
+            CaptureRunRootLayout corrupted = MakeLayout();
+            mutate(corrupted);
+            Assert.That(corrupted.IsValid, Is.False);
+
+            Assert.Throws<InvalidOperationException>(() => new CaptureRunPublicationPathSet(corrupted));
+
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunPublicationPathSet pathSet = new CaptureRunPublicationPathSet(layout);
+            mutate(layout);
+            Assert.That(pathSet.IsValid, Is.False);
+        }
+
+        [Test]
+        public void CorruptedLayout_StagingRunRootOutsideBase_RejectedAndInvalid()
+        {
+            string outside = IsWindows ? "X:\\outside-run" : "/outside-run";
+            AssertCorruptedLayoutRejected(l => SetField(l, "_stagingRunRoot", outside));
+        }
+
+        [Test]
+        public void CorruptedLayout_FinalRunRootOutsideBase_RejectedAndInvalid()
+        {
+            string outside = IsWindows ? "Y:\\outside-run" : "/outside-run-final";
+            AssertCorruptedLayoutRejected(l => SetField(l, "_finalRunRoot", outside));
+        }
+
+        [Test]
+        public void CorruptedLayout_RunRelativePathChanged_RejectedAndInvalid()
+        {
+            AssertCorruptedLayoutRejected(l => SetField(l, "_runRelativePath", "runs/run-999"));
+        }
+
+        [Test]
+        public void CorruptedLayout_TrustedBaseChanged_RejectedAndInvalid()
+        {
+            string other = IsWindows ? "C:\\other-staging" : "/other-staging";
+            AssertCorruptedLayoutRejected(l => SetField(l, "_stagingTrustedBaseRoot", other));
+        }
+
+        [Test]
+        public void CorruptedLayout_RootHashChanged_RejectedAndInvalid()
+        {
+            AssertCorruptedLayoutRejected(l => SetField(l, "_stagingRunRootSha256", new string('0', 64)));
+        }
+
+        [Test]
+        public void CorruptedLayout_BasesIdentical_RejectedAndInvalid()
+        {
+            AssertCorruptedLayoutRejected(l => SetField(l, "_finalTrustedBaseRoot", l.StagingTrustedBaseRoot));
+        }
+
+        [Test]
+        public void CorruptedLayout_StagingAncestorOfFinal_RejectedAndInvalid()
+        {
+            string child = IsWindows ? "C:\\staging\\child" : "/staging/child";
+            AssertCorruptedLayoutRejected(l => SetField(l, "_finalTrustedBaseRoot", child));
+        }
+
+        [Test]
+        public void CorruptedLayout_UncDeviceBase_RejectedAndInvalid()
+        {
+            if (!IsWindows)
+            {
+                Assert.Ignore("Windows-specific path forms.");
+                return;
+            }
+
+            AssertCorruptedLayoutRejected(l => SetField(l, "_stagingTrustedBaseRoot", "\\\\server\\share"));
+            AssertCorruptedLayoutRejected(l => SetField(l, "_stagingTrustedBaseRoot", "\\\\?\\C:\\device"));
+        }
+
+        [Test]
+        public void CorruptedLayout_TestRunIdNotPositive_RejectedAndInvalid()
+        {
+            AssertCorruptedLayoutRejected(l => SetField(l, "_testRunId", 0L));
         }
 
         // ---- Shape ----

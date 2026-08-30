@@ -43,28 +43,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(rootLayout));
             }
 
+            if (!rootLayout.IsValid)
+            {
+                throw new InvalidOperationException("Root layout must be valid.");
+            }
+
             string stagingRunRoot = rootLayout.StagingRunRoot;
             string finalRunRoot = rootLayout.FinalRunRoot;
-
-            if (string.IsNullOrEmpty(stagingRunRoot))
-            {
-                throw new InvalidOperationException("Staging run root must not be null or empty.");
-            }
-
-            if (string.IsNullOrEmpty(finalRunRoot))
-            {
-                throw new InvalidOperationException("Final run root must not be null or empty.");
-            }
-
-            if (!Path.IsPathFullyQualified(stagingRunRoot))
-            {
-                throw new InvalidOperationException("Staging run root must be a fully qualified absolute path.");
-            }
-
-            if (!Path.IsPathFullyQualified(finalRunRoot))
-            {
-                throw new InvalidOperationException("Final run root must be a fully qualified absolute path.");
-            }
 
             string stagingFramesRoot = RequireChildPath(stagingRunRoot, "frames");
             string publicationPlanTemporaryPath = RequireChildPath(stagingRunRoot, "publication.plan.tmp");
@@ -119,23 +104,13 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_rootLayout == null)
+                if (_rootLayout == null || !_rootLayout.IsValid)
                 {
                     return false;
                 }
 
                 string stagingRunRoot = _rootLayout.StagingRunRoot;
                 string finalRunRoot = _rootLayout.FinalRunRoot;
-
-                if (string.IsNullOrEmpty(stagingRunRoot) || string.IsNullOrEmpty(finalRunRoot))
-                {
-                    return false;
-                }
-
-                if (!Path.IsPathFullyQualified(stagingRunRoot) || !Path.IsPathFullyQualified(finalRunRoot))
-                {
-                    return false;
-                }
 
                 if (!MatchesFixed(stagingRunRoot, "frames", _stagingFramesRoot)
                     || !MatchesFixed(stagingRunRoot, "publication.plan.tmp", _publicationPlanTemporaryPath)
