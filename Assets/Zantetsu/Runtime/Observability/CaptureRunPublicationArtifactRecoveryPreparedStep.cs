@@ -62,7 +62,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Step must be valid.", nameof(stepIndex));
             }
 
-            if (!IsPreparedStepValid(actionPlan, token, stepIndex, publishOperation, captureIndexCommitOperation))
+            if (!IsPreparedStepValid(actionPlan, token, stepIndex, publishOperation, captureIndexCommitOperation, false))
             {
                 throw new ArgumentException("Prepared step must satisfy its action's exclusive operation correlation.", nameof(publishOperation));
             }
@@ -89,7 +89,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_actionPlan == null || !_actionPlan.IsValid)
+                if (_actionPlan == null)
                 {
                     return false;
                 }
@@ -110,7 +110,7 @@ namespace Zantetsu.Observability
 
         internal bool IsValidIndexLocal(CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
-            return IsPreparedStepValid(_actionPlan, token, _stepIndex, _publishOperation, _captureIndexCommitOperation);
+            return IsPreparedStepValid(_actionPlan, token, _stepIndex, _publishOperation, _captureIndexCommitOperation, true);
         }
 
         private static bool IsPreparedStepValid(
@@ -118,7 +118,8 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token,
             int stepIndex,
             CaptureRunPublicationArtifactPublishOperation publishOperation,
-            CaptureRunCaptureIndexCommitOperation captureIndexCommitOperation)
+            CaptureRunCaptureIndexCommitOperation captureIndexCommitOperation,
+            bool fullCommitValidation)
         {
             if (actionPlan == null || token == null || !token.IsIssuedFor(actionPlan))
             {
@@ -150,7 +151,9 @@ namespace Zantetsu.Observability
                         && captureIndexCommitOperation != null
                         && ReferenceEquals(captureIndexCommitOperation.ActionPlan, actionPlan)
                         && captureIndexCommitOperation.StepIndex == stepIndex
-                        && captureIndexCommitOperation.IsValid;
+                        && (fullCommitValidation
+                            ? captureIndexCommitOperation.IsValid
+                            : captureIndexCommitOperation.IsValidIndexLocal(token));
 
                 case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
                 case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:

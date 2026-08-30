@@ -480,6 +480,143 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Index-local validity for an already-validated action plan: re-verifies
+        /// only this step's correlation in O(1) without re-validating the whole
+        /// plan, re-scanning entries, or re-serializing the canonical bytes. The
+        /// token must be issued for this operation's action plan and its lease
+        /// must still be live. Full byte-content verification remains the
+        /// responsibility of <see cref="IsValid"/>.
+        /// </summary>
+        internal bool IsValidIndexLocal(
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (_actionPlan == null || token == null)
+            {
+                return false;
+            }
+
+            if (!token.IsIssuedFor(_actionPlan))
+            {
+                return false;
+            }
+
+            if (_stepIndex < 0 || _stepIndex >= _actionPlan.Count)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryStep step = _actionPlan.GetStep(_stepIndex);
+            if (step == null || !step.IsValid
+                || step.Action != CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex
+                || step.EntryIndex != -1
+                || step.ArtifactKind != CaptureRunPublicationArtifactKind.None)
+            {
+                return false;
+            }
+
+            if (_actionPlan.Count != 1)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = _actionPlan.Decision;
+            if (decision == null || decision.Disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation operation = snapshot.Operation;
+            if (operation == null)
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lease = operation.LockLease;
+            if (lease == null || !lease.IsCreated)
+            {
+                return false;
+            }
+
+            CaptureRunRootLayout rootLayout = operation.RootLayout;
+            if (rootLayout == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryDecision publicationDecision = decision.PublicationDecision;
+            if (publicationDecision == null
+                || publicationDecision.Disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative)
+            {
+                return false;
+            }
+
+            CapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
+            if (authoritativePlan == null)
+            {
+                return false;
+            }
+
+            if (snapshot.TraceManifestStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = publicationDecision.Snapshot;
+            if (publicationSnapshot == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationDocumentObservation captureIndex = publicationSnapshot.CaptureIndex;
+            if (captureIndex == null || !captureIndex.IsValid
+                || captureIndex.Status != CaptureRunPublicationDocumentObservationStatus.Absent)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationDocumentObservation captureIndexTemporary = publicationSnapshot.CaptureIndexTemporary;
+            if (captureIndexTemporary == null
+                || !captureIndexTemporary.IsValid
+                || !TryDeriveMode(captureIndexTemporary.Status, out CaptureRunCaptureIndexCommitMode expectedMode)
+                || _mode != expectedMode)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryInspectionOperation publicationOperation = publicationSnapshot.Operation;
+            if (publicationOperation == null)
+            {
+                return false;
+            }
+
+            if (_publicationPaths == null || !_publicationPaths.IsValid
+                || !ReferenceEquals(_publicationPaths, publicationOperation.PublicationPaths)
+                || !ReferenceEquals(_publicationPaths.RootLayout, rootLayout)
+                || !ReferenceEquals(publicationOperation.RootLayout, rootLayout))
+            {
+                return false;
+            }
+
+            if (string.Equals(_publicationPaths.CaptureIndexTemporaryPath, _publicationPaths.CaptureIndexPath, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (_canonicalBytes == null || _canonicalBytes.Length == 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private static bool TryDeriveMode(
             CaptureRunPublicationDocumentObservationStatus status,
             out CaptureRunCaptureIndexCommitMode mode)

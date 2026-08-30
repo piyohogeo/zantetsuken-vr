@@ -1067,5 +1067,23 @@ namespace Zantetsu.Core.Tests
             int assignIndex = batchSource.IndexOf("_preparedSteps = preparedSteps;", StringComparison.Ordinal);
             Assert.That(assignIndex, Is.GreaterThan(loopIndex));
         }
+
+        [Test]
+        public void Source_CommitIndexLocal_NoSerializationOrFullScan()
+        {
+            string commitSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperation.cs"));
+
+            int indexLocal = commitSource.IndexOf("IsValidIndexLocal", StringComparison.Ordinal);
+            Assert.That(indexLocal, Is.GreaterThan(0));
+
+            int tryDerive = commitSource.IndexOf("TryDeriveMode", indexLocal, StringComparison.Ordinal);
+            Assert.That(tryDerive, Is.GreaterThan(indexLocal));
+
+            string indexLocalBody = commitSource.Substring(indexLocal, tryDerive - indexLocal);
+            Assert.That(indexLocalBody, Does.Not.Contain("SerializeCanonical"));
+            Assert.That(indexLocalBody, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(indexLocalBody, Does.Not.Contain("PlansEqual"));
+            Assert.That(indexLocalBody, Does.Not.Contain("snapshot.Count"));
+        }
     }
 }
