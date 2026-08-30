@@ -123,9 +123,15 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Execution receipt initialization ID does not match the issued ID.");
                 }
 
-                CaptureRunInitializationSession createdSession = new CaptureRunInitializationSession(lease, executionReceipt);
+                CaptureRunInitializationSession createdSession = CaptureRunInitializationSessionFactory.Create(
+                    ref lease,
+                    CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt));
 
-                lease = null;
+                if (lease != null)
+                {
+                    throw new InvalidOperationException("Session factory did not transfer the lock lease.");
+                }
+
                 session = createdSession;
                 return true;
             }

@@ -321,7 +321,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockLease lease = MakeLease(MakeLayout(), null, out _, out _);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunInitializationSession(lease, null));
+                () => new CaptureRunInitializationSession(lease, (CaptureRunInitializationExecutionReceipt)null));
 
             Assert.That(ex.ParamName, Is.EqualTo("executionReceipt"));
         }
@@ -487,7 +487,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(fields.Length, Is.EqualTo(3));
 
             int leaseFields = 0;
-            int receiptFields = 0;
+            int evidenceFields = 0;
             int boolFields = 0;
             foreach (FieldInfo field in fields)
             {
@@ -496,10 +496,10 @@ namespace Zantetsu.Core.Tests
                     Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
                     leaseFields++;
                 }
-                else if (field.FieldType == typeof(CaptureRunInitializationExecutionReceipt))
+                else if (field.FieldType == typeof(CaptureRunInitializationReadyEvidence))
                 {
                     Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                    receiptFields++;
+                    evidenceFields++;
                 }
                 else if (field.FieldType == typeof(bool))
                 {
@@ -513,7 +513,7 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(leaseFields, Is.EqualTo(1));
-            Assert.That(receiptFields, Is.EqualTo(1));
+            Assert.That(evidenceFields, Is.EqualTo(1));
             Assert.That(boolFields, Is.EqualTo(1));
         }
 
