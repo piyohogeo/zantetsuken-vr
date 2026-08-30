@@ -158,7 +158,7 @@ namespace Zantetsu.Observability
                 && string.Equals(plan.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal);
         }
 
-        private static bool PlansEqual(CapturePublicationPlan left, CapturePublicationPlan right)
+        internal static bool PlansEqual(CapturePublicationPlan left, CapturePublicationPlan right)
         {
             if (ReferenceEquals(left, right))
             {
