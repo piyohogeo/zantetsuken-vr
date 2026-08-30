@@ -49,7 +49,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(operation));
             }
 
-            if (!operation.IsValid)
+            if (!operation.IsCoreValid())
             {
                 throw new ArgumentException("Operation must be valid.", nameof(operation));
             }
@@ -59,7 +59,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(artifactPaths));
             }
 
-            if (!artifactPaths.IsValid)
+            if (!artifactPaths.IsValidIndexLocal())
             {
                 throw new ArgumentException("Artifact path set must be valid.", nameof(artifactPaths));
             }
@@ -69,13 +69,8 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Artifact path set must share the operation's decision.", nameof(artifactPaths));
             }
 
-            int entryIndex = artifactPaths.EntryIndex;
-            if (entryIndex < 0 || entryIndex >= operation.EntryCount)
-            {
-                throw new ArgumentException("Artifact path set entry index must be within the operation entry count.", nameof(artifactPaths));
-            }
-
-            if (!ReferenceEquals(artifactPaths, operation.GetArtifactPaths(entryIndex)))
+            if (!operation.TryGetArtifactPaths(artifactPaths.EntryIndex, out CaptureRunPublicationArtifactPathSet expected)
+                || !ReferenceEquals(artifactPaths, expected))
             {
                 throw new ArgumentException("Artifact path set must be the operation's path set for its entry index.", nameof(artifactPaths));
             }
@@ -84,10 +79,10 @@ namespace Zantetsu.Observability
             long pngLimit = Min(entry.PngByteLength, operation.MaximumPngByteCount);
             long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
 
-            RequireEvidence(stagingPngStatus, stagingPngProbedByteCount, pngLimit, nameof(stagingPngStatus), nameof(stagingPngProbedByteCount));
-            RequireEvidence(stagingSidecarStatus, stagingSidecarProbedByteCount, sidecarLimit, nameof(stagingSidecarStatus), nameof(stagingSidecarProbedByteCount));
-            RequireEvidence(finalPngStatus, finalPngProbedByteCount, pngLimit, nameof(finalPngStatus), nameof(finalPngProbedByteCount));
-            RequireEvidence(finalSidecarStatus, finalSidecarProbedByteCount, sidecarLimit, nameof(finalSidecarStatus), nameof(finalSidecarProbedByteCount));
+            ArtifactRequireEvidence(stagingPngStatus, stagingPngProbedByteCount, entry.PngByteLength, pngLimit, nameof(stagingPngStatus), nameof(stagingPngProbedByteCount));
+            ArtifactRequireEvidence(stagingSidecarStatus, stagingSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit, nameof(stagingSidecarStatus), nameof(stagingSidecarProbedByteCount));
+            ArtifactRequireEvidence(finalPngStatus, finalPngProbedByteCount, entry.PngByteLength, pngLimit, nameof(finalPngStatus), nameof(finalPngProbedByteCount));
+            ArtifactRequireEvidence(finalSidecarStatus, finalSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit, nameof(finalSidecarStatus), nameof(finalSidecarProbedByteCount));
 
             _operation = operation;
             _artifactPaths = artifactPaths;
@@ -123,7 +118,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_operation == null || !_operation.IsValid || _artifactPaths == null || !_artifactPaths.IsValid)
+                if (_operation == null || !_operation.IsCoreValid() || _artifactPaths == null || !_artifactPaths.IsValidIndexLocal())
                 {
                     return false;
                 }
@@ -133,13 +128,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                int entryIndex = _artifactPaths.EntryIndex;
-                if (entryIndex < 0 || entryIndex >= _operation.EntryCount)
-                {
-                    return false;
-                }
-
-                if (!ReferenceEquals(_artifactPaths, _operation.GetArtifactPaths(entryIndex)))
+                if (!_operation.TryGetArtifactPaths(_artifactPaths.EntryIndex, out CaptureRunPublicationArtifactPathSet expected)
+                    || !ReferenceEquals(_artifactPaths, expected))
                 {
                     return false;
                 }
@@ -148,10 +138,10 @@ namespace Zantetsu.Observability
                 long pngLimit = Min(entry.PngByteLength, _operation.MaximumPngByteCount);
                 long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
 
-                return EvidenceSatisfied(_stagingPngStatus, _stagingPngProbedByteCount, pngLimit)
-                    && EvidenceSatisfied(_stagingSidecarStatus, _stagingSidecarProbedByteCount, sidecarLimit)
-                    && EvidenceSatisfied(_finalPngStatus, _finalPngProbedByteCount, pngLimit)
-                    && EvidenceSatisfied(_finalSidecarStatus, _finalSidecarProbedByteCount, sidecarLimit);
+                return ArtifactEvidenceSatisfied(_stagingPngStatus, _stagingPngProbedByteCount, entry.PngByteLength, pngLimit)
+                    && ArtifactEvidenceSatisfied(_stagingSidecarStatus, _stagingSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit)
+                    && ArtifactEvidenceSatisfied(_finalPngStatus, _finalPngProbedByteCount, entry.PngByteLength, pngLimit)
+                    && ArtifactEvidenceSatisfied(_finalSidecarStatus, _finalSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit);
             }
         }
 
@@ -164,7 +154,11 @@ namespace Zantetsu.Observability
                 || status == CaptureRunPublicationEvidenceStatus.LimitExceeded;
         }
 
-        internal static bool EvidenceSatisfied(CaptureRunPublicationEvidenceStatus status, long probedByteCount, long limit)
+        private static bool ArtifactEvidenceSatisfied(
+            CaptureRunPublicationEvidenceStatus status,
+            long probedByteCount,
+            long expectedByteLength,
+            long limit)
         {
             switch (status)
             {
@@ -172,6 +166,8 @@ namespace Zantetsu.Observability
                     return probedByteCount == 0;
 
                 case CaptureRunPublicationEvidenceStatus.MatchesExpected:
+                    return probedByteCount == expectedByteLength && expectedByteLength > 0;
+
                 case CaptureRunPublicationEvidenceStatus.Mismatch:
                     return probedByteCount > 0 && probedByteCount <= limit;
 
@@ -186,9 +182,10 @@ namespace Zantetsu.Observability
             }
         }
 
-        internal static void RequireEvidence(
+        private static void ArtifactRequireEvidence(
             CaptureRunPublicationEvidenceStatus status,
             long probedByteCount,
+            long expectedByteLength,
             long limit,
             string statusParamName,
             string countParamName)
@@ -209,6 +206,13 @@ namespace Zantetsu.Observability
                     return;
 
                 case CaptureRunPublicationEvidenceStatus.MatchesExpected:
+                    if (probedByteCount != expectedByteLength)
+                    {
+                        throw new ArgumentException("A matching evidence must probe exactly the expected byte length.", countParamName);
+                    }
+
+                    return;
+
                 case CaptureRunPublicationEvidenceStatus.Mismatch:
                     if (probedByteCount <= 0 || probedByteCount > limit)
                     {

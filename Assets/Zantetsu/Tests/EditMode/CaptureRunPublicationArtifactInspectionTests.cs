@@ -579,6 +579,40 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Operation_LargePlan_LinearConstruction()
+        {
+            // Building or validating one entry must never rescan the whole plan;
+            // with 10000 entries a quadratic path would take minutes, so the
+            // elapsed bound below pins the full-graph validation to a single
+            // pass per boundary.
+            const int entryCount = 10000;
+            CapturePublicationPlanEntry[] entries = new CapturePublicationPlanEntry[entryCount];
+            for (int i = 0; i < entryCount; i++)
+            {
+                entries[i] = MakeEntry(i + 1);
+            }
+
+            CapturePublicationPlan plan = MakePlan(entries: entries);
+
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(
+                MakePublicationRecoveryOutcome(), 1000, entryCount, 64);
+            CaptureRunPublicationRecoveryInspectionSnapshot recoverySnapshot = MakeRecoverySnapshot(
+                inspector, recoveryOperation, publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
+            CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(recoverySnapshot);
+
+            System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1024);
+            bool valid = operation.IsValid;
+            stopwatch.Stop();
+
+            Assert.That(valid, Is.True);
+            Assert.That(operation.EntryCount, Is.EqualTo(entryCount));
+            Assert.That(stopwatch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(10)),
+                "Constructing and validating the operation must not rescan the whole plan per entry.");
+        }
+
+        [Test]
         public void Operation_LeaseRelease_IsValidFalse()
         {
             CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome();
@@ -633,6 +667,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvAbsent, stagingPngCount: 1));
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 0));
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 15));
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 17));
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMismatch, stagingPngCount: 17));
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvInvalid, stagingPngCount: -1));
@@ -651,6 +686,29 @@ namespace Zantetsu.Core.Tests
             Assert.That(MakeEntryObservation(operation, paths, stagingSidecarStatus: EvLimitExceeded, stagingSidecarCount: 33).IsValid, Is.True);
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingSidecarStatus: EvLimitExceeded, stagingSidecarCount: 32));
             Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingSidecarStatus: EvLimitExceeded, stagingSidecarCount: 34));
+        }
+
+        [Test]
+        public void Observation_MatchesExpected_ExactlyExpectedLength()
+        {
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision();
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
+            CaptureRunPublicationArtifactPathSet paths = operation.GetArtifactPaths(0);
+
+            // PNG expected byte length is 16; sidecar expected byte length is 32.
+            Assert.That(MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 16).IsValid, Is.True);
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 15));
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingPngStatus: EvMatchesExpected, stagingPngCount: 17));
+
+            Assert.That(MakeEntryObservation(operation, paths, stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: 32).IsValid, Is.True);
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: 31));
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: 33));
+
+            Assert.That(MakeEntryObservation(operation, paths, finalPngStatus: EvMatchesExpected, finalPngCount: 16).IsValid, Is.True);
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, finalPngStatus: EvMatchesExpected, finalPngCount: 15));
+
+            Assert.That(MakeEntryObservation(operation, paths, finalSidecarStatus: EvMatchesExpected, finalSidecarCount: 32).IsValid, Is.True);
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths, finalSidecarStatus: EvMatchesExpected, finalSidecarCount: 31));
         }
 
         [Test]

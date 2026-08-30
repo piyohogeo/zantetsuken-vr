@@ -289,5 +289,178 @@ namespace Zantetsu.Observability
                 && !string.Equals(second, fourth, StringComparison.Ordinal)
                 && !string.Equals(third, fourth, StringComparison.Ordinal);
         }
+
+        private CaptureRunPublicationArtifactPathSet(
+            CaptureRunPublicationRecoveryDecision decision,
+            int entryIndex,
+            string stagingPngPath,
+            string stagingSidecarPath,
+            string finalPngPath,
+            string finalSidecarPath)
+        {
+            _decision = decision;
+            _entryIndex = entryIndex;
+            _stagingPngPath = stagingPngPath;
+            _stagingSidecarPath = stagingSidecarPath;
+            _finalPngPath = finalPngPath;
+            _finalSidecarPath = finalSidecarPath;
+        }
+
+        /// <summary>
+        /// Index-local construction for an already-validated decision: assumes
+        /// the decision graph and authoritative plan were fully validated by
+        /// the caller, and validates only this entry index, its entry, and its
+        /// four resolved paths.
+        /// </summary>
+        internal static CaptureRunPublicationArtifactPathSet CreateIndexLocal(
+            CaptureRunPublicationRecoveryDecision decision,
+            int entryIndex)
+        {
+            if (decision == null)
+            {
+                throw new ArgumentNullException(nameof(decision));
+            }
+
+            CaptureRunPublicationRecoveryDisposition disposition = decision.Disposition;
+            if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
+                && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
+            {
+                throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
+            }
+
+            CapturePublicationPlan plan = decision.AuthoritativePlan;
+            if (plan == null)
+            {
+                throw new ArgumentException("Decision must hold an authoritative plan.", nameof(decision));
+            }
+
+            if (entryIndex < 0 || entryIndex >= plan.EntryCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entryIndex), entryIndex, "Entry index must be within the authoritative plan entry count.");
+            }
+
+            if (!CheapCorrelated(decision))
+            {
+                throw new ArgumentException("Decision graph must remain correlated.", nameof(decision));
+            }
+
+            CaptureRunRootLayout rootLayout = decision.RootLayout;
+            CaptureRunPublicationPathSet publicationPaths = decision.Snapshot.Operation.PublicationPaths;
+
+            CapturePublicationPlanEntry entry = plan.GetEntry(entryIndex);
+            if (entry == null || !entry.IsValid)
+            {
+                throw new ArgumentException("Target plan entry must be valid.", nameof(decision));
+            }
+
+            string id = entry.CaptureFrameId.ToString(CultureInfo.InvariantCulture);
+
+            string stagingPngPath;
+            string stagingSidecarPath;
+            string finalPngPath;
+            string finalSidecarPath;
+
+            try
+            {
+                stagingPngPath = DeriveArtifactPath(rootLayout.StagingRunRoot, entry.PngStagingRelativePath, publicationPaths.StagingFramesRoot, id + ".png.stage");
+                stagingSidecarPath = DeriveArtifactPath(rootLayout.StagingRunRoot, entry.SidecarStagingRelativePath, publicationPaths.StagingFramesRoot, id + ".json.stage");
+                finalPngPath = DeriveArtifactPath(rootLayout.FinalRunRoot, entry.PngFinalRelativePath, publicationPaths.FinalFramesRoot, id + ".png");
+                finalSidecarPath = DeriveArtifactPath(rootLayout.FinalRunRoot, entry.SidecarFinalRelativePath, publicationPaths.FinalFramesRoot, id + ".json");
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is IOException)
+            {
+                throw new ArgumentException("Plan entry paths must resolve to fixed absolute artifact paths.", nameof(decision), ex);
+            }
+
+            if (!AreDistinct(stagingPngPath, stagingSidecarPath, finalPngPath, finalSidecarPath))
+            {
+                throw new ArgumentException("Artifact paths must be mutually distinct.", nameof(decision));
+            }
+
+            return new CaptureRunPublicationArtifactPathSet(decision, entryIndex, stagingPngPath, stagingSidecarPath, finalPngPath, finalSidecarPath);
+        }
+
+        /// <summary>
+        /// Index-local validity for an already-validated decision: re-verifies
+        /// only this entry index, entry, and four resolved paths without
+        /// re-validating the whole decision graph or plan.
+        /// </summary>
+        internal bool IsValidIndexLocal()
+        {
+            if (_decision == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryDisposition disposition = _decision.Disposition;
+            if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
+                && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
+            {
+                return false;
+            }
+
+            CapturePublicationPlan plan = _decision.AuthoritativePlan;
+            if (plan == null)
+            {
+                return false;
+            }
+
+            if (_entryIndex < 0 || _entryIndex >= plan.EntryCount)
+            {
+                return false;
+            }
+
+            if (!CheapCorrelated(_decision))
+            {
+                return false;
+            }
+
+            CaptureRunRootLayout rootLayout = _decision.RootLayout;
+            CaptureRunPublicationPathSet publicationPaths = _decision.Snapshot.Operation.PublicationPaths;
+
+            CapturePublicationPlanEntry entry = plan.GetEntry(_entryIndex);
+            if (entry == null || !entry.IsValid)
+            {
+                return false;
+            }
+
+            string id = entry.CaptureFrameId.ToString(CultureInfo.InvariantCulture);
+
+            return MatchesFixed(rootLayout.StagingRunRoot, entry.PngStagingRelativePath, publicationPaths.StagingFramesRoot, id + ".png.stage", _stagingPngPath)
+                && MatchesFixed(rootLayout.StagingRunRoot, entry.SidecarStagingRelativePath, publicationPaths.StagingFramesRoot, id + ".json.stage", _stagingSidecarPath)
+                && MatchesFixed(rootLayout.FinalRunRoot, entry.PngFinalRelativePath, publicationPaths.FinalFramesRoot, id + ".png", _finalPngPath)
+                && MatchesFixed(rootLayout.FinalRunRoot, entry.SidecarFinalRelativePath, publicationPaths.FinalFramesRoot, id + ".json", _finalSidecarPath)
+                && AreDistinct(_stagingPngPath, _stagingSidecarPath, _finalPngPath, _finalSidecarPath);
+        }
+
+        private static bool CheapCorrelated(CaptureRunPublicationRecoveryDecision decision)
+        {
+            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = decision.Snapshot;
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryInspectionOperation operation = snapshot.Operation;
+            if (operation == null)
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lockLease = operation.LockLease;
+            if (lockLease == null || !lockLease.IsCreated)
+            {
+                return false;
+            }
+
+            CaptureRunRootLayout rootLayout = operation.RootLayout;
+            if (rootLayout == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
+            return publicationPaths != null && ReferenceEquals(publicationPaths.RootLayout, rootLayout);
+        }
     }
 }

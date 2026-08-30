@@ -56,7 +56,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Operation must be valid.", nameof(operation));
             }
 
-            CaptureRunPublicationArtifactEntryObservation.RequireEvidence(
+            TraceRequireEvidence(
                 traceManifestStatus, traceManifestProbedByteCount, TraceRunManifestCodec.MaximumCanonicalByteCount,
                 nameof(traceManifestStatus), nameof(traceManifestProbedByteCount));
 
@@ -133,7 +133,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!CaptureRunPublicationArtifactEntryObservation.EvidenceSatisfied(
+                if (!TraceEvidenceSatisfied(
                     _traceManifestStatus, _traceManifestProbedByteCount, TraceRunManifestCodec.MaximumCanonicalByteCount))
                 {
                     return false;
@@ -160,6 +160,83 @@ namespace Zantetsu.Observability
                 }
 
                 return true;
+            }
+        }
+
+        private static bool TraceEvidenceSatisfied(
+            CaptureRunPublicationEvidenceStatus status,
+            long probedByteCount,
+            long limit)
+        {
+            switch (status)
+            {
+                case CaptureRunPublicationEvidenceStatus.Absent:
+                    return probedByteCount == 0;
+
+                case CaptureRunPublicationEvidenceStatus.MatchesExpected:
+                case CaptureRunPublicationEvidenceStatus.Mismatch:
+                    return probedByteCount > 0 && probedByteCount <= limit;
+
+                case CaptureRunPublicationEvidenceStatus.Invalid:
+                    return probedByteCount >= 0 && probedByteCount <= limit;
+
+                case CaptureRunPublicationEvidenceStatus.LimitExceeded:
+                    return probedByteCount == checked(limit + 1);
+
+                default:
+                    return false;
+            }
+        }
+
+        private static void TraceRequireEvidence(
+            CaptureRunPublicationEvidenceStatus status,
+            long probedByteCount,
+            long limit,
+            string statusParamName,
+            string countParamName)
+        {
+            if (!CaptureRunPublicationArtifactEntryObservation.IsDefinedStatus(status))
+            {
+                throw new ArgumentOutOfRangeException(statusParamName, status, "Evidence status must be defined.");
+            }
+
+            switch (status)
+            {
+                case CaptureRunPublicationEvidenceStatus.Absent:
+                    if (probedByteCount != 0)
+                    {
+                        throw new ArgumentException("An absent evidence must have a zero probed byte count.", countParamName);
+                    }
+
+                    return;
+
+                case CaptureRunPublicationEvidenceStatus.MatchesExpected:
+                case CaptureRunPublicationEvidenceStatus.Mismatch:
+                    if (probedByteCount <= 0 || probedByteCount > limit)
+                    {
+                        throw new ArgumentException("Evidence probed byte count must be positive and within the file limit.", countParamName);
+                    }
+
+                    return;
+
+                case CaptureRunPublicationEvidenceStatus.Invalid:
+                    if (probedByteCount < 0 || probedByteCount > limit)
+                    {
+                        throw new ArgumentException("Invalid evidence probed byte count must be non-negative and within the file limit.", countParamName);
+                    }
+
+                    return;
+
+                case CaptureRunPublicationEvidenceStatus.LimitExceeded:
+                    if (probedByteCount != checked(limit + 1))
+                    {
+                        throw new ArgumentException("A limit-exceeded evidence must probe exactly one byte past the file limit.", countParamName);
+                    }
+
+                    return;
+
+                default:
+                    throw new ArgumentOutOfRangeException(statusParamName, status, "Evidence status must be defined.");
             }
         }
     }

@@ -82,7 +82,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Plan entry sidecar byte length must not exceed the sidecar canonical byte count.", nameof(decision));
                 }
 
-                paths[i] = new CaptureRunPublicationArtifactPathSet(decision, i);
+                paths[i] = CaptureRunPublicationArtifactPathSet.CreateIndexLocal(decision, i);
             }
 
             _decision = decision;
@@ -120,6 +120,50 @@ namespace Zantetsu.Observability
             }
 
             return _artifactPaths[index];
+        }
+
+        internal bool TryGetArtifactPaths(int index, out CaptureRunPublicationArtifactPathSet paths)
+        {
+            paths = null;
+            if (_artifactPaths == null || index < 0 || index >= _artifactPaths.Length)
+            {
+                return false;
+            }
+
+            paths = _artifactPaths[index];
+            return true;
+        }
+
+        /// <summary>
+        /// Cheap, entry-independent validity: verifies the decision, its
+        /// authoritative plan reference, the PNG bound, the artifact path array,
+        /// and the lease and reference correlation without rescanning the plan.
+        /// </summary>
+        internal bool IsCoreValid()
+        {
+            if (_decision == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryDisposition disposition = _decision.Disposition;
+            if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
+                && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
+            {
+                return false;
+            }
+
+            if (_decision.AuthoritativePlan == null)
+            {
+                return false;
+            }
+
+            if (_maximumPngByteCount < 1 || _maximumPngByteCount > MaximumAllowedPngByteCount)
+            {
+                return false;
+            }
+
+            return _artifactPaths != null && DecisionGraphCorrelatedCheap(_decision);
         }
 
         internal bool IsValid
@@ -162,7 +206,7 @@ namespace Zantetsu.Observability
                 for (int i = 0; i < _artifactPaths.Length; i++)
                 {
                     CaptureRunPublicationArtifactPathSet paths = _artifactPaths[i];
-                    if (paths == null || !paths.IsValid || !ReferenceEquals(paths.Decision, _decision) || paths.EntryIndex != i)
+                    if (paths == null || !paths.IsValidIndexLocal() || !ReferenceEquals(paths.Decision, _decision) || paths.EntryIndex != i)
                     {
                         return false;
                     }
@@ -208,6 +252,38 @@ namespace Zantetsu.Observability
             CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
             return publicationPaths != null
                 && publicationPaths.IsValid
+                && ReferenceEquals(publicationPaths.RootLayout, rootLayout)
+                && ReferenceEquals(decision.RootLayout, rootLayout);
+        }
+
+        private static bool DecisionGraphCorrelatedCheap(CaptureRunPublicationRecoveryDecision decision)
+        {
+            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = decision.Snapshot;
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationRecoveryInspectionOperation operation = snapshot.Operation;
+            if (operation == null)
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lockLease = operation.LockLease;
+            if (lockLease == null || !lockLease.IsCreated)
+            {
+                return false;
+            }
+
+            CaptureRunRootLayout rootLayout = operation.RootLayout;
+            if (rootLayout == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
+            return publicationPaths != null
                 && ReferenceEquals(publicationPaths.RootLayout, rootLayout)
                 && ReferenceEquals(decision.RootLayout, rootLayout);
         }
