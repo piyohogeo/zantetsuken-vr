@@ -22,6 +22,15 @@ namespace Zantetsu.Observability
     /// must not return a receipt.
     /// </para>
     /// <para>
+    /// A returned receipt is never null, must satisfy
+    /// <c>ReferenceEquals(receipt.IssuedBy, this)</c> and
+    /// <c>ReferenceEquals(receipt.Operation, operation)</c>, and therefore
+    /// <c>receipt.IsIssuedFor(this, operation)</c> must be <c>true</c>. The
+    /// next coordinator must fail closed immediately for a null receipt, a
+    /// receipt issued by a foreign committer, or a receipt for a different
+    /// operation.
+    /// </para>
+    /// <para>
     /// CreateTemporaryAndCommit: re-confirm no-follow that
     /// <c>capture.index</c> is absent and that <c>capture.index.tmp</c> is
     /// absent; create the tmp non-overwriting; write the operation's canonical

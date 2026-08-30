@@ -334,6 +334,14 @@ namespace Zantetsu.Core.Tests
             return receipt;
         }
 
+        private static bool ValidateReceipt(
+            ICaptureRunCaptureIndexCommitter committer,
+            CaptureRunCaptureIndexCommitOperation operation,
+            CaptureRunCaptureIndexCommitReceipt receipt)
+        {
+            return receipt != null && receipt.IsIssuedFor(committer, operation);
+        }
+
         private static string LocateSource(string relativePath)
         {
             if (File.Exists(relativePath))
@@ -478,6 +486,16 @@ namespace Zantetsu.Core.Tests
                     throw Exception;
                 }
 
+                return Result;
+            }
+        }
+
+        private sealed class ConfigurableCommitter : ICaptureRunCaptureIndexCommitter
+        {
+            public CaptureRunCaptureIndexCommitReceipt Result;
+
+            public CaptureRunCaptureIndexCommitReceipt Commit(CaptureRunCaptureIndexCommitOperation operation)
+            {
                 return Result;
             }
         }
@@ -644,6 +662,32 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Coordinator_RejectsNullForeignAndDifferentOperationReceipts()
+        {
+            CaptureRunCaptureIndexCommitOperation operation = MakeCommitOperation(out _, out _);
+            CaptureRunCaptureIndexCommitOperation other = MakeCommitOperation(out _, out _);
+
+            // A null receipt is rejected.
+            ConfigurableCommitter nullCommitter = new ConfigurableCommitter();
+            nullCommitter.Result = null;
+            Assert.That(ValidateReceipt(nullCommitter, operation, nullCommitter.Commit(operation)), Is.False);
+
+            FakeCommitter real = new FakeCommitter();
+
+            // A receipt issued by a foreign committer is rejected.
+            CaptureRunCaptureIndexCommitReceipt foreign = new CaptureRunCaptureIndexCommitReceipt(real, operation);
+            Assert.That(ValidateReceipt(new FakeCommitter(), operation, foreign), Is.False);
+
+            // A receipt for a different operation is rejected.
+            CaptureRunCaptureIndexCommitReceipt wrongOperation = new CaptureRunCaptureIndexCommitReceipt(real, other);
+            Assert.That(ValidateReceipt(real, operation, wrongOperation), Is.False);
+
+            // A matching receipt is accepted.
+            CaptureRunCaptureIndexCommitReceipt correct = new CaptureRunCaptureIndexCommitReceipt(real, operation);
+            Assert.That(ValidateReceipt(real, operation, correct), Is.True);
+        }
+
+        [Test]
         public void Receipt_DoesNotMutateOperationOrBytes()
         {
             CaptureRunCaptureIndexCommitOperation operation = MakeCommitOperation(out _, out _);
@@ -786,6 +830,14 @@ namespace Zantetsu.Core.Tests
             Assert.That(interfaceSource, Does.Contain("CreateTemporaryAndCommit"));
             Assert.That(interfaceSource, Does.Contain("ReuseCanonicalTemporaryAndCommit"));
             Assert.That(interfaceSource, Does.Contain("ReplaceInvalidTemporaryAndCommit"));
+
+            // The returned receipt must be correlated to this committer and
+            // the supplied operation, and rejectable otherwise.
+            Assert.That(interfaceSource, Does.Contain("never null"));
+            Assert.That(interfaceSource, Does.Contain("ReferenceEquals(receipt.IssuedBy, this)"));
+            Assert.That(interfaceSource, Does.Contain("ReferenceEquals(receipt.Operation, operation)"));
+            Assert.That(interfaceSource, Does.Contain("receipt.IsIssuedFor(this, operation)"));
+            Assert.That(interfaceSource, Does.Contain("fail closed"));
         }
     }
 }
