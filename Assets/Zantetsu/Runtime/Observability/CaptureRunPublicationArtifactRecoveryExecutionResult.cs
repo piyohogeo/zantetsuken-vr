@@ -40,17 +40,18 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(batch));
             }
 
-            if (!batch.IsValid)
-            {
-                throw new ArgumentException("Execution batch must be valid.", nameof(batch));
-            }
-
             if (completedSteps == null)
             {
                 throw new ArgumentNullException(nameof(completedSteps));
             }
 
-            if (!IsCorrelated(issuedBy, batch, completedSteps))
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+            if (!TryAcquireToken(batch, out token))
+            {
+                throw new ArgumentException("Execution batch must be valid.", nameof(batch));
+            }
+
+            if (!IsCorrelated(issuedBy, batch, completedSteps, token))
             {
                 throw new ArgumentException("Completed steps must be fully correlated with the issuing coordinator and batch.", nameof(completedSteps));
             }
@@ -88,14 +89,27 @@ namespace Zantetsu.Observability
             return _completedSteps[index];
         }
 
-        internal bool IsValid => IsCorrelated(_issuedBy, _batch, _completedSteps);
+        internal bool IsValid
+        {
+            get
+            {
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+                if (!TryAcquireToken(_batch, out token))
+                {
+                    return false;
+                }
+
+                return IsCorrelated(_issuedBy, _batch, _completedSteps, token);
+            }
+        }
 
         private static bool IsCorrelated(
             CaptureRunPublicationArtifactRecoveryExecutionCoordinator issuedBy,
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch,
-            CaptureRunPublicationArtifactRecoveryCompletedStep[] completedSteps)
+            CaptureRunPublicationArtifactRecoveryCompletedStep[] completedSteps,
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
-            if (issuedBy == null || batch == null || !batch.IsValid || completedSteps == null)
+            if (issuedBy == null || batch == null || completedSteps == null || token == null)
             {
                 return false;
             }
@@ -113,12 +127,17 @@ namespace Zantetsu.Observability
             for (int i = 0; i < completedSteps.Length; i++)
             {
                 CaptureRunPublicationArtifactRecoveryCompletedStep completed = completedSteps[i];
-                if (completed == null || !completed.IsValid)
+                if (completed == null)
                 {
                     return false;
                 }
 
                 if (!ReferenceEquals(completed.PreparedStep, batch.GetStep(i)))
+                {
+                    return false;
+                }
+
+                if (!completed.IsValidIndexLocal(token))
                 {
                     return false;
                 }
@@ -141,6 +160,29 @@ namespace Zantetsu.Observability
 
                         break;
                 }
+            }
+
+            return true;
+        }
+
+        private static bool TryAcquireToken(
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch,
+            out CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            token = null;
+
+            if (batch == null || !batch.IsValid)
+            {
+                return false;
+            }
+
+            try
+            {
+                token = batch.ActionPlan.AcquireValidationToken();
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
             }
 
             return true;

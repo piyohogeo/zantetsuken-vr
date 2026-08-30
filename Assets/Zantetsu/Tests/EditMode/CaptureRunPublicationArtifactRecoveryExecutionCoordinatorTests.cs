@@ -622,6 +622,22 @@ namespace Zantetsu.Core.Tests
             return forged;
         }
 
+        private static CaptureRunPublicationArtifactRecoveryPreparedStep ForgePreparedStep(
+            CaptureRunPublicationArtifactRecoveryActionPlan actionPlan,
+            int stepIndex,
+            CaptureRunPublicationArtifactPublishOperation publishOperation,
+            CaptureRunCaptureIndexCommitOperation commitOperation)
+        {
+            CaptureRunPublicationArtifactRecoveryPreparedStep step =
+                (CaptureRunPublicationArtifactRecoveryPreparedStep)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationArtifactRecoveryPreparedStep));
+            SetField(step, "_actionPlan", actionPlan);
+            SetField(step, "_stepIndex", stepIndex);
+            SetField(step, "_publishOperation", publishOperation);
+            SetField(step, "_captureIndexCommitOperation", commitOperation);
+            return step;
+        }
+
         private static CaptureRunPublicationArtifactRecoveryCompletedStep[] WithReplaced(
             CaptureRunPublicationArtifactRecoveryExecutionResult result,
             int index,
@@ -1264,6 +1280,115 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompletedStep_DirectConstructor_CorruptedCanonicalBytes_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationArtifactRecoveryPreparedStep prepared = batch.GetStep(0);
+            CaptureRunCaptureIndexCommitOperation operation = prepared.CaptureIndexCommitOperation;
+
+            CaptureRunCaptureIndexCommitReceipt receipt = new CaptureRunCaptureIndexCommitReceipt(new FakeCommitter(), operation);
+
+            SetField(operation, "_canonicalBytes", new byte[] { 1, 2, 3 });
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryCompletedStep(prepared, null, receipt, token));
+        }
+
+        [Test]
+        public void CompletedStep_DirectConstructor_ConsumedCanonicalBytes_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationArtifactRecoveryPreparedStep prepared = batch.GetStep(0);
+            CaptureRunCaptureIndexCommitOperation operation = prepared.CaptureIndexCommitOperation;
+
+            CaptureRunCaptureIndexCommitReceipt receipt = new CaptureRunCaptureIndexCommitReceipt(new FakeCommitter(), operation);
+
+            SetField(operation, "_canonicalBytes", null);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryCompletedStep(prepared, null, receipt, token));
+        }
+
+        [Test]
+        public void CompletedStep_IsValid_False_ForCorruptedCommitBytes()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+
+            Assert.That(completed.IsValid, Is.True);
+
+            SetField(completed.CommitReceipt.Operation, "_canonicalBytes", new byte[] { 9, 9, 9 });
+
+            Assert.That(completed.IsValid, Is.False);
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void CompletedStep_DirectConstructor_OutOfRangeStepIndex_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationArtifactRecoveryPreparedStep prepared = batch.GetStep(0);
+            CaptureRunPublicationArtifactPublishReceipt receipt =
+                new CaptureRunPublicationArtifactPublishReceipt(new FakePublisher(), prepared.PublishOperation);
+
+            CaptureRunPublicationArtifactRecoveryPreparedStep forged = ForgePreparedStep(plan, int.MaxValue, prepared.PublishOperation, null);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryCompletedStep(forged, receipt, null, token));
+        }
+
+        [Test]
+        public void CompletedStep_DirectConstructor_SwappedPublishOperation_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationArtifactPublishOperation sidecarOperation = batch.GetStep(1).PublishOperation;
+            CaptureRunPublicationArtifactPublishReceipt receipt =
+                new CaptureRunPublicationArtifactPublishReceipt(new FakePublisher(), sidecarOperation);
+
+            // Forge a step at index 0 that holds the sidecar operation (step index 1).
+            CaptureRunPublicationArtifactRecoveryPreparedStep forged = ForgePreparedStep(plan, 0, sidecarOperation, null);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryCompletedStep(forged, receipt, null, token));
+        }
+
+        [Test]
+        public void CompletedStep_IsValid_False_ForForgedOutOfRangePreparedStep()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep original = good.GetCompletedStep(0);
+
+            CaptureRunPublicationArtifactRecoveryPreparedStep forgedPrepared =
+                ForgePreparedStep(plan, int.MaxValue, original.PublishReceipt.Operation, null);
+            CaptureRunPublicationArtifactRecoveryCompletedStep forgedCompleted = ForgeCompletedStep(original, original.PublishReceipt, null);
+            SetField(forgedCompleted, "_preparedStep", forgedPrepared);
+
+            Assert.That(forgedCompleted.IsValid, Is.False);
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult brokenResult =
+                (CaptureRunPublicationArtifactRecoveryExecutionResult)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationArtifactRecoveryExecutionResult));
+            SetField(brokenResult, "_issuedBy", coordinator);
+            SetField(brokenResult, "_batch", batch);
+            SetField(brokenResult, "_completedSteps", WithReplaced(good, 0, forgedCompleted));
+            Assert.That(brokenResult.IsValid, Is.False);
+        }
+
+        [Test]
         public void ForgedBrokenReceipt_IsValidFalse_WithoutException()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
@@ -1406,6 +1531,33 @@ namespace Zantetsu.Core.Tests
             Assert.That(coordinatorSource, Does.Contain("receipt.FinalPath"));
             Assert.That(coordinatorSource, Does.Contain("receipt.ByteCount"));
             Assert.That(coordinatorSource, Does.Contain("receipt.ActionPlan"));
+        }
+
+        [Test]
+        public void Source_NoRedundantBatchValidation()
+        {
+            string resultSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionResult.cs"));
+
+            int correlatedIndex = resultSource.IndexOf("private static bool IsCorrelated(", StringComparison.Ordinal);
+            int tryAcquireIndex = resultSource.IndexOf("private static bool TryAcquireToken(", StringComparison.Ordinal);
+            Assert.That(correlatedIndex, Is.GreaterThan(0));
+            Assert.That(tryAcquireIndex, Is.GreaterThan(correlatedIndex));
+
+            string correlatedBody = resultSource.Substring(correlatedIndex, tryAcquireIndex - correlatedIndex);
+            Assert.That(correlatedBody, Does.Not.Contain("batch.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("AcquireValidationToken"));
+
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionCoordinator.cs"));
+
+            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < batch.Count; i++)", StringComparison.Ordinal);
+            Assert.That(loopIndex, Is.GreaterThan(0));
+
+            string beforeLoop = coordinatorSource.Substring(0, loopIndex);
+            string fromLoop = coordinatorSource.Substring(loopIndex);
+            Assert.That(beforeLoop, Does.Contain("batch.IsValid"));
+            Assert.That(fromLoop, Does.Not.Contain("batch.IsValid"));
         }
     }
 }

@@ -12,10 +12,11 @@ namespace Zantetsu.Observability
     /// Exactly one receipt is required for a publish or commit action; a
     /// routing or stop step holds none. Each receipt's operation must be the
     /// same reference as the prepared step's operation. The constructor uses
-    /// the caller's already-issued plan validation token for index-local, O(1)
-    /// checks and never re-validates the whole plan or re-serializes canonical
-    /// bytes. <see cref="IsValid"/> recomputes the correlation from the held
-    /// values — including the plan's lease liveness — without throwing.
+    /// the caller's already-issued plan validation token for index-local checks
+    /// and never re-validates the whole plan; a commit step additionally
+    /// re-verifies the held canonical bytes against the authoritative plan.
+    /// <see cref="IsValid"/> recomputes the correlation from the held values —
+    /// including the plan's lease liveness — without throwing.
     /// </para>
     /// <para>
     /// This type performs no filesystem work and is not an
@@ -49,89 +50,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Token must be issued for the prepared step's action plan.", nameof(token));
             }
 
-            switch (preparedStep.Action)
+            if (!IsCorrelatedIndexLocal(preparedStep, publishReceipt, commitReceipt, token))
             {
-                case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
-                    if (publishReceipt == null)
-                    {
-                        throw new ArgumentException("Publish action requires a publish receipt.", nameof(publishReceipt));
-                    }
-
-                    if (commitReceipt != null)
-                    {
-                        throw new ArgumentException("Publish action must not hold a commit receipt.", nameof(publishReceipt));
-                    }
-
-                    if (preparedStep.PublishOperation == null)
-                    {
-                        throw new ArgumentException("Publish action requires a publish operation.", nameof(preparedStep));
-                    }
-
-                    if (!ReferenceEquals(publishReceipt.Operation, preparedStep.PublishOperation))
-                    {
-                        throw new ArgumentException("Publish receipt must match the prepared publish operation.", nameof(publishReceipt));
-                    }
-
-                    if (publishReceipt.IssuedBy == null)
-                    {
-                        throw new ArgumentException("Publish receipt must be valid.", nameof(publishReceipt));
-                    }
-
-                    if (!preparedStep.PublishOperation.IsValidIndexLocal(token))
-                    {
-                        throw new ArgumentException("Publish operation must be valid.", nameof(preparedStep));
-                    }
-
-                    break;
-
-                case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
-                    if (commitReceipt == null)
-                    {
-                        throw new ArgumentException("Commit action requires a commit receipt.", nameof(commitReceipt));
-                    }
-
-                    if (publishReceipt != null)
-                    {
-                        throw new ArgumentException("Commit action must not hold a publish receipt.", nameof(commitReceipt));
-                    }
-
-                    if (preparedStep.CaptureIndexCommitOperation == null)
-                    {
-                        throw new ArgumentException("Commit action requires a commit operation.", nameof(preparedStep));
-                    }
-
-                    if (!ReferenceEquals(commitReceipt.Operation, preparedStep.CaptureIndexCommitOperation))
-                    {
-                        throw new ArgumentException("Commit receipt must match the prepared commit operation.", nameof(commitReceipt));
-                    }
-
-                    if (commitReceipt.IssuedBy == null)
-                    {
-                        throw new ArgumentException("Commit receipt must be valid.", nameof(commitReceipt));
-                    }
-
-                    if (!preparedStep.CaptureIndexCommitOperation.IsValidIndexLocal(token))
-                    {
-                        throw new ArgumentException("Commit operation must be valid.", nameof(preparedStep));
-                    }
-
-                    break;
-
-                case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
-                case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
-                case CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace:
-                case CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing:
-                case CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing:
-                case CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision:
-                    if (publishReceipt != null || commitReceipt != null)
-                    {
-                        throw new ArgumentException("Routing or stop step must not hold a receipt.", nameof(publishReceipt));
-                    }
-
-                    break;
-
-                default:
-                    throw new ArgumentException("Prepared step action must be a defined recovery action.", nameof(preparedStep));
+                throw new ArgumentException("Completed step must satisfy its action's receipt and operation correlation.", nameof(preparedStep));
             }
 
             _preparedStep = preparedStep;
@@ -155,38 +76,77 @@ namespace Zantetsu.Observability
                 }
 
                 CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = _preparedStep.ActionPlan;
-                if (actionPlan == null || !actionPlan.IsDecisionLeaseLive())
+                if (actionPlan == null)
                 {
                     return false;
                 }
 
-                switch (_preparedStep.Action)
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+                try
                 {
-                    case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
-                        return _publishReceipt != null
-                            && _commitReceipt == null
-                            && _preparedStep.PublishOperation != null
-                            && _publishReceipt.IssuedBy != null
-                            && ReferenceEquals(_publishReceipt.Operation, _preparedStep.PublishOperation);
-
-                    case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
-                        return _publishReceipt == null
-                            && _commitReceipt != null
-                            && _preparedStep.CaptureIndexCommitOperation != null
-                            && _commitReceipt.IssuedBy != null
-                            && ReferenceEquals(_commitReceipt.Operation, _preparedStep.CaptureIndexCommitOperation);
-
-                    case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
-                    case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
-                    case CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace:
-                    case CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing:
-                    case CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing:
-                    case CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision:
-                        return _publishReceipt == null && _commitReceipt == null;
-
-                    default:
-                        return false;
+                    token = actionPlan.AcquireValidationToken();
                 }
+                catch (InvalidOperationException)
+                {
+                    return false;
+                }
+
+                return IsValidIndexLocal(token);
+            }
+        }
+
+        /// <summary>
+        /// Token-gated, exception-safe validity: re-verifies the whole prepared
+        /// step index-locally — for a commit step this also re-verifies the held
+        /// canonical bytes against the authoritative plan — and then confirms the
+        /// receipt shape and operation correlation. Never throws.
+        /// </summary>
+        internal bool IsValidIndexLocal(
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            return IsCorrelatedIndexLocal(_preparedStep, _publishReceipt, _commitReceipt, token);
+        }
+
+        private static bool IsCorrelatedIndexLocal(
+            CaptureRunPublicationArtifactRecoveryPreparedStep preparedStep,
+            CaptureRunPublicationArtifactPublishReceipt publishReceipt,
+            CaptureRunCaptureIndexCommitReceipt commitReceipt,
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (preparedStep == null || token == null)
+            {
+                return false;
+            }
+
+            if (!preparedStep.IsValidIndexLocal(token))
+            {
+                return false;
+            }
+
+            switch (preparedStep.Action)
+            {
+                case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
+                    return publishReceipt != null
+                        && commitReceipt == null
+                        && publishReceipt.IssuedBy != null
+                        && ReferenceEquals(publishReceipt.Operation, preparedStep.PublishOperation);
+
+                case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
+                    return publishReceipt == null
+                        && commitReceipt != null
+                        && commitReceipt.IssuedBy != null
+                        && ReferenceEquals(commitReceipt.Operation, preparedStep.CaptureIndexCommitOperation);
+
+                case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
+                case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
+                case CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace:
+                case CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing:
+                case CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing:
+                case CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision:
+                    return publishReceipt == null && commitReceipt == null;
+
+                default:
+                    return false;
             }
         }
     }
