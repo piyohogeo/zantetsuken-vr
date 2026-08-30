@@ -119,6 +119,17 @@ namespace Zantetsu.Observability
         internal bool IsValid => TryValidate(out _);
 
         /// <summary>
+        /// O(1), exception-safe check that the index-local core structure this
+        /// batch exposes — the action plan and the prepared step array — is
+        /// present, so a stale validation token cannot navigate a partially
+        /// corrupted batch.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            return _actionPlan != null && _preparedSteps != null;
+        }
+
+        /// <summary>
         /// Fully validates this batch once and returns the action plan
         /// validation token acquired during that validation, so a caller can
         /// perform the single full validation and reuse the token for index-local

@@ -111,7 +111,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);
 
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token =
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token =
                 VerifyExecutionResult(executionResult, batch);
 
             return new CaptureRunPublicationArtifactRecoveryOrchestrationResult(this, executionResult, token);
@@ -131,11 +131,11 @@ namespace Zantetsu.Observability
             }
         }
 
-        private CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken VerifyExecutionResult(
+        private CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken VerifyExecutionResult(
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch)
         {
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
             if (executionResult == null
                 || !executionResult.TryValidate(out token)
                 || !ReferenceEquals(executionResult.IssuedBy, _executionCoordinator)

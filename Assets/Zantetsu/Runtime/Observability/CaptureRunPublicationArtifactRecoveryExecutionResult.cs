@@ -25,6 +25,57 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationArtifactRecoveryExecutionBatch _batch;
         private readonly CaptureRunPublicationArtifactRecoveryCompletedStep[] _completedSteps;
 
+        /// <summary>
+        /// Proof that this exact execution result instance was fully validated.
+        /// The token is bound to the result by reference and carries the action
+        /// plan validation token acquired during that validation, so a caller
+        /// can re-check index-local correlation without re-validating the plan.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly CaptureRunPublicationArtifactRecoveryExecutionResult _result;
+            private readonly CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken _actionPlanToken;
+
+            private ValidationToken(
+                CaptureRunPublicationArtifactRecoveryExecutionResult result,
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken)
+            {
+                _result = result;
+                _actionPlanToken = actionPlanToken;
+            }
+
+            internal CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken ActionPlanToken => _actionPlanToken;
+
+            internal static ValidationToken Acquire(
+                CaptureRunPublicationArtifactRecoveryExecutionResult result,
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken)
+            {
+                if (result == null)
+                {
+                    throw new ArgumentNullException(nameof(result));
+                }
+
+                if (actionPlanToken == null)
+                {
+                    throw new ArgumentNullException(nameof(actionPlanToken));
+                }
+
+                return new ValidationToken(result, actionPlanToken);
+            }
+
+            /// <summary>
+            /// Reports whether this token was issued for the given execution
+            /// result and whether that result's index-local structure and step
+            /// correlations are still intact. Never throws.
+            /// </summary>
+            internal bool IsIssuedFor(CaptureRunPublicationArtifactRecoveryExecutionResult result)
+            {
+                return result != null
+                    && ReferenceEquals(_result, result)
+                    && result.IsIndexLocalIntact(_actionPlanToken);
+            }
+        }
+
         internal CaptureRunPublicationArtifactRecoveryExecutionResult(
             CaptureRunPublicationArtifactRecoveryExecutionCoordinator issuedBy,
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch,
@@ -92,27 +143,39 @@ namespace Zantetsu.Observability
         internal bool IsValid => TryValidate(out _);
 
         /// <summary>
-        /// Fully validates this execution result exactly once and returns the
-        /// action plan validation token acquired during that validation, so a
-        /// caller can reuse the token for index-local checks without
-        /// re-validating the batch or the plan a second time.
+        /// Fully validates this execution result exactly once and returns an
+        /// execution-result validation token bound to this exact instance, so a
+        /// caller can reuse it for index-local checks without re-validating the
+        /// batch or the plan a second time.
         /// </summary>
-        internal bool TryValidate(out CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        internal bool TryValidate(out ValidationToken token)
         {
             token = null;
 
-            if (!TryAcquireToken(_batch, out token))
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken;
+            if (!TryAcquireToken(_batch, out actionPlanToken))
             {
                 return false;
             }
 
-            if (!IsCorrelated(_issuedBy, _batch, _completedSteps, token))
+            if (!IsCorrelated(_issuedBy, _batch, _completedSteps, actionPlanToken))
             {
-                token = null;
                 return false;
             }
 
+            token = ValidationToken.Acquire(this, actionPlanToken);
             return true;
+        }
+
+        /// <summary>
+        /// O(n), exception-safe re-check that the completed-step array and its
+        /// receipts are still correlated to this result's batch and issuer,
+        /// using an already acquired action plan token.
+        /// </summary>
+        internal bool IsIndexLocalIntact(
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken)
+        {
+            return IsStepsIndexLocalCorrelated(_issuedBy, _batch, _completedSteps, actionPlanToken);
         }
 
         private static bool IsCorrelated(
@@ -127,6 +190,21 @@ namespace Zantetsu.Observability
             }
 
             if (StatusFromDisposition(batch.Disposition) == CaptureRunPublicationArtifactRecoveryExecutionStatus.None)
+            {
+                return false;
+            }
+
+            return IsStepsIndexLocalCorrelated(issuedBy, batch, completedSteps, token);
+        }
+
+        private static bool IsStepsIndexLocalCorrelated(
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator issuedBy,
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch,
+            CaptureRunPublicationArtifactRecoveryCompletedStep[] completedSteps,
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (issuedBy == null || batch == null || completedSteps == null || token == null
+                || !batch.IsIndexLocalStructureIntact())
             {
                 return false;
             }

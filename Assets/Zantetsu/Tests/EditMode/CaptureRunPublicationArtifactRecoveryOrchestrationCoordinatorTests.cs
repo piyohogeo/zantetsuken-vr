@@ -977,6 +977,78 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
         }
 
+        // ---- Trusted constructor token defense ----
+
+        [Test]
+        public void Result_TrustedConstructor_SameResultSameToken_Accepted()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out CaptureRunPublicationArtifactInspectionOperation operation);
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult = orchestrator.Execute(operation).ExecutionResult;
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
+            Assert.That(executionResult.TryValidate(out token), Is.True);
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult trusted =
+                new CaptureRunPublicationArtifactRecoveryOrchestrationResult(orchestrator, executionResult, token);
+
+            Assert.That(trusted.IsValid, Is.True);
+        }
+
+        [Test]
+        public void Result_TrustedConstructor_CrossTokenSubstitution_Rejected()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out CaptureRunPublicationArtifactInspectionOperation operation);
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, MakeExecutionCoordinator());
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult resultA = orchestrator.Execute(operation).ExecutionResult;
+            CaptureRunPublicationArtifactRecoveryExecutionResult resultB = orchestrator.Execute(operation).ExecutionResult;
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken tokenA;
+            Assert.That(resultA.TryValidate(out tokenA), Is.True);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryOrchestrationResult(orchestrator, resultB, tokenA));
+            Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
+        }
+
+        [Test]
+        public void Result_TrustedConstructor_NullCompletedStepsAfterToken_Rejected()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out CaptureRunPublicationArtifactInspectionOperation operation);
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult = orchestrator.Execute(operation).ExecutionResult;
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
+            Assert.That(executionResult.TryValidate(out token), Is.True);
+
+            SetField(executionResult, "_completedSteps", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryOrchestrationResult(orchestrator, executionResult, token));
+            Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
+        }
+
+        [Test]
+        public void Result_TrustedConstructor_SwappedReceiptAfterToken_Rejected()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out CaptureRunPublicationArtifactInspectionOperation operation);
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult = orchestrator.Execute(operation).ExecutionResult;
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
+            Assert.That(executionResult.TryValidate(out token), Is.True);
+
+            CaptureRunPublicationArtifactRecoveryCompletedStep firstStep = executionResult.GetCompletedStep(0);
+            CaptureRunPublicationArtifactPublishReceipt forged = new CaptureRunPublicationArtifactPublishReceipt(
+                new FakePublisher(), firstStep.PublishReceipt.Operation);
+            SetField(firstStep, "_publishReceipt", forged);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationArtifactRecoveryOrchestrationResult(orchestrator, executionResult, token));
+            Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
+        }
+
         // ---- Lease release / forged values ----
 
         [Test]

@@ -42,7 +42,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(executionResult));
             }
 
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
             if (!executionResult.TryValidate(out token)
                 || !IsCorrelated(issuedBy, executionResult, token))
             {
@@ -58,7 +58,7 @@ namespace Zantetsu.Observability
         internal CaptureRunPublicationArtifactRecoveryOrchestrationResult(
             CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token)
         {
             if (issuedBy == null)
             {
@@ -113,7 +113,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+                CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token;
                 if (_executionResult == null || !_executionResult.TryValidate(out token))
                 {
                     return false;
@@ -126,9 +126,14 @@ namespace Zantetsu.Observability
         private static bool IsCorrelated(
             CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token)
         {
             if (issuedBy == null || executionResult == null || token == null)
+            {
+                return false;
+            }
+
+            if (!token.IsIssuedFor(executionResult))
             {
                 return false;
             }
@@ -145,7 +150,7 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationArtifactRecoveryActionPlan plan = batch.ActionPlan;
-            if (!token.IsIssuedFor(plan) || !plan.IsIndexLocalStructureIntact())
+            if (!token.ActionPlanToken.IsIssuedFor(plan) || !plan.IsIndexLocalStructureIntact())
             {
                 return false;
             }
