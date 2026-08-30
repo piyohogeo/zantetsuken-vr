@@ -5,5 +5,7 @@ namespace Zantetsu.Observability
     {
         CapturePublicationPlanWriteReceipt WritePlan(CapturePublicationPlan plan);
         CapturePublicationPlan ReadPlan(int maximumCanonicalByteCount);
+        CapturePublicationPlan ReadOrRecoverPlan(int maximumCanonicalByteCount);
+        bool DiscardInvalidTemporaryPlan(int maximumCanonicalByteCount);
     }
 }

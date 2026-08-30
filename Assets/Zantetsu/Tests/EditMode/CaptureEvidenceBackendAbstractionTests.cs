@@ -239,13 +239,13 @@ namespace Zantetsu.Core.Tests
                 // A new store/coordinator instance simulates recovery after a
                 // process restart. The generic persisted plan is the source.
                 CaptureArtifactFileStore restartedStore = new CaptureArtifactFileStore(layout);
-                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(restartedStore);
-                CapturePublicationRecoverySnapshot snapshot = recovery.InspectPersisted(
-                    restartedStore, CapturePublicationPlanCodec.MaximumCanonicalByteCount);
+                CaptureEvidenceRunPublicationCoordinator lifecycle = new CaptureEvidenceRunPublicationCoordinator(restartedStore, restartedStore);
+                CapturePublicationRecoverySnapshot snapshot = lifecycle.RecoverAfterRestart(
+                    CapturePublicationPlanCodec.MaximumCanonicalByteCount);
                 Assert.That(snapshot.Plan.TestRunId, Is.EqualTo(3));
                 Assert.That(snapshot.Plan.GetArtifact(0).ArtifactId, Is.EqualTo("artifact/1"));
                 Assert.That(CapturePublicationRecoveryClassifier.Classify(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.PublishMissingArtifacts));
-                Assert.That(recovery.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
+                Assert.That(lifecycle.ContinueRecovery(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
                 Assert.That(restartedStore.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
                 Assert.That(restartedStore.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
             }
@@ -282,6 +282,94 @@ namespace Zantetsu.Core.Tests
             Array.Copy(canonical, nonCanonical, canonical.Length);
             nonCanonical[nonCanonical.Length - 1] = (byte)'\n';
             Assert.Throws<ArgumentException>(() => CapturePublicationPlanCodec.DeserializeCanonical(nonCanonical));
+
+            string source = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CapturePublicationPlanCodec.cs"));
+            Assert.That(source.IndexOf("ValidateStructureBeforeObjectification(canonicalBytes)", StringComparison.Ordinal),
+                Is.LessThan(source.IndexOf("JsonUtility.FromJson<PlanDto>", StringComparison.Ordinal)));
+            Assert.That(source, Does.Contain("MaximumArtifactCount"));
+            Assert.That(source, Does.Contain("MaximumCaptureFrameEvidenceCount"));
+            Assert.That(source, Does.Contain("MaximumArtifactReferencesPerFrame"));
+        }
+
+        [Test]
+        public void GenericPublicationPlanCodec_RejectsReferenceCountBeforeDtoObjectification()
+        {
+            StringBuilder document = new StringBuilder(900000);
+            document.Append("{\"schemaVersion\":2,\"testRunId\":3,\"runInitializationId\":\"")
+                .Append(InitializationId)
+                .Append("\",\"runManifestContentHash\":\"")
+                .Append(HashA)
+                .Append("\",\"artifactDescriptors\":[],\"captureFrameEvidenceEntries\":[{\"captureFrameId\":1,\"artifactIds\":[");
+            for (int i = 0; i <= CapturePublicationPlanCodec.MaximumArtifactReferencesPerFrame; i++)
+            {
+                if (i != 0) document.Append(',');
+                document.Append("\"a\"");
+            }
+            document.Append("]}]}");
+
+            byte[] bytes = Encoding.UTF8.GetBytes(document.ToString());
+            Assert.That(bytes.Length, Is.LessThan(CapturePublicationPlanCodec.MaximumCanonicalByteCount));
+            Assert.Throws<ArgumentException>(() => CapturePublicationPlanCodec.DeserializeCanonical(bytes));
+        }
+
+        [Test]
+        public void RunLifecycleCoordinator_SelectsOnlyGenericPlanPersistenceAndRecovery()
+        {
+            string source = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunPublicationCoordinator.cs"));
+            Assert.That(source, Does.Contain("_publication.BuildAndPersist"));
+            Assert.That(source, Does.Contain("_recovery.InspectPersisted(_planStore"));
+            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlan"));
+            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
+        }
+
+        [Test]
+        public void GenericPlanRecovery_PromotesCanonicalTemporary_AndFailsClosedOnCollisionOrInvalidTemporary()
+        {
+            string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-plan-recovery-" + Guid.NewGuid().ToString("N"));
+            string stagingBase = Path.Combine(sandbox, "staging");
+            string finalBase = Path.Combine(sandbox, "final");
+            Directory.CreateDirectory(stagingBase);
+            Directory.CreateDirectory(finalBase);
+            try
+            {
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
+                Directory.CreateDirectory(layout.StagingRunRoot);
+                string temporary = Path.Combine(layout.StagingRunRoot, "publication.plan.tmp");
+                string final = Path.Combine(layout.StagingRunRoot, "publication.plan");
+                CapturePublicationPlan plan = new CapturePublicationPlan(
+                    3, InitializationId, HashA,
+                    new[] { Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA) },
+                    new[] { new CaptureFrameEvidenceEntry(1, new[] { "a" }) });
+                byte[] bytes = CapturePublicationPlanCodec.SerializeCanonical(plan);
+                File.WriteAllBytes(temporary, bytes);
+
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
+                CaptureEvidenceRunPublicationCoordinator lifecycle = new CaptureEvidenceRunPublicationCoordinator(store, store);
+                CapturePublicationRecoverySnapshot recovered = lifecycle.RecoverAfterRestart(bytes.Length);
+                Assert.That(recovered.Plan.IsValid, Is.True);
+                Assert.That(File.Exists(final), Is.True);
+                Assert.That(File.Exists(temporary), Is.False);
+
+                File.WriteAllBytes(temporary, bytes);
+                Assert.Throws<InvalidDataException>(() => lifecycle.RecoverAfterRestart(bytes.Length));
+                Assert.That(File.Exists(final), Is.True);
+                Assert.That(File.Exists(temporary), Is.True);
+
+                File.Delete(final);
+                File.WriteAllText(temporary, "not canonical", Encoding.UTF8);
+                Assert.Throws<ArgumentException>(() => lifecycle.RecoverAfterRestart(bytes.Length));
+                Assert.That(File.Exists(temporary), Is.True);
+                Assert.That(File.Exists(final), Is.False);
+                Assert.That(store.DiscardInvalidTemporaryPlan(bytes.Length), Is.True);
+                Assert.That(File.Exists(temporary), Is.False);
+                Assert.That(store.WritePlan(plan).IsIssuedFor(store, plan), Is.True);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
         }
 
         [Test]

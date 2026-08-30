@@ -32,7 +32,7 @@ namespace Zantetsu.Observability
             int maximumCanonicalByteCount)
         {
             if (planStore == null) throw new ArgumentNullException(nameof(planStore));
-            CapturePublicationPlan plan = planStore.ReadPlan(maximumCanonicalByteCount);
+            CapturePublicationPlan plan = planStore.ReadOrRecoverPlan(maximumCanonicalByteCount);
             if (plan == null || !plan.IsValid) throw new InvalidOperationException("Plan store returned an invalid plan.");
             return Inspect(plan);
         }

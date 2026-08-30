@@ -10,6 +10,11 @@ namespace Zantetsu.Observability
     internal static class CapturePublicationPlanCodec
     {
         internal const int MaximumCanonicalByteCount = 16 * 1024 * 1024;
+        internal const int MaximumArtifactCount = 200000;
+        internal const int MaximumCaptureFrameEvidenceCount = 100000;
+        internal const int MaximumArtifactReferencesPerFrame = 200000;
+        private const int MaximumTextByteCount = 512;
+        private const int MaximumEncodedTextByteCount = MaximumTextByteCount * 6;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
@@ -116,6 +121,10 @@ namespace Zantetsu.Observability
             if (canonicalBytes.Length < 1 || canonicalBytes.Length > MaximumCanonicalByteCount)
                 throw new ArgumentException("Canonical plan byte count is outside the supported range.", nameof(canonicalBytes));
 
+            // Validate the fixed schema and all structural counts before
+            // JsonUtility is allowed to allocate a DTO graph.
+            ValidateStructureBeforeObjectification(canonicalBytes);
+
             string json;
             try
             {
@@ -180,6 +189,190 @@ namespace Zantetsu.Observability
             if (left.Length != right.Length) return false;
             for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
             return true;
+        }
+
+        private static void ValidateStructureBeforeObjectification(byte[] document)
+        {
+            PreflightReader reader = new PreflightReader(document);
+            reader.Expect((byte)'{');
+            reader.Expect("\"schemaVersion\":");
+            if (reader.ReadInteger() != 2) throw new ArgumentException("Unsupported publication plan schema.", nameof(document));
+            reader.Expect(",\"testRunId\":");
+            reader.ReadInteger();
+            reader.Expect(",\"runInitializationId\":");
+            reader.SkipString(32);
+            reader.Expect(",\"runManifestContentHash\":");
+            reader.SkipString(64);
+            reader.Expect(",\"artifactDescriptors\":[");
+
+            int artifactCount = 0;
+            if (!reader.TryConsume((byte)']'))
+            {
+                do
+                {
+                    artifactCount = checked(artifactCount + 1);
+                    if (artifactCount > MaximumArtifactCount)
+                        throw new ArgumentException("Artifact count exceeds the structural limit.", nameof(document));
+                    ValidateArtifactStructure(reader);
+                }
+                while (reader.TryConsume((byte)','));
+                reader.Expect((byte)']');
+            }
+
+            reader.Expect(",\"captureFrameEvidenceEntries\":[");
+            int frameCount = 0;
+            if (!reader.TryConsume((byte)']'))
+            {
+                do
+                {
+                    frameCount = checked(frameCount + 1);
+                    if (frameCount > MaximumCaptureFrameEvidenceCount)
+                        throw new ArgumentException("Frame evidence count exceeds the structural limit.", nameof(document));
+                    ValidateEvidenceStructure(reader);
+                }
+                while (reader.TryConsume((byte)','));
+                reader.Expect((byte)']');
+            }
+            reader.Expect((byte)'}');
+            reader.ExpectEnd();
+        }
+
+        private static void ValidateArtifactStructure(PreflightReader reader)
+        {
+            reader.Expect((byte)'{');
+            reader.Expect("\"artifactId\":"); reader.SkipString(MaximumEncodedTextByteCount);
+            reader.Expect(",\"artifactKind\":"); reader.ReadInteger();
+            reader.Expect(",\"formatId\":"); reader.SkipString(MaximumEncodedTextByteCount);
+            reader.Expect(",\"formatVersion\":"); reader.ReadInteger();
+            reader.Expect(",\"stagingRelativePath\":"); reader.SkipString(MaximumEncodedTextByteCount);
+            reader.Expect(",\"finalRelativePath\":"); reader.SkipString(MaximumEncodedTextByteCount);
+            reader.Expect(",\"byteLength\":"); reader.ReadInteger();
+            reader.Expect(",\"contentHash\":"); reader.SkipString(64);
+            reader.Expect((byte)'}');
+        }
+
+        private static void ValidateEvidenceStructure(PreflightReader reader)
+        {
+            reader.Expect((byte)'{');
+            reader.Expect("\"captureFrameId\":"); reader.ReadInteger();
+            reader.Expect(",\"artifactIds\":[");
+            int referenceCount = 0;
+            if (!reader.TryConsume((byte)']'))
+            {
+                do
+                {
+                    referenceCount = checked(referenceCount + 1);
+                    if (referenceCount > MaximumArtifactReferencesPerFrame)
+                        throw new ArgumentException("Artifact reference count exceeds the structural limit.", "document");
+                    reader.SkipString(MaximumEncodedTextByteCount);
+                }
+                while (reader.TryConsume((byte)','));
+                reader.Expect((byte)']');
+            }
+            reader.Expect((byte)'}');
+        }
+
+        /// <summary>
+        /// Allocation-free token scanner used only for structural preflight.
+        /// String contents are not materialized; canonical reserialization
+        /// after DTO construction remains the value-level authority.
+        /// </summary>
+        private sealed class PreflightReader
+        {
+            private readonly byte[] _bytes;
+            private int _position;
+
+            internal PreflightReader(byte[] bytes) { _bytes = bytes; }
+
+            internal void Expect(byte expected)
+            {
+                if (_position >= _bytes.Length || _bytes[_position] != expected)
+                    throw new ArgumentException("Publication plan structure is not canonical.", "document");
+                _position++;
+            }
+
+            internal void Expect(string ascii)
+            {
+                for (int i = 0; i < ascii.Length; i++) Expect((byte)ascii[i]);
+            }
+
+            internal bool TryConsume(byte value)
+            {
+                if (_position >= _bytes.Length || _bytes[_position] != value) return false;
+                _position++;
+                return true;
+            }
+
+            internal long ReadInteger()
+            {
+                if (_position >= _bytes.Length || _bytes[_position] < '0' || _bytes[_position] > '9')
+                    throw new ArgumentException("Publication plan integer is invalid.", "document");
+                if (_bytes[_position] == '0')
+                {
+                    _position++;
+                    if (_position < _bytes.Length && _bytes[_position] >= '0' && _bytes[_position] <= '9')
+                        throw new ArgumentException("Publication plan integer has a leading zero.", "document");
+                    return 0;
+                }
+                long value = 0;
+                while (_position < _bytes.Length && _bytes[_position] >= '0' && _bytes[_position] <= '9')
+                {
+                    int digit = _bytes[_position++] - '0';
+                    if (value > (long.MaxValue - digit) / 10)
+                        throw new ArgumentException("Publication plan integer overflows Int64.", "document");
+                    value = value * 10 + digit;
+                }
+                return value;
+            }
+
+            internal void SkipString(int maximumEncodedByteCount)
+            {
+                Expect((byte)'\"');
+                int encodedCount = 0;
+                while (true)
+                {
+                    if (_position >= _bytes.Length)
+                        throw new ArgumentException("Publication plan string is unterminated.", "document");
+                    byte value = _bytes[_position++];
+                    if (value == '"') break;
+                    encodedCount++;
+                    if (encodedCount > maximumEncodedByteCount)
+                        throw new ArgumentException("Publication plan string exceeds its structural limit.", "document");
+                    if (value < 0x20)
+                        throw new ArgumentException("Publication plan string contains a control byte.", "document");
+                    if (value == '\\')
+                    {
+                        if (_position >= _bytes.Length)
+                            throw new ArgumentException("Publication plan escape is incomplete.", "document");
+                        byte escaped = _bytes[_position++];
+                        encodedCount++;
+                        if (escaped == 'u')
+                        {
+                            for (int i = 0; i < 4; i++)
+                            {
+                                if (_position >= _bytes.Length || !IsHex(_bytes[_position++]))
+                                    throw new ArgumentException("Publication plan Unicode escape is invalid.", "document");
+                                encodedCount++;
+                            }
+                        }
+                        else if (escaped != '"' && escaped != '\\' && escaped != 'n' && escaped != 'r' && escaped != 't')
+                        {
+                            throw new ArgumentException("Publication plan escape is invalid.", "document");
+                        }
+                        if (encodedCount > maximumEncodedByteCount)
+                            throw new ArgumentException("Publication plan string exceeds its structural limit.", "document");
+                    }
+                }
+            }
+
+            internal void ExpectEnd()
+            {
+                if (_position != _bytes.Length)
+                    throw new ArgumentException("Publication plan has trailing bytes.", "document");
+            }
+
+            private static bool IsHex(byte value) =>
+                (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
         }
 
         private static void AppendFirstString(StringBuilder sb, string name, string value)

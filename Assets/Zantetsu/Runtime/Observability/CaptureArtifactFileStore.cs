@@ -57,6 +57,55 @@ namespace Zantetsu.Observability
             }
         }
 
+        public CapturePublicationPlan ReadOrRecoverPlan(int maximumCanonicalByteCount)
+        {
+            bool finalExists = File.Exists(_publicationPlanPath);
+            bool temporaryExists = File.Exists(_publicationPlanTemporaryPath);
+            if (finalExists && temporaryExists)
+                throw new InvalidDataException("Both canonical and temporary publication plans exist.");
+            if (finalExists) return ReadPlan(maximumCanonicalByteCount);
+            if (!temporaryExists) throw new FileNotFoundException("No publication plan is available for recovery.", _publicationPlanPath);
+
+            CapturePublicationPlan plan;
+            using (FileStream stream = new FileStream(_publicationPlanTemporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                plan = CapturePublicationPlanCodec.DeserializeCanonical(stream, maximumCanonicalByteCount);
+            }
+            if (plan.TestRunId != _testRunId) throw new InvalidDataException("Temporary publication plan belongs to another run.");
+
+            // The canonical temporary document is the durable pre-rename
+            // authority. Promote only after complete bounded validation.
+            File.Move(_publicationPlanTemporaryPath, _publicationPlanPath);
+            return plan;
+        }
+
+        public bool DiscardInvalidTemporaryPlan(int maximumCanonicalByteCount)
+        {
+            if (maximumCanonicalByteCount < 1
+                || maximumCanonicalByteCount > CapturePublicationPlanCodec.MaximumCanonicalByteCount)
+                throw new ArgumentOutOfRangeException(nameof(maximumCanonicalByteCount));
+            if (File.Exists(_publicationPlanPath))
+                throw new InvalidOperationException("A canonical publication plan exists; temporary cleanup requires collision inspection.");
+            if (!File.Exists(_publicationPlanTemporaryPath)) return false;
+
+            try
+            {
+                using (FileStream stream = new FileStream(_publicationPlanTemporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    CapturePublicationPlan plan = CapturePublicationPlanCodec.DeserializeCanonical(stream, maximumCanonicalByteCount);
+                    if (plan.TestRunId != _testRunId)
+                        throw new InvalidDataException("Temporary publication plan belongs to another run.");
+                }
+            }
+            catch (ArgumentException)
+            {
+                File.Delete(_publicationPlanTemporaryPath);
+                return true;
+            }
+
+            throw new InvalidOperationException("A canonical temporary plan must be promoted, not discarded.");
+        }
+
         public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
