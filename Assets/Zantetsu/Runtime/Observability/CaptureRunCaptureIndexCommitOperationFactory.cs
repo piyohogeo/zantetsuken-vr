@@ -85,14 +85,14 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
-                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(authoritativePlan, out byte[] canonicalBytes);
+                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(authoritativePlan);
 
             CaptureRunCaptureIndexCommitOperation operation = new CaptureRunCaptureIndexCommitOperation(
-                actionPlan, token, stepIndex, bytesToken, ref canonicalBytes);
+                actionPlan, token, stepIndex, ref bytesToken);
 
-            if (canonicalBytes != null)
+            if (bytesToken != null)
             {
-                throw new InvalidOperationException("Canonical bytes must be transferred to the operation.");
+                throw new InvalidOperationException("Canonical bytes token must be transferred to the operation.");
             }
 
             return operation;
