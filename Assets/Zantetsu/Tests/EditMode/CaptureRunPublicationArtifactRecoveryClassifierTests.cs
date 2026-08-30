@@ -36,9 +36,15 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationDocumentKind CaptureIndex => CaptureRunPublicationDocumentKind.CaptureIndex;
 
+        private static CaptureRunPublicationDocumentKind CaptureIndexTemporary => CaptureRunPublicationDocumentKind.CaptureIndexTemporary;
+
         private static CaptureRunPublicationDocumentObservationStatus DocAbsent => CaptureRunPublicationDocumentObservationStatus.Absent;
 
         private static CaptureRunPublicationDocumentObservationStatus DocCanonical => CaptureRunPublicationDocumentObservationStatus.Canonical;
+
+        private static CaptureRunPublicationDocumentObservationStatus DocInvalid => CaptureRunPublicationDocumentObservationStatus.Invalid;
+
+        private static CaptureRunPublicationDocumentObservationStatus DocLimitExceeded => CaptureRunPublicationDocumentObservationStatus.LimitExceeded;
 
         private static CaptureRunPublicationEvidenceStatus EvAbsent => CaptureRunPublicationEvidenceStatus.Absent;
 
@@ -223,7 +229,8 @@ namespace Zantetsu.Core.Tests
             List<string> disposeLog = null,
             bool indexAuthoritative = false,
             CapturePublicationPlan plan = null,
-            int maximumEntryCount = 4)
+            int maximumEntryCount = 4,
+            CaptureRunPublicationDocumentObservation captureIndexTemporary = null)
         {
             CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(
@@ -231,8 +238,8 @@ namespace Zantetsu.Core.Tests
             FakePublicationInspector inspector = new FakePublicationInspector();
             plan = plan ?? MakePlan();
             CaptureRunPublicationRecoveryInspectionSnapshot recoverySnapshot = indexAuthoritative
-                ? MakeRecoverySnapshot(inspector, recoveryOperation, captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, plan))
-                : MakeRecoverySnapshot(inspector, recoveryOperation, publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
+                ? MakeRecoverySnapshot(inspector, recoveryOperation, captureIndexTemporary: captureIndexTemporary, captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, plan))
+                : MakeRecoverySnapshot(inspector, recoveryOperation, captureIndexTemporary: captureIndexTemporary, publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan));
             CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(recoverySnapshot);
             return new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
         }
@@ -576,6 +583,107 @@ namespace Zantetsu.Core.Tests
         public void Classify_PlanTraceAbsent_OrphanedPreTrace()
         {
             Assert.That(Classify(traceStatus: EvAbsent, traceCount: 0).Disposition, Is.EqualTo(OrphanedPreTrace));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentFinalPngMatches_Collision()
+        {
+            Assert.That(ClassifySingleEntry(
+                finalPngStatus: EvMatchesExpected, finalPngCount: PngBytes,
+                traceStatus: EvAbsent, traceCount: 0), Is.EqualTo(RunRootCollision));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentFinalSidecarMatches_Collision()
+        {
+            Assert.That(ClassifySingleEntry(
+                finalSidecarStatus: EvMatchesExpected, finalSidecarCount: SidecarBytes,
+                traceStatus: EvAbsent, traceCount: 0), Is.EqualTo(RunRootCollision));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentOneFinalMatches_Collision()
+        {
+            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            FakeArtifactInspector inspector = new FakeArtifactInspector();
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, plan, 4);
+
+            CaptureRunPublicationArtifactEntryObservation e0 = MakeEntryObservation(
+                operation, operation.GetArtifactPaths(0),
+                stagingPngStatus: EvMatchesExpected, stagingPngCount: PngBytes,
+                stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: SidecarBytes);
+            CaptureRunPublicationArtifactEntryObservation e1 = MakeEntryObservation(
+                operation, operation.GetArtifactPaths(1),
+                finalPngStatus: EvMatchesExpected, finalPngCount: PngBytes);
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(
+                MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, new[] { e0, e1 }));
+
+            Assert.That(decision.Disposition, Is.EqualTo(RunRootCollision));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentStagingMatchAllFinalAbsent_OrphanedPreTrace()
+        {
+            Assert.That(ClassifySingleEntry(
+                stagingPngStatus: EvMatchesExpected, stagingPngCount: PngBytes,
+                stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: SidecarBytes,
+                finalPngStatus: EvAbsent, finalPngCount: 0,
+                finalSidecarStatus: EvAbsent, finalSidecarCount: 0,
+                traceStatus: EvAbsent, traceCount: 0), Is.EqualTo(OrphanedPreTrace));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentCanonicalIndexTemporary_Collision()
+        {
+            CapturePublicationPlan plan = MakePlan();
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
+                null, false, plan, 4,
+                MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
+            FakeArtifactInspector inspector = new FakeArtifactInspector();
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(
+                MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, null));
+
+            Assert.That(decision.Disposition, Is.EqualTo(RunRootCollision));
+        }
+
+        [Test]
+        public void Classify_TraceAbsentInvalidIndexTemporary_Collision()
+        {
+            CapturePublicationPlan plan = MakePlan();
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
+                null, false, plan, 4,
+                MakeDoc(CaptureIndexTemporary, DocInvalid, 0));
+            FakeArtifactInspector inspector = new FakeArtifactInspector();
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(
+                MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, null));
+
+            Assert.That(decision.Disposition, Is.EqualTo(RunRootCollision));
+        }
+
+        [Test]
+        public void ComputeDisposition_TraceAbsentLimitExceededIndexTemporary_Collision()
+        {
+            // A limit-exceeded capture.index.tmp is already rejected by the
+            // publication classifier before a valid artifact snapshot can
+            // exist, so this ordering violation is asserted on the shared pure
+            // computation over a forged snapshot whose operation is otherwise
+            // intact.
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false);
+            SetField(operation.Decision.Snapshot, "_captureIndexTemporary",
+                MakeDoc(CaptureIndexTemporary, DocLimitExceeded, 1001));
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = (CaptureRunPublicationArtifactInspectionSnapshot)FormatterServices.GetUninitializedObject(
+                typeof(CaptureRunPublicationArtifactInspectionSnapshot));
+            SetField(snapshot, "_issuedBy", new FakeArtifactInspector());
+            SetField(snapshot, "_operation", operation);
+            SetField(snapshot, "_traceManifestStatus", EvAbsent);
+            SetField(snapshot, "_traceManifestProbedByteCount", 0L);
+            SetField(snapshot, "_entries", new CaptureRunPublicationArtifactEntryObservation[0]);
+
+            Assert.That(CaptureRunPublicationArtifactRecoveryClassifier.ComputeDisposition(snapshot), Is.EqualTo(RunRootCollision));
         }
 
         [Test]

@@ -53,9 +53,22 @@ namespace Zantetsu.Observability
 
             if (traceStatus == CaptureRunPublicationEvidenceStatus.Absent)
             {
+                if (!IsAbsentCaptureIndexTemporary(snapshot))
+                {
+                    return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                }
+
                 for (int i = 0; i < count; i++)
                 {
-                    if (HasArtifactAnomaly(snapshot.GetEntry(i)))
+                    CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
+
+                    if (HasArtifactAnomaly(observation))
+                    {
+                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                    }
+
+                    if (observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.Absent
+                        || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.Absent)
                     {
                         return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
                     }
@@ -131,6 +144,12 @@ namespace Zantetsu.Observability
         {
             return status == CaptureRunPublicationEvidenceStatus.Absent
                 || status == CaptureRunPublicationEvidenceStatus.MatchesExpected;
+        }
+
+        private static bool IsAbsentCaptureIndexTemporary(CaptureRunPublicationArtifactInspectionSnapshot snapshot)
+        {
+            CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = snapshot.Decision.Snapshot;
+            return publicationSnapshot.CaptureIndexTemporary.Status == CaptureRunPublicationDocumentObservationStatus.Absent;
         }
 
         private static bool HasArtifactAnomaly(CaptureRunPublicationArtifactEntryObservation observation)
