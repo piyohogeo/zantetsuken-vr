@@ -26,12 +26,17 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(actionPlan));
             }
 
-            if (!actionPlan.IsValid)
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+            try
             {
-                throw new ArgumentException("Action plan must be valid.", nameof(actionPlan));
+                token = actionPlan.AcquireValidationToken();
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new ArgumentException("Action plan must be valid.", nameof(actionPlan), ex);
             }
 
-            return CreateIndexLocal(actionPlan, actionPlan.AcquireValidationToken(), stepIndex);
+            return CreateIndexLocal(actionPlan, token, stepIndex);
         }
 
         internal static CaptureRunPublicationArtifactPublishOperation CreateIndexLocal(

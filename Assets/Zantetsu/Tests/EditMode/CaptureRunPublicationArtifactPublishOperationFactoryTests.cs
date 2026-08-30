@@ -832,5 +832,20 @@ namespace Zantetsu.Core.Tests
             Assert.That(operationSource, Does.Not.Contain("System.Linq"));
             Assert.That(operationSource, Does.Not.Contain("List<"));
         }
+
+        [Test]
+        public void Factory_Create_SingleFullValidation()
+        {
+            string factorySource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperationFactory.cs"));
+            string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperation.cs"));
+
+            // Full plan validation must happen only inside AcquireValidationToken;
+            // the normal entry and normal constructor must delegate instead of
+            // re-checking the plan's validity themselves.
+            Assert.That(factorySource, Does.Not.Contain("!actionPlan.IsValid"));
+            Assert.That(operationSource, Does.Not.Contain("!actionPlan.IsValid"));
+            Assert.That(factorySource, Does.Contain("AcquireValidationToken"));
+            Assert.That(operationSource, Does.Contain("AcquireValidationToken"));
+        }
     }
 }

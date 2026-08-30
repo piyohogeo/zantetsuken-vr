@@ -116,12 +116,14 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(actionPlan));
             }
 
-            if (!actionPlan.IsValid)
+            try
             {
-                throw new ArgumentException("Action plan must be valid.", nameof(actionPlan));
+                return actionPlan.AcquireValidationToken();
             }
-
-            return actionPlan.AcquireValidationToken();
+            catch (InvalidOperationException ex)
+            {
+                throw new ArgumentException("Action plan must be valid.", nameof(actionPlan), ex);
+            }
         }
 
         private static void RequirePublishable(
