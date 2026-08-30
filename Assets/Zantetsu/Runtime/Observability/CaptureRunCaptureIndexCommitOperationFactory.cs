@@ -86,8 +86,11 @@ namespace Zantetsu.Observability
 
             byte[] canonicalBytes = CapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
 
+            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
+                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(authoritativePlan, canonicalBytes);
+
             CaptureRunCaptureIndexCommitOperation operation = new CaptureRunCaptureIndexCommitOperation(
-                actionPlan, token, stepIndex, ref canonicalBytes);
+                actionPlan, token, stepIndex, bytesToken, ref canonicalBytes);
 
             if (canonicalBytes != null)
             {
