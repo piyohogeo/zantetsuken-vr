@@ -84,10 +84,8 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Publication decision must hold an authoritative plan.", nameof(actionPlan));
             }
 
-            byte[] canonicalBytes = CapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
-
             CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
-                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(authoritativePlan, canonicalBytes);
+                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(authoritativePlan, out byte[] canonicalBytes);
 
             CaptureRunCaptureIndexCommitOperation operation = new CaptureRunCaptureIndexCommitOperation(
                 actionPlan, token, stepIndex, bytesToken, ref canonicalBytes);

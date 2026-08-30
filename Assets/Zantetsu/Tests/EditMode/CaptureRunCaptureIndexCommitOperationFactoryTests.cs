@@ -322,8 +322,7 @@ namespace Zantetsu.Core.Tests
             CapturePublicationPlan plan,
             out byte[] bytes)
         {
-            bytes = CapturePublicationPlanCodec.SerializeCanonical(plan);
-            return CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan, bytes);
+            return CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan, out bytes);
         }
 
         private static CaptureRunCaptureIndexCommitOperation ForgeOperation(
@@ -852,9 +851,8 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
 
-            byte[] correct = CapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
             CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
-                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan.AuthoritativePlan, correct);
+                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan.AuthoritativePlan, out byte[] correct);
 
             byte[] wrongSame = (byte[])correct.Clone();
             wrongSame[0] = (byte)(wrongSame[0] ^ 0xFF);
@@ -876,6 +874,41 @@ namespace Zantetsu.Core.Tests
                 Assert.That(local, Is.Not.Null);
                 Assert.That(local, Is.EqualTo(snapshot));
             }
+        }
+
+        [Test]
+        public void CanonicalBytesToken_Acquire_ReturnsCanonicalSerialization()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
+
+            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
+                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan.AuthoritativePlan, out byte[] bytes);
+
+            byte[] expected = CapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
+            Assert.That(bytes, Is.EqualTo(expected));
+            Assert.That(bytesToken.IsIssuedFor(plan.AuthoritativePlan, bytes), Is.True);
+            Assert.That(bytesToken.IsIssuedFor(plan.AuthoritativePlan, new byte[] { 1, 2, 3 }), Is.False);
+        }
+
+        [Test]
+        public void CanonicalBytesToken_CannotBeIssuedForArbitraryBytes()
+        {
+            // A token can only be minted from a plan, never from an arbitrary
+            // byte array: Acquire takes no byte[] input and the token has no
+            // public constructor.
+            MethodInfo acquire = typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken)
+                .GetMethod("Acquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(acquire, Is.Not.Null);
+
+            ParameterInfo[] parameters = acquire.GetParameters();
+            Assert.That(parameters.Length, Is.EqualTo(2));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CapturePublicationPlan)));
+            Assert.That(parameters[1].ParameterType, Is.EqualTo(typeof(byte[]).MakeByRefType()));
+            Assert.That(parameters[1].IsOut, Is.True);
+
+            Assert.That(
+                typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken).GetConstructors(BindingFlags.Public | BindingFlags.Instance),
+                Is.Empty);
         }
 
         [Test]
@@ -1033,11 +1066,14 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain("TraceLogger"));
             }
 
-            // The factory serializes once and transfers ownership without copying.
+            // The factory must not serialize or copy bytes; it mints the bytes
+            // token, whose Acquire performs the single canonical serialization.
             Assert.That(factorySource, Does.Not.Contain("Array.Copy"));
-            Assert.That(factorySource, Does.Contain("SerializeCanonical"));
+            Assert.That(factorySource, Does.Not.Contain("SerializeCanonical"));
+            Assert.That(factorySource, Does.Contain("Acquire"));
 
-            // The operation re-serializes in IsValid and defensively copies in the getter.
+            // The operation serializes once inside Acquire and re-serializes in
+            // IsValid, and defensively copies in the getter.
             Assert.That(operationSource, Does.Contain("SerializeCanonical"));
             Assert.That(operationSource, Does.Contain("GetCanonicalBytes"));
         }
