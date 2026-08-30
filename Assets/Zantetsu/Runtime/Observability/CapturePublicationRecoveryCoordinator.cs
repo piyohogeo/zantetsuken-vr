@@ -27,6 +27,16 @@ namespace Zantetsu.Observability
             return new CapturePublicationRecoverySnapshot(plan, observations);
         }
 
+        internal CapturePublicationRecoverySnapshot InspectPersisted(
+            ICapturePublicationPlanStore planStore,
+            int maximumCanonicalByteCount)
+        {
+            if (planStore == null) throw new ArgumentNullException(nameof(planStore));
+            CapturePublicationPlan plan = planStore.ReadPlan(maximumCanonicalByteCount);
+            if (plan == null || !plan.IsValid) throw new InvalidOperationException("Plan store returned an invalid plan.");
+            return Inspect(plan);
+        }
+
         internal CapturePublicationRecoveryDisposition ExecuteMissing(CapturePublicationRecoverySnapshot snapshot)
         {
             if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));

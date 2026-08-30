@@ -13,6 +13,8 @@ namespace Zantetsu.Observability
     /// </summary>
     internal interface ICaptureEvidenceSession : IDisposable
     {
+        int MaximumArtifactCountPerSubmission { get; }
+
         CaptureSubmitStatus TrySubmit(
             CaptureFrameEnvelope frame,
             CaptureSurfaceLease surface,

@@ -54,9 +54,29 @@ namespace Zantetsu.Observability
             int slot = FindFree();
             if (slot < 0) { token = default; return CaptureSubmitStatus.Backpressured; }
 
+            int reservedArtifacts = _evidence.MaximumArtifactCountPerSubmission;
+            if (!_artifacts.TryReserve(draft.TestRunId, draft.CaptureFrameId, reservedArtifacts))
+            {
+                token = default;
+                return CaptureSubmitStatus.Backpressured;
+            }
+
             CaptureFrameEnvelope envelope = CaptureFrameEnvelope.FromDraft(draft, colorSpace);
-            CaptureSubmitStatus status = _evidence.TrySubmit(envelope, surface, out token);
-            if (status != CaptureSubmitStatus.Accepted) return status;
+            CaptureSubmitStatus status;
+            try
+            {
+                status = _evidence.TrySubmit(envelope, surface, out token);
+            }
+            catch
+            {
+                _artifacts.CancelReservation(draft.TestRunId, draft.CaptureFrameId);
+                throw;
+            }
+            if (status != CaptureSubmitStatus.Accepted)
+            {
+                _artifacts.CancelReservation(draft.TestRunId, draft.CaptureFrameId);
+                return status;
+            }
             if (token.SlotIndex < 0 || token.SlotIndex >= _tokens.Length) throw new InvalidOperationException("Backend token slot exceeds coordinator capacity.");
             if (_occupied[token.SlotIndex]) throw new InvalidOperationException("Backend reused an occupied work slot.");
 
@@ -95,6 +115,7 @@ namespace Zantetsu.Observability
             if (_frameCompleted[slot]) throw new InvalidOperationException("Duplicate frame completion.");
             _frameCompleted[slot] = true;
             _expectedArtifacts[slot] = completion.ProducedArtifactCount;
+            _artifacts.TrimReservation(completion.WorkToken, completion.ProducedArtifactCount);
             if (completion.Status != CaptureFrameCompletionStatus.Succeeded)
             {
                 CompleteDrop(slot, completion.Status == CaptureFrameCompletionStatus.Cancelled
@@ -117,14 +138,13 @@ namespace Zantetsu.Observability
             _receivedArtifacts[slot]++;
             if (completion.Status == CaptureArtifactCompletionStatus.Staged)
             {
-                if (!_artifacts.TryRegister(completion.WorkToken, completion.Descriptor))
-                {
-                    _artifactFailed[slot] = true;
-                }
+                if (!_artifacts.TryRegister(completion.WorkToken, completion.Descriptor, completion.FrameRelation))
+                    throw new InvalidOperationException("Reserved artifact registration failed.");
                 _receivedBytes[slot] = checked(_receivedBytes[slot] + completion.ByteLength);
             }
             else
             {
+                _artifacts.ReleaseFailedArtifact(completion.WorkToken);
                 _artifactFailed[slot] = true;
             }
 

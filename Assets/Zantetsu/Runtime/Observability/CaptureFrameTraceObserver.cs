@@ -54,7 +54,7 @@ namespace Zantetsu.Observability
             double processingDurationMilliseconds,
             long artifactByteCount)
         {
-            if (artifactByteCount <= 0 || artifactByteCount > int.MaxValue)
+            if (artifactByteCount < 0 || artifactByteCount > int.MaxValue)
             {
                 throw new ArgumentOutOfRangeException(nameof(artifactByteCount));
             }

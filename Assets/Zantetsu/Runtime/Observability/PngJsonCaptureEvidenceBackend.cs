@@ -23,10 +23,13 @@ namespace Zantetsu.Observability
         private readonly CaptureSurfaceLease[] _surfaces;
         private readonly CaptureFrameCompletion[] _frameCompletions;
         private readonly CaptureArtifactCompletion[] _artifactCompletions;
+        private readonly CaptureFrameWorkToken[] _deliveredFrameTokens;
+        private readonly int[] _remainingDeliveredArtifacts;
         private int _frameHead;
         private int _frameCount;
         private int _artifactHead;
         private int _artifactCount;
+        private int _deliveredFrameCount;
         private bool _accepting;
         private bool _disposed;
 
@@ -48,8 +51,12 @@ namespace Zantetsu.Observability
             _surfaces = new CaptureSurfaceLease[capacity];
             _frameCompletions = new CaptureFrameCompletion[capacity];
             _artifactCompletions = new CaptureArtifactCompletion[checked(capacity * 2)];
+            _deliveredFrameTokens = new CaptureFrameWorkToken[capacity];
+            _remainingDeliveredArtifacts = new int[capacity];
             _accepting = true;
         }
+
+        public int MaximumArtifactCountPerSubmission => 2;
 
         public CaptureSubmitStatus TrySubmit(
             CaptureFrameEnvelope frame,
@@ -105,10 +112,20 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            completion = _artifactCompletions[_artifactHead];
+            CaptureArtifactCompletion pending = _artifactCompletions[_artifactHead];
+            int deliveredIndex = FindDeliveredFrame(pending.WorkToken);
+            if (deliveredIndex < 0)
+            {
+                completion = null;
+                return false;
+            }
+
+            completion = pending;
             _artifactCompletions[_artifactHead] = null;
             _artifactHead = (_artifactHead + 1) % _artifactCompletions.Length;
             _artifactCount--;
+            _remainingDeliveredArtifacts[deliveredIndex]--;
+            if (_remainingDeliveredArtifacts[deliveredIndex] == 0) RemoveDeliveredFrame(deliveredIndex);
             return true;
         }
 
@@ -135,7 +152,7 @@ namespace Zantetsu.Observability
         public void Dispose()
         {
             if (_disposed) return;
-            if (_dispatcher.ActiveCount != 0 || _frameCount != 0 || _artifactCount != 0 || HasInFlight())
+            if (_dispatcher.ActiveCount != 0 || _frameCount != 0 || _artifactCount != 0 || _deliveredFrameCount != 0 || HasInFlight())
             {
                 throw new InvalidOperationException("Backend must be drained and all completions collected before disposal.");
             }
@@ -228,6 +245,7 @@ namespace Zantetsu.Observability
                 token,
                 frameId,
                 descriptor,
+                new CaptureArtifactFrameRelation(new[] { frameId }),
                 failure == null ? CaptureArtifactCompletionStatus.Staged : CaptureArtifactCompletionStatus.Failed,
                 receipt,
                 failure));
@@ -254,7 +272,37 @@ namespace Zantetsu.Observability
             _frameCompletions[_frameHead] = default;
             _frameHead = (_frameHead + 1) % _frameCompletions.Length;
             _frameCount--;
+            if (completion.ProducedArtifactCount > 0) AddDeliveredFrame(completion.WorkToken, completion.ProducedArtifactCount);
             return true;
+        }
+
+        private void AddDeliveredFrame(in CaptureFrameWorkToken token, int artifactCount)
+        {
+            if (_deliveredFrameCount == _deliveredFrameTokens.Length) throw new InvalidOperationException("Delivered-frame gate is full.");
+            if (FindDeliveredFrame(token) >= 0) throw new InvalidOperationException("Frame completion was delivered twice.");
+            _deliveredFrameTokens[_deliveredFrameCount] = token;
+            _remainingDeliveredArtifacts[_deliveredFrameCount] = artifactCount;
+            _deliveredFrameCount++;
+        }
+
+        private int FindDeliveredFrame(in CaptureFrameWorkToken token)
+        {
+            for (int i = 0; i < _deliveredFrameCount; i++)
+                if (_deliveredFrameTokens[i].IdenticalTo(token)) return i;
+            return -1;
+        }
+
+        private void RemoveDeliveredFrame(int index)
+        {
+            int last = _deliveredFrameCount - 1;
+            if (index != last)
+            {
+                _deliveredFrameTokens[index] = _deliveredFrameTokens[last];
+                _remainingDeliveredArtifacts[index] = _remainingDeliveredArtifacts[last];
+            }
+            _deliveredFrameTokens[last] = default;
+            _remainingDeliveredArtifacts[last] = 0;
+            _deliveredFrameCount--;
         }
 
         private int FindFreeSlot()

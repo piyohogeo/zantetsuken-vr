@@ -5,17 +5,56 @@ using System.Security.Cryptography;
 namespace Zantetsu.Observability
 {
     /// <summary>Format-neutral file store rooted in one staging and one final run.</summary>
-    internal sealed class CaptureArtifactFileStore : ICaptureArtifactStore
+    internal sealed class CaptureArtifactFileStore : ICaptureArtifactStore, ICapturePublicationPlanStore
     {
+        private readonly long _testRunId;
         private readonly string _stagingRunRoot;
         private readonly string _finalRunRoot;
+        private readonly string _publicationPlanTemporaryPath;
+        private readonly string _publicationPlanPath;
 
         internal CaptureArtifactFileStore(CaptureRunRootLayout rootLayout)
         {
             if (rootLayout == null) throw new ArgumentNullException(nameof(rootLayout));
             if (!rootLayout.IsValid) throw new ArgumentException("Root layout must be valid.", nameof(rootLayout));
+            _testRunId = rootLayout.TestRunId;
             _stagingRunRoot = rootLayout.StagingRunRoot;
             _finalRunRoot = rootLayout.FinalRunRoot;
+            _publicationPlanTemporaryPath = Path.Combine(_stagingRunRoot, "publication.plan.tmp");
+            _publicationPlanPath = Path.Combine(_stagingRunRoot, "publication.plan");
+        }
+
+        public CapturePublicationPlanWriteReceipt WritePlan(CapturePublicationPlan plan)
+        {
+            if (plan == null || !plan.IsValid || plan.TestRunId != _testRunId)
+                throw new ArgumentException("Plan must be valid for this run.", nameof(plan));
+            byte[] bytes = CapturePublicationPlanCodec.SerializeCanonical(plan);
+            Directory.CreateDirectory(_stagingRunRoot);
+            using (FileStream stream = new FileStream(_publicationPlanTemporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(bytes, 0, bytes.Length);
+                stream.Flush(true);
+            }
+            try
+            {
+                File.Move(_publicationPlanTemporaryPath, _publicationPlanPath);
+            }
+            catch
+            {
+                if (File.Exists(_publicationPlanTemporaryPath)) File.Delete(_publicationPlanTemporaryPath);
+                throw;
+            }
+            return new CapturePublicationPlanWriteReceipt(this, plan, _publicationPlanPath, bytes.Length);
+        }
+
+        public CapturePublicationPlan ReadPlan(int maximumCanonicalByteCount)
+        {
+            using (FileStream stream = new FileStream(_publicationPlanPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                CapturePublicationPlan plan = CapturePublicationPlanCodec.DeserializeCanonical(stream, maximumCanonicalByteCount);
+                if (plan.TestRunId != _testRunId) throw new InvalidDataException("Publication plan belongs to another run.");
+                return plan;
+            }
         }
 
         public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)

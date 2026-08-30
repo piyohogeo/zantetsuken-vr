@@ -35,12 +35,12 @@ namespace Zantetsu.Observability
 
             int descriptorCount = 0;
             for (int i = 0; i < artifacts.Count; i++)
-                if (Array.BinarySearch(stagedIds, artifacts.GetWorkToken(i).CaptureFrameId) >= 0) descriptorCount++;
+                if (RelationCanPublish(artifacts.GetFrameRelation(i), stagedIds)) descriptorCount++;
 
             CaptureArtifactDescriptor[] descriptors = new CaptureArtifactDescriptor[descriptorCount];
             int descriptorIndex = 0;
             for (int i = 0; i < artifacts.Count; i++)
-                if (Array.BinarySearch(stagedIds, artifacts.GetWorkToken(i).CaptureFrameId) >= 0)
+                if (RelationCanPublish(artifacts.GetFrameRelation(i), stagedIds))
                     descriptors[descriptorIndex++] = artifacts.GetDescriptor(i);
             Array.Sort(descriptors, ArtifactComparer.Instance);
 
@@ -48,11 +48,15 @@ namespace Zantetsu.Observability
             for (int i = 0; i < stagedIds.Length; i++)
             {
                 long frameId = stagedIds[i];
-                int count = artifacts.CountForFrame(frameId);
+                int count = 0;
+                for (int j = 0; j < artifacts.Count; j++)
+                    if (RelationCanPublish(artifacts.GetFrameRelation(j), stagedIds)
+                        && artifacts.GetFrameRelation(j).Contains(frameId)) count++;
                 string[] ids = new string[count];
                 int index = 0;
                 for (int j = 0; j < artifacts.Count; j++)
-                    if (artifacts.GetWorkToken(j).CaptureFrameId == frameId)
+                    if (RelationCanPublish(artifacts.GetFrameRelation(j), stagedIds)
+                        && artifacts.GetFrameRelation(j).Contains(frameId))
                         ids[index++] = artifacts.GetDescriptor(j).ArtifactId;
                 Array.Sort(ids, StringComparer.Ordinal);
                 evidence[i] = new CaptureFrameEvidenceEntry(frameId, ids);
@@ -64,6 +68,14 @@ namespace Zantetsu.Observability
                 runManifestContentHash,
                 descriptors,
                 evidence);
+        }
+
+        private static bool RelationCanPublish(CaptureArtifactFrameRelation relation, long[] stagedIds)
+        {
+            if (relation == null || !relation.IsValid) return false;
+            for (int i = 0; i < relation.Count; i++)
+                if (Array.BinarySearch(stagedIds, relation.GetCaptureFrameId(i)) < 0) return false;
+            return true;
         }
 
         private sealed class ArtifactComparer : IComparer<CaptureArtifactDescriptor>

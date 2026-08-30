@@ -9,6 +9,7 @@ namespace Zantetsu.Observability
             in CaptureFrameWorkToken workToken,
             long captureFrameId,
             CaptureArtifactDescriptor descriptor,
+            CaptureArtifactFrameRelation frameRelation,
             CaptureArtifactCompletionStatus status,
             ICaptureArtifactStorageReceipt storageReceipt,
             ExceptionDispatchInfo failure)
@@ -16,6 +17,7 @@ namespace Zantetsu.Observability
             if (!workToken.IsValid) throw new ArgumentException("Work token must be valid.", nameof(workToken));
             if (captureFrameId <= 0 || captureFrameId != workToken.CaptureFrameId) throw new ArgumentOutOfRangeException(nameof(captureFrameId));
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
+            if (frameRelation == null || !frameRelation.IsValid) throw new ArgumentException("Frame relation must be valid.", nameof(frameRelation));
             if (status != CaptureArtifactCompletionStatus.Staged
                 && status != CaptureArtifactCompletionStatus.Failed
                 && status != CaptureArtifactCompletionStatus.Cancelled)
@@ -37,6 +39,7 @@ namespace Zantetsu.Observability
             WorkToken = workToken;
             CaptureFrameId = captureFrameId;
             Descriptor = descriptor;
+            FrameRelation = frameRelation;
             Status = status;
             StorageReceipt = storageReceipt;
             Failure = failure;
@@ -45,6 +48,7 @@ namespace Zantetsu.Observability
         internal CaptureFrameWorkToken WorkToken { get; }
         internal long CaptureFrameId { get; }
         internal CaptureArtifactDescriptor Descriptor { get; }
+        internal CaptureArtifactFrameRelation FrameRelation { get; }
         internal CaptureArtifactCompletionStatus Status { get; }
         internal long ByteLength => Descriptor.ByteLength;
         internal string ContentHash => Descriptor.ContentHash;
@@ -55,6 +59,8 @@ namespace Zantetsu.Observability
             && CaptureFrameId == WorkToken.CaptureFrameId
             && Descriptor != null
             && Descriptor.IsValid
+            && FrameRelation != null
+            && FrameRelation.IsValid
             && (Status == CaptureArtifactCompletionStatus.Staged
                 || Status == CaptureArtifactCompletionStatus.Failed
                 || Status == CaptureArtifactCompletionStatus.Cancelled)

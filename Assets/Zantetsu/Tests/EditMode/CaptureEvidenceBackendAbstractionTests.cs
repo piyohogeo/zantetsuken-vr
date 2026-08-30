@@ -116,6 +116,74 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PngJsonBackend_DoesNotExposeArtifactBeforeFrameCompletion()
+        {
+            using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 16))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(buffers))
+            using (FakeArtifactStore store = new FakeArtifactStore())
+            using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
+            {
+                CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 7);
+                CaptureArtifactDescriptor descriptor = Descriptor("frame/7/image", "frames/7.png.stage", "frames/7.png", HashA);
+                CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\frames\\7.png.stage");
+                CaptureArtifactCompletion artifact = new CaptureArtifactCompletion(
+                    token, 7, descriptor, new CaptureArtifactFrameRelation(new[] { 7L }),
+                    CaptureArtifactCompletionStatus.Staged, receipt, null);
+                CaptureFrameCompletion frame = new CaptureFrameCompletion(
+                    token, 7, CaptureFrameCompletionStatus.Succeeded, true, 1, null);
+
+                InvokePrivate(backend, "EnqueueArtifact", artifact);
+                InvokePrivate(backend, "EnqueueFrame", frame);
+
+                Assert.That(backend.TryCollectArtifactCompletion(out _), Is.False);
+                Assert.That(backend.TryCollectFrameCompletion(out CaptureFrameCompletion collectedFrame), Is.True);
+                Assert.That(collectedFrame.WorkToken.Equals(token), Is.True);
+                Assert.That(backend.TryCollectArtifactCompletion(out CaptureArtifactCompletion collectedArtifact), Is.True);
+                Assert.That(collectedArtifact.Descriptor, Is.SameAs(descriptor));
+                backend.BeginDrain();
+            }
+        }
+
+        [Test]
+        public void ArtifactRelation_IsIndependentFromProducerToken_AndSupportsRunOrManyFrames()
+        {
+            CaptureArtifactFrameRelation runScoped = new CaptureArtifactFrameRelation(Array.Empty<long>());
+            CaptureArtifactFrameRelation shared = new CaptureArtifactFrameRelation(new[] { 4L, 9L });
+            CaptureFrameWorkToken producer = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 4);
+            CaptureArtifactDescriptor descriptor = Descriptor("segment/4-9", "segments/4-9.stage", "segments/4-9", HashA);
+            using (FakeArtifactStore store = new FakeArtifactStore())
+            {
+                CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\segments\\4-9.stage");
+                CaptureArtifactCompletion completion = new CaptureArtifactCompletion(
+                    producer, 4, descriptor, shared, CaptureArtifactCompletionStatus.Staged, receipt, null);
+
+                Assert.That(runScoped.IsValid, Is.True);
+                Assert.That(runScoped.Count, Is.Zero);
+                Assert.That(shared.Contains(4), Is.True);
+                Assert.That(shared.Contains(9), Is.True);
+                Assert.That(completion.IsValid, Is.True);
+                Assert.That(completion.FrameRelation, Is.SameAs(shared));
+                Assert.That(completion.WorkToken.CaptureFrameId, Is.EqualTo(4));
+            }
+        }
+
+        [Test]
+        public void ArtifactRegistry_ReservesCapacityBeforeBackendAcceptance()
+        {
+            CaptureArtifactRegistry registry = new CaptureArtifactRegistry(1);
+            Assert.That(registry.TryReserve(3, 1, 1), Is.True);
+            Assert.That(registry.TryReserve(3, 2, 1), Is.False);
+            Assert.That(registry.ReservedArtifactCount, Is.EqualTo(1));
+
+            CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 1);
+            CaptureArtifactDescriptor descriptor = Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA);
+            CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new[] { 1L });
+            Assert.That(registry.TryRegister(token, descriptor, relation), Is.True);
+            Assert.That(registry.ReservedArtifactCount, Is.Zero);
+            Assert.That(registry.GetFrameRelation(0), Is.SameAs(relation));
+        }
+
+        [Test]
         public void GenericPublicationPlan_AllowsZeroOneAndMultipleArtifactsPerFrame()
         {
             CaptureArtifactDescriptor first = Descriptor("a", "frames/1.a.stage", "frames/1.a", HashA);
@@ -165,17 +233,55 @@ namespace Zantetsu.Core.Tests
 
                 CapturePublicationPlan plan = new CapturePublicationPlan(3, InitializationId, HashA,
                     new[] { descriptor }, new[] { new CaptureFrameEvidenceEntry(1, new[] { "artifact/1" }) });
-                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(store);
-                CapturePublicationRecoverySnapshot snapshot = recovery.Inspect(plan);
+                CapturePublicationPlanWriteReceipt persisted = store.WritePlan(plan);
+                Assert.That(persisted.IsIssuedFor(store, plan), Is.True);
+
+                // A new store/coordinator instance simulates recovery after a
+                // process restart. The generic persisted plan is the source.
+                CaptureArtifactFileStore restartedStore = new CaptureArtifactFileStore(layout);
+                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(restartedStore);
+                CapturePublicationRecoverySnapshot snapshot = recovery.InspectPersisted(
+                    restartedStore, CapturePublicationPlanCodec.MaximumCanonicalByteCount);
+                Assert.That(snapshot.Plan.TestRunId, Is.EqualTo(3));
+                Assert.That(snapshot.Plan.GetArtifact(0).ArtifactId, Is.EqualTo("artifact/1"));
                 Assert.That(CapturePublicationRecoveryClassifier.Classify(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.PublishMissingArtifacts));
                 Assert.That(recovery.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
-                Assert.That(store.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                Assert.That(store.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
+                Assert.That(restartedStore.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                Assert.That(restartedStore.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
             }
             finally
             {
                 if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
             }
+        }
+
+        [Test]
+        public void GenericPublicationPlanCodec_IsBoundedAndRejectsNonCanonicalPersistence()
+        {
+            CapturePublicationPlan plan = new CapturePublicationPlan(
+                3,
+                InitializationId,
+                HashA,
+                new[] { Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA) },
+                new[] { new CaptureFrameEvidenceEntry(1, new[] { "a" }) });
+            byte[] canonical = CapturePublicationPlanCodec.SerializeCanonical(plan);
+
+            using (MemoryStream exact = new MemoryStream(canonical, false))
+            {
+                CapturePublicationPlan decoded = CapturePublicationPlanCodec.DeserializeCanonical(exact, canonical.Length);
+                Assert.That(decoded.IsValid, Is.True);
+                Assert.That(decoded.GetArtifact(0).ArtifactId, Is.EqualTo("a"));
+            }
+            using (MemoryStream tooSmall = new MemoryStream(canonical, false))
+            {
+                Assert.Throws<ArgumentException>(() =>
+                    CapturePublicationPlanCodec.DeserializeCanonical(tooSmall, canonical.Length - 1));
+            }
+
+            byte[] nonCanonical = new byte[canonical.Length + 1];
+            Array.Copy(canonical, nonCanonical, canonical.Length);
+            nonCanonical[nonCanonical.Length - 1] = (byte)'\n';
+            Assert.Throws<ArgumentException>(() => CapturePublicationPlanCodec.DeserializeCanonical(nonCanonical));
         }
 
         [Test]
@@ -264,6 +370,13 @@ namespace Zantetsu.Core.Tests
             return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         }
 
+        private static void InvokePrivate(object target, string methodName, object argument)
+        {
+            MethodInfo method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(target, new[] { argument });
+        }
+
         private sealed class FakeEvidenceSession : ICaptureEvidenceSession
         {
             private readonly Guid _owner = Guid.NewGuid();
@@ -272,6 +385,8 @@ namespace Zantetsu.Core.Tests
             private bool _hasCompletion;
 
             internal FakeEvidenceSession(CaptureSubmitStatus status) { _status = status; }
+
+            public int MaximumArtifactCountPerSubmission => 2;
 
             public CaptureSubmitStatus TrySubmit(CaptureFrameEnvelope frame, CaptureSurfaceLease surface, out CaptureFrameWorkToken token)
             {
@@ -301,6 +416,31 @@ namespace Zantetsu.Core.Tests
             public void BeginDrain() { }
             public int CancelQueued() => 0;
             public bool TryJoin() => true;
+            public void Dispose() { }
+        }
+
+        private sealed class FakeArtifactStore : ICaptureArtifactStore, IDisposable
+        {
+            public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
+            {
+                return new CaptureArtifactWriteReceipt(this, request.Descriptor, "C:\\staging\\" + request.Descriptor.ArtifactId);
+            }
+
+            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
+            {
+                return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.MatchesExpected, descriptor.ByteLength);
+            }
+
+            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
+            {
+                return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.Absent, 0);
+            }
+
+            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
+            {
+                throw new NotSupportedException();
+            }
+
             public void Dispose() { }
         }
     }

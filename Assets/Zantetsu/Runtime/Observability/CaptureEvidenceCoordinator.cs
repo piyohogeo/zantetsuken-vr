@@ -13,7 +13,11 @@ namespace Zantetsu.Observability
         internal CaptureEvidenceCoordinator(ICaptureEvidenceSession session)
         {
             _session = session ?? throw new ArgumentNullException(nameof(session));
+            if (session.MaximumArtifactCountPerSubmission < 0)
+                throw new ArgumentException("Session artifact maximum must not be negative.", nameof(session));
         }
+
+        internal int MaximumArtifactCountPerSubmission => _session.MaximumArtifactCountPerSubmission;
 
         internal CaptureSubmitStatus TrySubmit(
             CaptureFrameEnvelope frame,
@@ -27,7 +31,11 @@ namespace Zantetsu.Observability
             CaptureSubmitStatus status = _session.TrySubmit(frame, surface, out token);
             if (status == CaptureSubmitStatus.Accepted)
             {
-                if (!token.IsValid || surface.IsCallerOwned) throw new InvalidOperationException("Accepted submission must transfer the surface and return a token.");
+                if (!token.IsValid
+                    || token.TestRunId != frame.TestRunId
+                    || token.CaptureFrameId != frame.CaptureFrameId
+                    || surface.IsCallerOwned)
+                    throw new InvalidOperationException("Accepted submission must transfer the surface and return a correlated token.");
             }
             else if (status == CaptureSubmitStatus.Backpressured || status == CaptureSubmitStatus.NotAccepting)
             {
