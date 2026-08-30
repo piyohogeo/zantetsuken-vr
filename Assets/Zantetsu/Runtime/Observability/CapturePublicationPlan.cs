@@ -118,6 +118,50 @@ namespace Zantetsu.Observability
             return _entries[index];
         }
 
+        /// <summary>
+        /// Exception-safe recomputation of every invariant this plan
+        /// guarantees. Returns <c>false</c> for any corrupted or partially
+        /// populated instance without throwing.
+        /// </summary>
+        internal bool IsValid
+        {
+            get
+            {
+                if (_testRunId <= 0
+                    || !IsLowercaseHex(_runInitializationId, 32)
+                    || !IsLowercaseHex(_runManifestContentSha256, 64)
+                    || _entries == null)
+                {
+                    return false;
+                }
+
+                if (_entries.Length > 100000)
+                {
+                    return false;
+                }
+
+                long previousCaptureFrameId = 0;
+                for (int i = 0; i < _entries.Length; i++)
+                {
+                    CapturePublicationPlanEntry entry = _entries[i];
+                    if (entry == null || !entry.IsValid)
+                    {
+                        return false;
+                    }
+
+                    long captureFrameId = entry.CaptureFrameId;
+                    if (i > 0 && captureFrameId <= previousCaptureFrameId)
+                    {
+                        return false;
+                    }
+
+                    previousCaptureFrameId = captureFrameId;
+                }
+
+                return true;
+            }
+        }
+
         private static bool IsLowercaseHex(string value, int length)
         {
             if (value == null || value.Length != length)

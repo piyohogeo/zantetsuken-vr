@@ -237,6 +237,27 @@ namespace Zantetsu.Core.Tests
                 finalRootEntryLimitExceeded);
         }
 
+        private static CaptureRunPublicationRecoveryInspectionSnapshot ForgeSnapshot(
+            ICaptureRunPublicationRecoveryInspector issuedBy,
+            CaptureRunPublicationRecoveryInspectionOperation operation,
+            CaptureRunPublicationDocumentObservation publicationPlanTemporary = null,
+            CaptureRunPublicationDocumentObservation publicationPlan = null,
+            CaptureRunPublicationDocumentObservation captureIndexTemporary = null,
+            CaptureRunPublicationDocumentObservation captureIndex = null)
+        {
+            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = (CaptureRunPublicationRecoveryInspectionSnapshot)FormatterServices.GetUninitializedObject(
+                typeof(CaptureRunPublicationRecoveryInspectionSnapshot));
+            SetField(snapshot, "_issuedBy", issuedBy);
+            SetField(snapshot, "_operation", operation);
+            SetField(snapshot, "_publicationPlanTemporary", publicationPlanTemporary ?? MakeDoc(PublicationPlanTemporary, DocAbsent));
+            SetField(snapshot, "_publicationPlan", publicationPlan ?? MakeDoc(PublicationPlan, DocAbsent));
+            SetField(snapshot, "_captureIndexTemporary", captureIndexTemporary ?? MakeDoc(CaptureIndexTemporary, DocAbsent));
+            SetField(snapshot, "_captureIndex", captureIndex ?? MakeDoc(CaptureIndex, DocAbsent));
+            SetField(snapshot, "_stagingFramesStatus", CaptureRunPublicationFramesObservationStatus.Directory);
+            SetField(snapshot, "_finalFramesStatus", CaptureRunPublicationFramesObservationStatus.Directory);
+            return snapshot;
+        }
+
         private static void AssertEnumContract(Type type, string[] expectedNames)
         {
             Assert.That(type.IsPublic, Is.False);
@@ -469,6 +490,25 @@ namespace Zantetsu.Core.Tests
             SetField(undefinedKind, "_kind", CaptureRunPublicationDocumentKind.None);
             SetField(undefinedKind, "_status", DocAbsent);
             Assert.That(undefinedKind.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PlanAndEntry_Uninitialized_IsInvalid()
+        {
+            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            CapturePublicationPlanEntry entry = (CapturePublicationPlanEntry)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlanEntry));
+
+            Assert.That(plan.IsValid, Is.False);
+            Assert.That(entry.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Observation_CanonicalInvalidPlan_Rejected()
+        {
+            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 1, plan));
+            Assert.That(ex.ParamName, Is.EqualTo("plan"));
         }
 
         // ---- Inspection operation ----
@@ -870,6 +910,106 @@ namespace Zantetsu.Core.Tests
             outcome.Dispose();
 
             Assert.That(snapshot.IsValid, Is.False);
+        }
+
+        // ---- Snapshot plan limits ----
+
+        [Test]
+        public void Snapshot_UninitializedPlan_Rejected()
+        {
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation();
+
+            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            Assert.That(plan.IsValid, Is.False);
+
+            Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 10, plan));
+        }
+
+        [Test]
+        public void Snapshot_EntryArrayCorruption_Rejected()
+        {
+            CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+            SetField(plan, "_testRunId", 1L);
+            SetField(plan, "_runInitializationId", InitId);
+            SetField(plan, "_runManifestContentSha256", StagingHash);
+            SetField(plan, "_entries", null);
+
+            Assert.That(plan.IsValid, Is.False);
+            Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 10, plan));
+        }
+
+        [Test]
+        public void Snapshot_EntryCountLimitExceeded_Rejected()
+        {
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation(maximumEntryCount: 2);
+
+            CapturePublicationPlan plan = new CapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(1), MakeEntry(2), MakeEntry(3) });
+            Assert.That(plan.IsValid, Is.True);
+
+            CaptureRunPublicationDocumentObservation observation = MakeDoc(PublicationPlan, DocCanonical, 10, plan);
+            Assert.That(observation.IsValid, Is.True);
+
+            Assert.Throws<ArgumentException>(() => MakeSnapshot(inspector, operation, publicationPlan: observation));
+            Assert.That(ForgeSnapshot(inspector, operation, publicationPlan: observation).IsValid, Is.False);
+        }
+
+        [Test]
+        public void Snapshot_PlanPathByteLimit_Exceeded_Rejected()
+        {
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation(maximumPathBytes: 16);
+
+            CapturePublicationPlan plan = new CapturePublicationPlan(1, InitId, StagingHash, new[] { MakeEntry(999999999999999999L) });
+            Assert.That(plan.IsValid, Is.True);
+
+            CaptureRunPublicationDocumentObservation observation = MakeDoc(PublicationPlan, DocCanonical, 100, plan);
+            Assert.That(observation.IsValid, Is.True);
+
+            Assert.Throws<ArgumentException>(() => MakeSnapshot(inspector, operation, publicationPlan: observation));
+            Assert.That(ForgeSnapshot(inspector, operation, publicationPlan: observation).IsValid, Is.False);
+        }
+
+        [Test]
+        public void Snapshot_EachPathTypeOverLimit_Rejected()
+        {
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation operation = MakeOperation(maximumPathBytes: 16);
+
+            string[] pathFields =
+            {
+                "_pngStagingRelativePath",
+                "_sidecarStagingRelativePath",
+                "_pngFinalRelativePath",
+                "_sidecarFinalRelativePath"
+            };
+
+            foreach (string pathField in pathFields)
+            {
+                CapturePublicationPlanEntry entry = MakeEntry(10);
+                SetField(entry, pathField, "frames/very-long-path-exceeding-limit/" + pathField + ".png");
+                Assert.That(entry.IsValid, Is.False, pathField);
+
+                CapturePublicationPlan plan = (CapturePublicationPlan)FormatterServices.GetUninitializedObject(typeof(CapturePublicationPlan));
+                SetField(plan, "_testRunId", 1L);
+                SetField(plan, "_runInitializationId", InitId);
+                SetField(plan, "_runManifestContentSha256", StagingHash);
+                SetField(plan, "_entries", new[] { entry });
+                Assert.That(plan.IsValid, Is.False, pathField);
+
+                Assert.Throws<ArgumentException>(() => MakeDoc(PublicationPlan, DocCanonical, 100, plan), pathField);
+
+                CaptureRunPublicationDocumentObservation forgedObservation = (CaptureRunPublicationDocumentObservation)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationDocumentObservation));
+                SetField(forgedObservation, "_kind", PublicationPlan);
+                SetField(forgedObservation, "_status", DocCanonical);
+                SetField(forgedObservation, "_probedByteCount", 100);
+                SetField(forgedObservation, "_plan", plan);
+                Assert.That(forgedObservation.IsValid, Is.False, pathField);
+
+                Assert.That(ForgeSnapshot(inspector, operation, publicationPlan: forgedObservation).IsValid, Is.False, pathField);
+            }
         }
 
         // ---- Inspector interface ----

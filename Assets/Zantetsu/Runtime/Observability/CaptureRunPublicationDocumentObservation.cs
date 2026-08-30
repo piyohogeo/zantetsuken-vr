@@ -77,7 +77,7 @@ namespace Zantetsu.Observability
                         return _probedByteCount == 0 && _plan == null;
 
                     case CaptureRunPublicationDocumentObservationStatus.Canonical:
-                        return _probedByteCount > 0 && _plan != null;
+                        return _probedByteCount > 0 && _plan != null && _plan.IsValid;
 
                     case CaptureRunPublicationDocumentObservationStatus.Invalid:
                         return _probedByteCount >= 0 && _plan == null;
@@ -136,6 +136,11 @@ namespace Zantetsu.Observability
                     if (plan == null)
                     {
                         throw new ArgumentException("A canonical document observation must hold a plan.", nameof(plan));
+                    }
+
+                    if (!plan.IsValid)
+                    {
+                        throw new ArgumentException("A canonical document observation must hold a valid plan.", nameof(plan));
                     }
 
                     return;

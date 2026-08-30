@@ -144,6 +144,62 @@ namespace Zantetsu.Observability
 
         internal string SidecarContentSha256 => _sidecarContentSha256;
 
+        /// <summary>
+        /// Exception-safe recomputation of every invariant this entry
+        /// guarantees. Returns <c>false</c> for any corrupted or partially
+        /// populated instance without throwing.
+        /// </summary>
+        internal bool IsValid
+        {
+            get
+            {
+                if (_captureFrameId <= 0
+                    || _pngStagingRelativePath == null
+                    || _sidecarStagingRelativePath == null
+                    || _pngFinalRelativePath == null
+                    || _sidecarFinalRelativePath == null
+                    || _pngByteLength <= 0
+                    || _sidecarByteLength <= 0
+                    || _pngContentSha256 == null
+                    || _sidecarContentSha256 == null)
+                {
+                    return false;
+                }
+
+                string id = _captureFrameId.ToString(CultureInfo.InvariantCulture);
+
+                return IsExactPath(_pngStagingRelativePath, "frames/" + id + ".png.stage")
+                    && IsExactPath(_sidecarStagingRelativePath, "frames/" + id + ".json.stage")
+                    && IsExactPath(_pngFinalRelativePath, "frames/" + id + ".png")
+                    && IsExactPath(_sidecarFinalRelativePath, "frames/" + id + ".json")
+                    && IsPrintableAsciiPath(_pngStagingRelativePath)
+                    && IsPrintableAsciiPath(_sidecarStagingRelativePath)
+                    && IsPrintableAsciiPath(_pngFinalRelativePath)
+                    && IsPrintableAsciiPath(_sidecarFinalRelativePath)
+                    && IsLowercaseHex64(_pngContentSha256)
+                    && IsLowercaseHex64(_sidecarContentSha256);
+            }
+        }
+
+        private static bool IsExactPath(string actual, string expected)
+        {
+            return string.Equals(actual, expected, StringComparison.Ordinal);
+        }
+
+        private static bool IsPrintableAsciiPath(string value)
+        {
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c < 0x20 || c > 0x7E)
+                {
+                    return false;
+                }
+            }
+
+            return Encoding.UTF8.GetByteCount(value) <= 512;
+        }
+
         private static void RequireExactPath(string actual, string expected, string paramName)
         {
             if (!string.Equals(actual, expected, StringComparison.Ordinal))

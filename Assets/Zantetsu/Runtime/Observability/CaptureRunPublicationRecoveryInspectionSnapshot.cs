@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 
 namespace Zantetsu.Observability
 {
@@ -96,10 +97,10 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(finalFramesStatus), finalFramesStatus, "Final frames status must be defined.");
             }
 
-            RequireDocument(publicationPlanTemporary, CaptureRunPublicationDocumentKind.PublicationPlanTemporary, nameof(publicationPlanTemporary), operation.MaximumPlanBytes);
-            RequireDocument(publicationPlan, CaptureRunPublicationDocumentKind.PublicationPlan, nameof(publicationPlan), operation.MaximumPlanBytes);
-            RequireDocument(captureIndexTemporary, CaptureRunPublicationDocumentKind.CaptureIndexTemporary, nameof(captureIndexTemporary), operation.MaximumPlanBytes);
-            RequireDocument(captureIndex, CaptureRunPublicationDocumentKind.CaptureIndex, nameof(captureIndex), operation.MaximumPlanBytes);
+            RequireDocument(publicationPlanTemporary, CaptureRunPublicationDocumentKind.PublicationPlanTemporary, nameof(publicationPlanTemporary), operation);
+            RequireDocument(publicationPlan, CaptureRunPublicationDocumentKind.PublicationPlan, nameof(publicationPlan), operation);
+            RequireDocument(captureIndexTemporary, CaptureRunPublicationDocumentKind.CaptureIndexTemporary, nameof(captureIndexTemporary), operation);
+            RequireDocument(captureIndex, CaptureRunPublicationDocumentKind.CaptureIndex, nameof(captureIndex), operation);
 
             _issuedBy = issuedBy;
             _operation = operation;
@@ -173,12 +174,10 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                int maximumPlanBytes = _operation.MaximumPlanBytes;
-
-                return ByteBoundsSatisfied(_publicationPlanTemporary, maximumPlanBytes)
-                    && ByteBoundsSatisfied(_publicationPlan, maximumPlanBytes)
-                    && ByteBoundsSatisfied(_captureIndexTemporary, maximumPlanBytes)
-                    && ByteBoundsSatisfied(_captureIndex, maximumPlanBytes);
+                return SatisfiesLimits(_publicationPlanTemporary, _operation)
+                    && SatisfiesLimits(_publicationPlan, _operation)
+                    && SatisfiesLimits(_captureIndexTemporary, _operation)
+                    && SatisfiesLimits(_captureIndex, _operation);
             }
         }
 
@@ -189,14 +188,21 @@ namespace Zantetsu.Observability
                 || status == CaptureRunPublicationFramesObservationStatus.Invalid;
         }
 
-        private static bool ByteBoundsSatisfied(CaptureRunPublicationDocumentObservation observation, int maximumPlanBytes)
+        private static bool SatisfiesLimits(
+            CaptureRunPublicationDocumentObservation observation,
+            CaptureRunPublicationRecoveryInspectionOperation operation)
         {
+            int maximumPlanBytes = operation.MaximumPlanBytes;
+
             switch (observation.Status)
             {
                 case CaptureRunPublicationDocumentObservationStatus.Absent:
                     return true;
 
                 case CaptureRunPublicationDocumentObservationStatus.Canonical:
+                    return observation.ProbedByteCount <= maximumPlanBytes
+                        && PlanWithinLimits(observation.Plan, operation.MaximumEntryCount, operation.MaximumPathBytes);
+
                 case CaptureRunPublicationDocumentObservationStatus.Invalid:
                     return observation.ProbedByteCount <= maximumPlanBytes;
 
@@ -208,11 +214,39 @@ namespace Zantetsu.Observability
             }
         }
 
+        private static bool PlanWithinLimits(CapturePublicationPlan plan, int maximumEntryCount, int maximumPathBytes)
+        {
+            if (plan == null || !plan.IsValid || plan.EntryCount > maximumEntryCount)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < plan.EntryCount; i++)
+            {
+                CapturePublicationPlanEntry entry = plan.GetEntry(i);
+                if (entry == null
+                    || Utf8ByteCount(entry.PngStagingRelativePath) > maximumPathBytes
+                    || Utf8ByteCount(entry.SidecarStagingRelativePath) > maximumPathBytes
+                    || Utf8ByteCount(entry.PngFinalRelativePath) > maximumPathBytes
+                    || Utf8ByteCount(entry.SidecarFinalRelativePath) > maximumPathBytes)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int Utf8ByteCount(string value)
+        {
+            return value == null ? int.MaxValue : Encoding.UTF8.GetByteCount(value);
+        }
+
         private static void RequireDocument(
             CaptureRunPublicationDocumentObservation observation,
             CaptureRunPublicationDocumentKind expectedKind,
             string paramName,
-            int maximumPlanBytes)
+            CaptureRunPublicationRecoveryInspectionOperation operation)
         {
             if (!observation.IsValid)
             {
@@ -224,27 +258,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Document observation kind must match its fixed position.", paramName);
             }
 
-            switch (observation.Status)
+            if (!SatisfiesLimits(observation, operation))
             {
-                case CaptureRunPublicationDocumentObservationStatus.Canonical:
-                case CaptureRunPublicationDocumentObservationStatus.Invalid:
-                    if (observation.ProbedByteCount > maximumPlanBytes)
-                    {
-                        throw new ArgumentException("Document probed byte count must not exceed the plan byte limit.", paramName);
-                    }
-
-                    return;
-
-                case CaptureRunPublicationDocumentObservationStatus.LimitExceeded:
-                    if (observation.ProbedByteCount != checked(maximumPlanBytes + 1))
-                    {
-                        throw new ArgumentException("A limit-exceeded document must probe exactly one byte past the plan byte limit.", paramName);
-                    }
-
-                    return;
-
-                default:
-                    return;
+                throw new ArgumentException("Document observation must satisfy the operation limits.", paramName);
             }
         }
     }
