@@ -1073,7 +1073,7 @@ namespace Zantetsu.Core.Tests
         {
             string commitSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperation.cs"));
 
-            int indexLocal = commitSource.IndexOf("IsValidIndexLocal", StringComparison.Ordinal);
+            int indexLocal = commitSource.IndexOf("internal bool IsValidIndexLocal", StringComparison.Ordinal);
             Assert.That(indexLocal, Is.GreaterThan(0));
 
             int tryDerive = commitSource.IndexOf("TryDeriveMode", indexLocal, StringComparison.Ordinal);
@@ -1106,10 +1106,15 @@ namespace Zantetsu.Core.Tests
             Assert.That(isValidBody, Does.Not.Contain("actionPlan.IsValid"));
 
             // The token-gated full helper must re-serialize and compare bytes
-            // without acquiring a fresh token or re-validating the plan.
+            // without acquiring a fresh token or re-validating the plan, and it
+            // must not re-scan entries or the nested plan graph.
             string fullHelperBody = commitSource.Substring(fullHelperIndex, indexLocalIndex - fullHelperIndex);
             Assert.That(fullHelperBody, Does.Not.Contain("AcquireValidationToken"));
             Assert.That(fullHelperBody, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(fullHelperBody, Does.Not.Contain("authoritativePlan.IsValid"));
+            Assert.That(fullHelperBody, Does.Not.Contain("snapshot.Count"));
+            Assert.That(fullHelperBody, Does.Not.Contain("PlansEqual"));
+            Assert.That(fullHelperBody, Does.Contain("IsValidIndexLocal(token)"));
             Assert.That(fullHelperBody, Does.Contain("SerializeCanonical"));
             Assert.That(fullHelperBody, Does.Contain("BytesEqual"));
         }

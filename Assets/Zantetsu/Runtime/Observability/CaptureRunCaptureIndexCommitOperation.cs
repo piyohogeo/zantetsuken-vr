@@ -348,164 +348,38 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Token-gated full validity: re-verifies this step's correlation and
-        /// re-serializes the canonical bytes for byte-content comparison, but
-        /// does not re-validate the action plan. The caller must supply a live
+        /// Token-gated full validity: delegates to the index-local correlation
+        /// check and then re-serializes the authoritative plan's canonical bytes
+        /// for byte-content comparison. It does not re-validate the plan or
+        /// re-scan any entry/observation graph; the caller must supply a live
         /// validation token acquired from the action plan, which guarantees the
         /// plan was fully validated exactly once upstream.
         /// </summary>
         internal bool IsValidWithToken(
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
-            if (_actionPlan == null || token == null || !token.IsIssuedFor(_actionPlan))
+            if (!IsValidIndexLocal(token))
             {
                 return false;
             }
 
-            if (_stepIndex < 0 || _stepIndex >= _actionPlan.Count)
+            CapturePublicationPlan authoritativePlan = AuthoritativePlan;
+            if (authoritativePlan == null)
             {
                 return false;
             }
 
-                CaptureRunPublicationArtifactRecoveryStep step = _actionPlan.GetStep(_stepIndex);
-                if (step == null || !step.IsValid
-                    || step.Action != CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex
-                    || step.EntryIndex != -1
-                    || step.ArtifactKind != CaptureRunPublicationArtifactKind.None)
-                {
-                    return false;
-                }
+            byte[] expected;
+            try
+            {
+                expected = CapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
 
-                if (_actionPlan.Count != 1)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactRecoveryDecision decision = _actionPlan.Decision;
-                if (decision == null || decision.Disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
-                if (snapshot == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionOperation operation = snapshot.Operation;
-                if (operation == null)
-                {
-                    return false;
-                }
-
-                CaptureRunLockLease lease = operation.LockLease;
-                if (lease == null || !lease.IsCreated)
-                {
-                    return false;
-                }
-
-                CaptureRunRootLayout rootLayout = operation.RootLayout;
-                if (rootLayout == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationRecoveryDecision publicationDecision = decision.PublicationDecision;
-                if (publicationDecision == null
-                    || publicationDecision.Disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative)
-                {
-                    return false;
-                }
-
-                CapturePublicationPlan authoritativePlan = publicationDecision.AuthoritativePlan;
-                if (authoritativePlan == null || !authoritativePlan.IsValid)
-                {
-                    return false;
-                }
-
-                if (snapshot.TraceManifestStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected)
-                {
-                    return false;
-                }
-
-                for (int i = 0; i < snapshot.Count; i++)
-                {
-                    CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
-                    if (observation == null
-                        || observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
-                        || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected)
-                    {
-                        return false;
-                    }
-                }
-
-                CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = publicationDecision.Snapshot;
-                if (publicationSnapshot == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationDocumentObservation captureIndex = publicationSnapshot.CaptureIndex;
-                if (captureIndex == null || !captureIndex.IsValid
-                    || captureIndex.Status != CaptureRunPublicationDocumentObservationStatus.Absent)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationDocumentObservation captureIndexTemporary = publicationSnapshot.CaptureIndexTemporary;
-                if (captureIndexTemporary == null
-                    || !captureIndexTemporary.IsValid
-                    || !TryDeriveMode(captureIndexTemporary.Status, out CaptureRunCaptureIndexCommitMode expectedMode)
-                    || _mode != expectedMode)
-                {
-                    return false;
-                }
-
-                if (_mode == CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit)
-                {
-                    if (captureIndexTemporary.Status != CaptureRunPublicationDocumentObservationStatus.Canonical
-                        || !CaptureRunPublicationRecoveryClassifier.PlansEqual(captureIndexTemporary.Plan, authoritativePlan))
-                    {
-                        return false;
-                    }
-                }
-
-                CaptureRunPublicationRecoveryInspectionOperation publicationOperation = publicationSnapshot.Operation;
-                if (publicationOperation == null)
-                {
-                    return false;
-                }
-
-                if (_publicationPaths == null || !_publicationPaths.IsValid
-                    || !ReferenceEquals(_publicationPaths, publicationOperation.PublicationPaths)
-                    || !ReferenceEquals(_publicationPaths.RootLayout, rootLayout)
-                    || !ReferenceEquals(publicationOperation.RootLayout, rootLayout))
-                {
-                    return false;
-                }
-
-                if (string.Equals(_publicationPaths.CaptureIndexTemporaryPath, _publicationPaths.CaptureIndexPath, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                if (_canonicalBytes == null || _canonicalBytes.Length == 0)
-                {
-                    return false;
-                }
-
-                byte[] expected;
-                try
-                {
-                    expected = CapturePublicationPlanCodec.SerializeCanonical(authoritativePlan);
-                }
-                catch (InvalidOperationException)
-                {
-                    return false;
-                }
-
-                return BytesEqual(_canonicalBytes, expected);
+            return BytesEqual(_canonicalBytes, expected);
         }
 
         /// <summary>
