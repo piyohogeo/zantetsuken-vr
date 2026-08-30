@@ -152,7 +152,7 @@ namespace Zantetsu.Observability
                         && ReferenceEquals(captureIndexCommitOperation.ActionPlan, actionPlan)
                         && captureIndexCommitOperation.StepIndex == stepIndex
                         && (fullCommitValidation
-                            ? captureIndexCommitOperation.IsValid
+                            ? captureIndexCommitOperation.IsValidWithToken(token)
                             : captureIndexCommitOperation.IsValidIndexLocal(token));
 
                 case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:

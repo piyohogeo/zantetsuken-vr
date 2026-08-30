@@ -328,15 +328,44 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_actionPlan == null || !_actionPlan.IsValid)
+                if (_actionPlan == null)
                 {
                     return false;
                 }
 
-                if (_stepIndex < 0 || _stepIndex >= _actionPlan.Count)
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+                try
+                {
+                    token = _actionPlan.AcquireValidationToken();
+                }
+                catch (InvalidOperationException)
                 {
                     return false;
                 }
+
+                return IsValidWithToken(token);
+            }
+        }
+
+        /// <summary>
+        /// Token-gated full validity: re-verifies this step's correlation and
+        /// re-serializes the canonical bytes for byte-content comparison, but
+        /// does not re-validate the action plan. The caller must supply a live
+        /// validation token acquired from the action plan, which guarantees the
+        /// plan was fully validated exactly once upstream.
+        /// </summary>
+        internal bool IsValidWithToken(
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (_actionPlan == null || token == null || !token.IsIssuedFor(_actionPlan))
+            {
+                return false;
+            }
+
+            if (_stepIndex < 0 || _stepIndex >= _actionPlan.Count)
+            {
+                return false;
+            }
 
                 CaptureRunPublicationArtifactRecoveryStep step = _actionPlan.GetStep(_stepIndex);
                 if (step == null || !step.IsValid
@@ -477,7 +506,6 @@ namespace Zantetsu.Observability
                 }
 
                 return BytesEqual(_canonicalBytes, expected);
-            }
         }
 
         /// <summary>

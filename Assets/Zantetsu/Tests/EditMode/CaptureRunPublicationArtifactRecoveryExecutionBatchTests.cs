@@ -1085,5 +1085,51 @@ namespace Zantetsu.Core.Tests
             Assert.That(indexLocalBody, Does.Not.Contain("PlansEqual"));
             Assert.That(indexLocalBody, Does.Not.Contain("snapshot.Count"));
         }
+
+        [Test]
+        public void Source_CommitFullValidation_UsesSingleToken()
+        {
+            string commitSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperation.cs"));
+
+            int isValidIndex = commitSource.IndexOf("internal bool IsValid", StringComparison.Ordinal);
+            int fullHelperIndex = commitSource.IndexOf("internal bool IsValidWithToken", StringComparison.Ordinal);
+            int indexLocalIndex = commitSource.IndexOf("internal bool IsValidIndexLocal", StringComparison.Ordinal);
+            Assert.That(isValidIndex, Is.GreaterThan(0));
+            Assert.That(fullHelperIndex, Is.GreaterThan(isValidIndex));
+            Assert.That(indexLocalIndex, Is.GreaterThan(fullHelperIndex));
+
+            // IsValid must acquire the plan token exactly once and delegate to
+            // the token-gated full helper rather than re-validating the plan.
+            string isValidBody = commitSource.Substring(isValidIndex, fullHelperIndex - isValidIndex);
+            Assert.That(isValidBody, Does.Contain("AcquireValidationToken"));
+            Assert.That(isValidBody, Does.Contain("IsValidWithToken(token)"));
+            Assert.That(isValidBody, Does.Not.Contain("actionPlan.IsValid"));
+
+            // The token-gated full helper must re-serialize and compare bytes
+            // without acquiring a fresh token or re-validating the plan.
+            string fullHelperBody = commitSource.Substring(fullHelperIndex, indexLocalIndex - fullHelperIndex);
+            Assert.That(fullHelperBody, Does.Not.Contain("AcquireValidationToken"));
+            Assert.That(fullHelperBody, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(fullHelperBody, Does.Contain("SerializeCanonical"));
+            Assert.That(fullHelperBody, Does.Contain("BytesEqual"));
+        }
+
+        [Test]
+        public void Source_PreparedStepCommitFullUsesTokenGatedHelper()
+        {
+            string preparedSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryPreparedStep.cs"));
+
+            int commitCase = preparedSource.IndexOf("case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:", StringComparison.Ordinal);
+            Assert.That(commitCase, Is.GreaterThan(0));
+
+            int nextCase = preparedSource.IndexOf("case ", commitCase + 1, StringComparison.Ordinal);
+            Assert.That(nextCase, Is.GreaterThan(commitCase));
+
+            // The full-validation path must forward the already-issued token to
+            // the token-gated helper, never the bare IsValid property.
+            string commitCaseBody = preparedSource.Substring(commitCase, nextCase - commitCase);
+            Assert.That(commitCaseBody, Does.Contain("captureIndexCommitOperation.IsValidWithToken(token)"));
+            Assert.That(commitCaseBody, Does.Not.Contain("captureIndexCommitOperation.IsValid;"));
+        }
     }
 }
