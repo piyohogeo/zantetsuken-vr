@@ -55,6 +55,7 @@ namespace Zantetsu.Observability
             {
                 return plan != null
                     && _bytes != null
+                    && _bytes.Length > 0
                     && ReferenceEquals(_plan, plan);
             }
 
@@ -250,10 +251,6 @@ namespace Zantetsu.Observability
             }
 
             byte[] canonicalBytes = canonicalBytesToken.TakeBytes();
-            if (canonicalBytes == null || canonicalBytes.Length == 0)
-            {
-                throw new ArgumentException("Canonical bytes must be present.", nameof(canonicalBytesToken));
-            }
 
             _actionPlan = actionPlan;
             _stepIndex = stepIndex;

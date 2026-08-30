@@ -861,6 +861,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CanonicalBytesToken_EmptyBytes_Rejected_TokenNotConsumed()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan.AuthoritativePlan);
+            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken original = bytesToken;
+
+            FieldInfo bytesField = typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken)
+                .GetField("_bytes", BindingFlags.NonPublic | BindingFlags.Instance);
+            byte[] empty = new byte[0];
+            bytesField.SetValue(bytesToken, empty);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+                new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken));
+
+            Assert.That(ex.ParamName, Is.EqualTo("canonicalBytesToken"));
+            Assert.That(bytesToken, Is.SameAs(original));
+            Assert.That(bytesField.GetValue(bytesToken), Is.SameAs(empty));
+        }
+
+        [Test]
         public void CanonicalBytesToken_Acquire_DoesNotExposeBytes()
         {
             // A token can only be minted from a plan and keeps its byte array
