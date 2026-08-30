@@ -51,9 +51,14 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(operation));
             }
 
-            if (!operation.IsValid)
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token;
+            try
             {
-                throw new ArgumentException("Operation must be valid.", nameof(operation));
+                token = operation.AcquireValidationToken();
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new ArgumentException("Operation must be valid.", nameof(operation), ex);
             }
 
             TraceRequireEvidence(
@@ -78,7 +83,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Entry observation array must not contain null elements.", nameof(entries));
                 }
 
-                if (!observation.IsValid)
+                if (!observation.IsValidIndexLocal(token))
                 {
                     throw new ArgumentException("Entry observation must be valid.", nameof(entries));
                 }
@@ -128,7 +133,17 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_issuedBy == null || _operation == null || !_operation.IsValid)
+                if (_issuedBy == null || _operation == null)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken token;
+                try
+                {
+                    token = _operation.AcquireValidationToken();
+                }
+                catch (InvalidOperationException)
                 {
                     return false;
                 }
@@ -147,7 +162,7 @@ namespace Zantetsu.Observability
                 for (int i = 0; i < _entries.Length; i++)
                 {
                     CaptureRunPublicationArtifactEntryObservation observation = _entries[i];
-                    if (observation == null || !observation.IsValid)
+                    if (observation == null || !observation.IsValidIndexLocal(token))
                     {
                         return false;
                     }

@@ -43,15 +43,42 @@ namespace Zantetsu.Observability
             long finalPngProbedByteCount,
             CaptureRunPublicationEvidenceStatus finalSidecarStatus,
             long finalSidecarProbedByteCount)
+            : this(
+                operation,
+                ValidateAndIssueToken(operation, artifactPaths),
+                artifactPaths,
+                stagingPngStatus,
+                stagingPngProbedByteCount,
+                stagingSidecarStatus,
+                stagingSidecarProbedByteCount,
+                finalPngStatus,
+                finalPngProbedByteCount,
+                finalSidecarStatus,
+                finalSidecarProbedByteCount)
+        {
+        }
+
+        internal CaptureRunPublicationArtifactEntryObservation(
+            CaptureRunPublicationArtifactInspectionOperation operation,
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token,
+            CaptureRunPublicationArtifactPathSet artifactPaths,
+            CaptureRunPublicationEvidenceStatus stagingPngStatus,
+            long stagingPngProbedByteCount,
+            CaptureRunPublicationEvidenceStatus stagingSidecarStatus,
+            long stagingSidecarProbedByteCount,
+            CaptureRunPublicationEvidenceStatus finalPngStatus,
+            long finalPngProbedByteCount,
+            CaptureRunPublicationEvidenceStatus finalSidecarStatus,
+            long finalSidecarProbedByteCount)
         {
             if (operation == null)
             {
                 throw new ArgumentNullException(nameof(operation));
             }
 
-            if (!operation.IsCoreValid())
+            if (token == null)
             {
-                throw new ArgumentException("Operation must be valid.", nameof(operation));
+                throw new ArgumentNullException(nameof(token));
             }
 
             if (artifactPaths == null)
@@ -96,6 +123,33 @@ namespace Zantetsu.Observability
             _finalSidecarProbedByteCount = finalSidecarProbedByteCount;
         }
 
+        private static CaptureRunPublicationArtifactInspectionOperation.ValidationToken ValidateAndIssueToken(
+            CaptureRunPublicationArtifactInspectionOperation operation,
+            CaptureRunPublicationArtifactPathSet artifactPaths)
+        {
+            if (operation == null)
+            {
+                throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (!operation.IsValid)
+            {
+                throw new ArgumentException("Operation must be valid.", nameof(operation));
+            }
+
+            if (artifactPaths == null)
+            {
+                throw new ArgumentNullException(nameof(artifactPaths));
+            }
+
+            if (!artifactPaths.IsValid)
+            {
+                throw new ArgumentException("Artifact path set must be valid.", nameof(artifactPaths));
+            }
+
+            return operation.AcquireValidationToken();
+        }
+
         internal CaptureRunPublicationArtifactPathSet ArtifactPaths => _artifactPaths;
 
         internal CaptureRunPublicationEvidenceStatus StagingPngStatus => _stagingPngStatus;
@@ -118,7 +172,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_operation == null || !_operation.IsCoreValid() || _artifactPaths == null || !_artifactPaths.IsValidIndexLocal())
+                if (_operation == null || !_operation.IsValid || _artifactPaths == null || !_artifactPaths.IsValid)
                 {
                     return false;
                 }
@@ -128,21 +182,66 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!_operation.TryGetArtifactPaths(_artifactPaths.EntryIndex, out CaptureRunPublicationArtifactPathSet expected)
-                    || !ReferenceEquals(_artifactPaths, expected))
+                if (!ReferenceEquals(_artifactPaths, _operation.GetArtifactPaths(_artifactPaths.EntryIndex)))
                 {
                     return false;
                 }
 
-                CapturePublicationPlanEntry entry = _artifactPaths.Entry;
-                long pngLimit = Min(entry.PngByteLength, _operation.MaximumPngByteCount);
-                long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
-
-                return ArtifactEvidenceSatisfied(_stagingPngStatus, _stagingPngProbedByteCount, entry.PngByteLength, pngLimit)
-                    && ArtifactEvidenceSatisfied(_stagingSidecarStatus, _stagingSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit)
-                    && ArtifactEvidenceSatisfied(_finalPngStatus, _finalPngProbedByteCount, entry.PngByteLength, pngLimit)
-                    && ArtifactEvidenceSatisfied(_finalSidecarStatus, _finalSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit);
+                return EvidenceCombosSatisfied(
+                    _operation, _artifactPaths,
+                    _stagingPngStatus, _stagingPngProbedByteCount,
+                    _stagingSidecarStatus, _stagingSidecarProbedByteCount,
+                    _finalPngStatus, _finalPngProbedByteCount,
+                    _finalSidecarStatus, _finalSidecarProbedByteCount);
             }
+        }
+
+        internal bool IsValidIndexLocal(CaptureRunPublicationArtifactInspectionOperation.ValidationToken token)
+        {
+            if (token == null || _operation == null || _artifactPaths == null || !_artifactPaths.IsValidIndexLocal())
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_artifactPaths.Decision, _operation.Decision))
+            {
+                return false;
+            }
+
+            if (!_operation.TryGetArtifactPaths(_artifactPaths.EntryIndex, out CaptureRunPublicationArtifactPathSet expected)
+                || !ReferenceEquals(_artifactPaths, expected))
+            {
+                return false;
+            }
+
+            return EvidenceCombosSatisfied(
+                _operation, _artifactPaths,
+                _stagingPngStatus, _stagingPngProbedByteCount,
+                _stagingSidecarStatus, _stagingSidecarProbedByteCount,
+                _finalPngStatus, _finalPngProbedByteCount,
+                _finalSidecarStatus, _finalSidecarProbedByteCount);
+        }
+
+        private static bool EvidenceCombosSatisfied(
+            CaptureRunPublicationArtifactInspectionOperation operation,
+            CaptureRunPublicationArtifactPathSet artifactPaths,
+            CaptureRunPublicationEvidenceStatus stagingPngStatus,
+            long stagingPngProbedByteCount,
+            CaptureRunPublicationEvidenceStatus stagingSidecarStatus,
+            long stagingSidecarProbedByteCount,
+            CaptureRunPublicationEvidenceStatus finalPngStatus,
+            long finalPngProbedByteCount,
+            CaptureRunPublicationEvidenceStatus finalSidecarStatus,
+            long finalSidecarProbedByteCount)
+        {
+            CapturePublicationPlanEntry entry = artifactPaths.Entry;
+            long pngLimit = Min(entry.PngByteLength, operation.MaximumPngByteCount);
+            long sidecarLimit = Min(entry.SidecarByteLength, CaptureFramePngArtifactCodec.MaximumCanonicalByteCount);
+
+            return ArtifactEvidenceSatisfied(stagingPngStatus, stagingPngProbedByteCount, entry.PngByteLength, pngLimit)
+                && ArtifactEvidenceSatisfied(stagingSidecarStatus, stagingSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit)
+                && ArtifactEvidenceSatisfied(finalPngStatus, finalPngProbedByteCount, entry.PngByteLength, pngLimit)
+                && ArtifactEvidenceSatisfied(finalSidecarStatus, finalSidecarProbedByteCount, entry.SidecarByteLength, sidecarLimit);
         }
 
         internal static bool IsDefinedStatus(CaptureRunPublicationEvidenceStatus status)

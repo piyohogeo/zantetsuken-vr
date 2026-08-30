@@ -25,6 +25,87 @@ namespace Zantetsu.Observability
     {
         internal const long MaximumAllowedPngByteCount = 1024L * 1024L * 1024L;
 
+        /// <summary>
+        /// Proof that this operation was fully validated. Only this operation
+        /// can mint tokens, so callers cannot substitute a cheap check for the
+        /// full <see cref="IsValid"/> pass.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private ValidationToken()
+            {
+            }
+
+            internal static ValidationToken Acquire(CaptureRunPublicationArtifactInspectionOperation operation)
+            {
+                if (operation == null)
+                {
+                    throw new ArgumentNullException(nameof(operation));
+                }
+
+                if (!operation.IsValid)
+                {
+                    throw new InvalidOperationException("Operation must be fully valid before issuing a validation token.");
+                }
+
+                return new ValidationToken();
+            }
+        }
+
+        /// <summary>
+        /// Construction-grade proof minted only after the decision graph, plan,
+        /// and probe bounds are fully validated. Distinct from
+        /// <see cref="ValidationToken"/> so it can unlock index-local path set
+        /// assembly but never index-local validity checks.
+        /// </summary>
+        internal sealed class ConstructionToken
+        {
+            private ConstructionToken()
+            {
+            }
+
+            internal static ConstructionToken Acquire(
+                CaptureRunPublicationRecoveryDecision decision,
+                long maximumPngByteCount)
+            {
+                if (decision == null)
+                {
+                    throw new ArgumentNullException(nameof(decision));
+                }
+
+                if (!decision.IsValid)
+                {
+                    throw new ArgumentException("Decision must be valid.", nameof(decision));
+                }
+
+                CaptureRunPublicationRecoveryDisposition disposition = decision.Disposition;
+                if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
+                    && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
+                {
+                    throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
+                }
+
+                CapturePublicationPlan plan = decision.AuthoritativePlan;
+                if (plan == null || !plan.IsValid)
+                {
+                    throw new ArgumentException("Decision must hold a valid authoritative plan.", nameof(decision));
+                }
+
+                if (!DecisionGraphCorrelated(decision))
+                {
+                    throw new ArgumentException("Decision graph must be fully correlated with its lease and publication paths.", nameof(decision));
+                }
+
+                if (maximumPngByteCount < 1 || maximumPngByteCount > MaximumAllowedPngByteCount)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(maximumPngByteCount), maximumPngByteCount,
+                        "Maximum PNG byte count must be between 1 and " + MaximumAllowedPngByteCount + ".");
+                }
+
+                return new ConstructionToken();
+            }
+        }
+
         private readonly CaptureRunPublicationRecoveryDecision _decision;
         private readonly long _maximumPngByteCount;
         private readonly CaptureRunPublicationArtifactPathSet[] _artifactPaths;
@@ -33,39 +114,9 @@ namespace Zantetsu.Observability
             CaptureRunPublicationRecoveryDecision decision,
             long maximumPngByteCount)
         {
-            if (decision == null)
-            {
-                throw new ArgumentNullException(nameof(decision));
-            }
-
-            if (!decision.IsValid)
-            {
-                throw new ArgumentException("Decision must be valid.", nameof(decision));
-            }
-
-            CaptureRunPublicationRecoveryDisposition disposition = decision.Disposition;
-            if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
-                && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
-            {
-                throw new ArgumentException("Decision must carry an authoritative plan.", nameof(decision));
-            }
+            ConstructionToken token = ConstructionToken.Acquire(decision, maximumPngByteCount);
 
             CapturePublicationPlan plan = decision.AuthoritativePlan;
-            if (plan == null || !plan.IsValid)
-            {
-                throw new ArgumentException("Decision must hold a valid authoritative plan.", nameof(decision));
-            }
-
-            if (!DecisionGraphCorrelated(decision))
-            {
-                throw new ArgumentException("Decision graph must be fully correlated with its lease and publication paths.", nameof(decision));
-            }
-
-            if (maximumPngByteCount < 1 || maximumPngByteCount > MaximumAllowedPngByteCount)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maximumPngByteCount), maximumPngByteCount,
-                    "Maximum PNG byte count must be between 1 and " + MaximumAllowedPngByteCount + ".");
-            }
 
             CaptureRunPublicationArtifactPathSet[] paths = new CaptureRunPublicationArtifactPathSet[plan.EntryCount];
             for (int i = 0; i < plan.EntryCount; i++)
@@ -82,7 +133,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Plan entry sidecar byte length must not exceed the sidecar canonical byte count.", nameof(decision));
                 }
 
-                paths[i] = CaptureRunPublicationArtifactPathSet.CreateIndexLocal(decision, i);
+                paths[i] = CaptureRunPublicationArtifactPathSet.CreateIndexLocal(token, decision, i);
             }
 
             _decision = decision;
@@ -135,35 +186,14 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Cheap, entry-independent validity: verifies the decision, its
-        /// authoritative plan reference, the PNG bound, the artifact path array,
-        /// and the lease and reference correlation without rescanning the plan.
+        /// Issues a validation token only after a full <see cref="IsValid"/>
+        /// pass, proving the whole decision graph, plan, lease, and artifact
+        /// path array are currently valid. The token cannot be fabricated by
+        /// callers and is the only way to reach index-local validity checks.
         /// </summary>
-        internal bool IsCoreValid()
+        internal ValidationToken AcquireValidationToken()
         {
-            if (_decision == null)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationRecoveryDisposition disposition = _decision.Disposition;
-            if (disposition != CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
-                && disposition != CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
-            {
-                return false;
-            }
-
-            if (_decision.AuthoritativePlan == null)
-            {
-                return false;
-            }
-
-            if (_maximumPngByteCount < 1 || _maximumPngByteCount > MaximumAllowedPngByteCount)
-            {
-                return false;
-            }
-
-            return _artifactPaths != null && DecisionGraphCorrelatedCheap(_decision);
+            return ValidationToken.Acquire(this);
         }
 
         internal bool IsValid
@@ -252,38 +282,6 @@ namespace Zantetsu.Observability
             CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
             return publicationPaths != null
                 && publicationPaths.IsValid
-                && ReferenceEquals(publicationPaths.RootLayout, rootLayout)
-                && ReferenceEquals(decision.RootLayout, rootLayout);
-        }
-
-        private static bool DecisionGraphCorrelatedCheap(CaptureRunPublicationRecoveryDecision decision)
-        {
-            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = decision.Snapshot;
-            if (snapshot == null)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationRecoveryInspectionOperation operation = snapshot.Operation;
-            if (operation == null)
-            {
-                return false;
-            }
-
-            CaptureRunLockLease lockLease = operation.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
-            {
-                return false;
-            }
-
-            CaptureRunRootLayout rootLayout = operation.RootLayout;
-            if (rootLayout == null)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
-            return publicationPaths != null
                 && ReferenceEquals(publicationPaths.RootLayout, rootLayout)
                 && ReferenceEquals(decision.RootLayout, rootLayout);
         }

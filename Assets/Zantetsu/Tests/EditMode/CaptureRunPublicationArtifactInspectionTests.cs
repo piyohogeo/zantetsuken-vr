@@ -757,6 +757,85 @@ namespace Zantetsu.Core.Tests
             Assert.That(forged.IsValid, Is.False);
         }
 
+        [Test]
+        public void Observation_OtherIndexPathSetMissing_Invalid_NoException()
+        {
+            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            Assert.That(observation.IsValid, Is.True);
+
+            // Forge: the other index's path set is missing, so the operation is
+            // no longer fully valid even though entry 0 is index-locally valid.
+            SetField(operation, "_artifactPaths", new CaptureRunPublicationArtifactPathSet[] { paths0, null });
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(observation.IsValid, Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths0));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Observation_PathSetArrayLengthMismatch_Invalid_NoException()
+        {
+            CapturePublicationPlan plan = MakePlan(entries: new[] { MakeEntry(1), MakeEntry(2) });
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            Assert.That(observation.IsValid, Is.True);
+
+            // Forge: the path set array is shorter than the plan entry count.
+            SetField(operation, "_artifactPaths", new CaptureRunPublicationArtifactPathSet[] { paths0 });
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(observation.IsValid, Is.False);
+
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths0));
+        }
+
+        [Test]
+        public void Observation_DecisionDispositionCorrupted_Invalid_NoException()
+        {
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision();
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            Assert.That(observation.IsValid, Is.True);
+
+            // Forge: the decision's disposition no longer names an authoritative document.
+            SetField(decision, "_disposition", CaptureRunPublicationRecoveryDisposition.NoAuthoritativeDocument);
+            Assert.That(decision.IsValid, Is.False);
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(observation.IsValid, Is.False);
+
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths0));
+        }
+
+        [Test]
+        public void Observation_PlanEntriesNull_Invalid_NoException()
+        {
+            CapturePublicationPlan plan = MakePlan();
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision(plan);
+            CaptureRunPublicationArtifactInspectionOperation operation = new CaptureRunPublicationArtifactInspectionOperation(decision, 1000);
+            CaptureRunPublicationArtifactPathSet paths0 = operation.GetArtifactPaths(0);
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(operation, paths0);
+            Assert.That(observation.IsValid, Is.True);
+
+            // Forge: the authoritative plan loses its entry array entirely.
+            SetField(plan, "_entries", null);
+            Assert.That(plan.IsValid, Is.False);
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(observation.IsValid, Is.False);
+
+            Assert.Throws<ArgumentException>(() => MakeEntryObservation(operation, paths0));
+        }
+
         // ---- Snapshot ----
 
         [Test]

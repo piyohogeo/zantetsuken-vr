@@ -313,9 +313,15 @@ namespace Zantetsu.Observability
         /// four resolved paths.
         /// </summary>
         internal static CaptureRunPublicationArtifactPathSet CreateIndexLocal(
+            CaptureRunPublicationArtifactInspectionOperation.ConstructionToken token,
             CaptureRunPublicationRecoveryDecision decision,
             int entryIndex)
         {
+            if (token == null)
+            {
+                throw new ArgumentNullException(nameof(token));
+            }
+
             if (decision == null)
             {
                 throw new ArgumentNullException(nameof(decision));
