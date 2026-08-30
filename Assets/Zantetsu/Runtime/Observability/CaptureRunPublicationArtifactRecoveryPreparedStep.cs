@@ -126,6 +126,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            if (!actionPlan.IsIndexLocalStructureIntact())
+            {
+                return false;
+            }
+
             if (stepIndex < 0 || stepIndex >= actionPlan.Count)
             {
                 return false;

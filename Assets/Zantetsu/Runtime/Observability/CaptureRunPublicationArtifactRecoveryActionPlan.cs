@@ -190,6 +190,17 @@ namespace Zantetsu.Observability
             return lease != null && lease.IsCreated;
         }
 
+        /// <summary>
+        /// O(1), exception-safe check that the index-local core structure this
+        /// plan exposes — the step array and the decision graph — is present,
+        /// so a stale validation token cannot navigate a partially corrupted
+        /// plan.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            return _steps != null && _decision != null && _decision.Snapshot != null;
+        }
+
         internal bool IsValid
         {
             get

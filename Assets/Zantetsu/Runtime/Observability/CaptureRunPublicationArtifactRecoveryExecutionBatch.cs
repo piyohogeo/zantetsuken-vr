@@ -116,44 +116,52 @@ namespace Zantetsu.Observability
             return _preparedSteps[index];
         }
 
-        internal bool IsValid
+        internal bool IsValid => TryValidate(out _);
+
+        /// <summary>
+        /// Fully validates this batch once and returns the action plan
+        /// validation token acquired during that validation, so a caller can
+        /// perform the single full validation and reuse the token for index-local
+        /// checks without re-validating the plan a second time.
+        /// </summary>
+        internal bool TryValidate(out CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
-            get
+            token = null;
+
+            if (_actionPlan == null || _preparedSteps == null)
             {
-                if (_actionPlan == null || _preparedSteps == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
-                try
-                {
-                    token = _actionPlan.AcquireValidationToken();
-                }
-                catch (InvalidOperationException)
-                {
-                    return false;
-                }
-
-                if (_preparedSteps.Length != _actionPlan.Count)
-                {
-                    return false;
-                }
-
-                for (int i = 0; i < _preparedSteps.Length; i++)
-                {
-                    CaptureRunPublicationArtifactRecoveryPreparedStep preparedStep = _preparedSteps[i];
-                    if (preparedStep == null
-                        || preparedStep.StepIndex != i
-                        || !ReferenceEquals(preparedStep.ActionPlan, _actionPlan)
-                        || !preparedStep.IsValidIndexLocal(token))
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
+                return false;
             }
+
+            try
+            {
+                token = _actionPlan.AcquireValidationToken();
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+
+            if (_preparedSteps.Length != _actionPlan.Count)
+            {
+                token = null;
+                return false;
+            }
+
+            for (int i = 0; i < _preparedSteps.Length; i++)
+            {
+                CaptureRunPublicationArtifactRecoveryPreparedStep preparedStep = _preparedSteps[i];
+                if (preparedStep == null
+                    || preparedStep.StepIndex != i
+                    || !ReferenceEquals(preparedStep.ActionPlan, _actionPlan)
+                    || !preparedStep.IsValidIndexLocal(token))
+                {
+                    token = null;
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

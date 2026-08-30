@@ -72,20 +72,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(batch));
             }
 
-            if (!batch.IsValid)
+            if (!batch.TryValidate(out CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token))
             {
                 throw new ArgumentException("Execution batch must be valid.", nameof(batch));
-            }
-
-            CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = batch.ActionPlan;
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
-            try
-            {
-                token = actionPlan.AcquireValidationToken();
-            }
-            catch (InvalidOperationException)
-            {
-                throw new ArgumentException("Action plan must be valid.", nameof(batch));
             }
 
             CaptureRunPublicationArtifactRecoveryCompletedStep[] completedSteps =

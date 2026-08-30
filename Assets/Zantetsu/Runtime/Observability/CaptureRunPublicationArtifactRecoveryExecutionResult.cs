@@ -171,21 +171,12 @@ namespace Zantetsu.Observability
         {
             token = null;
 
-            if (batch == null || !batch.IsValid)
+            if (batch == null)
             {
                 return false;
             }
 
-            try
-            {
-                token = batch.ActionPlan.AcquireValidationToken();
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
-
-            return true;
+            return batch.TryValidate(out token);
         }
 
         private static CaptureRunPublicationArtifactRecoveryExecutionStatus StatusFromDisposition(

@@ -1389,6 +1389,51 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompletedStep_IsValidIndexLocal_StaleToken_NullSteps_False()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan, "_steps", null);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void CompletedStep_IsValidIndexLocal_StaleToken_NullDecisionSnapshot_False()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan.Decision, "_snapshot", null);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void CompletedStep_IsValidIndexLocal_StaleToken_EmptySteps_False()
+        {
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            CaptureRunPublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            CaptureRunPublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan, "_steps", new CaptureRunPublicationArtifactRecoveryStep[0]);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
         public void ForgedBrokenReceipt_IsValidFalse_WithoutException()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
@@ -1539,6 +1584,10 @@ namespace Zantetsu.Core.Tests
             string resultSource = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionResult.cs"));
 
+            Assert.That(resultSource, Does.Contain("TryValidate"));
+            Assert.That(resultSource, Does.Not.Contain("batch.IsValid"));
+            Assert.That(resultSource, Does.Not.Contain("AcquireValidationToken"));
+
             int correlatedIndex = resultSource.IndexOf("private static bool IsCorrelated(", StringComparison.Ordinal);
             int tryAcquireIndex = resultSource.IndexOf("private static bool TryAcquireToken(", StringComparison.Ordinal);
             Assert.That(correlatedIndex, Is.GreaterThan(0));
@@ -1551,13 +1600,9 @@ namespace Zantetsu.Core.Tests
             string coordinatorSource = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionCoordinator.cs"));
 
-            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < batch.Count; i++)", StringComparison.Ordinal);
-            Assert.That(loopIndex, Is.GreaterThan(0));
-
-            string beforeLoop = coordinatorSource.Substring(0, loopIndex);
-            string fromLoop = coordinatorSource.Substring(loopIndex);
-            Assert.That(beforeLoop, Does.Contain("batch.IsValid"));
-            Assert.That(fromLoop, Does.Not.Contain("batch.IsValid"));
+            Assert.That(coordinatorSource, Does.Contain("TryValidate"));
+            Assert.That(coordinatorSource, Does.Not.Contain("batch.IsValid"));
+            Assert.That(coordinatorSource, Does.Not.Contain("AcquireValidationToken"));
         }
     }
 }
