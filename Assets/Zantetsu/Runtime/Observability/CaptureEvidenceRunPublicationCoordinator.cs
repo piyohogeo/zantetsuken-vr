@@ -9,42 +9,56 @@ namespace Zantetsu.Observability
     /// </summary>
     internal sealed class CaptureEvidenceRunPublicationCoordinator
     {
-        private readonly ICapturePublicationPlanStore _planStore;
+        private readonly CaptureArtifactFileStore _store;
         private readonly CaptureEvidencePublicationCoordinator _publication;
         private readonly CapturePublicationRecoveryCoordinator _recovery;
 
-        internal CaptureEvidenceRunPublicationCoordinator(
-            ICapturePublicationPlanStore planStore,
-            ICaptureArtifactStore artifactStore)
+        internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)
         {
-            _planStore = planStore ?? throw new ArgumentNullException(nameof(planStore));
-            if (artifactStore == null) throw new ArgumentNullException(nameof(artifactStore));
-            _publication = new CaptureEvidencePublicationCoordinator(planStore);
-            _recovery = new CapturePublicationRecoveryCoordinator(artifactStore);
+            _store = store ?? throw new ArgumentNullException(nameof(store));
+            _publication = new CaptureEvidencePublicationCoordinator(store);
+            _recovery = new CapturePublicationRecoveryCoordinator(store);
         }
 
         internal CapturePublicationPlanWriteReceipt PersistFrozenRun(
-            CaptureFrameDraftRegistry drafts,
-            CaptureArtifactRegistry artifacts,
-            string runInitializationId,
+            CaptureEvidenceRunFreezeReceipt freezeReceipt,
             string runManifestContentHash)
         {
+            if (freezeReceipt == null) throw new ArgumentNullException(nameof(freezeReceipt));
+            if (!freezeReceipt.IsValid) throw new ArgumentException("Freeze receipt must remain valid.", nameof(freezeReceipt));
+            if (!ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout))
+                throw new ArgumentException("Freeze receipt and store must share the exact Run root layout.", nameof(freezeReceipt));
             return _publication.BuildAndPersist(
-                drafts,
-                artifacts,
-                runInitializationId,
+                freezeReceipt.Drafts,
+                freezeReceipt.Artifacts,
+                freezeReceipt.RunInitializationId,
                 runManifestContentHash);
         }
 
-        internal CapturePublicationRecoverySnapshot RecoverAfterRestart(int maximumCanonicalByteCount)
+        internal CapturePublicationRecoverySnapshot RecoverAfterRestart(
+            CaptureRunInitializationOpenOutcome openOutcome,
+            int maximumCanonicalByteCount)
         {
-            return _recovery.InspectPersisted(_planStore, maximumCanonicalByteCount);
+            RequireRecoveryOutcome(openOutcome);
+            return _recovery.InspectPersisted(_store, maximumCanonicalByteCount);
         }
 
         internal CapturePublicationRecoveryDisposition ContinueRecovery(
+            CaptureRunInitializationOpenOutcome openOutcome,
             CapturePublicationRecoverySnapshot snapshot)
         {
+            RequireRecoveryOutcome(openOutcome);
             return _recovery.ExecuteMissing(snapshot);
+        }
+
+        private void RequireRecoveryOutcome(CaptureRunInitializationOpenOutcome openOutcome)
+        {
+            if (openOutcome == null) throw new ArgumentNullException(nameof(openOutcome));
+            if (!openOutcome.IsCreated || !openOutcome.IsValid
+                || openOutcome.Status != CaptureRunInitializationOpenStatus.PublicationRecoveryRequired)
+                throw new ArgumentException("Open outcome must hold publication recovery and the OS Run lock.", nameof(openOutcome));
+            if (!ReferenceEquals(openOutcome.RootLayout, _store.RootLayout))
+                throw new ArgumentException("Open outcome and store must share the exact Run root layout.", nameof(openOutcome));
         }
     }
 }

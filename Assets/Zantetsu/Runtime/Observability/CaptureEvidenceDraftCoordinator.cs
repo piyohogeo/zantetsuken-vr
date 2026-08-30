@@ -20,6 +20,9 @@ namespace Zantetsu.Observability
         private readonly bool[] _frameCompleted;
         private readonly bool[] _artifactFailed;
         private readonly bool[] _occupied;
+        private bool _drainStarted;
+        private bool _joined;
+        private bool _queuedCancelled;
 
         internal CaptureEvidenceDraftCoordinator(
             int capacity,
@@ -51,6 +54,11 @@ namespace Zantetsu.Observability
         {
             if (draft == null) throw new ArgumentNullException(nameof(draft));
             if (surface == null) throw new ArgumentNullException(nameof(surface));
+            if (_drainStarted)
+            {
+                token = default;
+                return CaptureSubmitStatus.NotAccepting;
+            }
             int slot = FindFree();
             if (slot < 0) { token = default; return CaptureSubmitStatus.Backpressured; }
 
@@ -104,9 +112,34 @@ namespace Zantetsu.Observability
             return false;
         }
 
-        internal void BeginDrain() => _evidence.BeginDrain();
-        internal int CancelQueued() => _evidence.CancelQueued();
-        internal bool TryJoin() => _evidence.TryJoin();
+        internal CaptureFrameDraftRegistry Drafts => _drafts;
+        internal CaptureArtifactRegistry Artifacts => _artifacts;
+        internal bool IsFullyDrained => _drainStarted
+            && _joined
+            && !HasOccupiedSlots()
+            && _artifacts.ReservedArtifactCount == 0;
+
+        internal void BeginDrain()
+        {
+            if (_drainStarted) return;
+            _evidence.BeginDrain();
+            _drainStarted = true;
+        }
+        internal int CancelQueued()
+        {
+            if (!_drainStarted) throw new InvalidOperationException("Drain must start before queued cancellation.");
+            if (_queuedCancelled) return 0;
+            int cancelled = _evidence.CancelQueued();
+            _queuedCancelled = true;
+            return cancelled;
+        }
+        internal bool TryJoin()
+        {
+            if (!_drainStarted) return false;
+            bool joined = _evidence.TryJoin();
+            if (joined) _joined = true;
+            return joined;
+        }
 
         private void ApplyFrame(in CaptureFrameCompletion completion)
         {
@@ -186,6 +219,12 @@ namespace Zantetsu.Observability
         {
             for (int i = 0; i < _occupied.Length; i++) if (!_occupied[i]) return i;
             return -1;
+        }
+
+        private bool HasOccupiedSlots()
+        {
+            for (int i = 0; i < _occupied.Length; i++) if (_occupied[i]) return true;
+            return false;
         }
 
         private void Clear(int slot)

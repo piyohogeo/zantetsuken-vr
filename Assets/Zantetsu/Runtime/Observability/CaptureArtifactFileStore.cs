@@ -7,6 +7,7 @@ namespace Zantetsu.Observability
     /// <summary>Format-neutral file store rooted in one staging and one final run.</summary>
     internal sealed class CaptureArtifactFileStore : ICaptureArtifactStore, ICapturePublicationPlanStore
     {
+        private readonly CaptureRunRootLayout _rootLayout;
         private readonly long _testRunId;
         private readonly string _stagingRunRoot;
         private readonly string _finalRunRoot;
@@ -17,12 +18,15 @@ namespace Zantetsu.Observability
         {
             if (rootLayout == null) throw new ArgumentNullException(nameof(rootLayout));
             if (!rootLayout.IsValid) throw new ArgumentException("Root layout must be valid.", nameof(rootLayout));
+            _rootLayout = rootLayout;
             _testRunId = rootLayout.TestRunId;
             _stagingRunRoot = rootLayout.StagingRunRoot;
             _finalRunRoot = rootLayout.FinalRunRoot;
             _publicationPlanTemporaryPath = Path.Combine(_stagingRunRoot, "publication.plan.tmp");
             _publicationPlanPath = Path.Combine(_stagingRunRoot, "publication.plan");
         }
+
+        internal CaptureRunRootLayout RootLayout => _rootLayout;
 
         public CapturePublicationPlanWriteReceipt WritePlan(CapturePublicationPlan plan)
         {

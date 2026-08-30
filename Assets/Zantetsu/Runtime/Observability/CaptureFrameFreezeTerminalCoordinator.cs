@@ -54,6 +54,54 @@ namespace Zantetsu.Observability
             _bufferBuilder = bufferBuilder;
         }
 
+        internal bool IsFrozenFor(long testRunId) => testRunId > 0
+            && _recorder.State == TraceFlightRecorderState.Frozen
+            && _recorder.Logger.TestRunId == testRunId
+            && _bufferBuilder.Registry.Run.TestRunId == testRunId;
+
+        /// <summary>
+        /// Existing Run-freeze integration point. It stops evidence admission,
+        /// drains every completion, joins the backend, verifies that no
+        /// artifact reservation remains, completes the trace transition to
+        /// Frozen, and only then issues publication evidence.
+        /// </summary>
+        internal bool TryCompleteEvidenceRun(
+            CaptureEvidenceDraftCoordinator evidence,
+            CaptureRunInitializationSession runSession,
+            TraceRunSealReceipt sealReceipt,
+            ForcedDropFrameIdSet forcedDropFrameIds,
+            in FreezeTerminalCheckpoint checkpoint,
+            out CaptureEvidenceRunFreezeReceipt receipt)
+        {
+            receipt = null;
+            if (evidence == null) throw new ArgumentNullException(nameof(evidence));
+            if (runSession == null) throw new ArgumentNullException(nameof(runSession));
+            if (!runSession.IsCreated) throw new ArgumentException("Run session must hold the OS Run lock.", nameof(runSession));
+            if (!ReferenceEquals(evidence.Drafts, _bufferBuilder.Registry))
+                throw new ArgumentException("Evidence and freeze terminal must share the draft registry.", nameof(evidence));
+            if (runSession.TestRunId != evidence.Drafts.Run.TestRunId
+                || runSession.TestRunId != _recorder.Logger.TestRunId)
+                throw new ArgumentException("Run session must match the evidence and trace run.", nameof(runSession));
+
+            evidence.BeginDrain();
+            evidence.CancelQueued();
+            while (evidence.TryApplyNextCompletion()) { }
+            if (!evidence.TryJoin()) return false;
+            while (evidence.TryApplyNextCompletion()) { }
+            if (!evidence.IsFullyDrained)
+                throw new InvalidOperationException("Joined evidence backend retained work or artifact reservations.");
+
+            FreezeTerminalTraceBuffer buffer = Complete(
+                sealReceipt,
+                forcedDropFrameIds,
+                checkpoint,
+                true);
+            if (!IsFrozenFor(runSession.TestRunId))
+                throw new InvalidOperationException("Trace recorder did not reach Frozen.");
+            receipt = new CaptureEvidenceRunFreezeReceipt(this, evidence, runSession, buffer);
+            return true;
+        }
+
         /// <summary>
         /// Completes the freeze terminal sequence and returns the exact buffer
         /// appended to the recorder. Main-thread only.

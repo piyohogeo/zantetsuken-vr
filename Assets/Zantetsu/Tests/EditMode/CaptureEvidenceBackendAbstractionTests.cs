@@ -239,13 +239,13 @@ namespace Zantetsu.Core.Tests
                 // A new store/coordinator instance simulates recovery after a
                 // process restart. The generic persisted plan is the source.
                 CaptureArtifactFileStore restartedStore = new CaptureArtifactFileStore(layout);
-                CaptureEvidenceRunPublicationCoordinator lifecycle = new CaptureEvidenceRunPublicationCoordinator(restartedStore, restartedStore);
-                CapturePublicationRecoverySnapshot snapshot = lifecycle.RecoverAfterRestart(
-                    CapturePublicationPlanCodec.MaximumCanonicalByteCount);
+                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(restartedStore);
+                CapturePublicationRecoverySnapshot snapshot = recovery.InspectPersisted(
+                    restartedStore, CapturePublicationPlanCodec.MaximumCanonicalByteCount);
                 Assert.That(snapshot.Plan.TestRunId, Is.EqualTo(3));
                 Assert.That(snapshot.Plan.GetArtifact(0).ArtifactId, Is.EqualTo("artifact/1"));
                 Assert.That(CapturePublicationRecoveryClassifier.Classify(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.PublishMissingArtifacts));
-                Assert.That(lifecycle.ContinueRecovery(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
+                Assert.That(recovery.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
                 Assert.That(restartedStore.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
                 Assert.That(restartedStore.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
             }
@@ -319,9 +319,28 @@ namespace Zantetsu.Core.Tests
             string source = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunPublicationCoordinator.cs"));
             Assert.That(source, Does.Contain("_publication.BuildAndPersist"));
-            Assert.That(source, Does.Contain("_recovery.InspectPersisted(_planStore"));
+            Assert.That(source, Does.Contain("CaptureEvidenceRunFreezeReceipt freezeReceipt"));
+            Assert.That(source, Does.Contain("CaptureRunInitializationOpenOutcome openOutcome"));
+            Assert.That(source, Does.Contain("internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)"));
+            Assert.That(source, Does.Contain("ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout)"));
+            Assert.That(source, Does.Contain("ReferenceEquals(openOutcome.RootLayout, _store.RootLayout)"));
+            Assert.That(source, Does.Contain("_recovery.InspectPersisted(_store"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlan"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
+
+            string freeze = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureFrameFreezeTerminalCoordinator.cs"));
+            Assert.That(freeze, Does.Contain("TryCompleteEvidenceRun"));
+            Assert.That(freeze, Does.Contain("evidence.BeginDrain()"));
+            Assert.That(freeze, Does.Contain("evidence.TryJoin()"));
+            Assert.That(freeze, Does.Contain("evidence.IsFullyDrained"));
+            Assert.That(freeze, Does.Contain("runSession.IsCreated"));
+            Assert.That(freeze, Does.Contain("new CaptureEvidenceRunFreezeReceipt"));
+
+            string freezeReceipt = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunFreezeReceipt.cs"));
+            Assert.That(freezeReceipt, Does.Contain("_evidence.Artifacts.ReservedArtifactCount == 0"));
+            Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(_runSession.TestRunId)"));
         }
 
         [Test]
@@ -346,20 +365,20 @@ namespace Zantetsu.Core.Tests
                 File.WriteAllBytes(temporary, bytes);
 
                 CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
-                CaptureEvidenceRunPublicationCoordinator lifecycle = new CaptureEvidenceRunPublicationCoordinator(store, store);
-                CapturePublicationRecoverySnapshot recovered = lifecycle.RecoverAfterRestart(bytes.Length);
+                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(store);
+                CapturePublicationRecoverySnapshot recovered = recovery.InspectPersisted(store, bytes.Length);
                 Assert.That(recovered.Plan.IsValid, Is.True);
                 Assert.That(File.Exists(final), Is.True);
                 Assert.That(File.Exists(temporary), Is.False);
 
                 File.WriteAllBytes(temporary, bytes);
-                Assert.Throws<InvalidDataException>(() => lifecycle.RecoverAfterRestart(bytes.Length));
+                Assert.Throws<InvalidDataException>(() => recovery.InspectPersisted(store, bytes.Length));
                 Assert.That(File.Exists(final), Is.True);
                 Assert.That(File.Exists(temporary), Is.True);
 
                 File.Delete(final);
                 File.WriteAllText(temporary, "not canonical", Encoding.UTF8);
-                Assert.Throws<ArgumentException>(() => lifecycle.RecoverAfterRestart(bytes.Length));
+                Assert.Throws<ArgumentException>(() => recovery.InspectPersisted(store, bytes.Length));
                 Assert.That(File.Exists(temporary), Is.True);
                 Assert.That(File.Exists(final), Is.False);
                 Assert.That(store.DiscardInvalidTemporaryPlan(bytes.Length), Is.True);
