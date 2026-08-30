@@ -285,5 +285,86 @@ namespace Zantetsu.Observability
                     && entry.SidecarContentSha256 != null;
             }
         }
+
+        /// <summary>
+        /// Index-local validity for an already-validated action plan: re-verifies
+        /// only this step's artifact correlation in O(1) without re-validating
+        /// the whole plan. The token must be issued for this operation's action
+        /// plan and its lease must still be live.
+        /// </summary>
+        internal bool IsValidIndexLocal(
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (_actionPlan == null || _artifactPaths == null || token == null)
+            {
+                return false;
+            }
+
+            if (!token.IsIssuedFor(_actionPlan))
+            {
+                return false;
+            }
+
+            if (_stepIndex < 0 || _stepIndex >= _actionPlan.Count)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryStep step = _actionPlan.GetStep(_stepIndex);
+            if (step == null || !step.IsValid
+                || step.Action != CaptureRunPublicationArtifactRecoveryAction.PublishArtifact)
+            {
+                return false;
+            }
+
+            int entryIndex = step.EntryIndex;
+            CaptureRunPublicationArtifactKind kind = step.ArtifactKind;
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = _actionPlan.Decision;
+            if (decision == null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_artifactPaths.Decision, decision.PublicationDecision)
+                || _artifactPaths.EntryIndex != entryIndex
+                || !_artifactPaths.IsValidIndexLocal())
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
+            if (snapshot == null || entryIndex < 0 || entryIndex >= snapshot.Count)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(entryIndex);
+            if (observation == null || !ReferenceEquals(observation.ArtifactPaths, _artifactPaths))
+            {
+                return false;
+            }
+
+            CapturePublicationPlanEntry entry = _artifactPaths.Entry;
+            if (entry == null)
+            {
+                return false;
+            }
+
+            if (kind == CaptureRunPublicationArtifactKind.Png)
+            {
+                return observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                    && observation.FinalPngStatus == CaptureRunPublicationEvidenceStatus.Absent
+                    && !string.Equals(_artifactPaths.StagingPngPath, _artifactPaths.FinalPngPath, StringComparison.Ordinal)
+                    && entry.PngByteLength > 0
+                    && entry.PngContentSha256 != null;
+            }
+
+            return observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                && observation.FinalSidecarStatus == CaptureRunPublicationEvidenceStatus.Absent
+                && !string.Equals(_artifactPaths.StagingSidecarPath, _artifactPaths.FinalSidecarPath, StringComparison.Ordinal)
+                && entry.SidecarByteLength > 0
+                && entry.SidecarContentSha256 != null;
+        }
     }
 }
