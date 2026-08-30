@@ -12,12 +12,14 @@ namespace Zantetsu.Observability
         private readonly CaptureArtifactFileStore _store;
         private readonly CaptureEvidencePublicationCoordinator _publication;
         private readonly CapturePublicationRecoveryCoordinator _recovery;
+        private readonly object _recoveryReceiptAuthority;
 
         internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _publication = new CaptureEvidencePublicationCoordinator(store);
             _recovery = new CapturePublicationRecoveryCoordinator(store);
+            _recoveryReceiptAuthority = new object();
         }
 
         internal CapturePublicationPlanWriteReceipt PersistFrozenRun(
@@ -35,21 +37,44 @@ namespace Zantetsu.Observability
                 runManifestContentHash);
         }
 
-        internal CapturePublicationRecoverySnapshot RecoverAfterRestart(
+        internal CaptureEvidenceRunRecoveryInspectionReceipt RecoverAfterRestart(
             CaptureRunInitializationOpenOutcome openOutcome,
             int maximumCanonicalByteCount)
         {
             RequireRecoveryOutcome(openOutcome);
-            return _recovery.InspectPersisted(_store, maximumCanonicalByteCount);
+            CapturePublicationRecoverySnapshot snapshot = _recovery.InspectPersisted(_store, maximumCanonicalByteCount);
+            if (!IsRecoveryContextFor(openOutcome, snapshot))
+                throw new InvalidOperationException("Recovered snapshot is not correlated with the locked Run.");
+            return new CaptureEvidenceRunRecoveryInspectionReceipt(
+                this, _recoveryReceiptAuthority, openOutcome, snapshot);
         }
 
         internal CapturePublicationRecoveryDisposition ContinueRecovery(
+            CaptureEvidenceRunRecoveryInspectionReceipt inspectionReceipt)
+        {
+            if (inspectionReceipt == null) throw new ArgumentNullException(nameof(inspectionReceipt));
+            if (!inspectionReceipt.IsIssuedFor(this))
+                throw new ArgumentException("Inspection receipt must remain valid and be issued by this coordinator.", nameof(inspectionReceipt));
+            return _recovery.ExecuteMissing(inspectionReceipt.Snapshot);
+        }
+
+        internal bool IsRecoveryContextFor(
             CaptureRunInitializationOpenOutcome openOutcome,
             CapturePublicationRecoverySnapshot snapshot)
         {
-            RequireRecoveryOutcome(openOutcome);
-            return _recovery.ExecuteMissing(snapshot);
+            if (openOutcome == null || snapshot == null || !snapshot.IsValid) return false;
+            if (!openOutcome.IsCreated || !openOutcome.IsValid
+                || openOutcome.Status != CaptureRunInitializationOpenStatus.PublicationRecoveryRequired
+                || !ReferenceEquals(openOutcome.RootLayout, _store.RootLayout)) return false;
+            CapturePublicationPlan plan = snapshot.Plan;
+            return plan != null
+                && plan.IsValid
+                && plan.TestRunId == openOutcome.TestRunId
+                && plan.TestRunId == _store.RootLayout.TestRunId;
         }
+
+        internal bool IsRecoveryReceiptAuthority(object authority) =>
+            ReferenceEquals(_recoveryReceiptAuthority, authority);
 
         private void RequireRecoveryOutcome(CaptureRunInitializationOpenOutcome openOutcome)
         {

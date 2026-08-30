@@ -321,10 +321,14 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Contain("_publication.BuildAndPersist"));
             Assert.That(source, Does.Contain("CaptureEvidenceRunFreezeReceipt freezeReceipt"));
             Assert.That(source, Does.Contain("CaptureRunInitializationOpenOutcome openOutcome"));
+            Assert.That(source, Does.Contain("CaptureEvidenceRunRecoveryInspectionReceipt"));
             Assert.That(source, Does.Contain("internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)"));
             Assert.That(source, Does.Contain("ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout)"));
             Assert.That(source, Does.Contain("ReferenceEquals(openOutcome.RootLayout, _store.RootLayout)"));
             Assert.That(source, Does.Contain("_recovery.InspectPersisted(_store"));
+            Assert.That(source, Does.Contain("plan.TestRunId == openOutcome.TestRunId"));
+            Assert.That(source, Does.Contain("plan.TestRunId == _store.RootLayout.TestRunId"));
+            Assert.That(source, Does.Contain("inspectionReceipt.IsIssuedFor(this)"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlan"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
 
@@ -341,6 +345,18 @@ namespace Zantetsu.Core.Tests
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunFreezeReceipt.cs"));
             Assert.That(freezeReceipt, Does.Contain("_evidence.Artifacts.ReservedArtifactCount == 0"));
             Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(_runSession.TestRunId)"));
+
+            string recoveryReceipt = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunRecoveryInspectionReceipt.cs"));
+            Assert.That(recoveryReceipt, Does.Contain("ReferenceEquals(_issuedBy, coordinator)"));
+            Assert.That(recoveryReceipt, Does.Contain("IsRecoveryReceiptAuthority(_authority)"));
+            Assert.That(recoveryReceipt, Does.Contain("IsRecoveryContextFor(_openOutcome, _snapshot)"));
+
+            string evidence = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceDraftCoordinator.cs"));
+            Assert.That(evidence, Does.Contain("internal bool IsFullyDrained => _drainStarted"));
+            Assert.That(evidence, Does.Contain("&& _queuedCancelled"));
+            Assert.That(evidence, Does.Contain("&& _joined"));
         }
 
         [Test]

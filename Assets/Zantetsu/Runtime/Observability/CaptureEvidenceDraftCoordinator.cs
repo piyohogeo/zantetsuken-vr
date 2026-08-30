@@ -115,6 +115,7 @@ namespace Zantetsu.Observability
         internal CaptureFrameDraftRegistry Drafts => _drafts;
         internal CaptureArtifactRegistry Artifacts => _artifacts;
         internal bool IsFullyDrained => _drainStarted
+            && _queuedCancelled
             && _joined
             && !HasOccupiedSlots()
             && _artifacts.ReservedArtifactCount == 0;
