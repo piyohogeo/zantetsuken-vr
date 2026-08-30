@@ -127,6 +127,69 @@ namespace Zantetsu.Observability
             return _steps[index];
         }
 
+        /// <summary>
+        /// Proof that this action plan was fully validated. Only this plan can
+        /// mint tokens, so callers cannot substitute a cheap check for the
+        /// full <see cref="IsValid"/> pass.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly CaptureRunPublicationArtifactRecoveryActionPlan _plan;
+
+            private ValidationToken(CaptureRunPublicationArtifactRecoveryActionPlan plan)
+            {
+                _plan = plan;
+            }
+
+            internal bool IsIssuedFor(CaptureRunPublicationArtifactRecoveryActionPlan plan)
+            {
+                return plan != null && ReferenceEquals(_plan, plan) && plan.IsDecisionLeaseLive();
+            }
+
+            internal static ValidationToken Acquire(CaptureRunPublicationArtifactRecoveryActionPlan plan)
+            {
+                if (plan == null)
+                {
+                    throw new ArgumentNullException(nameof(plan));
+                }
+
+                if (!plan.IsValid)
+                {
+                    throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
+                }
+
+                return new ValidationToken(plan);
+            }
+        }
+
+        internal ValidationToken AcquireValidationToken()
+        {
+            return ValidationToken.Acquire(this);
+        }
+
+        internal bool IsDecisionLeaseLive()
+        {
+            if (_decision == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = _decision.Snapshot;
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation operation = snapshot.Operation;
+            if (operation == null)
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lease = operation.LockLease;
+            return lease != null && lease.IsCreated;
+        }
+
         internal bool IsValid
         {
             get
