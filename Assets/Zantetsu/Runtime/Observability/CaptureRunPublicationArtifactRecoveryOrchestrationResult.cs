@@ -42,7 +42,35 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(executionResult));
             }
 
-            if (!IsCorrelated(issuedBy, executionResult))
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+            if (!executionResult.TryValidate(out token)
+                || !IsCorrelated(issuedBy, executionResult, token))
+            {
+                throw new ArgumentException(
+                    "Execution result must be correlated with the issuing orchestration coordinator.",
+                    nameof(executionResult));
+            }
+
+            _issuedBy = issuedBy;
+            _executionResult = executionResult;
+        }
+
+        internal CaptureRunPublicationArtifactRecoveryOrchestrationResult(
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (issuedBy == null)
+            {
+                throw new ArgumentNullException(nameof(issuedBy));
+            }
+
+            if (executionResult == null)
+            {
+                throw new ArgumentNullException(nameof(executionResult));
+            }
+
+            if (!IsCorrelated(issuedBy, executionResult, token))
             {
                 throw new ArgumentException(
                     "Execution result must be correlated with the issuing orchestration coordinator.",
@@ -81,13 +109,26 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _executionResult.RunInitializationId;
 
-        internal bool IsValid => IsCorrelated(_issuedBy, _executionResult);
+        internal bool IsValid
+        {
+            get
+            {
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
+                if (_executionResult == null || !_executionResult.TryValidate(out token))
+                {
+                    return false;
+                }
+
+                return IsCorrelated(_issuedBy, _executionResult, token);
+            }
+        }
 
         private static bool IsCorrelated(
             CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
-            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult)
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
-            if (issuedBy == null || executionResult == null || !executionResult.IsValid)
+            if (issuedBy == null || executionResult == null || token == null)
             {
                 return false;
             }
@@ -98,36 +139,22 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch = executionResult.Batch;
-            if (batch == null || !batch.IsValid)
+            if (batch == null)
             {
                 return false;
             }
 
             CaptureRunPublicationArtifactRecoveryActionPlan plan = batch.ActionPlan;
-            if (plan == null || !plan.IsValid)
+            if (!token.IsIssuedFor(plan) || !plan.IsIndexLocalStructureIntact())
             {
                 return false;
             }
 
             CaptureRunPublicationArtifactRecoveryDecision decision = plan.Decision;
-            if (decision == null || !decision.IsValid)
-            {
-                return false;
-            }
-
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
-            if (snapshot == null || !snapshot.IsValid)
-            {
-                return false;
-            }
+            CaptureRunPublicationArtifactInspectionOperation operation = snapshot.Operation;
 
             if (!ReferenceEquals(snapshot.IssuedBy, issuedBy.Inspector))
-            {
-                return false;
-            }
-
-            CaptureRunPublicationArtifactInspectionOperation operation = snapshot.Operation;
-            if (operation == null || !operation.IsValid)
             {
                 return false;
             }

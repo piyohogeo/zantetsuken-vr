@@ -111,9 +111,10 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);
 
-            VerifyExecutionResult(executionResult, batch);
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token =
+                VerifyExecutionResult(executionResult, batch);
 
-            return new CaptureRunPublicationArtifactRecoveryOrchestrationResult(this, executionResult);
+            return new CaptureRunPublicationArtifactRecoveryOrchestrationResult(this, executionResult, token);
         }
 
         private void VerifySnapshot(
@@ -130,18 +131,21 @@ namespace Zantetsu.Observability
             }
         }
 
-        private void VerifyExecutionResult(
+        private CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken VerifyExecutionResult(
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch)
         {
+            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
             if (executionResult == null
-                || !executionResult.IsValid
+                || !executionResult.TryValidate(out token)
                 || !ReferenceEquals(executionResult.IssuedBy, _executionCoordinator)
                 || !ReferenceEquals(executionResult.Batch, batch))
             {
                 throw new InvalidOperationException(
                     "Execution result must be valid and issued for the execution batch.");
             }
+
+            return token;
         }
     }
 }

@@ -89,18 +89,30 @@ namespace Zantetsu.Observability
             return _completedSteps[index];
         }
 
-        internal bool IsValid
-        {
-            get
-            {
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token;
-                if (!TryAcquireToken(_batch, out token))
-                {
-                    return false;
-                }
+        internal bool IsValid => TryValidate(out _);
 
-                return IsCorrelated(_issuedBy, _batch, _completedSteps, token);
+        /// <summary>
+        /// Fully validates this execution result exactly once and returns the
+        /// action plan validation token acquired during that validation, so a
+        /// caller can reuse the token for index-local checks without
+        /// re-validating the batch or the plan a second time.
+        /// </summary>
+        internal bool TryValidate(out CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            token = null;
+
+            if (!TryAcquireToken(_batch, out token))
+            {
+                return false;
             }
+
+            if (!IsCorrelated(_issuedBy, _batch, _completedSteps, token))
+            {
+                token = null;
+                return false;
+            }
+
+            return true;
         }
 
         private static bool IsCorrelated(

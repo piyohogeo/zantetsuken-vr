@@ -1111,5 +1111,52 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain("Random"));
             }
         }
+
+        [Test]
+        public void Source_NoRedundantExecutionResultValidation()
+        {
+            string resultSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryOrchestrationResult.cs"));
+
+            int correlatedIndex = resultSource.IndexOf("private static bool IsCorrelated(", StringComparison.Ordinal);
+            int statusIndex = resultSource.IndexOf("private static bool StatusMatchesDisposition(", StringComparison.Ordinal);
+            Assert.That(correlatedIndex, Is.GreaterThan(0));
+            Assert.That(statusIndex, Is.GreaterThan(correlatedIndex));
+
+            string correlatedBody = resultSource.Substring(correlatedIndex, statusIndex - correlatedIndex);
+            Assert.That(correlatedBody, Does.Not.Contain("executionResult.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("batch.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("plan.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("decision.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("snapshot.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("operation.IsValid"));
+            Assert.That(correlatedBody, Does.Not.Contain("TryValidate"));
+            Assert.That(correlatedBody, Does.Contain("token.IsIssuedFor"));
+
+            // The direct constructor performs exactly one full validation; the
+            // trusted constructor reuses the token without re-validating.
+            int directIndex = resultSource.IndexOf("executionResult)", StringComparison.Ordinal);
+            int trustedIndex = resultSource.IndexOf("ValidationToken token)", StringComparison.Ordinal);
+            Assert.That(directIndex, Is.GreaterThan(0));
+            Assert.That(trustedIndex, Is.GreaterThan(directIndex));
+
+            string directBody = resultSource.Substring(directIndex, trustedIndex - directIndex);
+            Assert.That(directBody, Does.Contain("TryValidate"));
+
+            int firstPropertyIndex = resultSource.IndexOf(
+                "internal CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator IssuedBy",
+                StringComparison.Ordinal);
+            Assert.That(firstPropertyIndex, Is.GreaterThan(trustedIndex));
+
+            string trustedBody = resultSource.Substring(trustedIndex, firstPropertyIndex - trustedIndex);
+            Assert.That(trustedBody, Does.Not.Contain("TryValidate"));
+            Assert.That(trustedBody, Does.Not.Contain(".IsValid"));
+
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator.cs"));
+
+            Assert.That(coordinatorSource, Does.Contain("TryValidate"));
+            Assert.That(coordinatorSource, Does.Not.Contain("executionResult.IsValid"));
+        }
     }
 }
