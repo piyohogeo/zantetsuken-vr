@@ -1474,39 +1474,20 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
 
-            // Corrupt the operation, then mint through the proof-gated path:
-            // the full plan validation must fail, so no proof (and therefore no
-            // inspection token) is issued.
+            // Corrupt the operation; the full plan validation must fail, so the
+            // atomic mint path issues no inspection token.
             SetField(operation, "_artifactPaths", null);
 
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(plan, out _),
-                Is.False);
             Assert.That(plan.TryValidate(out _), Is.False);
+            Assert.That(plan.IsValid, Is.False);
         }
 
         [Test]
-        public void InspectionToken_NonValidatedMintRequiresBoundProof()
+        public void InspectionToken_NonValidatedMintRejectsNullProof()
         {
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
-            CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
-
-            // A null proof fails closed.
             Assert.That(
                 CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromValidatedPlan(null, out _),
                 Is.False);
-
-            // The bound proof mints an inspection token for the exact operation.
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
-                    plan,
-                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
-                Is.True);
-            Assert.That(
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromValidatedPlan(
-                    proof, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token),
-                Is.True);
-            Assert.That(token.IsIssuedFor(operation), Is.True);
         }
 
         [Test]
@@ -2729,102 +2710,89 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Proof_ConstructorIsPrivate()
+        public void Proof_IsUnobtainableExternally()
         {
+            Type tokenType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken);
             Type proofType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof);
 
-            Assert.That(proofType.IsPublic, Is.False);
+            // The two-step proof mint must not exist; the proof can only be
+            // produced and consumed inside the atomic TryAcquire.
             Assert.That(
-                proofType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .All(constructor => !constructor.IsPublic),
-                Is.True,
-                "The validation proof must be unfabricable outside its validating mint.");
+                tokenType.GetMethod("TryAcquireProof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static),
+                Is.Null);
+
+            Assert.That(proofType.IsPublic, Is.False);
+
+            // The proof has only a private constructor, so no assembly code can
+            // instantiate it.
+            ConstructorInfo[] constructors = proofType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(constructors, Is.Not.Empty);
+            foreach (ConstructorInfo constructor in constructors)
+            {
+                Assert.That(constructor.IsPublic, Is.False, "The proof constructor must not be public.");
+                Assert.That(constructor.IsPrivate, Is.True, "The proof constructor must be private.");
+            }
+
+            // The atomic mint returns the plan token, never the proof, through
+            // any out parameter.
+            MethodInfo mint = proofType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(mint, Is.Not.Null);
+            Assert.That(
+                mint.GetParameters().Any(parameter => parameter.ParameterType == proofType && parameter.IsOut),
+                Is.False,
+                "The atomic mint must not return the proof through an out parameter.");
         }
 
         [Test]
-        public void Proof_MintFailsClosedOnCorruptedActionPlan()
+        public void CorruptedActionPlan_AtomicMintFailsClosed()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
 
             // Destroy the recovery action plan's step array; the full cleanup
-            // plan validation must fail, so no proof can be minted even though
-            // the inspection operation itself remains valid.
+            // plan validation must fail, so the atomic mint path issues no
+            // proof and no downstream token.
             SetField(plan.OrchestrationResult.Batch.ActionPlan, "_steps", null);
 
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(plan, out _),
-                Is.False);
             Assert.That(plan.TryValidate(out _), Is.False);
+            Assert.That(plan.IsValid, Is.False);
         }
 
         [Test]
-        public void ActionPlanToken_NonValidatedMintRequiresBoundProof()
+        public void CorruptedInspectionOperation_AtomicMintFailsClosed()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
 
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
-                    plan,
-                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
-                Is.True);
+            // Corrupt the inspection operation; the full plan validation must
+            // fail, so the atomic mint path issues no inspection token.
+            SetField(operation, "_artifactPaths", null);
 
-            CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = plan.OrchestrationResult.Batch.ActionPlan;
-
-            // A null proof is rejected.
-            Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, null));
-
-            // A proof minted for a different cleanup plan is rejected.
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildPlan(commitRoute: false);
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
-                    otherPlan,
-                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof otherProof),
-                Is.True);
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, otherProof));
-
-            // The bound proof mints a token issued for the exact action plan.
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token =
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, proof);
-            Assert.That(token.IsIssuedFor(actionPlan), Is.True);
+            Assert.That(plan.TryValidate(out _), Is.False);
+            Assert.That(plan.IsValid, Is.False);
         }
 
         [Test]
-        public void ExecutionResultToken_NonValidatedMintRequiresBoundProof()
+        public void ActionPlanToken_NonValidatedMintRejectsNullProof()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = plan.OrchestrationResult.Batch.ActionPlan;
+
+            // A null proof is rejected; a real proof cannot be obtained outside
+            // the atomic mint, so this is the only call a caller can make.
+            Assert.Throws<ArgumentNullException>(
+                () => CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, null));
+        }
+
+        [Test]
+        public void ExecutionResultToken_NonValidatedMintRejectsNullProof()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             CaptureRunPublicationArtifactRecoveryExecutionResult result = plan.OrchestrationResult.ExecutionResult;
 
-            // A null proof fails closed.
             Assert.That(
                 CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
                     result, null, out _),
                 Is.False);
-
-            // A proof for a different cleanup plan fails closed.
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildPlan(commitRoute: false);
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
-                    otherPlan,
-                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof otherProof),
-                Is.True);
-            Assert.That(
-                CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
-                    result, otherProof, out _),
-                Is.False);
-
-            // The bound proof mints a token issued for the exact result.
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
-                    plan,
-                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
-                Is.True);
-            Assert.That(
-                CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
-                    result, proof, out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token),
-                Is.True);
-            Assert.That(token.IsIssuedFor(result), Is.True);
         }
 
         [Test]
