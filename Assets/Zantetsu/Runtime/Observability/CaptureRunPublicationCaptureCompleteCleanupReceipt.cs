@@ -74,14 +74,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                try
-                {
-                    return _issuedBy != null && _operation != null && _operation.IsValid;
-                }
-                catch
-                {
-                    return false;
-                }
+                return _issuedBy != null && _operation != null && _operation.IsValid;
             }
         }
 
@@ -89,18 +82,11 @@ namespace Zantetsu.Observability
             ICaptureRunPublicationCaptureCompleteCleanupBackend backend,
             CaptureRunPublicationCaptureCompleteCleanupOperation operation)
         {
-            try
-            {
-                return backend != null
-                    && operation != null
-                    && ReferenceEquals(_issuedBy, backend)
-                    && ReferenceEquals(_operation, operation)
-                    && _operation.IsValid;
-            }
-            catch
-            {
-                return false;
-            }
+            return backend != null
+                && operation != null
+                && ReferenceEquals(_issuedBy, backend)
+                && ReferenceEquals(_operation, operation)
+                && _operation.IsValid;
         }
     }
 }

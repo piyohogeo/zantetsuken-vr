@@ -37,6 +37,22 @@ namespace Zantetsu.Observability
             CaptureRunPublicationPathSet publicationPaths,
             CaptureRunMarkerPathSet markerPaths,
             int stepIndex)
+            : this(actionPlan, publicationPaths, markerPaths, stepIndex, AcquireToken(actionPlan, publicationPaths, markerPaths))
+        {
+        }
+
+        /// <summary>
+        /// Token-gated construction path used by a batch that has already
+        /// acquired the plan's validation token once. It performs only
+        /// index-local validation against the token, so materializing every
+        /// cleanup step of a large plan stays linear in the total step count.
+        /// </summary>
+        internal CaptureRunPublicationCaptureCompleteCleanupOperation(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths,
+            int stepIndex,
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
             if (actionPlan == null)
             {
@@ -53,7 +69,12 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(markerPaths));
             }
 
-            if (!TryCorrelate(actionPlan, publicationPaths, markerPaths, stepIndex, out CorrelationFailure failure))
+            if (token == null)
+            {
+                throw new ArgumentNullException(nameof(token));
+            }
+
+            if (!TryCorrelateTrusted(actionPlan, publicationPaths, markerPaths, stepIndex, token, out CorrelationFailure failure))
             {
                 ThrowFor(failure, stepIndex);
             }
@@ -62,6 +83,36 @@ namespace Zantetsu.Observability
             _publicationPaths = publicationPaths;
             _markerPaths = markerPaths;
             _stepIndex = stepIndex;
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken AcquireToken(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths)
+        {
+            if (actionPlan == null)
+            {
+                throw new ArgumentNullException(nameof(actionPlan));
+            }
+
+            if (publicationPaths == null)
+            {
+                throw new ArgumentNullException(nameof(publicationPaths));
+            }
+
+            if (markerPaths == null)
+            {
+                throw new ArgumentNullException(nameof(markerPaths));
+            }
+
+            try
+            {
+                return actionPlan.AcquireValidationToken();
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new ArgumentException("Action plan must be a valid capture-complete cleanup plan.", nameof(actionPlan), ex);
+            }
         }
 
         internal CaptureRunPublicationCaptureCompleteCleanupActionPlan ActionPlan => _actionPlan;
@@ -191,14 +242,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                try
-                {
-                    return TryCorrelate(_actionPlan, _publicationPaths, _markerPaths, _stepIndex, out _);
-                }
-                catch
-                {
-                    return false;
-                }
+                return TryCorrelate(_actionPlan, _publicationPaths, _markerPaths, _stepIndex, out _);
             }
         }
 
@@ -268,10 +312,11 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Single shared correlation predicate used by both the constructor and
-        /// <see cref="IsValid"/>. It performs one full action plan validation,
-        /// then index-local access to the single target step, and allocates
-        /// nothing.
+        /// Full correlation predicate used by <see cref="IsValid"/>. It performs
+        /// one full action plan validation plus one artifact inspection token
+        /// acquisition, then delegates to the shared index-local predicate.
+        /// The predicate is written with explicit structural guards and never
+        /// throws, so <see cref="IsValid"/> needs no catch.
         /// </summary>
         private static bool TryCorrelate(
             CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
@@ -293,6 +338,119 @@ namespace Zantetsu.Observability
                 failure = CorrelationFailure.InvalidActionPlan;
                 return false;
             }
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = actionPlan.OrchestrationResult;
+            if (result == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            if (snapshot == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation inspection = snapshot.Operation;
+            if (inspection == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken;
+            try
+            {
+                inspectionToken = inspection.AcquireValidationToken();
+            }
+            catch (InvalidOperationException)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            return TryCorrelateIndexLocal(actionPlan, publicationPaths, markerPaths, stepIndex, inspection, inspectionToken, out failure);
+        }
+
+        /// <summary>
+        /// Token-gated, index-local correlation predicate used by the trusted
+        /// constructor. It performs no full plan walk; the caller proves the
+        /// plan and inspection were validated by supplying the plan's
+        /// validation token, which is checked for reference identity against
+        /// both the plan and the inspection operation.
+        /// </summary>
+        private static bool TryCorrelateTrusted(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths,
+            int stepIndex,
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token,
+            out CorrelationFailure failure)
+        {
+            failure = CorrelationFailure.None;
+
+            if (actionPlan == null || publicationPaths == null || markerPaths == null || token == null)
+            {
+                failure = CorrelationFailure.InvalidActionPlan;
+                return false;
+            }
+
+            if (!token.IsIssuedFor(actionPlan))
+            {
+                failure = CorrelationFailure.InvalidActionPlan;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = actionPlan.OrchestrationResult;
+            if (result == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            if (snapshot == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation inspection = snapshot.Operation;
+            if (inspection == null)
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken = token.InspectionToken;
+            if (inspectionToken == null || !inspectionToken.IsIssuedFor(inspection))
+            {
+                failure = CorrelationFailure.InspectionInvalid;
+                return false;
+            }
+
+            return TryCorrelateIndexLocal(actionPlan, publicationPaths, markerPaths, stepIndex, inspection, inspectionToken, out failure);
+        }
+
+        /// <summary>
+        /// Shared index-local correlation predicate: every check here is O(1)
+        /// against the already-validated plan and inspection. It re-verifies
+        /// root layout identity, the target step, the lease, the publication
+        /// path set identity and validity, and, for artifact steps, the
+        /// index-local observation and artifact path set predicates.
+        /// </summary>
+        private static bool TryCorrelateIndexLocal(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths,
+            int stepIndex,
+            CaptureRunPublicationArtifactInspectionOperation inspection,
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken,
+            out CorrelationFailure failure)
+        {
+            failure = CorrelationFailure.None;
 
             if (!ReferenceEquals(publicationPaths.RootLayout, actionPlan.RootLayout))
             {
@@ -326,27 +484,6 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = actionPlan.OrchestrationResult;
-            if (result == null || !result.IsValid)
-            {
-                failure = CorrelationFailure.InspectionInvalid;
-                return false;
-            }
-
-            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
-            if (snapshot == null || !snapshot.IsValid)
-            {
-                failure = CorrelationFailure.InspectionInvalid;
-                return false;
-            }
-
-            CaptureRunPublicationArtifactInspectionOperation inspection = snapshot.Operation;
-            if (inspection == null || !inspection.IsValid)
-            {
-                failure = CorrelationFailure.InspectionInvalid;
-                return false;
-            }
-
             if (!ReferenceEquals(inspection.RootLayout, actionPlan.RootLayout))
             {
                 failure = CorrelationFailure.InspectionInvalid;
@@ -360,6 +497,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = actionPlan.OrchestrationResult.InspectionSnapshot;
             CaptureRunPublicationRecoveryDecision publicationDecision = snapshot.Decision;
             if (publicationDecision == null)
             {
@@ -368,20 +506,15 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = publicationDecision.Snapshot;
-            if (publicationSnapshot == null || !publicationSnapshot.IsValid)
+            if (publicationSnapshot == null)
             {
                 failure = CorrelationFailure.InspectionInvalid;
                 return false;
             }
 
             CaptureRunPublicationRecoveryInspectionOperation publicationInspection = publicationSnapshot.Operation;
-            if (publicationInspection == null || !publicationInspection.IsValid)
-            {
-                failure = CorrelationFailure.InspectionInvalid;
-                return false;
-            }
-
-            if (!ReferenceEquals(publicationPaths, publicationInspection.PublicationPaths))
+            if (publicationInspection == null
+                || !ReferenceEquals(publicationPaths, publicationInspection.PublicationPaths))
             {
                 failure = CorrelationFailure.PublicationPathsInstanceMismatch;
                 return false;
@@ -401,17 +534,6 @@ namespace Zantetsu.Observability
 
             if (action == CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
             {
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken token;
-                try
-                {
-                    token = inspection.AcquireValidationToken();
-                }
-                catch (InvalidOperationException)
-                {
-                    failure = CorrelationFailure.InspectionInvalid;
-                    return false;
-                }
-
                 int entryIndex = step.EntryIndex;
                 if (entryIndex < 0 || entryIndex >= inspection.EntryCount
                     || !inspection.TryGetArtifactPaths(entryIndex, out CaptureRunPublicationArtifactPathSet artifactPaths)
@@ -423,14 +545,14 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (entryIndex >= snapshot.Count)
+                if (snapshot == null || entryIndex >= snapshot.Count)
                 {
                     failure = CorrelationFailure.ArtifactInvalid;
                     return false;
                 }
 
                 CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(entryIndex);
-                if (observation == null || !observation.IsValidIndexLocal(token))
+                if (observation == null || !observation.IsValidIndexLocal(inspectionToken))
                 {
                     failure = CorrelationFailure.ArtifactInvalid;
                     return false;

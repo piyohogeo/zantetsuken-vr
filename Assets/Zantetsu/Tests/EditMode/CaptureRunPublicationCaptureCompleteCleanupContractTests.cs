@@ -1204,6 +1204,109 @@ namespace Zantetsu.Core.Tests
             Assert.That(op.EntryIndex, Is.EqualTo(499));
         }
 
+        // ---- Plan validation token ----
+
+        [Test]
+        public void PlanToken_Acquire_IssuedForPlanOnly()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan other = BuildPlan(commitRoute: true);
+
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            Assert.That(token.IsIssuedFor(plan), Is.True);
+            Assert.That(token.IsIssuedFor(other), Is.False);
+            Assert.That(token.IsIssuedFor(null), Is.False);
+            Assert.That(token.InspectionToken, Is.Not.Null);
+        }
+
+        [Test]
+        public void TrustedConstructor_BuildsAllSteps_SharedToken()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 500);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
+                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            int built = 0;
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (plan.GetStep(i).Action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    continue;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                    new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, i, token);
+
+                Assert.That(op.StepIndex, Is.EqualTo(i));
+                built++;
+            }
+
+            Assert.That(built, Is.EqualTo(500 * 2 + 5));
+
+            // Spot-check full re-validation on a few operations only, so the
+            // shared-token batch path stays linear in the total step count.
+            Assert.That(new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token).IsValid, Is.True);
+            Assert.That(new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 999, token).IsValid, Is.True);
+            Assert.That(new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 1004, token).IsValid, Is.True);
+        }
+
+        [Test]
+        public void TrustedConstructor_NullToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void TrustedConstructor_CrossToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan other = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken foreign = other.AcquireValidationToken();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, foreign));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void TrustedConstructor_StaleToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            plan.LockLease.Dispose();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Source_NoUnconditionalCatchInPredicates()
+        {
+            string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOperation.cs"));
+            string receiptSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupReceipt.cs"));
+
+            Assert.That(receiptSource, Does.Not.Contain("catch"));
+            Assert.That(operationSource, Does.Not.Contain("catch {"));
+            Assert.That(operationSource, Does.Not.Contain("catch\n"));
+        }
+
         // ---- Shape ----
 
         [Test]

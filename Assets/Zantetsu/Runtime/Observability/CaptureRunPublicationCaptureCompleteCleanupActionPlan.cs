@@ -164,6 +164,68 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Issues a validation token only after a full plan and artifact
+        /// inspection validation pass. The token is bound to this exact plan
+        /// instance and carries the artifact inspection token so trusted
+        /// consumers can perform index-local validation without re-walking the
+        /// whole plan.
+        /// </summary>
+        internal ValidationToken AcquireValidationToken()
+        {
+            return ValidationToken.Acquire(this);
+        }
+
+        /// <summary>
+        /// Proof that this plan and its underlying artifact inspection graph
+        /// were fully validated at a single point in time. The token is bound
+        /// to the exact plan instance and carries the artifact inspection
+        /// operation's validation token.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan _plan;
+            private readonly CaptureRunPublicationArtifactInspectionOperation.ValidationToken _inspectionToken;
+
+            private ValidationToken(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken)
+            {
+                _plan = plan;
+                _inspectionToken = inspectionToken;
+            }
+
+            internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
+
+            /// <summary>
+            /// Reports whether this token was issued for the given plan. The
+            /// binding is reference-identical and exposes no reference back to
+            /// the plan.
+            /// </summary>
+            internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
+            {
+                return plan != null && ReferenceEquals(_plan, plan);
+            }
+
+            internal static ValidationToken Acquire(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
+            {
+                if (plan == null)
+                {
+                    throw new ArgumentNullException(nameof(plan));
+                }
+
+                if (!plan.IsValid)
+                {
+                    throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
+                }
+
+                CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken = inspection.AcquireValidationToken();
+
+                return new ValidationToken(plan, inspectionToken);
+            }
+        }
+
         private bool MatchAt(
             int position,
             CaptureRunPublicationCaptureCompleteCleanupAction action,
