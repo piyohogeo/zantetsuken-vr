@@ -2425,6 +2425,58 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
+        // ---- Execution batch: execution result chain corruption ----
+
+        [Test]
+        public void PreparedStep_ExecutionResultBatchNullAfterToken_FailsClosed()
+        {
+            AssertExecutionResultChainCorruptionFailsClosed(
+                plan => SetField(plan.OrchestrationResult.ExecutionResult, "_batch", null));
+        }
+
+        [Test]
+        public void PreparedStep_ExecutionBatchActionPlanNullAfterToken_FailsClosed()
+        {
+            AssertExecutionResultChainCorruptionFailsClosed(
+                plan => SetField(plan.OrchestrationResult.ExecutionResult.Batch, "_actionPlan", null));
+        }
+
+        [Test]
+        public void PreparedStep_RecoveryActionPlanDecisionNullAfterToken_FailsClosed()
+        {
+            AssertExecutionResultChainCorruptionFailsClosed(
+                plan => SetField(plan.OrchestrationResult.ExecutionResult.Batch.ActionPlan, "_decision", null));
+        }
+
+        private static void AssertExecutionResultChainCorruptionFailsClosed(
+            Action<CaptureRunPublicationCaptureCompleteCleanupActionPlan> corrupt)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(0);
+
+            corrupt(plan);
+
+            // Side-effecting prepared step and operation fail closed without
+            // leaking a NullReferenceException.
+            Assert.That(prepared.IsValidIndexLocal(token), Is.False);
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+
+            // The routing constructor rejects with the action plan parameter.
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, publicationPaths, markerPaths, readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
         [Test]
         public void Batch_TryValidate_NullTokenOnEveryFailure()
         {

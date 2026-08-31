@@ -253,20 +253,40 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// O(1), exception-safe check that the index-local core structure this
-        /// plan exposes — its orchestration result, inspection snapshot,
-        /// inspection operation, and live lock lease — is present and
-        /// correlated, so a stale validation token cannot navigate a partially
-        /// corrupted plan.
+        /// plan exposes — its orchestration result, execution result, execution
+        /// batch, recovery action plan, inspection snapshot, inspection
+        /// operation, and live lock lease — is present and correlated, so a
+        /// stale validation token cannot navigate a partially corrupted plan.
+        /// Each link of the execution result chain is guarded in order so a
+        /// forged null never escapes as a NullReferenceException.
         /// </summary>
         internal bool IsIndexLocalStructureIntact()
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = _orchestrationResult;
-            if (result == null || result.ExecutionResult == null)
+            if (result == null)
             {
                 return false;
             }
 
-            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult = result.ExecutionResult;
+            if (executionResult == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = executionResult.Batch;
+            if (batch == null || !batch.IsIndexLocalStructureIntact())
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryActionPlan recoveryActionPlan = batch.ActionPlan;
+            if (recoveryActionPlan == null || !recoveryActionPlan.IsIndexLocalStructureIntact())
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = recoveryActionPlan.Decision.Snapshot;
             if (snapshot == null || !snapshot.IsIndexLocalStructureIntact())
             {
                 return false;
