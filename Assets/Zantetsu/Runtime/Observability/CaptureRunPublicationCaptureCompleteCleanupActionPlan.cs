@@ -232,7 +232,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (_steps == null || token.IssuedStepCount != _steps.Length)
+            if (_steps == null || !token.IsIssuedStepCount(_steps.Length))
             {
                 return false;
             }
@@ -313,10 +313,16 @@ namespace Zantetsu.Observability
             internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
 
             /// <summary>
-            /// Number of step proofs snapshotted at issuance. Exposes only the
-            /// count, never the snapshot array itself.
+            /// O(1), exception-safe check that the snapshot array is present
+            /// and has the given length. Never exposes the snapshot array or
+            /// its length directly, so a forged (null or shorter) snapshot
+            /// fails closed instead of throwing.
             /// </summary>
-            internal int IssuedStepCount => _issuedSteps.Length;
+            internal bool IsIssuedStepCount(int count)
+            {
+                IssuedStepProof[] issued = _issuedSteps;
+                return issued != null && issued.Length == count;
+            }
 
             /// <summary>
             /// O(1) check that the current step at the given index is the same
@@ -326,13 +332,19 @@ namespace Zantetsu.Observability
             /// </summary>
             internal bool IsIssuedStepIdentityAt(int index, CaptureRunPublicationCaptureCompleteCleanupStep step)
             {
-                IssuedStepProof issued = _issuedSteps[index];
-                if (step == null || issued.Step == null || !ReferenceEquals(step, issued.Step))
+                IssuedStepProof[] issued = _issuedSteps;
+                if (issued == null || index < 0 || index >= issued.Length)
                 {
                     return false;
                 }
 
-                return step.Matches(issued.Action, issued.EntryIndex, issued.ArtifactKind);
+                IssuedStepProof proof = issued[index];
+                if (step == null || proof.Step == null || !ReferenceEquals(step, proof.Step))
+                {
+                    return false;
+                }
+
+                return step.Matches(proof.Action, proof.EntryIndex, proof.ArtifactKind);
             }
 
             /// <summary>
@@ -347,10 +359,9 @@ namespace Zantetsu.Observability
 
             /// <summary>
             /// Performs the full plan validation exactly once (which validates
-            /// the plan and its whole inspection graph), then mints the
-            /// inspection token via the proof-gated non-validating mint and
-            /// captures a defensive proof snapshot of each current step's
-            /// reference and value triple.
+            /// the plan and its whole inspection graph) via the single atomic
+            /// inspection-token mint, then captures a defensive proof snapshot
+            /// of each current step's reference and value triple.
             /// </summary>
             internal static bool TryAcquire(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
@@ -362,14 +373,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!ValidationProof.TryMint(plan, out ValidationProof proof))
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaProof(
-                        proof, inspection,
+                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                        plan,
                         out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken))
                 {
                     return false;
@@ -404,49 +409,6 @@ namespace Zantetsu.Observability
                     EntryIndex = step.EntryIndex;
                     ArtifactKind = step.ArtifactKind;
                 }
-            }
-        }
-
-        /// <summary>
-        /// Unforgeable proof that this plan completed its single-pass full
-        /// validation. The constructor is private, so the proof can only be
-        /// minted by <see cref="TryMint"/> — which performs the full plan
-        /// validation — and never by arbitrary same-assembly callers. The
-        /// proof records the exact inspection operation that was validated.
-        /// </summary>
-        internal sealed class ValidationProof
-        {
-            private readonly CaptureRunPublicationArtifactInspectionOperation _operation;
-
-            private ValidationProof(CaptureRunPublicationArtifactInspectionOperation operation)
-            {
-                _operation = operation;
-            }
-
-            internal bool IsFor(CaptureRunPublicationArtifactInspectionOperation operation)
-            {
-                return operation != null && ReferenceEquals(_operation, operation);
-            }
-
-            /// <summary>
-            /// Mints the proof only after a full, current
-            /// <see cref="CaptureRunPublicationCaptureCompleteCleanupActionPlan.IsValid"/>
-            /// pass succeeds, so holding a proof guarantees the plan and its
-            /// inspection operation were valid at mint time.
-            /// </summary>
-            internal static bool TryMint(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
-                out ValidationProof proof)
-            {
-                proof = null;
-                if (plan == null || !plan.IsValid)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                proof = new ValidationProof(inspection);
-                return true;
             }
         }
 

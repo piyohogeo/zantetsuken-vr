@@ -1454,48 +1454,34 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(planTokenType.GetMethod("AcquireTrusted", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
             Assert.That(inspectionTokenType.GetMethod("AcquireTrusted", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
+            Assert.That(inspectionTokenType.GetMethod("TryAcquireViaProof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
+
+            // The two-step proof mint must not exist; the inspection token's
+            // only non-validating mint is the single atomic TryAcquireFromPlan.
+            Assert.That(
+                typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan).GetNestedType("ValidationProof", BindingFlags.Public | BindingFlags.NonPublic),
+                Is.Null);
 
             Assert.That(planTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
             Assert.That(inspectionTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
+            Assert.That(inspectionTokenType.GetMethod("TryAcquireFromPlan", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
         }
 
         [Test]
-        public void InspectionToken_NonValidatingMintRequiresCorrelatedOperation()
-        {
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
-            CaptureRunPublicationArtifactInspectionOperation other =
-                BuildPlan(commitRoute: true).OrchestrationResult.InspectionSnapshot.Operation;
-
-            // The proof-gated non-validating mint must refuse an operation that
-            // the validated plan did not inspect, so it cannot be aimed at an
-            // unrelated operation.
-            Assert.That(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof.TryMint(
-                    plan, out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof proof),
-                Is.True);
-
-            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaProof(
-                proof, other, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
-
-            Assert.That(minted, Is.False);
-            Assert.That(token, Is.Null);
-        }
-
-        [Test]
-        public void InspectionToken_NonValidatingMintRejectsCorruptedOperationBeforeIssuance()
+        public void InspectionToken_MintRejectsCorruptedOperation()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
 
-            // Corrupt the operation before minting. The proof can only be
-            // minted through a full current validation, which must now fail.
+            // Corrupt the operation, then mint through the single atomic API:
+            // the full plan validation must fail, so no token is issued.
             SetField(operation, "_artifactPaths", null);
 
-            bool minted = CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof.TryMint(
-                plan, out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof proof);
-            Assert.That(minted, Is.False);
-            Assert.That(proof, Is.Null);
+            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                plan, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
 
+            Assert.That(minted, Is.False);
+            Assert.That(token, Is.Null);
             Assert.That(plan.TryValidate(out _), Is.False);
         }
 
@@ -1512,6 +1498,23 @@ namespace Zantetsu.Core.Tests
             SetField(plan.GetStep(0), "_action", CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan);
             SetField(plan.GetStep(0), "_entryIndex", -1);
             SetField(plan.GetStep(0), "_artifactKind", CaptureRunPublicationArtifactKind.None);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void TrustedConstructor_NullIssuedStepsAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            // Forge the token's snapshot array away; the index-local predicate
+            // must fail closed instead of leaking a NullReferenceException.
+            SetField(token, "_issuedSteps", null);
 
             Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
 
