@@ -308,6 +308,37 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// O(1), exception-safe check that the execution result held by this
+        /// plan is still proven valid by the exact execution-result token that
+        /// was minted together with this plan's validation token. Re-verifies
+        /// the completed-step and receipt correlation of the capture-index
+        /// commit evidence, so cleanup cannot start after that evidence was
+        /// destroyed while a token remained issued.
+        /// </summary>
+        internal bool IsExecutionResultIntact(ValidationToken token)
+        {
+            if (token == null || !token.IsIssuedFor(this))
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = _orchestrationResult;
+            if (result == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult executionResult = result.ExecutionResult;
+            if (executionResult == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken = token.ExecutionResultToken;
+            return executionResultToken != null && executionResultToken.IsIssuedFor(executionResult);
+        }
+
+        /// <summary>
         /// Proof that this plan and its underlying artifact inspection graph
         /// were fully validated at a single point in time. The token is bound
         /// to the exact plan instance, carries the artifact inspection token,
@@ -318,19 +349,24 @@ namespace Zantetsu.Observability
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan _plan;
             private readonly CaptureRunPublicationArtifactInspectionOperation.ValidationToken _inspectionToken;
+            private readonly CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken _executionResultToken;
             private readonly IssuedStepProof[] _issuedSteps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
                 CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken,
+                CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken,
                 IssuedStepProof[] issuedSteps)
             {
                 _plan = plan;
                 _inspectionToken = inspectionToken;
+                _executionResultToken = executionResultToken;
                 _issuedSteps = issuedSteps;
             }
 
             internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
+
+            internal CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken ExecutionResultToken => _executionResultToken;
 
             /// <summary>
             /// O(1), exception-safe check that the snapshot array is present
@@ -400,13 +436,24 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                CaptureRunPublicationArtifactRecoveryOrchestrationResult result = plan._orchestrationResult;
+                if (result == null || result.ExecutionResult == null)
+                {
+                    return false;
+                }
+
+                if (!result.ExecutionResult.TryValidate(out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken))
+                {
+                    return false;
+                }
+
                 IssuedStepProof[] issuedSteps = new IssuedStepProof[plan._steps.Length];
                 for (int i = 0; i < issuedSteps.Length; i++)
                 {
                     issuedSteps[i] = new IssuedStepProof(plan._steps[i]);
                 }
 
-                token = new ValidationToken(plan, inspectionToken, issuedSteps);
+                token = new ValidationToken(plan, inspectionToken, executionResultToken, issuedSteps);
                 return true;
             }
 

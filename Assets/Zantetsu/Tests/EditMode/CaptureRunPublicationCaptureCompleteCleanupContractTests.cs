@@ -1225,6 +1225,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.IsIssuedFor(other), Is.False);
             Assert.That(token.IsIssuedFor(null), Is.False);
             Assert.That(token.InspectionToken, Is.Not.Null);
+            Assert.That(token.ExecutionResultToken, Is.Not.Null);
         }
 
         [Test]
@@ -2532,10 +2533,117 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch candidate)
         {
             bool valid = candidate.TryValidate(
-                out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token);
+                out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token);
 
             Assert.That(valid, Is.False);
             Assert.That(token, Is.Null);
+        }
+
+        // ---- Execution batch: execution result success evidence ----
+
+        [Test]
+        public void PreparedStep_ExecutionResultEvidenceDestroyedAfterToken_FailsClosed()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(0);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.True);
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            SetField(plan.OrchestrationResult.ExecutionResult, "_completedSteps", null);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.False);
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, publicationPaths, markerPaths, readyIndex, token));
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        // ---- Execution batch: authoritative plan structure ----
+
+        [Test]
+        public void PreparedStep_AuthoritativePlanEntriesNullAfterToken_FailsClosed()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            SetField(plan.AuthoritativePlan, "_entries", null);
+
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_InspectionDecisionNullAfterToken_FailsClosed()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            SetField(plan.OrchestrationResult.InspectionSnapshot.Operation, "_decision", null);
+
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+        }
+
+        // ---- Execution batch: batch token binding ----
+
+        [Test]
+        public void Batch_TryValidate_TokenBoundToExactBatch()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batchA = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batchB = BuildBatch(plan);
+
+            Assert.That(
+                batchA.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken tokenA),
+                Is.True);
+
+            Assert.That(tokenA.IsIssuedFor(batchA), Is.True);
+            Assert.That(tokenA.IsIssuedFor(batchB), Is.False);
+            Assert.That(tokenA.IsIssuedFor(null), Is.False);
+            Assert.That(tokenA.ActionPlanToken, Is.Not.Null);
+        }
+
+        [Test]
+        public void Batch_TryValidate_TokenDetectsArrayReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(batch), Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] original =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] replacement =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            SetField(batch, "_steps", replacement);
+
+            Assert.That(token.IsIssuedFor(batch), Is.False);
         }
 
         // ---- Execution batch: shape and O(n) ----

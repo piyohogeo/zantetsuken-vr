@@ -104,6 +104,16 @@ namespace Zantetsu.Observability
         internal int EntryCount => _entries.Length;
 
         /// <summary>
+        /// O(1), exception-safe check that the entry array is present, so a
+        /// stale validation token cannot navigate a plan whose entry array was
+        /// forged away before <see cref="EntryCount"/> is read.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            return _entries != null;
+        }
+
+        /// <summary>
         /// Returns the entry at the given index in capture frame ID ascending
         /// order. Out-of-range indices throw
         /// <see cref="ArgumentOutOfRangeException"/>.

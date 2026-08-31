@@ -255,12 +255,17 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// O(1), exception-safe check that the index-local core structure this
-        /// operation exposes — its artifact path array — is present, so a stale
-        /// validation token cannot navigate a partially corrupted operation.
+        /// operation exposes — its artifact path array, decision, and
+        /// authoritative plan entry array — is present, so a stale validation
+        /// token cannot navigate a partially corrupted operation or read an
+        /// entry count from a plan whose entry array was forged away.
         /// </summary>
         internal bool IsIndexLocalStructureIntact()
         {
-            return _artifactPaths != null;
+            return _artifactPaths != null
+                && _decision != null
+                && _decision.AuthoritativePlan != null
+                && _decision.AuthoritativePlan.IsIndexLocalStructureIntact();
         }
 
         /// <summary>

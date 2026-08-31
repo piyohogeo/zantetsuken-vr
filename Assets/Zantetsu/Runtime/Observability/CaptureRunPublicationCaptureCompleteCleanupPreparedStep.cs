@@ -80,7 +80,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteCleanupOperation operation = null;
             if (action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
             {
-                ValidateRoutingStep(actionPlan, publicationPaths, markerPaths);
+                ValidateRoutingStep(actionPlan, publicationPaths, markerPaths, token);
             }
             else
             {
@@ -167,6 +167,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            if (!_actionPlan.IsExecutionResultIntact(token))
+            {
+                return false;
+            }
+
             CaptureRunPublicationCaptureCompleteCleanupStep step = _actionPlan.GetStep(_stepIndex);
             if (step == null || !step.IsValid)
             {
@@ -215,7 +220,8 @@ namespace Zantetsu.Observability
         private static void ValidateRoutingStep(
             CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
             CaptureRunPublicationPathSet publicationPaths,
-            CaptureRunMarkerPathSet markerPaths)
+            CaptureRunMarkerPathSet markerPaths,
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
             if (!actionPlan.IsIndexLocalStructureIntact())
             {
@@ -245,6 +251,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "Marker path set must be valid and share the action plan's root layout.",
                     nameof(markerPaths));
+            }
+
+            if (!actionPlan.IsExecutionResultIntact(token))
+            {
+                throw new ArgumentException(
+                    "Action plan execution result must still be proven valid by its minted token.",
+                    nameof(actionPlan));
             }
         }
 

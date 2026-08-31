@@ -430,7 +430,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!actionPlan.IsIndexLocalStructureIntact())
+            if (!actionPlan.IsIndexLocalStructureIntact() || !actionPlan.IsExecutionResultIntact(token))
             {
                 failure = CorrelationFailure.InspectionInvalid;
                 return false;

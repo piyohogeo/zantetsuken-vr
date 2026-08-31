@@ -115,10 +115,11 @@ namespace Zantetsu.Observability
         /// then verifies the prepared-step array length, per-step correlation,
         /// shared path set identity, step order, and terminal
         /// <c>CaptureCompleteReady</c> position. The returned token is non-null
-        /// only when every check succeeds, so the execution coordinator can
-        /// reuse it as proof of a fully valid batch.
+        /// only when every check succeeds and is bound to this exact batch and
+        /// its prepared-step array, so the execution coordinator cannot reuse a
+        /// token minted for one batch as proof of another.
         /// </summary>
-        internal bool TryValidate(out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+        internal bool TryValidate(out ValidationToken token)
         {
             token = null;
 
@@ -137,8 +138,49 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            token = acquired;
+            token = new ValidationToken(this, acquired, _steps);
             return true;
+        }
+
+        /// <summary>
+        /// Proof that this exact execution batch and its prepared-step array
+        /// were fully validated at a single point in time. The token is bound
+        /// to the batch by reference, carries the action plan token, and binds
+        /// to the exact prepared-step array, so a token minted for one batch
+        /// cannot be reused for a different batch built from the same plan and
+        /// array replacement after issuance fails closed.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly CaptureRunPublicationCaptureCompleteCleanupExecutionBatch _batch;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken _actionPlanToken;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] _issuedSteps;
+
+            internal ValidationToken(
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken,
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issuedSteps)
+            {
+                _batch = batch;
+                _actionPlanToken = actionPlanToken;
+                _issuedSteps = issuedSteps;
+            }
+
+            internal CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken ActionPlanToken => _actionPlanToken;
+
+            /// <summary>
+            /// O(1), exception-safe check that this token was minted for the
+            /// given batch and that the batch still holds the exact prepared
+            /// step array present at mint time. Never throws and never exposes
+            /// the prepared-step array.
+            /// </summary>
+            internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
+            {
+                return batch != null
+                    && ReferenceEquals(_batch, batch)
+                    && batch._steps != null
+                    && ReferenceEquals(_issuedSteps, batch._steps);
+            }
         }
 
         private bool IsValidatedSequence(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
