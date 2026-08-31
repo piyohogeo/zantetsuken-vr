@@ -2341,6 +2341,90 @@ namespace Zantetsu.Core.Tests
             Assert.That(forged.IsValid, Is.False);
         }
 
+        // ---- Execution batch: routing constructor rejection ----
+
+        [Test]
+        public void PreparedStep_Routing_ForeignPublicationPathSet_ConstructorRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationPathSet foreign = new CaptureRunPublicationPathSet(plan.RootLayout);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, foreign, new CaptureRunMarkerPathSet(plan.RootLayout), readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("publicationPaths"));
+        }
+
+        [Test]
+        public void PreparedStep_Routing_CorruptedPublicationPathSet_ConstructorRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationPathSet corrupted = GetPublicationPaths(plan);
+            SetField(corrupted, "_publicationPlanPath", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, corrupted, new CaptureRunMarkerPathSet(plan.RootLayout), readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("publicationPaths"));
+        }
+
+        [Test]
+        public void PreparedStep_Routing_ForeignMarkerPathSet_ConstructorRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunMarkerPathSet foreign = new CaptureRunMarkerPathSet(MakeLayout(2));
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, GetPublicationPaths(plan), foreign, readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("markerPaths"));
+        }
+
+        [Test]
+        public void PreparedStep_Routing_CorruptedMarkerPathSet_ConstructorRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunMarkerPathSet corrupted = ForgeMarkerPathSet(
+                new CaptureRunMarkerPathSet(plan.RootLayout), "_stagingReadyPath", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, GetPublicationPaths(plan), corrupted, readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("markerPaths"));
+        }
+
+        [Test]
+        public void PreparedStep_Routing_ReleasedLease_ConstructorRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            int readyIndex = plan.Count - 1;
+
+            plan.LockLease.Dispose();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), readyIndex, token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
         [Test]
         public void Batch_TryValidate_NullTokenOnEveryFailure()
         {

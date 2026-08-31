@@ -78,7 +78,11 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteCleanupAction action = step.Action;
 
             CaptureRunPublicationCaptureCompleteCleanupOperation operation = null;
-            if (action != CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+            if (action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+            {
+                ValidateRoutingStep(actionPlan, publicationPaths, markerPaths);
+            }
+            else
             {
                 operation = new CaptureRunPublicationCaptureCompleteCleanupOperation(
                     actionPlan, publicationPaths, markerPaths, stepIndex, token);
@@ -178,7 +182,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                return ReferenceEquals(_publicationPaths, PublicationInspectionPaths())
+                return ReferenceEquals(_publicationPaths, PublicationInspectionPaths(_actionPlan))
                     && ReferenceEquals(_publicationPaths.RootLayout, _actionPlan.RootLayout)
                     && _publicationPaths.IsValid
                     && ReferenceEquals(_markerPaths.RootLayout, _actionPlan.RootLayout)
@@ -208,10 +212,47 @@ namespace Zantetsu.Observability
             return _cleanupOperation.IsValidIndexLocal(token);
         }
 
-        private CaptureRunPublicationPathSet PublicationInspectionPaths()
+        private static void ValidateRoutingStep(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths)
+        {
+            if (!actionPlan.IsIndexLocalStructureIntact())
+            {
+                throw new ArgumentException(
+                    "Action plan, inspection operation, and lease must be valid and correlated.",
+                    nameof(actionPlan));
+            }
+
+            if (!ReferenceEquals(publicationPaths, PublicationInspectionPaths(actionPlan)))
+            {
+                throw new ArgumentException(
+                    "Publication path set must be the publication inspection operation's exact path set.",
+                    nameof(publicationPaths));
+            }
+
+            if (!ReferenceEquals(publicationPaths.RootLayout, actionPlan.RootLayout)
+                || !publicationPaths.IsValid)
+            {
+                throw new ArgumentException(
+                    "Publication path set must be valid and share the action plan's root layout.",
+                    nameof(publicationPaths));
+            }
+
+            if (!ReferenceEquals(markerPaths.RootLayout, actionPlan.RootLayout)
+                || !markerPaths.IsValid)
+            {
+                throw new ArgumentException(
+                    "Marker path set must be valid and share the action plan's root layout.",
+                    nameof(markerPaths));
+            }
+        }
+
+        private static CaptureRunPublicationPathSet PublicationInspectionPaths(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan)
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result =
-                _actionPlan == null ? null : _actionPlan.OrchestrationResult;
+                actionPlan == null ? null : actionPlan.OrchestrationResult;
             if (result == null)
             {
                 return null;
