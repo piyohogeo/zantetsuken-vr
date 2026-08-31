@@ -188,27 +188,53 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// O(1), exception-safe binding-only check that this token was
+            /// minted for the exact batch and still binds to the exact action
+            /// plan and the exact issued prepared-step array. It deliberately
+            /// does not walk the step elements, so callers can re-prove every
+            /// index with <see cref="TryGetIssuedStep"/> without repeating the
+            /// full-sequence validation. The action plan token is loaded into a
+            /// local and null-rejected so a corrupted token fails closed
+            /// instead of leaking a <see cref="NullReferenceException"/>. Never
+            /// throws and never exposes the prepared-step array.
+            /// </summary>
+            internal bool IsIssuedForExactBindings(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
+            {
+                if (batch == null || !ReferenceEquals(_batch, batch))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken = _actionPlanToken;
+                if (actionPlanToken == null
+                    || batch._actionPlan == null
+                    || !actionPlanToken.IsIssuedFor(batch._actionPlan))
+                {
+                    return false;
+                }
+
+                if (batch._steps == null || !ReferenceEquals(_issuedStepsArray, batch._steps))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            /// <summary>
             /// Exception-safe check that this token was minted for the given
             /// batch, that the batch still holds the exact action plan and the
             /// exact prepared-step array, and that each prepared step is still
             /// the same instance and still satisfies the shared index-local
             /// correlation predicate (action plan, publication paths, marker
-            /// paths, step identity, and cleanup operation correlation). Never
-            /// throws and never exposes the prepared-step array.
+            /// paths, step identity, and cleanup operation correlation). The
+            /// O(1) exact-binding check runs first, so a corrupted token fails
+            /// closed without throwing. Never throws and never exposes the
+            /// prepared-step array.
             /// </summary>
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
             {
-                if (batch == null || !ReferenceEquals(_batch, batch) || batch._steps == null)
-                {
-                    return false;
-                }
-
-                if (batch._actionPlan == null || !_actionPlanToken.IsIssuedFor(batch._actionPlan))
-                {
-                    return false;
-                }
-
-                if (!ReferenceEquals(_issuedStepsArray, batch._steps))
+                if (!IsIssuedForExactBindings(batch))
                 {
                     return false;
                 }
@@ -241,11 +267,10 @@ namespace Zantetsu.Observability
             /// O(1), exception-safe exact-index proof: reports whether this
             /// token was minted for the given batch and the prepared step at
             /// <paramref name="index"/> is still the exact issued step. It
-            /// verifies the exact batch reference, the exact action plan
-            /// reference, the exact issued prepared-step array reference, the
-            /// index range, the issued-versus-current element reference, the
-            /// prepared step's own <c>StepIndex</c>, and the prepared step's
-            /// full index-local correlation. Never throws and never exposes the
+            /// reuses the O(1) exact-binding check and then verifies the index
+            /// range, the issued-versus-current element reference, the prepared
+            /// step's own <c>StepIndex</c>, and the prepared step's full
+            /// index-local correlation. Never throws and never exposes the
             /// prepared-step array.
             /// </summary>
             internal bool TryGetIssuedStep(
@@ -254,23 +279,13 @@ namespace Zantetsu.Observability
                 out CaptureRunPublicationCaptureCompleteCleanupPreparedStep preparedStep)
             {
                 preparedStep = null;
-                if (batch == null || !ReferenceEquals(_batch, batch))
-                {
-                    return false;
-                }
-
-                if (batch._actionPlan == null || !_actionPlanToken.IsIssuedFor(batch._actionPlan))
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] current = batch._steps;
-                if (current == null || !ReferenceEquals(_issuedStepsArray, current))
+                if (!IsIssuedForExactBindings(batch))
                 {
                     return false;
                 }
 
                 CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issued = _issuedSteps;
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] current = batch._steps;
                 if (issued == null || current.Length != issued.Length
                     || index < 0 || index >= issued.Length)
                 {

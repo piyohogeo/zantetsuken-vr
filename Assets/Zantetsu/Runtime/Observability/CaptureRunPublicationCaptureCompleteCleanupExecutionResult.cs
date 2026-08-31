@@ -174,10 +174,10 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Token-gated construction path used by a coordinator that has already
-        /// acquired the exact batch validation token once. It confirms the
-        /// token still binds to the exact batch and its prepared-step array and
-        /// re-verifies the completed-step correlation index-locally, never
-        /// re-running the full plan validation.
+        /// acquired the exact batch validation token once. It re-verifies the
+        /// completed-step correlation index-locally against that token — the
+        /// O(1) exact-binding check plus one O(1) exact-index proof per step —
+        /// without re-running the full plan or full batch validation.
         /// </summary>
         internal CaptureRunPublicationCaptureCompleteCleanupExecutionResult(
             CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator issuedBy,
@@ -203,11 +203,6 @@ namespace Zantetsu.Observability
             if (batchToken == null)
             {
                 throw new ArgumentNullException(nameof(batchToken));
-            }
-
-            if (!batchToken.IsIssuedFor(batch))
-            {
-                throw new ArgumentException("Token must be issued for the exact execution batch.", nameof(batchToken));
             }
 
             if (!IsCorrelated(issuedBy, batch, completedSteps, batchToken))
@@ -294,7 +289,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
             if (issuedBy == null || batch == null || completedSteps == null || batchToken == null
-                || !batchToken.IsIssuedFor(batch))
+                || !batchToken.IsIssuedForExactBindings(batch))
             {
                 return false;
             }

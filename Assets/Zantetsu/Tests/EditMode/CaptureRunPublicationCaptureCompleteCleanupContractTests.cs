@@ -2875,6 +2875,44 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.TryGetIssuedStep(otherBatch, 0, out _), Is.False);
         }
 
+        [Test]
+        public void Batch_Token_NullActionPlanTokenFailsClosedWithoutThrowing()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+
+            // Corrupt the token's action plan link after issuance; every
+            // predicate must fail closed instead of leaking a
+            // NullReferenceException.
+            SetField(token, "_actionPlanToken", null);
+
+            Assert.That(token.IsIssuedForExactBindings(batch), Is.False);
+            Assert.That(token.IsIssuedFor(batch), Is.False);
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared;
+            Assert.That(token.TryGetIssuedStep(batch, 0, out prepared), Is.False);
+            Assert.That(prepared, Is.Null);
+
+            // The result token delegates to its held batch token, so it must
+            // also fail closed rather than propagate the exception.
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken resultToken),
+                Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken innerBatchToken =
+                (CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken)GetField(resultToken, "_batchToken");
+            SetField(innerBatchToken, "_actionPlanToken", null);
+
+            Assert.That(resultToken.IsIssuedFor(result), Is.False);
+        }
+
         // ---- Execution batch: shape and O(n) ----
 
         [Test]
@@ -3541,7 +3579,7 @@ namespace Zantetsu.Core.Tests
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(coordinator, batch, completed, foreignToken));
 
-            Assert.That(ex.ParamName, Is.EqualTo("batchToken"));
+            Assert.That(ex.ParamName, Is.EqualTo("completedSteps"));
         }
 
         [Test]
@@ -3808,6 +3846,19 @@ namespace Zantetsu.Core.Tests
             Assert.That(CountOccurrences(coordinatorSource, "batch.TryValidate"), Is.EqualTo(1));
             Assert.That(coordinatorSource, Does.Not.Contain("batch.IsValid"));
             Assert.That(coordinatorSource, Does.Not.Contain("AcquireValidationToken"));
+        }
+
+        [Test]
+        public void Source_ResultUsesExactBindingsNotFullBatchValidation()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionResult.cs"));
+
+            // The result must never call the full-sequence batch validation;
+            // correlation uses the O(1) exact-bindings predicate plus per-index
+            // exact-step proofs instead.
+            Assert.That(CountOccurrences(source, "batchToken.IsIssuedFor("), Is.EqualTo(0));
+            Assert.That(source, Does.Contain("IsIssuedForExactBindings"));
         }
 
         [Test]
