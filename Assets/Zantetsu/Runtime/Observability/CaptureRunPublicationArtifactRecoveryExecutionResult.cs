@@ -69,17 +69,23 @@ namespace Zantetsu.Observability
             /// (its batch, action plan, and completed-step receipts). This
             /// mints the result token from that already-validated state without
             /// re-walking the Artifact/Receipt graph a second time, but only
-            /// when the caller presents the opaque validation proof produced by
-            /// that pass, so arbitrary code cannot mint a token for an
+            /// when the caller presents the opaque validation proof minted by
+            /// that pass, which binds to this exact execution result and its
+            /// action plan, so arbitrary code cannot mint a token for an
             /// unvalidated result.
             /// </summary>
             internal static bool TryAcquireFromValidatedResult(
                 CaptureRunPublicationArtifactRecoveryExecutionResult result,
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof,
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof validationProof,
                 out ValidationToken token)
             {
                 token = null;
                 if (result == null || result.Batch == null || validationProof == null)
+                {
+                    return false;
+                }
+
+                if (!validationProof.IsIssuedFor(result))
                 {
                     return false;
                 }

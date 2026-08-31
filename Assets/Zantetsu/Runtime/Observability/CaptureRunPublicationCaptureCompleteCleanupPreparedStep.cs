@@ -217,59 +217,6 @@ namespace Zantetsu.Observability
             return _cleanupOperation.IsValidIndexLocal(token);
         }
 
-        /// <summary>
-        /// Exception-safe read of this prepared step's identity triple: its
-        /// step index, the action of the plan step it materializes, and its
-        /// cleanup operation. The action is read through the plan only after
-        /// the plan and its step array are structurally guarded, so a forged
-        /// null plan or step array fails closed instead of throwing.
-        /// </summary>
-        internal bool TryGetIssuedIdentity(
-            out int stepIndex,
-            out CaptureRunPublicationCaptureCompleteCleanupAction action,
-            out CaptureRunPublicationCaptureCompleteCleanupOperation operation)
-        {
-            stepIndex = _stepIndex;
-            action = default(CaptureRunPublicationCaptureCompleteCleanupAction);
-            operation = _cleanupOperation;
-
-            if (_actionPlan == null)
-            {
-                return false;
-            }
-
-            if (!_actionPlan.TryGetStep(_stepIndex, out CaptureRunPublicationCaptureCompleteCleanupStep step))
-            {
-                return false;
-            }
-
-            action = step.Action;
-            return true;
-        }
-
-        /// <summary>
-        /// Exception-safe check that this prepared step still carries the given
-        /// identity triple. Shared with the batch token so its per-step proof
-        /// comparison never reads the plan action without a structural guard.
-        /// </summary>
-        internal bool MatchesIssuedProof(
-            int stepIndex,
-            CaptureRunPublicationCaptureCompleteCleanupAction action,
-            CaptureRunPublicationCaptureCompleteCleanupOperation operation)
-        {
-            if (!TryGetIssuedIdentity(
-                    out int currentStepIndex,
-                    out CaptureRunPublicationCaptureCompleteCleanupAction currentAction,
-                    out CaptureRunPublicationCaptureCompleteCleanupOperation currentOperation))
-            {
-                return false;
-            }
-
-            return currentStepIndex == stepIndex
-                && currentAction == action
-                && ReferenceEquals(currentOperation, operation);
-        }
-
         private static void ValidateRoutingStep(
             CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
             CaptureRunPublicationPathSet publicationPaths,

@@ -1458,14 +1458,14 @@ namespace Zantetsu.Core.Tests
             Assert.That(inspectionTokenType.GetMethod("TryAcquireViaProof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
 
             // The two-step proof mint must not exist; the inspection token's
-            // only non-validating mint is the single atomic TryAcquireFromPlan.
+            // only non-validating mint is the proof-gated TryAcquireFromValidatedPlan.
             Assert.That(
                 typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan).GetNestedType("ValidationProof", BindingFlags.Public | BindingFlags.NonPublic),
                 Is.Null);
 
             Assert.That(planTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
             Assert.That(inspectionTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
-            Assert.That(inspectionTokenType.GetMethod("TryAcquireFromPlan", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
+            Assert.That(inspectionTokenType.GetMethod("TryAcquireFromValidatedPlan", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
         }
 
         [Test]
@@ -1474,16 +1474,39 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
 
-            // Corrupt the operation, then mint through the single atomic API:
-            // the full plan validation must fail, so no token is issued.
+            // Corrupt the operation, then mint through the proof-gated path:
+            // the full plan validation must fail, so no proof (and therefore no
+            // inspection token) is issued.
             SetField(operation, "_artifactPaths", null);
 
-            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
-                plan, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
-
-            Assert.That(minted, Is.False);
-            Assert.That(token, Is.Null);
+            Assert.That(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(plan, out _),
+                Is.False);
             Assert.That(plan.TryValidate(out _), Is.False);
+        }
+
+        [Test]
+        public void InspectionToken_NonValidatedMintRequiresBoundProof()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
+
+            // A null proof fails closed.
+            Assert.That(
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromValidatedPlan(null, out _),
+                Is.False);
+
+            // The bound proof mints an inspection token for the exact operation.
+            Assert.That(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
+                    plan,
+                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
+                Is.True);
+            Assert.That(
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromValidatedPlan(
+                    proof, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(operation), Is.True);
         }
 
         [Test]
@@ -2706,14 +2729,43 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Proof_ConstructorIsPrivate()
+        {
+            Type proofType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof);
+
+            Assert.That(proofType.IsPublic, Is.False);
+            Assert.That(
+                proofType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .All(constructor => !constructor.IsPublic),
+                Is.True,
+                "The validation proof must be unfabricable outside its validating mint.");
+        }
+
+        [Test]
+        public void Proof_MintFailsClosedOnCorruptedActionPlan()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+
+            // Destroy the recovery action plan's step array; the full cleanup
+            // plan validation must fail, so no proof can be minted even though
+            // the inspection operation itself remains valid.
+            SetField(plan.OrchestrationResult.Batch.ActionPlan, "_steps", null);
+
+            Assert.That(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(plan, out _),
+                Is.False);
+            Assert.That(plan.TryValidate(out _), Is.False);
+        }
+
+        [Test]
         public void ActionPlanToken_NonValidatedMintRequiresBoundProof()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
 
             Assert.That(
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
                     plan,
-                    out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken),
+                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
                 Is.True);
 
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = plan.OrchestrationResult.Batch.ActionPlan;
@@ -2722,20 +2774,19 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentNullException>(
                 () => CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, null));
 
-            // A proof minted for a different plan's inspection operation is
-            // rejected.
+            // A proof minted for a different cleanup plan is rejected.
             CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildPlan(commitRoute: false);
             Assert.That(
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
                     otherPlan,
-                    out CaptureRunPublicationArtifactInspectionOperation.ValidationToken otherProof),
+                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof otherProof),
                 Is.True);
             Assert.Throws<ArgumentException>(
                 () => CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, otherProof));
 
             // The bound proof mints a token issued for the exact action plan.
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token =
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, inspectionToken);
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan, proof);
             Assert.That(token.IsIssuedFor(actionPlan), Is.True);
         }
 
@@ -2751,12 +2802,12 @@ namespace Zantetsu.Core.Tests
                     result, null, out _),
                 Is.False);
 
-            // A proof for a different plan fails closed.
+            // A proof for a different cleanup plan fails closed.
             CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildPlan(commitRoute: false);
             Assert.That(
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
                     otherPlan,
-                    out CaptureRunPublicationArtifactInspectionOperation.ValidationToken otherProof),
+                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof otherProof),
                 Is.True);
             Assert.That(
                 CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
@@ -2765,15 +2816,60 @@ namespace Zantetsu.Core.Tests
 
             // The bound proof mints a token issued for the exact result.
             Assert.That(
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.TryAcquireProof(
                     plan,
-                    out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken),
+                    out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof proof),
                 Is.True);
             Assert.That(
                 CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
-                    result, inspectionToken, out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token),
+                    result, proof, out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken token),
                 Is.True);
             Assert.That(token.IsIssuedFor(result), Is.True);
+        }
+
+        [Test]
+        public void Batch_TryValidate_TokenDetectsSwappedPreparedStepActionPlan()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(batch), Is.True);
+
+            // Swap the prepared step's plan link to a different but equally
+            // shaped plan. The step index and action still match, but the
+            // token must fail closed because the step no longer correlates to
+            // the validated plan.
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+            SetField(steps[0], "_actionPlan", otherPlan);
+
+            Assert.That(token.IsIssuedFor(batch), Is.False);
+        }
+
+        [Test]
+        public void Batch_TryValidate_TokenDetectsSwappedPublicationPaths()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(batch), Is.True);
+
+            // Replace the prepared step's publication path set with a
+            // different instance; the token must fail closed.
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationPathSet forged = GetPublicationPaths(otherPlan);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+            SetField(steps[0], "_publicationPaths", forged);
+
+            Assert.That(token.IsIssuedFor(batch), Is.False);
         }
 
         // ---- Execution batch: shape and O(n) ----

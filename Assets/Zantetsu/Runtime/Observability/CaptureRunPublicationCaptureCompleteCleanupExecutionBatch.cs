@@ -137,27 +137,27 @@ namespace Zantetsu.Observability
             private readonly CaptureRunPublicationCaptureCompleteCleanupExecutionBatch _batch;
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken _actionPlanToken;
             private readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] _issuedStepsArray;
-            private readonly PreparedStepProof[] _issuedStepProofs;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] _issuedSteps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken,
                 CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issuedStepsArray,
-                PreparedStepProof[] issuedStepProofs)
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issuedSteps)
             {
                 _batch = batch;
                 _actionPlanToken = actionPlanToken;
                 _issuedStepsArray = issuedStepsArray;
-                _issuedStepProofs = issuedStepProofs;
+                _issuedSteps = issuedSteps;
             }
 
             internal CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken ActionPlanToken => _actionPlanToken;
 
             /// <summary>
             /// Single validated mint: re-runs the batch's full sequence
-            /// validation exactly once and only then captures the defensive
-            /// proof snapshot. The private constructor keeps the token
-            /// unfabricable by callers.
+            /// validation exactly once and then captures a defensive reference
+            /// snapshot of the issued prepared steps. The private constructor
+            /// keeps the token unfabricable by callers.
             /// </summary>
             internal static bool TryAcquire(
                 CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
@@ -180,22 +180,21 @@ namespace Zantetsu.Observability
                 }
 
                 CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps = batch._steps;
-                PreparedStepProof[] proofs = new PreparedStepProof[steps.Length];
-                for (int i = 0; i < proofs.Length; i++)
-                {
-                    proofs[i] = new PreparedStepProof(steps[i]);
-                }
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issued =
+                    (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])steps.Clone();
 
-                token = new ValidationToken(batch, actionPlanToken, steps, proofs);
+                token = new ValidationToken(batch, actionPlanToken, steps, issued);
                 return true;
             }
 
             /// <summary>
             /// Exception-safe check that this token was minted for the given
             /// batch, that the batch still holds the exact prepared-step array,
-            /// and that each prepared step is still the same instance with the
-            /// same step index, action, and cleanup operation as at mint time.
-            /// Never throws and never exposes the prepared-step array.
+            /// and that each prepared step is still the same instance and still
+            /// satisfies the shared index-local correlation predicate (action
+            /// plan, publication paths, marker paths, step identity, and
+            /// cleanup operation correlation). Never throws and never exposes
+            /// the prepared-step array.
             /// </summary>
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
             {
@@ -209,58 +208,28 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                PreparedStepProof[] proofs = _issuedStepProofs;
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issued = _issuedSteps;
                 CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] current = batch._steps;
-                if (proofs == null || proofs.Length != current.Length)
+                if (issued == null || issued.Length != current.Length)
                 {
                     return false;
                 }
 
-                for (int i = 0; i < proofs.Length; i++)
+                for (int i = 0; i < issued.Length; i++)
                 {
                     CaptureRunPublicationCaptureCompleteCleanupPreparedStep step = current[i];
-                    PreparedStepProof proof = proofs[i];
-                    if (step == null || !ReferenceEquals(step, proof.Step))
+                    if (step == null || !ReferenceEquals(step, issued[i]))
                     {
                         return false;
                     }
 
-                    if (!step.MatchesIssuedProof(proof.StepIndex, proof.Action, proof.Operation))
+                    if (!step.IsValidIndexLocal(_actionPlanToken))
                     {
                         return false;
                     }
                 }
 
                 return true;
-            }
-
-            private readonly struct PreparedStepProof
-            {
-                internal readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep Step;
-                internal readonly int StepIndex;
-                internal readonly CaptureRunPublicationCaptureCompleteCleanupAction Action;
-                internal readonly CaptureRunPublicationCaptureCompleteCleanupOperation Operation;
-
-                internal PreparedStepProof(CaptureRunPublicationCaptureCompleteCleanupPreparedStep step)
-                {
-                    Step = step;
-                    if (step != null
-                        && step.TryGetIssuedIdentity(
-                            out int stepIndex,
-                            out CaptureRunPublicationCaptureCompleteCleanupAction action,
-                            out CaptureRunPublicationCaptureCompleteCleanupOperation operation))
-                    {
-                        StepIndex = stepIndex;
-                        Action = action;
-                        Operation = operation;
-                    }
-                    else
-                    {
-                        StepIndex = -1;
-                        Action = default(CaptureRunPublicationCaptureCompleteCleanupAction);
-                        Operation = null;
-                    }
-                }
             }
         }
 

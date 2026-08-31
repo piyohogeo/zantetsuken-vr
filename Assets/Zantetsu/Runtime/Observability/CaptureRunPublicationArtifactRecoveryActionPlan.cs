@@ -162,14 +162,14 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Non-validating mint gated on an opaque validation proof that only
-            /// the single combined plan validation can produce. The proof must
-            /// be issued for this action plan's exact inspection operation, so
-            /// it cannot mint a token for a different or unvalidated plan.
+            /// Non-validating mint gated on an opaque validation proof minted
+            /// only by the single full cleanup plan validation. The proof binds
+            /// to the exact recovery action plan of that validated plan, so it
+            /// cannot mint a token for a different or unvalidated action plan.
             /// </summary>
             internal static ValidationToken AcquireFromValidatedPlan(
                 CaptureRunPublicationArtifactRecoveryActionPlan plan,
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof)
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof validationProof)
             {
                 if (plan == null)
                 {
@@ -181,33 +181,14 @@ namespace Zantetsu.Observability
                     throw new ArgumentNullException(nameof(validationProof));
                 }
 
-                if (!IsProofBoundToPlan(plan, validationProof))
+                if (!validationProof.IsIssuedFor(plan))
                 {
                     throw new ArgumentException(
-                        "Validation proof must be issued for the action plan's inspection operation.",
+                        "Validation proof must be issued for the validated cleanup plan's action plan.",
                         nameof(validationProof));
                 }
 
                 return new ValidationToken(plan);
-            }
-
-            private static bool IsProofBoundToPlan(
-                CaptureRunPublicationArtifactRecoveryActionPlan plan,
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof)
-            {
-                CaptureRunPublicationArtifactRecoveryDecision decision = plan.Decision;
-                if (decision == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
-                if (snapshot == null)
-                {
-                    return false;
-                }
-
-                return validationProof.IsIssuedFor(snapshot.Operation);
             }
         }
 

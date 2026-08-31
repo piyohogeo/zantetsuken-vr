@@ -81,23 +81,6 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Exception-safe read of the step at the given index: returns false
-        /// when the step array or the element is missing, so a forged null step
-        /// array never escapes as a NullReferenceException.
-        /// </summary>
-        internal bool TryGetStep(int index, out CaptureRunPublicationCaptureCompleteCleanupStep step)
-        {
-            step = null;
-            if (_steps == null || index < 0 || index >= _steps.Length)
-            {
-                return false;
-            }
-
-            step = _steps[index];
-            return step != null;
-        }
-
-        /// <summary>
         /// Re-derives the expected step count from the current result graph and
         /// compares each held step against its expected value as a virtual
         /// sequence, without allocating any array or step objects and without
@@ -431,10 +414,102 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Performs the full plan validation exactly once (which validates
-            /// the plan and its whole inspection graph) via the single atomic
-            /// inspection-token mint, then captures a defensive proof snapshot
-            /// of each current step's reference and value triple.
+            /// Opaque proof minted only by the single full plan validation in
+            /// <see cref="TryAcquireProof"/> or <see cref="TryAcquire"/>. Its
+            /// private constructor keeps it unfabricable, and it binds to the
+            /// exact execution result, recovery action plan, and inspection
+            /// operation of the validated cleanup plan, so downstream
+            /// non-validating mints can verify they are minting for the
+            /// validated plan's own objects.
+            /// </summary>
+            internal sealed class ValidatedPlanProof
+            {
+                private readonly CaptureRunPublicationArtifactRecoveryExecutionResult _executionResult;
+                private readonly CaptureRunPublicationArtifactRecoveryActionPlan _actionPlan;
+                private readonly CaptureRunPublicationArtifactInspectionOperation _inspectionOperation;
+
+                private ValidatedPlanProof(
+                    CaptureRunPublicationArtifactRecoveryExecutionResult executionResult,
+                    CaptureRunPublicationArtifactRecoveryActionPlan actionPlan,
+                    CaptureRunPublicationArtifactInspectionOperation inspectionOperation)
+                {
+                    _executionResult = executionResult;
+                    _actionPlan = actionPlan;
+                    _inspectionOperation = inspectionOperation;
+                }
+
+                internal CaptureRunPublicationArtifactInspectionOperation InspectionOperation => _inspectionOperation;
+
+                internal bool IsIssuedFor(CaptureRunPublicationArtifactRecoveryExecutionResult executionResult)
+                {
+                    return executionResult != null && ReferenceEquals(_executionResult, executionResult);
+                }
+
+                internal bool IsIssuedFor(CaptureRunPublicationArtifactRecoveryActionPlan actionPlan)
+                {
+                    return actionPlan != null && ReferenceEquals(_actionPlan, actionPlan);
+                }
+
+                internal bool IsIssuedFor(CaptureRunPublicationArtifactInspectionOperation inspectionOperation)
+                {
+                    return inspectionOperation != null && ReferenceEquals(_inspectionOperation, inspectionOperation);
+                }
+
+                /// <summary>
+                /// Single validated mint: performs the full plan validation
+                /// once and mints a proof bound to the validated plan's exact
+                /// execution result, recovery action plan, and inspection
+                /// operation.
+                /// </summary>
+                internal static bool TryAcquire(
+                    CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                    out ValidatedPlanProof proof)
+                {
+                    proof = null;
+                    if (plan == null || !plan.IsValid)
+                    {
+                        return false;
+                    }
+
+                    CaptureRunPublicationArtifactRecoveryOrchestrationResult result = plan.OrchestrationResult;
+                    CaptureRunPublicationArtifactRecoveryExecutionResult executionResult =
+                        result == null ? null : result.ExecutionResult;
+                    CaptureRunPublicationArtifactRecoveryExecutionBatch batch =
+                        executionResult == null ? null : executionResult.Batch;
+                    CaptureRunPublicationArtifactRecoveryActionPlan actionPlan =
+                        batch == null ? null : batch.ActionPlan;
+
+                    CaptureRunPublicationArtifactInspectionOperation inspectionOperation = null;
+                    if (actionPlan != null)
+                    {
+                        CaptureRunPublicationArtifactRecoveryDecision decision = actionPlan.Decision;
+                        CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision == null ? null : decision.Snapshot;
+                        inspectionOperation = snapshot == null ? null : snapshot.Operation;
+                    }
+
+                    proof = new ValidatedPlanProof(executionResult, actionPlan, inspectionOperation);
+                    return true;
+                }
+            }
+
+            /// <summary>
+            /// Single validated proof mint: performs the full plan validation
+            /// once and mints a proof bound to the validated plan's execution
+            /// result, recovery action plan, and inspection operation.
+            /// </summary>
+            internal static bool TryAcquireProof(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                out ValidatedPlanProof proof)
+            {
+                return ValidatedPlanProof.TryAcquire(plan, out proof);
+            }
+
+            /// <summary>
+            /// Performs the full plan validation exactly once via the validated
+            /// proof mint, then mints the inspection token, the execution
+            /// result token, and this plan token from that single validated
+            /// state, and captures a defensive proof snapshot of each current
+            /// step's reference and value triple.
             /// </summary>
             internal static bool TryAcquire(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
@@ -446,8 +521,13 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromPlan(
-                        plan,
+                if (!ValidatedPlanProof.TryAcquire(plan, out ValidatedPlanProof proof))
+                {
+                    return false;
+                }
+
+                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireFromValidatedPlan(
+                        proof,
                         out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken))
                 {
                     return false;
@@ -461,7 +541,7 @@ namespace Zantetsu.Observability
 
                 if (!CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
                         result.ExecutionResult,
-                        inspectionToken,
+                        proof,
                         out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken))
                 {
                     return false;

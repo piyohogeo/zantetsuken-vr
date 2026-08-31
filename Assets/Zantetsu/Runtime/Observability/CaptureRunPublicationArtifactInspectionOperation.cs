@@ -84,24 +84,29 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Single, atomic non-validating mint: performs the plan's full
-            /// validation exactly once, then re-fetches the inspection
-            /// operation from the now-validated plan and mints a token for it.
-            /// There is no separate proof object and no two-step API, so a
-            /// caller cannot validate a plan, corrupt the operation afterwards,
-            /// and still mint a token.
+            /// Non-validating mint gated on the cleanup plan validation proof:
+            /// the proof binds to this exact inspection operation, so a caller
+            /// can only mint an inspection token for an operation whose whole
+            /// cleanup plan was validated in the single combined pass. There is
+            /// no separate two-step API, so a caller cannot validate a plan,
+            /// corrupt the operation afterwards, and still mint a token.
             /// </summary>
-            internal static bool TryAcquireFromPlan(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+            internal static bool TryAcquireFromValidatedPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken.ValidatedPlanProof validationProof,
                 out ValidationToken token)
             {
                 token = null;
-                if (plan == null || !plan.IsValid)
+                if (validationProof == null)
                 {
                     return false;
                 }
 
-                CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
+                CaptureRunPublicationArtifactInspectionOperation inspection = validationProof.InspectionOperation;
+                if (inspection == null || !validationProof.IsIssuedFor(inspection))
+                {
+                    return false;
+                }
+
                 token = new ValidationToken(inspection);
                 return true;
             }
