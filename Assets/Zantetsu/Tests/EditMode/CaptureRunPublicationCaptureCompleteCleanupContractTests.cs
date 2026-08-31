@@ -577,6 +577,13 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakePublicationCleanupBackend : ICaptureRunPublicationCaptureCompleteCleanupBackend
         {
+            private readonly List<string> _log;
+
+            public FakePublicationCleanupBackend(List<string> log = null)
+            {
+                _log = log;
+            }
+
             public int CallCount { get; private set; }
 
             public CaptureRunPublicationCaptureCompleteCleanupOperation LastOperation { get; private set; }
@@ -589,6 +596,7 @@ namespace Zantetsu.Core.Tests
             {
                 CallCount++;
                 LastOperation = operation;
+                _log?.Add("cleanup:" + operation.StepIndex + ":" + operation.Action);
 
                 if (ExceptionToThrow != null)
                 {
@@ -3012,6 +3020,645 @@ namespace Zantetsu.Core.Tests
             }
 
             return count;
+        }
+
+        // ---- Execution coordinator / result / completed step ----
+
+        [Test]
+        public void ExecutionStatus_EnumShapeAndAppendOnly()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsEnum, Is.True);
+            Assert.That(Enum.GetUnderlyingType(type), Is.EqualTo(typeof(int)));
+            Assert.That((int)CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.None, Is.EqualTo(0));
+            Assert.That((int)CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady, Is.EqualTo(1));
+
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.cs"));
+            Assert.That(source, Does.Contain("append-only"));
+        }
+
+        [Test]
+        public void Coordinator_NullBackend_Rejected()
+        {
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(null));
+            Assert.That(ex.ParamName, Is.EqualTo("backend"));
+        }
+
+        [Test]
+        public void Coordinator_NullBatch_RejectedWithoutBackendContact()
+        {
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.Execute(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("batch"));
+            Assert.That(backend.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Coordinator_InvalidBatch_RejectedWithoutBackendContact()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            SetField(batch, "_steps", null);
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.Execute(batch));
+
+            Assert.That(ex.ParamName, Is.EqualTo("batch"));
+            Assert.That(backend.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Coordinator_ExecutesAllSideEffectingActionsInOrder()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            List<string> log = new List<string>();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend(log);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            int sideEffectingCount = 0;
+            for (int i = 0; i < batch.Count; i++)
+            {
+                if (batch.GetStep(i).Action != CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    sideEffectingCount++;
+                }
+            }
+
+            Assert.That(backend.CallCount, Is.EqualTo(sideEffectingCount));
+            Assert.That(result.Count, Is.EqualTo(batch.Count));
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+
+            // Every side-effecting step was executed exactly once in batch order,
+            // and each completed step carries a receipt bound to its own operation.
+            List<string> expectedLog = new List<string>();
+            for (int i = 0; i < batch.Count; i++)
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(i);
+                CaptureRunPublicationCaptureCompleteCleanupCompletedStep completed = result.GetStep(i);
+
+                Assert.That(ReferenceEquals(completed.PreparedStep, prepared), Is.True, "step " + i);
+
+                if (prepared.Action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    Assert.That(completed.CleanupReceipt, Is.Null, "routing step " + i);
+                }
+                else
+                {
+                    Assert.That(completed.CleanupReceipt, Is.Not.Null, "side-effecting step " + i);
+                    Assert.That(ReferenceEquals(completed.CleanupReceipt.IssuedBy, backend), Is.True);
+                    Assert.That(
+                        ReferenceEquals(completed.CleanupReceipt.Operation, prepared.CleanupOperation),
+                        Is.True);
+                    expectedLog.Add("cleanup:" + prepared.StepIndex + ":" + prepared.Action);
+                }
+            }
+
+            Assert.That(log, Is.EqualTo(expectedLog));
+        }
+
+        [Test]
+        public void Coordinator_RoutingStep_NoBackendContact()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(backend.CallCount, Is.EqualTo(batch.Count - 1));
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep last = result.GetStep(result.Count - 1);
+            Assert.That(last.PreparedStep.Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+            Assert.That(last.CleanupReceipt, Is.Null);
+        }
+
+        [Test]
+        public void Coordinator_NullReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend
+            {
+                ReceiptOverride = op => null
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+            Assert.That(backend.CallCount, Is.EqualTo(1), "Execution must stop after the first rejected receipt.");
+        }
+
+        [Test]
+        public void Coordinator_ForeignIssuerReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend foreign = new FakePublicationCleanupBackend();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend
+            {
+                ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteCleanupReceipt(foreign, op)
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+        }
+
+        [Test]
+        public void Coordinator_DifferentOperationReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation wrongOperation = MakeOp(plan, 1);
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteCleanupReceipt(backend, wrongOperation);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+        }
+
+        [Test]
+        public void Coordinator_ForwardingMismatchReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            // Step 1 is the PNG staging artifact and step 2 the sidecar: binding
+            // a receipt to the sidecar operation while the step expects PNG makes
+            // the forwarded artifact kind, entry index, and target path disagree.
+            CaptureRunPublicationCaptureCompleteCleanupOperation sidecarOperation = MakeOp(plan, 2);
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteCleanupReceipt(backend, sidecarOperation);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+        }
+
+        [Test]
+        public void Coordinator_BackendException_PropagatesIdentical_NoRetry_NoSubsequentSteps()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            IOException exception = new IOException("cleanup failed");
+            List<string> log = new List<string>();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend(log)
+            {
+                ExceptionToThrow = exception
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            IOException ex = Assert.Throws<IOException>(() => coordinator.Execute(batch));
+
+            Assert.That(ex, Is.SameAs(exception));
+            Assert.That(log, Is.EqualTo(new[] { "cleanup:0:DeletePublicationPlanTemporary" }));
+        }
+
+        [Test]
+        public void Coordinator_Failure_DoesNotDisposeLease()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend
+            {
+                ExceptionToThrow = new IOException("boom")
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<IOException>(() => coordinator.Execute(batch));
+            Assert.That(batch.LockLease.IsCreated, Is.True);
+        }
+
+        [Test]
+        public void Coordinator_Success_DoesNotDisposeLease()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.LockLease.IsCreated, Is.True);
+        }
+
+        [Test]
+        public void Result_ArrayDefensiveCopyAndNonExposure()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult first = coordinator.Execute(batch);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] internalArray =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(first, "_completedSteps");
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] input =
+                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[first.Count];
+            for (int i = 0; i < input.Length; i++)
+            {
+                input[i] = internalArray[i];
+            }
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult second =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(coordinator, batch, input);
+
+            input[0] = null;
+
+            Assert.That(second.GetStep(0), Is.Not.Null, "The result must defensively copy the input array.");
+
+            // The completed-step array is never exposed.
+            foreach (PropertyInfo property in typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionResult)
+                .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Assert.That(
+                    property.PropertyType != typeof(CaptureRunPublicationCaptureCompleteCleanupCompletedStep[]),
+                    "The completed-step array must not be exposed.");
+            }
+        }
+
+        [Test]
+        public void Result_IsValidFalseForNullReorderReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult good = coordinator.Execute(batch);
+
+            // Missing trailing step.
+            AssertCleanupResultRejected(coordinator, batch,
+                new[] { good.GetStep(0), good.GetStep(1) });
+
+            // Extra step.
+            AssertCleanupResultRejected(coordinator, batch,
+                new[] { good.GetStep(0), good.GetStep(1), good.GetStep(2), good.GetStep(3), good.GetStep(4), good.GetStep(5), good.GetStep(6), good.GetStep(7), good.GetStep(8), good.GetStep(0) });
+
+            // Reordered step.
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] reordered = WithReplacedCleanup(good, 0, good.GetStep(1));
+            reordered[1] = good.GetStep(0);
+            AssertCleanupResultRejected(coordinator, batch, reordered);
+
+            // Foreign prepared step from a different batch.
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch otherBatch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep foreign =
+                coordinator.Execute(otherBatch).GetStep(0);
+            AssertCleanupResultRejected(coordinator, batch, WithReplacedCleanup(good, 0, foreign));
+        }
+
+        [Test]
+        public void Result_IsValidFalseForForeignIssuerReceipt()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult good = coordinator.Execute(batch);
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep original = good.GetStep(0);
+            FakePublicationCleanupBackend foreign = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupReceipt foreignReceipt =
+                new CaptureRunPublicationCaptureCompleteCleanupReceipt(foreign, original.CleanupReceipt.Operation);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep forged = ForgeCleanupCompletedStep(original, foreignReceipt);
+
+            AssertCleanupResultRejected(coordinator, batch, WithReplacedCleanup(good, 0, forged));
+        }
+
+        [Test]
+        public void Result_IsValidFalseAfterLeaseRelease()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.IsValid, Is.True);
+
+            result.LockLease.Dispose();
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.TryValidate(out _), Is.False);
+        }
+
+        [Test]
+        public void Result_CrossTokenSubstitutionRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult resultA =
+                coordinator.Execute(BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult resultB =
+                coordinator.Execute(BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+
+            Assert.That(resultA.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken tokenA), Is.True);
+            Assert.That(resultB.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken tokenB), Is.True);
+
+            Assert.That(tokenA.IsIssuedFor(resultA), Is.True);
+            Assert.That(tokenA.IsIssuedFor(resultB), Is.False);
+            Assert.That(tokenB.IsIssuedFor(resultB), Is.True);
+            Assert.That(tokenB.IsIssuedFor(resultA), Is.False);
+            Assert.That(tokenA.IsIssuedFor(null), Is.False);
+        }
+
+        [Test]
+        public void Result_TokenDetectsInPlaceElementReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token), Is.True);
+            Assert.That(token.IsIssuedFor(result), Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(result, "_completedSteps");
+            steps[0] = steps[1];
+
+            Assert.That(token.IsIssuedFor(result), Is.False);
+        }
+
+        [Test]
+        public void CompletedStep_ReceiptExclusivityTable()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            for (int i = 0; i < result.Count; i++)
+            {
+                CaptureRunPublicationCaptureCompleteCleanupCompletedStep completed = result.GetStep(i);
+                CaptureRunPublicationCaptureCompleteCleanupAction action = completed.PreparedStep.Action;
+
+                if (action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    Assert.That(completed.CleanupReceipt, Is.Null, "routing step must hold no receipt");
+                }
+                else
+                {
+                    Assert.That(completed.CleanupReceipt, Is.Not.Null, "side-effecting step must hold a receipt");
+                    Assert.That(
+                        ReferenceEquals(completed.CleanupReceipt.Operation, completed.PreparedStep.CleanupOperation),
+                        Is.True);
+                }
+            }
+        }
+
+        [Test]
+        public void CompletedStep_RoutingStepReceiptRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep routingStep = batch.GetStep(batch.Count - 1);
+            Assert.That(routingStep.Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+
+            CaptureRunPublicationCaptureCompleteCleanupReceipt strayReceipt =
+                new CaptureRunPublicationCaptureCompleteCleanupReceipt(
+                    new FakePublicationCleanupBackend(), batch.GetStep(0).CleanupOperation);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupCompletedStep(routingStep, strayReceipt, token));
+        }
+
+        [Test]
+        public void CompletedStep_SideEffectingStepNullReceiptRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep sideEffectingStep = batch.GetStep(0);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupCompletedStep(sideEffectingStep, null, token));
+        }
+
+        [Test]
+        public void CompletedStep_ForeignOperationReceiptRejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep sideEffectingStep = batch.GetStep(0);
+            CaptureRunPublicationCaptureCompleteCleanupReceipt wrongReceipt =
+                new CaptureRunPublicationCaptureCompleteCleanupReceipt(
+                    new FakePublicationCleanupBackend(), batch.GetStep(1).CleanupOperation);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupCompletedStep(sideEffectingStep, wrongReceipt, token));
+        }
+
+        [Test]
+        public void Source_ExecutionTypesNoForbiddenDependencies()
+        {
+            string[] relativePaths =
+            {
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupCompletedStep.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionResult.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"
+            };
+
+            foreach (string relativePath in relativePaths)
+            {
+                string source = File.ReadAllText(LocateSource(relativePath));
+
+                Assert.That(source, Does.Not.Contain("File."));
+                Assert.That(source, Does.Not.Contain("Directory."));
+                Assert.That(source, Does.Not.Contain("FileStream"));
+                Assert.That(source, Does.Not.Contain("DllImport"));
+                Assert.That(source, Does.Not.Contain("Serialize"));
+                Assert.That(source, Does.Not.Contain("ComputeHash"));
+                Assert.That(source, Does.Not.Contain("Registry"));
+                Assert.That(source, Does.Not.Contain("Draft"));
+                Assert.That(source, Does.Not.Contain("Notification"));
+                Assert.That(source, Does.Not.Contain("List<"));
+                Assert.That(source, Does.Not.Contain("ToArray"));
+                Assert.That(source, Does.Not.Contain("Array.Copy"));
+                Assert.That(source, Does.Not.Contain("using System.Linq"));
+                Assert.That(source, Does.Not.Contain("DateTime"));
+                Assert.That(source, Does.Not.Contain("Random"));
+                Assert.That(source, Does.Not.Contain("Thread"));
+                Assert.That(source, Does.Not.Contain(".Dispose()"));
+            }
+        }
+
+        [Test]
+        public void Source_LoopNoFullValidationNoBackendRevalidation()
+        {
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"));
+
+            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < batch.Count; i++)", StringComparison.Ordinal);
+            Assert.That(loopIndex, Is.GreaterThan(0));
+
+            int resultIndex = coordinatorSource.IndexOf("return new CaptureRunPublicationCaptureCompleteCleanupExecutionResult", StringComparison.Ordinal);
+            Assert.That(resultIndex, Is.GreaterThan(loopIndex));
+
+            string loopBody = coordinatorSource.Substring(loopIndex, resultIndex - loopIndex);
+            Assert.That(loopBody, Does.Not.Contain("batch.IsValid"));
+            Assert.That(loopBody, Does.Not.Contain(".IsValid"));
+            Assert.That(loopBody, Does.Not.Contain("TryValidate"));
+            Assert.That(loopBody, Does.Not.Contain("AcquireValidationToken"));
+            Assert.That(loopBody, Does.Contain("VerifyReceipt"));
+            Assert.That(coordinatorSource, Does.Contain("IsIssuedForIndexLocal"));
+        }
+
+        [Test]
+        public void Source_BatchValidatedExactlyOnce()
+        {
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"));
+
+            Assert.That(CountOccurrences(coordinatorSource, "batch.TryValidate"), Is.EqualTo(1));
+            Assert.That(coordinatorSource, Does.Not.Contain("batch.IsValid"));
+            Assert.That(coordinatorSource, Does.Not.Contain("AcquireValidationToken"));
+        }
+
+        [Test]
+        public void Source_ForwardingComparisons()
+        {
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"));
+
+            Assert.That(coordinatorSource, Does.Contain("receipt.Action != prepared.Action"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.StepIndex != prepared.StepIndex"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.EntryIndex != operation.EntryIndex"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.ArtifactKind != operation.ArtifactKind"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.TargetPath"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.ActionPlan"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.RootLayout"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.LockLease"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.TestRunId"));
+            Assert.That(coordinatorSource, Does.Contain("receipt.RunInitializationId"));
+        }
+
+        [Test]
+        public void Coordinator_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(1));
+            Assert.That(fields[0].IsInitOnly, Is.True);
+            Assert.That(fields[0].IsPrivate, Is.True);
+            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(ICaptureRunPublicationCaptureCompleteCleanupBackend)));
+        }
+
+        [Test]
+        public void Result_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionResult);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(3));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+        }
+
+        [Test]
+        public void CompletedStep_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupCompletedStep);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(2));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupCompletedStep ForgeCleanupCompletedStep(
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep template,
+            CaptureRunPublicationCaptureCompleteCleanupReceipt receipt)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep forged =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteCleanupCompletedStep));
+            SetField(forged, "_preparedStep", template.PreparedStep);
+            SetField(forged, "_cleanupReceipt", receipt);
+            return forged;
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] WithReplacedCleanup(
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result,
+            int index,
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep replacement)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] steps =
+                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[result.Count];
+            for (int i = 0; i < result.Count; i++)
+            {
+                steps[i] = i == index ? replacement : result.GetStep(i);
+            }
+
+            return steps;
+        }
+
+        private static void AssertCleanupResultRejected(
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator,
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps)
+        {
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(coordinator, batch, completedSteps));
+
+            Assert.That(ex.ParamName, Is.EqualTo("completedSteps"));
         }
 
         // ---- Forge helpers ----

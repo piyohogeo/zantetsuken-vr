@@ -88,5 +88,25 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(_operation, operation)
                 && _operation.IsValid;
         }
+
+        /// <summary>
+        /// Token-gated, exception-safe index-local issuance check: confirms the
+        /// issuer and operation reference identity and re-verifies the
+        /// operation's full index-local correlation against an already acquired
+        /// plan validation token, without re-walking the whole plan. Never
+        /// throws.
+        /// </summary>
+        internal bool IsIssuedForIndexLocal(
+            ICaptureRunPublicationCaptureCompleteCleanupBackend backend,
+            CaptureRunPublicationCaptureCompleteCleanupOperation operation,
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+        {
+            return backend != null
+                && operation != null
+                && token != null
+                && ReferenceEquals(_issuedBy, backend)
+                && ReferenceEquals(_operation, operation)
+                && operation.IsValidIndexLocal(token);
+        }
     }
 }
