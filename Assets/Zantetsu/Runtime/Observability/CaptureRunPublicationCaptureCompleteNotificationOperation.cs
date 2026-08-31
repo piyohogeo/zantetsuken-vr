@@ -26,7 +26,7 @@ namespace Zantetsu.Observability
     /// execution-result-to-batch-to-action-plan-to-recovery-result reference
     /// chain, a valid root layout, a live lock lease, shared root layout and
     /// lock lease across the result, action plan, and inspection operation, a
-    /// valid authoritative plan, matching test run id, ordinally matching run
+    /// present authoritative plan, matching test run id, ordinally matching run
     /// initialization id, exactly matching run manifest content SHA-256, a
     /// valid publication path set sharing the root layout, and a capture index
     /// path equal to the authoritative <c>capture.index</c> directly under the
@@ -194,9 +194,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // 9. Authoritative plan must be present and valid.
+            // 9. Authoritative plan must be present. Its full entry walk was
+            // already performed by the single cleanup result validation, so it
+            // is not re-walked here.
             PngJsonCapturePublicationPlan plan = actionPlan.AuthoritativePlan;
-            if (plan == null || !plan.IsValid)
+            if (plan == null)
             {
                 return false;
             }

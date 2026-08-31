@@ -4983,11 +4983,13 @@ namespace Zantetsu.Core.Tests
 
             // The cleanup orchestration result is fully validated exactly once
             // in the constructor and once in IsValid; the correlation predicate
-            // itself never re-runs the full result, batch, or plan validation.
+            // itself never re-runs the full result, batch, plan, or
+            // authoritative-plan validation.
             Assert.That(CountOccurrences(source, "cleanupResult.IsValid"), Is.EqualTo(2));
             Assert.That(source, Does.Not.Contain("executionResult.IsValid"));
             Assert.That(source, Does.Not.Contain("batch.IsValid"));
             Assert.That(source, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(source, Does.Not.Contain("plan.IsValid"));
             Assert.That(source, Does.Not.Contain("TryValidate"));
             Assert.That(source, Does.Not.Contain("AcquireValidationToken"));
             Assert.That(source, Does.Not.Contain("using System.Linq"));
