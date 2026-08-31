@@ -11,14 +11,14 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The constructor recomputes the single expected step sequence from the
-    /// orchestration result, so no external caller can hand in a contradicting
-    /// step list. It owns exactly two reference fields — the orchestration
-    /// result and the exact-length step array — allocates the step array
-    /// exactly once at its exact length, fills it directly in fixed order, and
-    /// never exposes it. <see cref="IsValid"/> recomputes the same expected
-    /// sequence from the current result graph and compares the held steps in
-    /// one linear pass without throwing.
+    /// The constructor validates the orchestration result, derives the expected
+    /// step count, allocates the step array exactly once at its exact length,
+    /// and fills it directly in fixed order; no external caller can hand in a
+    /// contradicting step list, and the array is never exposed.
+    /// <see cref="IsValid"/> re-derives the expected step count from the
+    /// current result graph and compares each held step against its expected
+    /// value as a virtual sequence in one linear pass, allocating no array and
+    /// no step objects.
     /// </para>
     /// <para>
     /// This type performs no filesystem work, no cleanup backend call, no
@@ -44,8 +44,8 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(orchestrationResult));
             }
 
-            CaptureRunPublicationCaptureCompleteCleanupStep[] steps = ComputeSteps(orchestrationResult);
-            if (steps == null)
+            ExpectedSequence? expected = ComputeExpected(orchestrationResult);
+            if (expected == null)
             {
                 throw new ArgumentException(
                     "Orchestration result must be a valid capture-complete cleanup result.",
@@ -53,7 +53,7 @@ namespace Zantetsu.Observability
             }
 
             _orchestrationResult = orchestrationResult;
-            _steps = steps;
+            _steps = BuildSteps(expected.Value);
         }
 
         internal CaptureRunPublicationArtifactRecoveryOrchestrationResult OrchestrationResult => _orchestrationResult;
@@ -81,42 +81,161 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Recomputes the expected step sequence from the current result graph
-        /// and compares the held steps without throwing. Any forged nested
-        /// value, corrupted step array, reordered step, corrupted observation,
-        /// or released lease makes the plan invalid.
+        /// Re-derives the expected step count from the current result graph and
+        /// compares each held step against its expected value as a virtual
+        /// sequence, without allocating any array or step objects and without
+        /// throwing. Any forged nested value, corrupted step array, reordered
+        /// step, corrupted observation, or released lease makes the plan
+        /// invalid.
         /// </summary>
         internal bool IsValid
         {
             get
             {
-                CaptureRunPublicationCaptureCompleteCleanupStep[] expected = ComputeSteps(_orchestrationResult);
-                if (expected == null || _steps == null || expected.Length != _steps.Length)
+                ExpectedSequence? expected = ComputeExpected(_orchestrationResult);
+                if (expected == null || _steps == null)
                 {
                     return false;
                 }
 
-                for (int i = 0; i < _steps.Length; i++)
+                ExpectedSequence exp = expected.Value;
+                if (_steps.Length != exp.TotalStepCount)
                 {
-                    CaptureRunPublicationCaptureCompleteCleanupStep held = _steps[i];
-                    CaptureRunPublicationCaptureCompleteCleanupStep exp = expected[i];
-                    if (held == null || !held.Matches(exp.Action, exp.EntryIndex, exp.ArtifactKind))
+                    return false;
+                }
+
+                int position = 0;
+
+                if (exp.DeletePublicationPlanTemporary
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
+                {
+                    return false;
+                }
+
+                if (exp.DeleteCaptureIndexTemporary
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactInspectionSnapshot snapshot = exp.Snapshot;
+                for (int i = 0; i < exp.EntryCount; i++)
+                {
+                    CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
+                    if (observation == null)
+                    {
+                        return false;
+                    }
+
+                    if (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                        && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Png))
+                    {
+                        return false;
+                    }
+
+                    if (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                        && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Sidecar))
                     {
                         return false;
                     }
                 }
 
-                return true;
+                if (exp.RemoveStagingFramesRoot
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
+                {
+                    return false;
+                }
+
+                if (exp.DeletePublicationPlan
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
+                {
+                    return false;
+                }
+
+                if (!MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker)
+                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker)
+                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot)
+                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady))
+                {
+                    return false;
+                }
+
+                return position == _steps.Length;
+            }
+        }
+
+        private bool MatchAt(
+            int position,
+            CaptureRunPublicationCaptureCompleteCleanupAction action,
+            int entryIndex = -1,
+            CaptureRunPublicationArtifactKind artifactKind = CaptureRunPublicationArtifactKind.None)
+        {
+            if (position < 0 || position >= _steps.Length)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationCaptureCompleteCleanupStep held = _steps[position];
+            return held != null && held.Matches(action, entryIndex, artifactKind);
+        }
+
+        /// <summary>
+        /// Expected step sequence derived from a fully validated orchestration
+        /// result: the conditional cleanup flags, the entry count, the total
+        /// staging step count, and the inspection snapshot used to enumerate
+        /// staging steps. It allocates nothing and is shared by the
+        /// constructor (which allocates and fills the array exactly once) and
+        /// <see cref="IsValid"/> (which compares the held steps against this
+        /// virtual sequence).
+        /// </summary>
+        private struct ExpectedSequence
+        {
+            internal bool DeletePublicationPlanTemporary;
+            internal bool DeleteCaptureIndexTemporary;
+            internal bool RemoveStagingFramesRoot;
+            internal bool DeletePublicationPlan;
+            internal int EntryCount;
+            internal int StagingStepCount;
+            internal CaptureRunPublicationArtifactInspectionSnapshot Snapshot;
+
+            internal int TotalStepCount
+            {
+                get
+                {
+                    int count = StagingStepCount + 4;
+                    if (DeletePublicationPlanTemporary)
+                    {
+                        count++;
+                    }
+
+                    if (DeleteCaptureIndexTemporary)
+                    {
+                        count++;
+                    }
+
+                    if (RemoveStagingFramesRoot)
+                    {
+                        count++;
+                    }
+
+                    if (DeletePublicationPlan)
+                    {
+                        count++;
+                    }
+
+                    return count;
+                }
             }
         }
 
         /// <summary>
-        /// Fully validates the result and derives the exact expected cleanup
-        /// step sequence, or returns null on any violation. This is the single
-        /// shared computation used by both the constructor and
-        /// <see cref="IsValid"/>.
+        /// Fully validates the orchestration result and derives the expected
+        /// step count and conditional cleanup flags, or returns null on any
+        /// violation. This is the single shared validation used by both the
+        /// constructor and <see cref="IsValid"/>; it allocates no array and no
+        /// step objects.
         /// </summary>
-        private static CaptureRunPublicationCaptureCompleteCleanupStep[] ComputeSteps(
+        private static ExpectedSequence? ComputeExpected(
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result)
         {
             if (result == null || !result.IsValid)
@@ -325,30 +444,6 @@ namespace Zantetsu.Observability
             }
 
             // Per-entry validation and staging step count.
-            int fixedStepCount = 0;
-            if (deletePublicationPlanTemporary)
-            {
-                fixedStepCount++;
-            }
-
-            if (deleteCaptureIndexTemporary)
-            {
-                fixedStepCount++;
-            }
-
-            if (removeStagingFramesRoot)
-            {
-                fixedStepCount++;
-            }
-
-            if (deletePublicationPlan)
-            {
-                fixedStepCount++;
-            }
-
-            // Four unconditional tail steps.
-            fixedStepCount += 4;
-
             int stagingStepCount = 0;
             for (int i = 0; i < entryCount; i++)
             {
@@ -383,24 +478,43 @@ namespace Zantetsu.Observability
                 }
             }
 
+            ExpectedSequence sequence;
+            sequence.DeletePublicationPlanTemporary = deletePublicationPlanTemporary;
+            sequence.DeleteCaptureIndexTemporary = deleteCaptureIndexTemporary;
+            sequence.RemoveStagingFramesRoot = removeStagingFramesRoot;
+            sequence.DeletePublicationPlan = deletePublicationPlan;
+            sequence.EntryCount = entryCount;
+            sequence.StagingStepCount = stagingStepCount;
+            sequence.Snapshot = snapshot;
+            return sequence;
+        }
+
+        /// <summary>
+        /// Allocates the step array exactly once at its exact length and fills
+        /// it directly in fixed order from the derived sequence. This is the
+        /// single step-array allocation site in the plan.
+        /// </summary>
+        private static CaptureRunPublicationCaptureCompleteCleanupStep[] BuildSteps(ExpectedSequence expected)
+        {
             CaptureRunPublicationCaptureCompleteCleanupStep[] steps =
-                new CaptureRunPublicationCaptureCompleteCleanupStep[fixedStepCount + stagingStepCount];
+                new CaptureRunPublicationCaptureCompleteCleanupStep[expected.TotalStepCount];
 
             int position = 0;
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = expected.Snapshot;
 
-            if (deletePublicationPlanTemporary)
+            if (expected.DeletePublicationPlanTemporary)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            if (deleteCaptureIndexTemporary)
+            if (expected.DeleteCaptureIndexTemporary)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            for (int i = 0; i < entryCount; i++)
+            for (int i = 0; i < expected.EntryCount; i++)
             {
                 CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
 
@@ -417,13 +531,13 @@ namespace Zantetsu.Observability
                 }
             }
 
-            if (removeStagingFramesRoot)
+            if (expected.RemoveStagingFramesRoot)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            if (deletePublicationPlan)
+            if (expected.DeletePublicationPlan)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan, -1, CaptureRunPublicationArtifactKind.None);

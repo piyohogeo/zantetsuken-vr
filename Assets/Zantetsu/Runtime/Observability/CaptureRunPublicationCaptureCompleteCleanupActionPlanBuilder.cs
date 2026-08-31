@@ -3,10 +3,10 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Side-effect-free builder that validates a capture-complete cleanup
+    /// Side-effect-free builder that null-checks a capture-complete cleanup
     /// orchestration result and delegates to the cleanup action plan
-    /// constructor. It performs no filesystem work and mutates, owns, or
-    /// disposes nothing.
+    /// constructor, which is the single full-validation path. It performs no
+    /// filesystem work and mutates, owns, or disposes nothing.
     /// </summary>
     internal static class CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder
     {
@@ -18,11 +18,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(orchestrationResult));
             }
 
-            if (!orchestrationResult.IsValid)
-            {
-                throw new ArgumentException("Orchestration result must be valid.", nameof(orchestrationResult));
-            }
-
+            // Delegate the full validation to the plan constructor, which is
+            // the single validation path; validating the result here would
+            // walk the artifact and receipt graph twice on the success path.
             return new CaptureRunPublicationCaptureCompleteCleanupActionPlan(orchestrationResult);
         }
     }
