@@ -3610,6 +3610,42 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void ExecutionResult_Token_ExactBindings_BindingOnly()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedForExactBindings(result), Is.True);
+            Assert.That(token.IsIssuedForExactBindings(null), Is.False);
+
+            // Cross-token substitution.
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult other =
+                coordinator.Execute(BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+            Assert.That(token.IsIssuedForExactBindings(other), Is.False);
+
+            // Completed-step array swapped in place.
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] original =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(result, "_completedSteps");
+            SetField(result, "_completedSteps", ((CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])original.Clone()));
+            Assert.That(token.IsIssuedForExactBindings(result), Is.False);
+
+            // Null array.
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result2 =
+                coordinator.Execute(BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+            Assert.That(
+                result2.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token2),
+                Is.True);
+            SetField(result2, "_completedSteps", null);
+            Assert.That(token2.IsIssuedForExactBindings(result2), Is.False);
+        }
+
+        [Test]
         public void Result_TrustedCtorRejectsForeignBatchToken()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
@@ -3975,6 +4011,12 @@ namespace Zantetsu.Core.Tests
             // re-runs it and shares the correlation predicate instead.
             Assert.That(CountOccurrences(resultSource, "TryValidate"), Is.EqualTo(2));
             Assert.That(resultSource, Does.Contain("IsCorrelated"));
+
+            // The correlation predicate must use the O(1) exact-bindings
+            // predicate, not the full-step walk, because TryValidate has
+            // already fully validated the completed-step sequence.
+            Assert.That(CountOccurrences(resultSource, "token.IsIssuedFor("), Is.EqualTo(0));
+            Assert.That(resultSource, Does.Contain("IsIssuedForExactBindings"));
         }
 
         [Test]

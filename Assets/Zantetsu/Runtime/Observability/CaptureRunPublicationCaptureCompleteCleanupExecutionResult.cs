@@ -134,6 +134,23 @@ namespace Zantetsu.Observability
 
                 return result.IsIndexLocalIntact(_batchToken);
             }
+
+            /// <summary>
+            /// O(1), exception-safe binding-only check that this token was
+            /// minted for the given result and still binds to its exact
+            /// completed-step array, without walking the step elements. It is
+            /// used by callers that have already fully validated the result in
+            /// the same method, so the full completed-step and receipt sequence
+            /// is not re-walked a second time. Never throws.
+            /// </summary>
+            internal bool IsIssuedForExactBindings(CaptureRunPublicationCaptureCompleteCleanupExecutionResult result)
+            {
+                return result != null
+                    && _batchToken != null
+                    && ReferenceEquals(_result, result)
+                    && result._completedSteps != null
+                    && ReferenceEquals(_issuedStepsArray, result._completedSteps);
+            }
         }
 
         internal CaptureRunPublicationCaptureCompleteCleanupExecutionResult(

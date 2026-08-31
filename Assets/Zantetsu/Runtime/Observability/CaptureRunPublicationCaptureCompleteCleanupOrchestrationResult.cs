@@ -155,7 +155,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!token.IsIssuedFor(executionResult))
+            if (!token.IsIssuedForExactBindings(executionResult))
             {
                 return false;
             }
@@ -172,7 +172,8 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan = batch.ActionPlan;
-            if (actionPlan == null || !token.ActionPlanToken.IsIssuedFor(actionPlan))
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken = token.ActionPlanToken;
+            if (actionPlan == null || actionPlanToken == null || !actionPlanToken.IsIssuedFor(actionPlan))
             {
                 return false;
             }
