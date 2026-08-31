@@ -121,65 +121,135 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryValidate(out ValidationToken token)
         {
-            token = null;
-
-            if (_actionPlan == null || _steps == null)
-            {
-                return false;
-            }
-
-            if (!_actionPlan.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken acquired))
-            {
-                return false;
-            }
-
-            if (!IsValidatedSequence(acquired))
-            {
-                return false;
-            }
-
-            token = new ValidationToken(this, acquired, _steps);
-            return true;
+            return ValidationToken.TryAcquire(this, out token);
         }
 
         /// <summary>
         /// Proof that this exact execution batch and its prepared-step array
         /// were fully validated at a single point in time. The token is bound
-        /// to the batch by reference, carries the action plan token, and binds
-        /// to the exact prepared-step array, so a token minted for one batch
-        /// cannot be reused for a different batch built from the same plan and
-        /// array replacement after issuance fails closed.
+        /// to the batch by reference, carries the action plan token, binds to
+        /// the exact prepared-step array, and holds a defensive per-step proof
+        /// snapshot, so both whole-array replacement and in-place element
+        /// substitution after issuance fail closed.
         /// </summary>
         internal sealed class ValidationToken
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupExecutionBatch _batch;
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken _actionPlanToken;
-            private readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] _issuedSteps;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] _issuedStepsArray;
+            private readonly PreparedStepProof[] _issuedStepProofs;
 
-            internal ValidationToken(
+            private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken,
-                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issuedSteps)
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issuedStepsArray,
+                PreparedStepProof[] issuedStepProofs)
             {
                 _batch = batch;
                 _actionPlanToken = actionPlanToken;
-                _issuedSteps = issuedSteps;
+                _issuedStepsArray = issuedStepsArray;
+                _issuedStepProofs = issuedStepProofs;
             }
 
             internal CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken ActionPlanToken => _actionPlanToken;
 
             /// <summary>
-            /// O(1), exception-safe check that this token was minted for the
-            /// given batch and that the batch still holds the exact prepared
-            /// step array present at mint time. Never throws and never exposes
-            /// the prepared-step array.
+            /// Single validated mint: re-runs the batch's full sequence
+            /// validation exactly once and only then captures the defensive
+            /// proof snapshot. The private constructor keeps the token
+            /// unfabricable by callers.
+            /// </summary>
+            internal static bool TryAcquire(
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
+                out ValidationToken token)
+            {
+                token = null;
+                if (batch == null || batch._actionPlan == null || batch._steps == null)
+                {
+                    return false;
+                }
+
+                if (!batch._actionPlan.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken))
+                {
+                    return false;
+                }
+
+                if (!batch.IsValidatedSequence(actionPlanToken))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps = batch._steps;
+                PreparedStepProof[] proofs = new PreparedStepProof[steps.Length];
+                for (int i = 0; i < proofs.Length; i++)
+                {
+                    proofs[i] = new PreparedStepProof(steps[i]);
+                }
+
+                token = new ValidationToken(batch, actionPlanToken, steps, proofs);
+                return true;
+            }
+
+            /// <summary>
+            /// Exception-safe check that this token was minted for the given
+            /// batch, that the batch still holds the exact prepared-step array,
+            /// and that each prepared step is still the same instance with the
+            /// same step index, action, and cleanup operation as at mint time.
+            /// Never throws and never exposes the prepared-step array.
             /// </summary>
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
             {
-                return batch != null
-                    && ReferenceEquals(_batch, batch)
-                    && batch._steps != null
-                    && ReferenceEquals(_issuedSteps, batch._steps);
+                if (batch == null || !ReferenceEquals(_batch, batch) || batch._steps == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_issuedStepsArray, batch._steps))
+                {
+                    return false;
+                }
+
+                PreparedStepProof[] proofs = _issuedStepProofs;
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] current = batch._steps;
+                if (proofs == null || proofs.Length != current.Length)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < proofs.Length; i++)
+                {
+                    CaptureRunPublicationCaptureCompleteCleanupPreparedStep step = current[i];
+                    PreparedStepProof proof = proofs[i];
+                    if (step == null || !ReferenceEquals(step, proof.Step))
+                    {
+                        return false;
+                    }
+
+                    if (step.StepIndex != proof.StepIndex
+                        || step.Action != proof.Action
+                        || !ReferenceEquals(step.CleanupOperation, proof.Operation))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            private readonly struct PreparedStepProof
+            {
+                internal readonly CaptureRunPublicationCaptureCompleteCleanupPreparedStep Step;
+                internal readonly int StepIndex;
+                internal readonly CaptureRunPublicationCaptureCompleteCleanupAction Action;
+                internal readonly CaptureRunPublicationCaptureCompleteCleanupOperation Operation;
+
+                internal PreparedStepProof(CaptureRunPublicationCaptureCompleteCleanupPreparedStep step)
+                {
+                    Step = step;
+                    StepIndex = step.StepIndex;
+                    Action = step.Action;
+                    Operation = step.CleanupOperation;
+                }
             }
         }
 

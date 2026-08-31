@@ -442,7 +442,9 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!result.ExecutionResult.TryValidate(out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken))
+                if (!CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
+                        result.ExecutionResult,
+                        out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken))
                 {
                     return false;
                 }

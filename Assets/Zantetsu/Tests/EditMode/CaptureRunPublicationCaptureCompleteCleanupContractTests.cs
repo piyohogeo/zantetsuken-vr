@@ -2646,6 +2646,26 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.IsIssuedFor(batch), Is.False);
         }
 
+        [Test]
+        public void Batch_TryValidate_TokenDetectsInPlaceElementReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(batch), Is.True);
+
+            // Replace an element in place (same array reference): the token
+            // must fail closed.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+            steps[0] = steps[1];
+
+            Assert.That(token.IsIssuedFor(batch), Is.False);
+        }
+
         // ---- Execution batch: shape and O(n) ----
 
         [Test]

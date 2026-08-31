@@ -160,6 +160,17 @@ namespace Zantetsu.Observability
 
                 return new ValidationToken(plan);
             }
+
+            /// <summary>
+            /// Non-validating mint reachable only from the single combined plan
+            /// validation: the caller has already proven this action plan valid
+            /// in the same pass, so this must never re-walk the plan. No
+            /// caller-facing API bypasses <see cref="Acquire"/>.
+            /// </summary>
+            internal static ValidationToken AcquireFromValidatedPlan(CaptureRunPublicationArtifactRecoveryActionPlan plan)
+            {
+                return new ValidationToken(plan);
+            }
         }
 
         internal ValidationToken AcquireValidationToken()

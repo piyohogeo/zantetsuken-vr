@@ -64,6 +64,36 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// Combined-proof mint: the caller has already fully validated the
+            /// cleanup plan in one pass, which proved this execution result
+            /// (its batch, action plan, and completed-step receipts). This
+            /// mints the result token from that already-validated state without
+            /// re-walking the Artifact/Receipt graph a second time.
+            /// </summary>
+            internal static bool TryAcquireFromValidatedResult(
+                CaptureRunPublicationArtifactRecoveryExecutionResult result,
+                out ValidationToken token)
+            {
+                token = null;
+                if (result == null || result.Batch == null)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactRecoveryActionPlan actionPlan = result.Batch.ActionPlan;
+                if (actionPlan == null)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken =
+                    CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan);
+
+                token = new ValidationToken(result, actionPlanToken);
+                return true;
+            }
+
+            /// <summary>
             /// Reports whether this token was issued for the given execution
             /// result and whether that result's index-local structure and step
             /// correlations are still intact. Never throws.
