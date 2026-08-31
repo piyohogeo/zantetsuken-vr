@@ -173,7 +173,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal ValidationToken AcquireValidationToken()
         {
-            if (!TryValidate(out ValidationToken token))
+            if (!ValidationToken.TryAcquire(this, out ValidationToken token))
             {
                 throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
             }
@@ -184,19 +184,12 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Single combined validation path: performs the full plan validation
         /// once, then mints a token bound to this plan, to the artifact
-        /// inspection token, and to the exact step array, without re-walking
-        /// the inspection graph.
+        /// inspection token, and to a defensive snapshot of the issued step
+        /// references, without re-walking the inspection graph.
         /// </summary>
         internal bool TryValidate(out ValidationToken token)
         {
-            if (!IsValid)
-            {
-                token = null;
-                return false;
-            }
-
-            token = ValidationToken.AcquireTrusted(this);
-            return true;
+            return ValidationToken.TryAcquire(this, out token);
         }
 
         /// <summary>
@@ -208,7 +201,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsValidIndexLocal(ValidationToken token, int stepIndex)
         {
-            if (!IsStepArrayBound(token))
+            if (!IsTokenBound(token))
             {
                 return false;
             }
@@ -218,8 +211,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
-            if (step == null || !step.IsValid)
+            if (!IsStepIdentityAt(token, stepIndex))
             {
                 return false;
             }
@@ -228,26 +220,42 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// O(1) check that a validation token still binds to this plan's exact
-        /// current step array: the token must be issued for this plan and the
-        /// stored step array must be reference-identical to the array the token
-        /// captured when it was minted. Rejects stale tokens, null arrays, and
-        /// reflection-based step substitution or reordering.
+        /// O(1) check that a validation token still binds to this plan: the
+        /// token must be issued for this plan and its defensive step snapshot
+        /// must have the same length as the current step array. Rejects stale
+        /// tokens, null arrays, and array-level substitution or reordering.
         /// </summary>
-        internal bool IsStepArrayBound(ValidationToken token)
+        internal bool IsTokenBound(ValidationToken token)
         {
             if (token == null || !token.IsIssuedFor(this))
             {
                 return false;
             }
 
-            CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps = token.Steps;
-            if (_steps == null || issuedSteps == null || !ReferenceEquals(_steps, issuedSteps))
+            if (_steps == null || token.IssuedStepCount != _steps.Length)
             {
                 return false;
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// O(1) check that the step at the given index is reference-identical
+        /// to the step the token snapshotted when it was minted, so an in-place
+        /// element replacement within the same array is rejected even though
+        /// the array reference itself is unchanged.
+        /// </summary>
+        internal bool IsStepIdentityAt(ValidationToken token, int stepIndex)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
+            CaptureRunPublicationCaptureCompleteCleanupStep issued = token.GetIssuedStep(stepIndex);
+            if (step == null || issued == null || !ReferenceEquals(step, issued))
+            {
+                return false;
+            }
+
+            return step.IsValid;
         }
 
         /// <summary>
@@ -260,7 +268,7 @@ namespace Zantetsu.Observability
         internal bool IsIndexLocalStructureIntact()
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = _orchestrationResult;
-            if (result == null)
+            if (result == null || result.ExecutionResult == null)
             {
                 return false;
             }
@@ -297,21 +305,34 @@ namespace Zantetsu.Observability
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan _plan;
             private readonly CaptureRunPublicationArtifactInspectionOperation.ValidationToken _inspectionToken;
-            private readonly CaptureRunPublicationCaptureCompleteCleanupStep[] _steps;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupStep[] _issuedSteps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
                 CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken,
-                CaptureRunPublicationCaptureCompleteCleanupStep[] steps)
+                CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps)
             {
                 _plan = plan;
                 _inspectionToken = inspectionToken;
-                _steps = steps;
+                _issuedSteps = issuedSteps;
             }
 
             internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
 
-            internal CaptureRunPublicationCaptureCompleteCleanupStep[] Steps => _steps;
+            /// <summary>
+            /// Number of step references snapshotted at issuance. Exposes only
+            /// the count, never the snapshot array itself.
+            /// </summary>
+            internal int IssuedStepCount => _issuedSteps.Length;
+
+            /// <summary>
+            /// The step reference snapshotted at the given index at issuance.
+            /// Exposes a single element, never the snapshot array itself.
+            /// </summary>
+            internal CaptureRunPublicationCaptureCompleteCleanupStep GetIssuedStep(int index)
+            {
+                return _issuedSteps[index];
+            }
 
             /// <summary>
             /// Reports whether this token was issued for the given plan. The
@@ -324,23 +345,41 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Mints a token without re-validating. The caller must have just
-            /// completed a full validation of the plan and its inspection
-            /// graph. The token binds to the plan's current step array without
-            /// copying it.
+            /// Performs the full plan validation exactly once (which validates
+            /// the plan and its whole inspection graph), then mints the
+            /// inspection token via the plan-proof-gated non-validating mint
+            /// and captures a defensive snapshot of the current step
+            /// references. The snapshot is a separate proof allocation from
+            /// the plan's own step array, so in-place element replacement is
+            /// detectable.
             /// </summary>
-            internal static ValidationToken AcquireTrusted(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
+            internal static bool TryAcquire(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                out ValidationToken token)
             {
-                if (plan == null)
+                token = null;
+                if (plan == null || !plan.IsValid)
                 {
-                    throw new ArgumentNullException(nameof(plan));
+                    return false;
                 }
 
                 CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken =
-                    CaptureRunPublicationArtifactInspectionOperation.ValidationToken.AcquireTrusted(inspection);
+                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaValidatedPlan(
+                        plan, inspection,
+                        out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken))
+                {
+                    return false;
+                }
 
-                return new ValidationToken(plan, inspectionToken, plan._steps);
+                CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps =
+                    new CaptureRunPublicationCaptureCompleteCleanupStep[plan._steps.Length];
+                for (int i = 0; i < issuedSteps.Length; i++)
+                {
+                    issuedSteps[i] = plan._steps[i];
+                }
+
+                token = new ValidationToken(plan, inspectionToken, issuedSteps);
+                return true;
             }
         }
 

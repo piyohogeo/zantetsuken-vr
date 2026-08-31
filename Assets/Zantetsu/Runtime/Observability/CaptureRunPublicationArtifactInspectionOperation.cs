@@ -49,6 +49,25 @@ namespace Zantetsu.Observability
                 return operation != null && ReferenceEquals(_operation, operation);
             }
 
+            /// <summary>
+            /// Performs the full <see cref="IsValid"/> pass exactly once and
+            /// mints a token only on success. The private constructor keeps the
+            /// token unfabricable by callers.
+            /// </summary>
+            internal static bool TryAcquire(
+                CaptureRunPublicationArtifactInspectionOperation operation,
+                out ValidationToken token)
+            {
+                token = null;
+                if (operation == null || !operation.IsValid)
+                {
+                    return false;
+                }
+
+                token = new ValidationToken(operation);
+                return true;
+            }
+
             internal static ValidationToken Acquire(CaptureRunPublicationArtifactInspectionOperation operation)
             {
                 if (operation == null)
@@ -56,28 +75,40 @@ namespace Zantetsu.Observability
                     throw new ArgumentNullException(nameof(operation));
                 }
 
-                if (!operation.IsValid)
+                if (!TryAcquire(operation, out ValidationToken token))
                 {
                     throw new InvalidOperationException("Operation must be fully valid before issuing a validation token.");
                 }
 
-                return new ValidationToken(operation);
+                return token;
             }
 
             /// <summary>
-            /// Mints a token without re-validating the operation. Only callers
-            /// that have already completed a full validation of the operation
-            /// graph (for example the action plan's combined validation path)
-            /// may use this.
+            /// Non-validating mint gated by the plan whose single-pass
+            /// validation already proved this operation valid. The plan's
+            /// inspection operation must be this exact operation, so arbitrary
+            /// callers cannot mint a token for an unrelated or invalid
+            /// operation without first validating a plan that inspected it.
             /// </summary>
-            internal static ValidationToken AcquireTrusted(CaptureRunPublicationArtifactInspectionOperation operation)
+            internal static bool TryAcquireViaValidatedPlan(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                CaptureRunPublicationArtifactInspectionOperation operation,
+                out ValidationToken token)
             {
-                if (operation == null)
+                token = null;
+                if (plan == null || operation == null)
                 {
-                    throw new ArgumentNullException(nameof(operation));
+                    return false;
                 }
 
-                return new ValidationToken(operation);
+                CaptureRunPublicationArtifactInspectionOperation planInspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
+                if (!ReferenceEquals(planInspection, operation))
+                {
+                    return false;
+                }
+
+                token = new ValidationToken(operation);
+                return true;
             }
         }
 

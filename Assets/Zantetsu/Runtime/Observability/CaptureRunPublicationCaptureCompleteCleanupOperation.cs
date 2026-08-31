@@ -396,7 +396,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!actionPlan.IsStepArrayBound(token))
+            if (!actionPlan.IsTokenBound(token))
             {
                 failure = CorrelationFailure.InvalidActionPlan;
                 return false;
@@ -405,6 +405,12 @@ namespace Zantetsu.Observability
             if (stepIndex < 0 || stepIndex >= actionPlan.Count)
             {
                 failure = CorrelationFailure.StepIndexOutOfRange;
+                return false;
+            }
+
+            if (!actionPlan.IsStepIdentityAt(token, stepIndex))
+            {
+                failure = CorrelationFailure.StepInvalid;
                 return false;
             }
 

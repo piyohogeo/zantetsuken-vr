@@ -68,6 +68,13 @@ namespace Zantetsu.Core.Tests
             field.SetValue(target, value);
         }
 
+        private static object GetField(object target, string fieldName)
+        {
+            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
+            return field.GetValue(target);
+        }
+
         private static CaptureRunMarkerBinding MakeBinding(CaptureRunRootLayout layout)
         {
             return CaptureRunMarkerBindingFactory.Create(
@@ -1317,7 +1324,7 @@ namespace Zantetsu.Core.Tests
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
                     plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
-            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+            Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
@@ -1387,6 +1394,107 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentException>(
                 () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
                     plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void Token_HasNoStepArrayExposure()
+        {
+            Type tokenType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken);
+
+            Assert.That(
+                tokenType.GetProperty("Steps", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+            Assert.That(
+                tokenType.GetField("Steps", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+            Assert.That(
+                tokenType.GetMethod("get_Steps", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+
+            foreach (PropertyInfo property in tokenType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Assert.That(property.PropertyType.IsArray, Is.False, "The token must not expose any array property.");
+            }
+
+            foreach (FieldInfo field in tokenType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                if (field.FieldType.IsArray)
+                {
+                    Assert.That(field.IsPrivate, Is.True, "Any array field on the token must be private (a defensive snapshot).");
+                }
+            }
+        }
+
+        [Test]
+        public void TrustedConstructor_InPlaceStepReplacementAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            // Replace only the element inside the same array object; the array
+            // reference itself is unchanged, so an array-level identity check
+            // would not notice, but the per-index snapshot must.
+            CaptureRunPublicationCaptureCompleteCleanupStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupStep[])GetField(plan, "_steps");
+            steps[0] = new CaptureRunPublicationCaptureCompleteCleanupStep(
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan, -1, CaptureRunPublicationArtifactKind.None);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void Token_HasNoUnvalidatedMintApi()
+        {
+            Type planTokenType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken);
+            Type inspectionTokenType = typeof(CaptureRunPublicationArtifactInspectionOperation.ValidationToken);
+
+            Assert.That(planTokenType.GetMethod("AcquireTrusted", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
+            Assert.That(inspectionTokenType.GetMethod("AcquireTrusted", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Null);
+
+            Assert.That(planTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
+            Assert.That(inspectionTokenType.GetMethod("TryAcquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Null);
+        }
+
+        [Test]
+        public void InspectionToken_NonValidatingMintRequiresCorrelatedPlan()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationArtifactInspectionOperation other =
+                BuildPlan(commitRoute: true).OrchestrationResult.InspectionSnapshot.Operation;
+
+            // The proof-gated non-validating mint must refuse an operation that
+            // the supplied plan did not inspect, so it cannot be aimed at an
+            // unrelated operation without first validating a correlated plan.
+            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaValidatedPlan(
+                plan, other, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
+
+            Assert.That(minted, Is.False);
+            Assert.That(token, Is.Null);
+        }
+
+        [Test]
+        public void TrustedConstructor_CorruptedOrchestrationResultInternalAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            // Corrupt the orchestration result's internal execution result
+            // reference after issuance; the index-local check must fail closed
+            // without leaking a NullReferenceException.
+            SetField(plan.OrchestrationResult, "_executionResult", null);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token));
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]

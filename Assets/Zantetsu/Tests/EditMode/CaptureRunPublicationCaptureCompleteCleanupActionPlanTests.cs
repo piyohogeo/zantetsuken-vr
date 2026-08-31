@@ -1229,8 +1229,11 @@ namespace Zantetsu.Core.Tests
             string planSource = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupActionPlan.cs"));
 
+            // One allocation is the plan's own step array (BuildSteps); the
+            // second is the validation token's defensive proof snapshot of
+            // step references, which is a separate proof allocation.
             int allocations = CountOccurrences(planSource, "new CaptureRunPublicationCaptureCompleteCleanupStep[");
-            Assert.That(allocations, Is.EqualTo(1), "The plan must allocate its step array exactly once.");
+            Assert.That(allocations, Is.EqualTo(2), "The plan must allocate its step array exactly once, plus one defensive proof snapshot in the validation token.");
 
             // The constructor must not accept an array.
             Type planType = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan);
