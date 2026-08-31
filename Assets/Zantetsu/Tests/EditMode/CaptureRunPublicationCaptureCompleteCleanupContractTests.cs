@@ -4577,5 +4577,422 @@ namespace Zantetsu.Core.Tests
             SetField(forged, fieldName, corruptedValue);
             return forged;
         }
+
+        // ---- Capture-complete notification operation / notifier / receipt ----
+
+        private sealed class FakeNotificationNotifier : ICaptureRunPublicationCaptureCompleteNotifier
+        {
+            public CaptureRunPublicationCaptureCompleteNotificationReceipt Notify(CaptureRunPublicationCaptureCompleteNotificationOperation operation)
+            {
+                return new CaptureRunPublicationCaptureCompleteNotificationReceipt(this, operation);
+            }
+        }
+
+        private static CaptureRunPublicationCaptureCompleteNotificationOperation MakeNotificationOperation(bool commitRoute)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                coordinator.Execute(commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
+            return new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+        }
+
+        [Test]
+        public void Notification_CommitCaptureIndexRoute_Constructs()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation = MakeNotificationOperation(commitRoute: true);
+
+            Assert.That(operation.IsValid, Is.True);
+            Assert.That(operation.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+            Assert.That(operation.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex));
+        }
+
+        [Test]
+        public void Notification_CaptureCompleteRoute_Constructs()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation = MakeNotificationOperation(commitRoute: false);
+
+            Assert.That(operation.IsValid, Is.True);
+            Assert.That(operation.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+            Assert.That(operation.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete));
+        }
+
+        [Test]
+        public void Notification_ForwardsAllValues()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(recovery);
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation = new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+
+            Assert.That(ReferenceEquals(operation.CleanupResult, cleanup), Is.True);
+            Assert.That(ReferenceEquals(operation.ExecutionResult, cleanup.ExecutionResult), Is.True);
+            Assert.That(ReferenceEquals(operation.RootLayout, cleanup.RootLayout), Is.True);
+            Assert.That(ReferenceEquals(operation.LockLease, cleanup.LockLease), Is.True);
+            Assert.That(operation.TestRunId, Is.EqualTo(cleanup.TestRunId));
+            Assert.That(operation.RunInitializationId, Is.EqualTo(cleanup.RunInitializationId));
+            Assert.That(operation.RunManifestContentSha256, Is.EqualTo(cleanup.ActionPlan.AuthoritativePlan.RunManifestContentSha256));
+            Assert.That(operation.CaptureIndexPath, Is.EqualTo(GetPublicationPaths(cleanup.ActionPlan).CaptureIndexPath));
+            Assert.That(operation.Disposition, Is.EqualTo(cleanup.Disposition));
+            Assert.That(operation.Status, Is.EqualTo(cleanup.Status));
+        }
+
+        [Test]
+        public void Notification_StableIdentityFourElements()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(recovery);
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation = new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+
+            Assert.That(operation.TestRunId, Is.EqualTo(recovery.TestRunId));
+            Assert.That(operation.RunInitializationId, Is.EqualTo(recovery.RunInitializationId));
+            Assert.That(operation.RunManifestContentSha256, Is.EqualTo(recovery.Decision.AuthoritativePlan.RunManifestContentSha256));
+            Assert.That(operation.CaptureIndexPath, Is.EqualTo(GetPublicationPaths(cleanup.ActionPlan).CaptureIndexPath));
+
+            // Identity string comparisons are ordinal.
+            Assert.That(string.Equals(operation.RunInitializationId, recovery.RunInitializationId, StringComparison.Ordinal), Is.True);
+            Assert.That(string.Equals(operation.RunManifestContentSha256, recovery.Decision.AuthoritativePlan.RunManifestContentSha256, StringComparison.Ordinal), Is.True);
+            Assert.That(string.Equals(operation.CaptureIndexPath, GetPublicationPaths(cleanup.ActionPlan).CaptureIndexPath, StringComparison.Ordinal), Is.True);
+        }
+
+        [Test]
+        public void Notification_NullResult_Rejected()
+        {
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("cleanupResult"));
+        }
+
+        [Test]
+        public void Notification_InvalidResult_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+
+            SetField(cleanup.ExecutionResult, "_completedSteps", null);
+            Assert.That(cleanup.IsValid, Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup));
+
+            Assert.That(ex.ParamName, Is.EqualTo("cleanupResult"));
+        }
+
+        [Test]
+        public void Notification_DispositionContradiction_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+
+            CaptureRunPublicationArtifactRecoveryDecision decision = cleanup.OrchestrationResult.Decision;
+            SetField(decision, "_disposition", CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision);
+            Assert.That(cleanup.IsValid, Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup));
+
+            Assert.That(ex.ParamName, Is.EqualTo("cleanupResult"));
+        }
+
+        [Test]
+        public void Notification_ForeignRootLayoutLockLeasePublicationPathSet_Rejected()
+        {
+            // Foreign root layout: swap the cleanup execution batch.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c1 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r1 = c1.Execute(BuildCommitResult());
+            SetField(r1.ExecutionResult, "_batch", BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r1));
+
+            // Foreign lock lease: release the lease.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c2 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r2 = c2.Execute(BuildCommitResult());
+            r2.LockLease.Dispose();
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r2));
+
+            // Foreign publication path set: swap the recovery operation's path set to another layout.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c3 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r3 = c3.Execute(BuildCommitResult());
+            CaptureRunPublicationRecoveryInspectionOperation recoveryOperation =
+                r3.OrchestrationResult.InspectionSnapshot.Decision.Snapshot.Operation;
+            SetField(recoveryOperation, "_publicationPaths", new CaptureRunPublicationPathSet(MakeLayout(999)));
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r3));
+        }
+
+        [Test]
+        public void Notification_LeaseExpired_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+
+            Assert.That(operation.IsValid, Is.True);
+
+            cleanup.LockLease.Dispose();
+            Assert.That(operation.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Notification_PlanCorruption_Rejected()
+        {
+            // Test run id corrupted.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c1 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r1 = c1.Execute(BuildCommitResult());
+            SetField(r1.ActionPlan.AuthoritativePlan, "_testRunId", 999L);
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r1));
+
+            // Run initialization id corrupted.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c2 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r2 = c2.Execute(BuildCommitResult());
+            SetField(r2.ActionPlan.AuthoritativePlan, "_runInitializationId", "ffffffffffffffffffffffffffffffff");
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r2));
+
+            // Manifest hash corrupted.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator c3 =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult r3 = c3.Execute(BuildCommitResult());
+            SetField(r3.ActionPlan.AuthoritativePlan, "_runManifestContentSha256", "broken");
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(r3));
+        }
+
+        [Test]
+        public void Notification_CaptureIndexPathReplaced_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationPathSet pathSet = GetPublicationPaths(cleanup.ActionPlan);
+
+            SetField(pathSet, "_captureIndexPath", pathSet.CaptureIndexTemporaryPath);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup));
+        }
+
+        [Test]
+        public void Notification_CompletedStepReceiptCorruption_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep original = cleanup.ExecutionResult.GetStep(0);
+            CaptureRunPublicationCaptureCompleteCleanupReceipt foreign =
+                new CaptureRunPublicationCaptureCompleteCleanupReceipt(
+                    new FakePublicationCleanupBackend(), original.CleanupReceipt.Operation);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep forged = ForgeCleanupCompletedStep(original, foreign);
+
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(cleanup.ExecutionResult, "_completedSteps");
+            steps[0] = forged;
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup));
+        }
+
+        [Test]
+        public void Notification_UninitializedOperationAndReceipt_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                (CaptureRunPublicationCaptureCompleteNotificationOperation)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteNotificationOperation));
+            Assert.That(operation.IsValid, Is.False);
+
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
+                (CaptureRunPublicationCaptureCompleteNotificationReceipt)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteNotificationReceipt));
+            Assert.That(receipt.IsValid, Is.False);
+        }
+
+        [Test]
+        public void NotificationReceipt_NullArgsForeignNotifierForeignOperation_Rejected()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation = MakeNotificationOperation(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
+                new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, operation);
+
+            Assert.That(receipt.IsValid, Is.True);
+            Assert.That(receipt.IsIssuedFor(notifier, operation), Is.True);
+
+            // Null arguments.
+            Assert.That(receipt.IsIssuedFor(null, operation), Is.False);
+            Assert.That(receipt.IsIssuedFor(notifier, null), Is.False);
+
+            // Foreign notifier.
+            Assert.That(receipt.IsIssuedFor(new FakeNotificationNotifier(), operation), Is.False);
+
+            // Different operation.
+            CaptureRunPublicationCaptureCompleteNotificationOperation other = MakeNotificationOperation(commitRoute: false);
+            Assert.That(receipt.IsIssuedFor(notifier, other), Is.False);
+
+            // Null-argument construction rejection.
+            ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationReceipt(null, operation));
+            Assert.That(ex1.ParamName, Is.EqualTo("issuedBy"));
+
+            ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, null));
+            Assert.That(ex2.ParamName, Is.EqualTo("operation"));
+
+            // Invalid operation rejection.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteNotificationOperation leaseOperation =
+                new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+            cleanup.LockLease.Dispose();
+            Assert.That(leaseOperation.IsValid, Is.False);
+
+            ArgumentException ex3 = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, leaseOperation));
+            Assert.That(ex3.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void NotificationReceipt_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteNotificationReceipt);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(2));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+        }
+
+        [Test]
+        public void NotificationOperation_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteNotificationOperation);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(1));
+            Assert.That(fields[0].IsInitOnly, Is.True);
+            Assert.That(fields[0].IsPrivate, Is.True);
+            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult)));
+        }
+
+        [Test]
+        public void Notifier_InterfaceSingleMethod()
+        {
+            Type type = typeof(ICaptureRunPublicationCaptureCompleteNotifier);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsInterface, Is.True);
+
+            MethodInfo[] methods = type.GetMethods();
+            Assert.That(methods.Length, Is.EqualTo(1));
+            Assert.That(methods[0].Name, Is.EqualTo("Notify"));
+            Assert.That(methods[0].ReturnType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteNotificationReceipt)));
+
+            ParameterInfo[] parameters = methods[0].GetParameters();
+            Assert.That(parameters.Length, Is.EqualTo(1));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteNotificationOperation)));
+        }
+
+        [Test]
+        public void Source_NotificationXmlContract()
+        {
+            string notifierSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/ICaptureRunPublicationCaptureCompleteNotifier.cs"));
+
+            Assert.That(notifierSource, Does.Contain("idempotent"));
+            Assert.That(notifierSource, Does.Contain("durably"));
+            Assert.That(notifierSource, Does.Contain("hard failure"));
+            Assert.That(notifierSource, Does.Contain("no internal retry"));
+            Assert.That(notifierSource, Does.Contain("never mutates, retains, or disposes"));
+            Assert.That(notifierSource, Does.Contain("identity conflict"));
+        }
+
+        [Test]
+        public void Source_NotificationTypesNoForbiddenDependencies()
+        {
+            string[] relativePaths =
+            {
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationOperation.cs",
+                "Assets/Zantetsu/Runtime/Observability/ICaptureRunPublicationCaptureCompleteNotifier.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationReceipt.cs"
+            };
+
+            foreach (string relativePath in relativePaths)
+            {
+                string source = File.ReadAllText(LocateSource(relativePath));
+
+                Assert.That(source, Does.Not.Contain("File."));
+                Assert.That(source, Does.Not.Contain("Directory."));
+                Assert.That(source, Does.Not.Contain("FileStream"));
+                Assert.That(source, Does.Not.Contain("DllImport"));
+                Assert.That(source, Does.Not.Contain("Serialize"));
+                Assert.That(source, Does.Not.Contain("ComputeHash"));
+                Assert.That(source, Does.Not.Contain("Registry"));
+                Assert.That(source, Does.Not.Contain("Draft"));
+                Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteCleanupBackend"));
+                Assert.That(source, Does.Not.Contain(".Dispose()"));
+                Assert.That(source, Does.Not.Contain("DateTime"));
+                Assert.That(source, Does.Not.Contain("Random"));
+                Assert.That(source, Does.Not.Contain("using System.Linq"));
+                Assert.That(source, Does.Not.Contain("List<"));
+                Assert.That(source, Does.Not.Contain("ToArray"));
+                Assert.That(source, Does.Not.Contain("Array.Copy"));
+
+                // The only static members are pure predicate helpers, never mutable state.
+                Assert.That(
+                    CountOccurrences(source, "static"),
+                    Is.EqualTo(CountOccurrences(source, "static bool")));
+            }
+        }
+
+        [Test]
+        public void Source_NotificationNoDuplicateFullValidation()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationOperation.cs"));
+
+            // The cleanup orchestration result is fully validated exactly once
+            // in the constructor and once in IsValid; the correlation predicate
+            // itself never re-runs the full result, batch, or plan validation.
+            Assert.That(CountOccurrences(source, "cleanupResult.IsValid"), Is.EqualTo(2));
+            Assert.That(source, Does.Not.Contain("executionResult.IsValid"));
+            Assert.That(source, Does.Not.Contain("batch.IsValid"));
+            Assert.That(source, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(source, Does.Not.Contain("TryValidate"));
+            Assert.That(source, Does.Not.Contain("AcquireValidationToken"));
+            Assert.That(source, Does.Not.Contain("using System.Linq"));
+            Assert.That(source, Does.Not.Contain("List<"));
+            Assert.That(source, Does.Not.Contain("Array.Copy"));
+        }
     }
 }
