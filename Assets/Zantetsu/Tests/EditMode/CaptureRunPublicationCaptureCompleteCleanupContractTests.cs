@@ -45,6 +45,8 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationEvidenceStatus EvMatchesExpected => CaptureRunPublicationEvidenceStatus.MatchesExpected;
 
+        private static CaptureRunPublicationEvidenceStatus EvMismatch => CaptureRunPublicationEvidenceStatus.Mismatch;
+
         private static CaptureRunPublicationFramesObservationStatus FramesDirectory => CaptureRunPublicationFramesObservationStatus.Directory;
 
         private static CaptureRunPublicationArtifactKind Png => CaptureRunPublicationArtifactKind.Png;
@@ -395,6 +397,60 @@ namespace Zantetsu.Core.Tests
         {
             return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
+        }
+
+        private static CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildArtifactResult(
+            bool commitRoute,
+            CaptureRunPublicationEvidenceStatus stagingPngStatus,
+            CaptureRunPublicationEvidenceStatus stagingSidecarStatus,
+            CaptureRunPublicationEvidenceStatus finalPngStatus,
+            CaptureRunPublicationEvidenceStatus finalSidecarStatus,
+            CaptureRunPublicationEvidenceStatus traceStatus)
+        {
+            PngJsonCapturePublicationPlan plan = MakePlan();
+            CaptureRunPublicationArtifactInspectionOperation operation = commitRoute
+                ? MakeOperation(plan: plan)
+                : MakeOperation(plan: plan, captureIndex: MakeDoc(CaptureIndex, DocCanonical, 100, plan));
+
+            CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
+                operation,
+                operation.GetArtifactPaths(0),
+                stagingPngStatus: stagingPngStatus,
+                stagingPngCount: stagingPngStatus == EvMatchesExpected ? PngBytes : 0,
+                stagingSidecarStatus: stagingSidecarStatus,
+                stagingSidecarCount: stagingSidecarStatus == EvMatchesExpected ? SidecarBytes : 0,
+                finalPngStatus: finalPngStatus,
+                finalPngCount: finalPngStatus == EvMatchesExpected ? PngBytes : 0,
+                finalSidecarStatus: finalSidecarStatus,
+                finalSidecarCount: finalSidecarStatus == EvMatchesExpected ? SidecarBytes : 0);
+
+            FakeArtifactInspector inspector = MakeArtifactInspector(
+                operation, new[] { observation }, traceStatus, traceStatus == EvAbsent ? 0 : 100);
+            CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator orchestrator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            return orchestrator.Execute(operation);
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator MakeCleanupOrchestrator(
+            FakePublicationCleanupBackend backend = null)
+        {
+            return new CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator(
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(
+                    backend ?? new FakePublicationCleanupBackend()));
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupExecutionResult ForgeExecutionResult(
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator issuedBy,
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult forged =
+                (CaptureRunPublicationCaptureCompleteCleanupExecutionResult)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionResult));
+            SetField(forged, "_issuedBy", issuedBy);
+            SetField(forged, "_batch", batch);
+            SetField(forged, "_completedSteps", completedSteps);
+            return forged;
         }
 
         private static CaptureRunPublicationPathSet GetPublicationPaths(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
@@ -3862,6 +3918,66 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Source_OrchestrationTypesNoForbiddenDependencies()
+        {
+            string[] relativePaths =
+            {
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult.cs"
+            };
+
+            foreach (string relativePath in relativePaths)
+            {
+                string source = File.ReadAllText(LocateSource(relativePath));
+
+                Assert.That(source, Does.Not.Contain("File."));
+                Assert.That(source, Does.Not.Contain("Directory."));
+                Assert.That(source, Does.Not.Contain("FileStream"));
+                Assert.That(source, Does.Not.Contain("DllImport"));
+                Assert.That(source, Does.Not.Contain("Serialize"));
+                Assert.That(source, Does.Not.Contain("ComputeHash"));
+                Assert.That(source, Does.Not.Contain("Registry"));
+                Assert.That(source, Does.Not.Contain("Draft"));
+                Assert.That(source, Does.Not.Contain("Notification"));
+                Assert.That(source, Does.Not.Contain("List<"));
+                Assert.That(source, Does.Not.Contain("ToArray"));
+                Assert.That(source, Does.Not.Contain("Array.Copy"));
+                Assert.That(source, Does.Not.Contain("using System.Linq"));
+                Assert.That(source, Does.Not.Contain("DateTime"));
+                Assert.That(source, Does.Not.Contain("Random"));
+                Assert.That(source, Does.Not.Contain("Thread"));
+                Assert.That(source, Does.Not.Contain(".Dispose()"));
+            }
+        }
+
+        [Test]
+        public void Source_OrchestrationNoDuplicateFullValidation()
+        {
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator.cs"));
+            string resultSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult.cs"));
+
+            // The coordinator never re-validates the recovery result, action
+            // plan, or batch on the success path; the builders are the single
+            // full-validation boundary.
+            Assert.That(coordinatorSource, Does.Not.Contain("recoveryResult.IsValid"));
+            Assert.That(coordinatorSource, Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(coordinatorSource, Does.Not.Contain("batch.IsValid"));
+            Assert.That(coordinatorSource, Does.Not.Contain("AcquireValidationToken"));
+
+            // Exactly one TryValidate in the coordinator: the execution-result
+            // verification.
+            Assert.That(CountOccurrences(coordinatorSource, "TryValidate"), Is.EqualTo(1));
+
+            // The result runs TryValidate exactly twice: once in the direct
+            // constructor and once in IsValid; the trusted constructor never
+            // re-runs it and shares the correlation predicate instead.
+            Assert.That(CountOccurrences(resultSource, "TryValidate"), Is.EqualTo(2));
+            Assert.That(resultSource, Does.Contain("IsCorrelated"));
+        }
+
+        [Test]
         public void Source_ForwardingComparisons()
         {
             string coordinatorSource = File.ReadAllText(
@@ -3933,6 +4049,360 @@ namespace Zantetsu.Core.Tests
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
                 Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
             }
+        }
+
+        // ---- Cleanup orchestration: end-to-end ----
+
+        [Test]
+        public void Orchestration_CommitCaptureIndexRoute_ConnectsEndToEnd()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result = coordinator.Execute(recovery);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+            Assert.That(result.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex));
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.OrchestrationResult, recovery), Is.True);
+            Assert.That(ReferenceEquals(result.RootLayout, recovery.RootLayout), Is.True);
+            Assert.That(ReferenceEquals(result.LockLease, recovery.LockLease), Is.True);
+            Assert.That(result.TestRunId, Is.EqualTo(recovery.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(recovery.RunInitializationId));
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = result.Batch;
+            int sideEffecting = 0;
+            for (int i = 0; i < batch.Count; i++)
+            {
+                if (batch.GetStep(i).Action != CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    sideEffecting++;
+                }
+            }
+
+            Assert.That(backend.CallCount, Is.EqualTo(sideEffecting), "Every side-effecting step executes once.");
+            Assert.That(result.ExecutionResult.Count, Is.EqualTo(batch.Count));
+        }
+
+        [Test]
+        public void Orchestration_CaptureCompleteRoute_ConnectsEndToEnd()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCaptureCompleteResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result = coordinator.Execute(recovery);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+            Assert.That(result.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete));
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.OrchestrationResult, recovery), Is.True);
+        }
+
+        [Test]
+        public void Orchestration_NullRecoveryResult_Rejected()
+        {
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.Execute(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("recoveryResult"));
+            Assert.That(backend.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Orchestration_NonTargetDispositions_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult publish = BuildArtifactResult(
+                true, EvMatchesExpected, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult orphaned = BuildArtifactResult(
+                true, EvAbsent, EvAbsent, EvAbsent, EvAbsent, EvAbsent);
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult sourceMissing = BuildArtifactResult(
+                true, EvAbsent, EvAbsent, EvAbsent, EvAbsent, EvMatchesExpected);
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult publishedMissing = BuildArtifactResult(
+                false, EvMatchesExpected, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult collision = BuildArtifactResult(
+                true, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected, EvMismatch);
+
+            foreach (CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery in new[]
+            {
+                publish, orphaned, sourceMissing, publishedMissing, collision
+            })
+            {
+                FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+                CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+                Assert.Throws<ArgumentException>(() => coordinator.Execute(recovery));
+                Assert.That(backend.CallCount, Is.EqualTo(0), "No backend contact for a non-target disposition.");
+            }
+        }
+
+        [Test]
+        public void Orchestration_InvalidRecoveryResult_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult forged =
+                (CaptureRunPublicationArtifactRecoveryOrchestrationResult)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationArtifactRecoveryOrchestrationResult));
+            SetField(forged, "_issuedBy", recovery.IssuedBy);
+            SetField(forged, "_executionResult", null);
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            Assert.Throws<ArgumentException>(() => coordinator.Execute(forged));
+            Assert.That(backend.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Orchestration_ReleasedLease_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            recovery.LockLease.Dispose();
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            Assert.Throws<ArgumentException>(() => coordinator.Execute(recovery));
+            Assert.That(backend.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Orchestration_BackendException_PropagatesIdentical()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            IOException exception = new IOException("cleanup failed");
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend { ExceptionToThrow = exception };
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            IOException ex = Assert.Throws<IOException>(() => coordinator.Execute(recovery));
+
+            Assert.That(ex, Is.SameAs(exception));
+            Assert.That(backend.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Orchestration_Failure_NoRetryNoDispose()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            List<string> log = new List<string>();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend(log)
+            {
+                ExceptionToThrow = new IOException("boom")
+            };
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            Assert.Throws<IOException>(() => coordinator.Execute(recovery));
+
+            Assert.That(backend.CallCount, Is.EqualTo(1), "No retry.");
+            Assert.That(log.Count, Is.EqualTo(1), "No subsequent backend contact.");
+            Assert.That(recovery.LockLease.IsCreated, Is.True, "The lease stays owned by the caller.");
+        }
+
+        // ---- Cleanup orchestration result: construction and correlation ----
+
+        [Test]
+        public void OrchestrationResult_NullIssuedBy_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(recovery);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(null, good.ExecutionResult));
+            Assert.That(ex.ParamName, Is.EqualTo("issuedBy"));
+        }
+
+        [Test]
+        public void OrchestrationResult_NullExecutionResult_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator();
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, null));
+            Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
+        }
+
+        [Test]
+        public void OrchestrationResult_ForeignIssuer_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(recovery);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator foreignExecution =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult forged =
+                ForgeExecutionResult(foreignExecution, good.Batch,
+                    (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(good.ExecutionResult, "_completedSteps"));
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, forged));
+        }
+
+        [Test]
+        public void OrchestrationResult_ForeignBatch_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(recovery);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch otherBatch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult forged =
+                ForgeExecutionResult(coordinator.ExecutionCoordinator, otherBatch,
+                    (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(good.ExecutionResult, "_completedSteps"));
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, forged));
+        }
+
+        [Test]
+        public void OrchestrationResult_ForeignActionPlan_Rejected()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(recovery);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch forgedBatch = ForgeBatch(
+                BuildCommitPlanWithPublicationPlanTemporary(),
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(good.Batch, "_steps"));
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult forged =
+                ForgeExecutionResult(coordinator.ExecutionCoordinator, forgedBatch,
+                    (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(good.ExecutionResult, "_completedSteps"));
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, forged));
+        }
+
+        [Test]
+        public void OrchestrationResult_CrossTokenSubstitutionRejected()
+        {
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult resultA = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult resultB = coordinator.Execute(BuildCommitResult());
+
+            Assert.That(resultA.ExecutionResult.TryValidate(out _), Is.True);
+            Assert.That(resultB.ExecutionResult.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken tokenB), Is.True);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, resultA.ExecutionResult, tokenB));
+        }
+
+        [Test]
+        public void OrchestrationResult_CorruptedTokenFailsClosed()
+        {
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(BuildCommitResult());
+
+            Assert.That(good.ExecutionResult.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token), Is.True);
+
+            SetField(token, "_batchToken", null);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, good.ExecutionResult, token));
+        }
+
+        [Test]
+        public void OrchestrationResult_ForwardingAndFieldShape()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recovery = BuildCommitResult();
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result = coordinator.Execute(recovery);
+
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.Batch, result.ExecutionResult.Batch), Is.True);
+            Assert.That(ReferenceEquals(result.ActionPlan, result.ExecutionResult.ActionPlan), Is.True);
+            Assert.That(ReferenceEquals(result.OrchestrationResult, recovery), Is.True);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady));
+            Assert.That(result.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex));
+            Assert.That(ReferenceEquals(result.RootLayout, recovery.RootLayout), Is.True);
+            Assert.That(ReferenceEquals(result.LockLease, recovery.LockLease), Is.True);
+            Assert.That(result.TestRunId, Is.EqualTo(recovery.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(recovery.RunInitializationId));
+
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(2));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+
+            Type coordinatorType = typeof(CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator);
+            Assert.That(coordinatorType.IsPublic, Is.False);
+            Assert.That(coordinatorType.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(coordinatorType), Is.False);
+            Assert.That(coordinatorType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] coordinatorFields = coordinatorType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(coordinatorFields.Length, Is.EqualTo(1));
+            Assert.That(coordinatorFields[0].IsInitOnly, Is.True);
+            Assert.That(coordinatorFields[0].IsPrivate, Is.True);
+            Assert.That(coordinatorFields[0].FieldType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator)));
+        }
+
+        [Test]
+        public void OrchestrationResult_CorruptedFailsClosedWithoutThrowing()
+        {
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+
+            // Completed step array null.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result1 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result1.IsValid, Is.True);
+            SetField(result1.ExecutionResult, "_completedSteps", null);
+            Assert.That(result1.IsValid, Is.False);
+
+            // Lease released.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result2 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result2.IsValid, Is.True);
+            result2.LockLease.Dispose();
+            Assert.That(result2.IsValid, Is.False);
+
+            // Foreign execution coordinator.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result3 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result3.IsValid, Is.True);
+            SetField(result3.ExecutionResult, "_issuedBy",
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend()));
+            Assert.That(result3.IsValid, Is.False);
+
+            // Batch swapped.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result4 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result4.IsValid, Is.True);
+            SetField(result4.ExecutionResult, "_batch", BuildBatch(BuildCommitPlanWithPublicationPlanTemporary()));
+            Assert.That(result4.IsValid, Is.False);
+
+            // Action plan swapped on the batch.
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result5 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result5.IsValid, Is.True);
+            SetField(result5.Batch, "_actionPlan", BuildCommitPlanWithPublicationPlanTemporary());
+            Assert.That(result5.IsValid, Is.False);
+
+            // Nested orchestration result corrupted (recovery execution result null).
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult result6 = coordinator.Execute(BuildCommitResult());
+            Assert.That(result6.IsValid, Is.True);
+            SetField(result6.OrchestrationResult, "_executionResult", null);
+            Assert.That(result6.IsValid, Is.False);
         }
 
         private static CaptureRunPublicationCaptureCompleteCleanupCompletedStep ForgeCleanupCompletedStep(
