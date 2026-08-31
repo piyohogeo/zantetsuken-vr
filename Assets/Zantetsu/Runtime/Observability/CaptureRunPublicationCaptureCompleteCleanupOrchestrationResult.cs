@@ -63,15 +63,19 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Token-gated construction path used by a coordinator that has already
-        /// acquired the execution-result validation token once. It never
-        /// re-validates the execution result and only re-verifies the
-        /// correlation index-locally against the already issued token.
+        /// Atomic construction path used by the coordinator: fully validates
+        /// the execution result once, verifies the expected batch, action plan,
+        /// and recovery result references, re-verifies the correlation
+        /// index-locally, and constructs the result — all without ever exposing
+        /// the validation token, so no two-step token handoff can re-introduce
+        /// a TOCTOU gap.
         /// </summary>
         internal CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(
             CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator issuedBy,
             CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult,
-            CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token)
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch expectedBatch,
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan expectedActionPlan,
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult expectedRecoveryResult)
         {
             if (issuedBy == null)
             {
@@ -83,11 +87,17 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(executionResult));
             }
 
-            if (!IsCorrelated(issuedBy, executionResult, token))
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token;
+            if (!executionResult.TryValidate(out token)
+                || !ReferenceEquals(executionResult.IssuedBy, issuedBy.ExecutionCoordinator)
+                || !ReferenceEquals(executionResult.Batch, expectedBatch)
+                || !ReferenceEquals(executionResult.ActionPlan, expectedActionPlan)
+                || !ReferenceEquals(executionResult.OrchestrationResult, expectedRecoveryResult)
+                || executionResult.Status != CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady
+                || !IsCorrelated(issuedBy, executionResult, token))
             {
-                throw new ArgumentException(
-                    "Execution result must be correlated with the issuing orchestration coordinator.",
-                    nameof(executionResult));
+                throw new InvalidOperationException(
+                    "Execution result must be valid and correlated with the cleanup batch, plan, and recovery result.");
             }
 
             _issuedBy = issuedBy;

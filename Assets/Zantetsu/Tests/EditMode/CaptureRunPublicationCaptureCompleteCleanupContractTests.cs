@@ -4002,14 +4002,14 @@ namespace Zantetsu.Core.Tests
             Assert.That(coordinatorSource, Does.Not.Contain("batch.IsValid"));
             Assert.That(coordinatorSource, Does.Not.Contain("AcquireValidationToken"));
 
-            // Exactly one TryValidate in the coordinator: the execution-result
-            // verification.
-            Assert.That(CountOccurrences(coordinatorSource, "TryValidate"), Is.EqualTo(1));
+            // No TryValidate in the coordinator: the atomic result constructor
+            // owns the single full validation, so no token ever leaves it.
+            Assert.That(CountOccurrences(coordinatorSource, "TryValidate"), Is.EqualTo(0));
 
-            // The result runs TryValidate exactly twice: once in the direct
-            // constructor and once in IsValid; the trusted constructor never
-            // re-runs it and shares the correlation predicate instead.
-            Assert.That(CountOccurrences(resultSource, "TryValidate"), Is.EqualTo(2));
+            // The result runs TryValidate exactly three times: once in the
+            // direct constructor, once in the atomic constructor, and once in
+            // IsValid. No constructor accepts an externally supplied token.
+            Assert.That(CountOccurrences(resultSource, "TryValidate"), Is.EqualTo(3));
             Assert.That(resultSource, Does.Contain("IsCorrelated"));
 
             // The correlation predicate must use the O(1) exact-bindings
@@ -4327,34 +4327,63 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void OrchestrationResult_CrossTokenSubstitutionRejected()
+        public void Orchestration_AtomicCtor_RejectsReplacedCompletedStepElement()
         {
             FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
-            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator execution =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator(execution);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult = execution.Execute(batch);
 
-            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult resultA = coordinator.Execute(BuildCommitResult());
-            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult resultB = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(executionResult, "_completedSteps");
+            steps[0] = steps[1];
 
-            Assert.That(resultA.ExecutionResult.TryValidate(out _), Is.True);
-            Assert.That(resultB.ExecutionResult.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken tokenB), Is.True);
-
-            Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, resultA.ExecutionResult, tokenB));
+            Assert.Throws<InvalidOperationException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(
+                    coordinator, executionResult, batch, batch.ActionPlan, batch.ActionPlan.OrchestrationResult));
         }
 
         [Test]
-        public void OrchestrationResult_CorruptedTokenFailsClosed()
+        public void Orchestration_AtomicCtor_RejectsReplacedReceipt()
         {
             FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
-            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator = MakeCleanupOrchestrator(backend);
-            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult good = coordinator.Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator execution =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator(execution);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult = execution.Execute(batch);
 
-            Assert.That(good.ExecutionResult.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token), Is.True);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep original = executionResult.GetStep(0);
+            CaptureRunPublicationCaptureCompleteCleanupReceipt foreignReceipt =
+                new CaptureRunPublicationCaptureCompleteCleanupReceipt(
+                    new FakePublicationCleanupBackend(), original.CleanupReceipt.Operation);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep forged =
+                ForgeCleanupCompletedStep(original, foreignReceipt);
 
-            SetField(token, "_batchToken", null);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupCompletedStep[])GetField(executionResult, "_completedSteps");
+            steps[0] = forged;
 
-            Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(coordinator, good.ExecutionResult, token));
+            Assert.Throws<InvalidOperationException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(
+                    coordinator, executionResult, batch, batch.ActionPlan, batch.ActionPlan.OrchestrationResult));
+        }
+
+        [Test]
+        public void OrchestrationResult_NoExternalTokenConstructor()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult);
+
+            foreach (ConstructorInfo ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                bool acceptsToken = ctor.GetParameters().Any(
+                    parameter => parameter.ParameterType == typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken));
+                Assert.That(acceptsToken, Is.False, "No constructor may accept an externally supplied token.");
+            }
         }
 
         [Test]

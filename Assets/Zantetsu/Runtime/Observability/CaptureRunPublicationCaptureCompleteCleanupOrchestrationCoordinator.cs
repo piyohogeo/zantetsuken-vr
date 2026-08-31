@@ -30,12 +30,11 @@ namespace Zantetsu.Observability
     /// once.</item>
     /// <item>Execute the batch through the held execution coordinator exactly
     /// once.</item>
-    /// <item>Fully verify the returned execution result: non-null, a single
-    /// successful validation, issued by the held execution coordinator,
-    /// bound to the same batch, action plan, and recovery result, and carrying
-    /// <c>CaptureCompleteReady</c>.</item>
-    /// <item>Construct the immutable orchestration result through its trusted
-    /// constructor using the already acquired execution-result token.</item>
+    /// <item>Atomically construct the immutable orchestration result: fully
+    /// validate the execution result once, verify it is issued by the held
+    /// execution coordinator and bound to the same batch, action plan, and
+    /// recovery result with <c>CaptureCompleteReady</c>, and never expose the
+    /// validation token outside that single call.</item>
     /// </list>
     /// </para>
     /// <para>
@@ -82,32 +81,8 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);
 
-            CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token =
-                VerifyExecutionResult(executionResult, batch, actionPlan, recoveryResult);
-
-            return new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(this, executionResult, token);
-        }
-
-        private CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken VerifyExecutionResult(
-            CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult,
-            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
-            CaptureRunPublicationArtifactRecoveryOrchestrationResult recoveryResult)
-        {
-            CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token;
-            if (executionResult == null
-                || !executionResult.TryValidate(out token)
-                || !ReferenceEquals(executionResult.IssuedBy, _executionCoordinator)
-                || !ReferenceEquals(executionResult.Batch, batch)
-                || !ReferenceEquals(executionResult.ActionPlan, actionPlan)
-                || !ReferenceEquals(executionResult.OrchestrationResult, recoveryResult)
-                || executionResult.Status != CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady)
-            {
-                throw new InvalidOperationException(
-                    "Execution result must be valid and correlated with the cleanup batch, plan, and recovery result.");
-            }
-
-            return token;
+            return new CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult(
+                this, executionResult, batch, actionPlan, recoveryResult);
         }
     }
 }
