@@ -1701,7 +1701,761 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Contain("fail-closed"));
         }
 
+        // ---- Execution batch: construction helpers ----
+
+        private static CaptureRunPublicationCaptureCompleteCleanupActionPlan BuildCommitPlanWithPublicationPlanTemporary()
+        {
+            PngJsonCapturePublicationPlan planValue = MakePlan(entries: MakeEntries(1));
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(
+                plan: planValue,
+                publicationPlanTemporary: MakeDoc(
+                    CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue));
+            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupActionPlan BuildCaptureCompletePlanWithCaptureIndexTemporary()
+        {
+            PngJsonCapturePublicationPlan planValue = MakePlan(entries: MakeEntries(1));
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCaptureCompleteResult(
+                plan: planValue,
+                captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, planValue));
+            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupExecutionBatch BuildBatch(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
+        {
+            return CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(plan);
+        }
+
+        // ---- Execution batch: route order ----
+
+        [Test]
+        public void Batch_CommitRoute_StepsMatchPlanOrder()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationCaptureCompleteCleanupAction[] expected =
+            {
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady
+            };
+
+            Assert.That(batch.Count, Is.EqualTo(expected.Length));
+            Assert.That(batch.IsValid, Is.True);
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(i);
+                Assert.That(prepared.Action, Is.EqualTo(expected[i]), "step " + i);
+                Assert.That(prepared.StepIndex, Is.EqualTo(i));
+                Assert.That(prepared.Action, Is.EqualTo(plan.GetStep(i).Action));
+                Assert.That(prepared.ActionPlan, Is.SameAs(plan));
+            }
+        }
+
+        [Test]
+        public void Batch_CaptureCompleteRoute_StepsMatchPlanOrder()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCaptureCompletePlanWithCaptureIndexTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationCaptureCompleteCleanupAction[] expected =
+            {
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady
+            };
+
+            Assert.That(batch.Count, Is.EqualTo(expected.Length));
+            Assert.That(batch.IsValid, Is.True);
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.That(batch.GetStep(i).Action, Is.EqualTo(expected[i]), "step " + i);
+                Assert.That(batch.GetStep(i).StepIndex, Is.EqualTo(i));
+            }
+        }
+
+        [Test]
+        public void Batch_DefaultRoutes_StepsMatchPlanOrder()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupAction[] expected =
+            {
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady
+            };
+
+            foreach (bool commitRoute in new[] { true, false })
+            {
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildPlan(commitRoute));
+
+                Assert.That(batch.Count, Is.EqualTo(expected.Length), "commitRoute=" + commitRoute);
+                Assert.That(batch.IsValid, Is.True);
+
+                for (int i = 0; i < expected.Length; i++)
+                {
+                    Assert.That(batch.GetStep(i).Action, Is.EqualTo(expected[i]), "step " + i);
+                }
+            }
+        }
+
+        [Test]
+        public void Batch_NoArtifactCleanup_StepsMatchPlanOrder()
+        {
+            PngJsonCapturePublicationPlan planValue = MakePlan(entries: MakeEntries(1));
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(
+                plan: planValue,
+                stagingStatus: CaptureRunPublicationEvidenceStatus.Absent,
+                publicationPlanTemporary: MakeDoc(
+                    CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue));
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
+                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationCaptureCompleteCleanupAction[] expected =
+            {
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady
+            };
+
+            Assert.That(batch.Count, Is.EqualTo(expected.Length));
+            Assert.That(batch.IsValid, Is.True);
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.That(batch.GetStep(i).Action, Is.EqualTo(expected[i]), "step " + i);
+            }
+        }
+
+        [Test]
+        public void PreparedStep_ExclusiveOperationPerAction()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan commit = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan captureComplete = BuildCaptureCompletePlanWithCaptureIndexTemporary();
+
+            HashSet<CaptureRunPublicationCaptureCompleteCleanupAction> sideEffecting =
+                new HashSet<CaptureRunPublicationCaptureCompleteCleanupAction>();
+            int readySteps = 0;
+            int operations = 0;
+
+            foreach (CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch in new[]
+            {
+                BuildBatch(commit),
+                BuildBatch(captureComplete)
+            })
+            {
+                for (int i = 0; i < batch.Count; i++)
+                {
+                    CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(i);
+                    if (prepared.Action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                    {
+                        readySteps++;
+                        Assert.That(prepared.CleanupOperation, Is.Null);
+                    }
+                    else
+                    {
+                        operations++;
+                        Assert.That(prepared.CleanupOperation, Is.Not.Null, "step " + i);
+                        Assert.That(prepared.CleanupOperation.Action, Is.EqualTo(prepared.Action), "step " + i);
+                        sideEffecting.Add(prepared.Action);
+                    }
+                }
+            }
+
+            Assert.That(readySteps, Is.EqualTo(2));
+            Assert.That(operations, Is.EqualTo(16));
+            Assert.That(sideEffecting.Count, Is.EqualTo(8));
+
+            foreach (CaptureRunPublicationCaptureCompleteCleanupAction action in new[]
+            {
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker,
+                CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot
+            })
+            {
+                Assert.That(sideEffecting, Does.Contain(action));
+            }
+        }
+
+        [Test]
+        public void Batch_AllSideEffectOperations_FullyCorrelated()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationPathSet publicationPaths = batch.GetStep(0).PublicationPaths;
+            CaptureRunMarkerPathSet markerPaths = batch.GetStep(0).MarkerPaths;
+
+            for (int i = 0; i < batch.Count; i++)
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(i);
+                CaptureRunPublicationCaptureCompleteCleanupStep step = plan.GetStep(i);
+
+                Assert.That(prepared.ActionPlan, Is.SameAs(plan));
+                Assert.That(prepared.PublicationPaths, Is.SameAs(publicationPaths));
+                Assert.That(prepared.MarkerPaths, Is.SameAs(markerPaths));
+                Assert.That(prepared.StepIndex, Is.EqualTo(i));
+                Assert.That(prepared.Action, Is.EqualTo(step.Action));
+                Assert.That(prepared.Step.EntryIndex, Is.EqualTo(step.EntryIndex));
+                Assert.That(prepared.Step.ArtifactKind, Is.EqualTo(step.ArtifactKind));
+
+                if (prepared.Action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
+                {
+                    Assert.That(prepared.CleanupOperation, Is.Null);
+                }
+                else
+                {
+                    CaptureRunPublicationCaptureCompleteCleanupOperation op = prepared.CleanupOperation;
+                    Assert.That(op, Is.Not.Null);
+                    Assert.That(op.ActionPlan, Is.SameAs(plan));
+                    Assert.That(op.PublicationPaths, Is.SameAs(publicationPaths));
+                    Assert.That(op.MarkerPaths, Is.SameAs(markerPaths));
+                    Assert.That(op.StepIndex, Is.EqualTo(i));
+                    Assert.That(op.Action, Is.EqualTo(step.Action));
+                    Assert.That(op.EntryIndex, Is.EqualTo(step.EntryIndex));
+                    Assert.That(op.ArtifactKind, Is.EqualTo(step.ArtifactKind));
+                    Assert.That(op.TargetPath, Is.Not.Null.And.Not.Empty);
+                }
+            }
+        }
+
+        [Test]
+        public void Batch_SharedPathSetsAcrossAllSteps()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            CaptureRunPublicationPathSet publicationPaths = batch.GetStep(0).PublicationPaths;
+            CaptureRunMarkerPathSet markerPaths = batch.GetStep(0).MarkerPaths;
+
+            Assert.That(publicationPaths, Is.Not.Null);
+            Assert.That(markerPaths, Is.Not.Null);
+            Assert.That(publicationPaths.RootLayout, Is.SameAs(batch.RootLayout));
+            Assert.That(markerPaths.RootLayout, Is.SameAs(batch.RootLayout));
+
+            for (int i = 1; i < batch.Count; i++)
+            {
+                Assert.That(batch.GetStep(i).PublicationPaths, Is.SameAs(publicationPaths), "step " + i);
+                Assert.That(batch.GetStep(i).MarkerPaths, Is.SameAs(markerPaths), "step " + i);
+            }
+        }
+
+        // ---- Execution batch: rejection ----
+
+        [Test]
+        public void Builder_NullPlan_Rejected()
+        {
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Batch_NullPlan_Rejected()
+        {
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionBatch(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Batch_InvalidPlan_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
+                (CaptureRunPublicationCaptureCompleteCleanupActionPlan)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan));
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionBatch(plan));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Batch_ReleasedLease_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            plan.LockLease.Dispose();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionBatch(plan));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Batch_GetStep_OutOfRange_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildPlan(commitRoute: true));
+
+            foreach (int index in new[] { -1, batch.Count, batch.Count + 1 })
+            {
+                ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
+                    () => batch.GetStep(index));
+
+                Assert.That(ex.ParamName, Is.EqualTo("index"));
+            }
+        }
+
+        [Test]
+        public void PreparedStep_NullArguments_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    null, publicationPaths, markerPaths, 0, plan.AcquireValidationToken()));
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+
+            ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, null, markerPaths, 0, plan.AcquireValidationToken()));
+            Assert.That(ex.ParamName, Is.EqualTo("publicationPaths"));
+
+            ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, publicationPaths, null, 0, plan.AcquireValidationToken()));
+            Assert.That(ex.ParamName, Is.EqualTo("markerPaths"));
+
+            ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan, publicationPaths, markerPaths, 0, null));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void PreparedStep_IndexOutOfRange_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            foreach (int index in new[] { -1, plan.Count, plan.Count + 1 })
+            {
+                ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
+                    () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                        plan, publicationPaths, markerPaths, index, plan.AcquireValidationToken()));
+
+                Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
+            }
+        }
+
+        [Test]
+        public void PreparedStep_CrossToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan other = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken foreign = other.AcquireValidationToken();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan,
+                    GetPublicationPaths(plan),
+                    new CaptureRunMarkerPathSet(plan.RootLayout),
+                    0,
+                    foreign));
+
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void PreparedStep_StaleToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            plan.LockLease.Dispose();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupPreparedStep(
+                    plan,
+                    GetPublicationPaths(plan),
+                    new CaptureRunMarkerPathSet(plan.RootLayout),
+                    0,
+                    token));
+
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        // ---- Execution batch: lease liveness and corruption ----
+
+        [Test]
+        public void Batch_LeaseReleased_InvalidatesAll()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            Assert.That(batch.IsValid, Is.True);
+            Assert.That(batch.GetStep(0).IsValid, Is.True);
+            Assert.That(batch.GetStep(batch.Count - 1).IsValid, Is.True);
+
+            batch.LockLease.Dispose();
+
+            Assert.That(batch.IsValid, Is.False);
+            Assert.That(batch.GetStep(0).IsValid, Is.False);
+            Assert.That(batch.GetStep(batch.Count - 1).IsValid, Is.False);
+        }
+
+        [Test]
+        public void Batch_StepsArrayCorruption_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] original =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+
+            // Null array.
+            Assert.That(ForgeBatch(plan, null).IsValid, Is.False);
+
+            // Null element.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] withNull =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            withNull[0] = null;
+            Assert.That(ForgeBatch(plan, withNull).IsValid, Is.False);
+
+            // Shorter array.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] shorter =
+                new CaptureRunPublicationCaptureCompleteCleanupPreparedStep[original.Length - 1];
+            Array.Copy(original, shorter, shorter.Length);
+            Assert.That(ForgeBatch(plan, shorter).IsValid, Is.False);
+
+            // Longer array.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] longer =
+                new CaptureRunPublicationCaptureCompleteCleanupPreparedStep[original.Length + 1];
+            Array.Copy(original, longer, original.Length);
+            Assert.That(ForgeBatch(plan, longer).IsValid, Is.False);
+
+            // Reordered elements.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] reordered =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            reordered[0] = original[1];
+            reordered[1] = original[0];
+            Assert.That(ForgeBatch(plan, reordered).IsValid, Is.False);
+
+            // Element replaced with a foreign prepared step.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] replaced =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            replaced[0] = BuildBatch(BuildPlan(commitRoute: true)).GetStep(0);
+            Assert.That(ForgeBatch(plan, replaced).IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_CorruptedIndex_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            // Step 0 holds step 1's operation: the index no longer correlates.
+            CaptureRunPublicationCaptureCompleteCleanupOperation foreign =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 1, token);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep forged =
+                ForgePreparedStep(plan, publicationPaths, markerPaths, 0, foreign);
+
+            Assert.That(forged.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_CorruptedPlanOrPathSetOrOperation_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan other = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+
+            // Different plan reference.
+            Assert.That(ForgePreparedStep(other, GetPublicationPaths(other), new CaptureRunMarkerPathSet(other.RootLayout), 0, op).IsValid, Is.False);
+
+            // Different publication path set reference.
+            CaptureRunPublicationPathSet foreignPaths = new CaptureRunPublicationPathSet(plan.RootLayout);
+            Assert.That(ForgePreparedStep(plan, foreignPaths, markerPaths, 0, op).IsValid, Is.False);
+
+            // Different marker path set reference.
+            CaptureRunMarkerPathSet foreignMarkers = new CaptureRunMarkerPathSet(plan.RootLayout);
+            Assert.That(ForgePreparedStep(plan, publicationPaths, foreignMarkers, 0, op).IsValid, Is.False);
+
+            // Different operation instance for the same index (step 1's op).
+            CaptureRunPublicationCaptureCompleteCleanupOperation foreignOp =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 1, token);
+            Assert.That(ForgePreparedStep(plan, publicationPaths, markerPaths, 0, foreignOp).IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_RoutingStepWithInjectedOperation_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            int readyIndex = plan.Count - 1;
+            Assert.That(plan.GetStep(readyIndex).Action,
+                Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep forged =
+                ForgePreparedStep(plan, publicationPaths, markerPaths, readyIndex, op);
+
+            Assert.That(forged.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_SideEffectStepMissingOperation_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep forged =
+                ForgePreparedStep(plan, publicationPaths, markerPaths, 0, null);
+
+            Assert.That(forged.IsValid, Is.False);
+        }
+
+        // ---- Execution batch: shape and O(n) ----
+
+        [Test]
+        public void Batch_FieldsShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(2));
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Assert.That(property.PropertyType.IsArray, Is.False,
+                    property.Name + " must not expose an array.");
+            }
+        }
+
+        [Test]
+        public void Batch_NoExternalArrayConstructor()
+        {
+            ConstructorInfo[] constructors = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch)
+                .GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            Assert.That(constructors, Has.Length.EqualTo(1));
+
+            ParameterInfo[] parameters = constructors[0].GetParameters();
+            Assert.That(parameters, Has.Length.EqualTo(1));
+            Assert.That(parameters[0].ParameterType,
+                Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlan)));
+        }
+
+        [Test]
+        public void PreparedStep_FieldsShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupPreparedStep);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(5));
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+        }
+
+        [Test]
+        public void Builder_Shape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder);
+
+            Assert.That(type.IsAbstract, Is.True);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Empty);
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+        }
+
+        [Test]
+        public void Batch_DoesNotDisposeLease()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            Assert.That(batch.LockLease.IsCreated, Is.True);
+            Assert.That(batch.IsValid, Is.True);
+            Assert.That(batch.LockLease.IsCreated, Is.True);
+        }
+
+        [Test]
+        public void Batch_LargePlan_BuildsAndValidates()
+        {
+            PngJsonCapturePublicationPlan planValue = MakePlan(entries: MakeEntries(500));
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 500, plan: planValue);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
+                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(batch.Count, Is.EqualTo(500 * 2 + 6));
+            Assert.That(batch.IsValid, Is.True);
+
+            Assert.That(batch.GetStep(0).Action,
+                Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact));
+            Assert.That(batch.GetStep(batch.Count - 1).Action,
+                Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+            Assert.That(batch.GetStep(batch.Count - 1).CleanupOperation, Is.Null);
+        }
+
+        [Test]
+        public void Source_NoForbiddenDependenciesOrBackendCalls()
+        {
+            string[] relativePaths =
+            {
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupPreparedStep.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.cs"
+            };
+
+            foreach (string relativePath in relativePaths)
+            {
+                string source = File.ReadAllText(LocateSource(relativePath));
+
+                Assert.That(source, Does.Not.Contain("File."));
+                Assert.That(source, Does.Not.Contain("Directory."));
+                Assert.That(source, Does.Not.Contain("Stream"));
+                Assert.That(source, Does.Not.Contain("SafeHandle"));
+                Assert.That(source, Does.Not.Contain("DllImport"));
+                Assert.That(source, Does.Not.Contain("UnityEngine"));
+                Assert.That(source, Does.Not.Contain("Logger"));
+                Assert.That(source, Does.Not.Contain("Registry"));
+                Assert.That(source, Does.Not.Contain("Draft"));
+                Assert.That(source, Does.Not.Contain("DateTime"));
+                Assert.That(source, Does.Not.Contain("Random"));
+                Assert.That(source, Does.Not.Contain("System.IO"));
+                Assert.That(source, Does.Not.Contain("Backend"));
+                Assert.That(source, Does.Not.Contain("List<"));
+                Assert.That(source, Does.Not.Contain("System.Linq"));
+                Assert.That(source, Does.Not.Contain("ToArray"));
+                Assert.That(source, Does.Not.Contain("Array.Copy"));
+                Assert.That(source, Does.Not.Contain(".Dispose("));
+            }
+        }
+
+        [Test]
+        public void Source_ExactLengthAllocation()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.cs"));
+
+            Assert.That(
+                CountOccurrences(source, "new CaptureRunPublicationCaptureCompleteCleanupPreparedStep["),
+                Is.EqualTo(1));
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            int count = 0;
+            int index = 0;
+            while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
+        }
+
         // ---- Forge helpers ----
+
+        private static CaptureRunPublicationCaptureCompleteCleanupExecutionBatch ForgeBatch(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
+                (CaptureRunPublicationCaptureCompleteCleanupExecutionBatch)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch));
+            SetField(batch, "_actionPlan", actionPlan);
+            SetField(batch, "_steps", steps);
+            return batch;
+        }
+
+        private static CaptureRunPublicationCaptureCompleteCleanupPreparedStep ForgePreparedStep(
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths,
+            int stepIndex,
+            CaptureRunPublicationCaptureCompleteCleanupOperation cleanupOperation)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteCleanupPreparedStep));
+            SetField(prepared, "_actionPlan", actionPlan);
+            SetField(prepared, "_publicationPaths", publicationPaths);
+            SetField(prepared, "_markerPaths", markerPaths);
+            SetField(prepared, "_stepIndex", stepIndex);
+            SetField(prepared, "_cleanupOperation", cleanupOperation);
+            return prepared;
+        }
 
         private static CaptureRunPublicationPathSet ForgePublicationPathSet(CaptureRunPublicationPathSet source, string fieldName, string corruptedValue)
         {
