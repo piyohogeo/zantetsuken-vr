@@ -68,14 +68,18 @@ namespace Zantetsu.Observability
             /// cleanup plan in one pass, which proved this execution result
             /// (its batch, action plan, and completed-step receipts). This
             /// mints the result token from that already-validated state without
-            /// re-walking the Artifact/Receipt graph a second time.
+            /// re-walking the Artifact/Receipt graph a second time, but only
+            /// when the caller presents the opaque validation proof produced by
+            /// that pass, so arbitrary code cannot mint a token for an
+            /// unvalidated result.
             /// </summary>
             internal static bool TryAcquireFromValidatedResult(
                 CaptureRunPublicationArtifactRecoveryExecutionResult result,
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof,
                 out ValidationToken token)
             {
                 token = null;
-                if (result == null || result.Batch == null)
+                if (result == null || result.Batch == null || validationProof == null)
                 {
                     return false;
                 }
@@ -86,8 +90,17 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken =
-                    CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(actionPlan);
+                CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken;
+                try
+                {
+                    actionPlanToken =
+                        CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken.AcquireFromValidatedPlan(
+                            actionPlan, validationProof);
+                }
+                catch (ArgumentException)
+                {
+                    return false;
+                }
 
                 token = new ValidationToken(result, actionPlanToken);
                 return true;

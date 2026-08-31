@@ -225,9 +225,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (step.StepIndex != proof.StepIndex
-                        || step.Action != proof.Action
-                        || !ReferenceEquals(step.CleanupOperation, proof.Operation))
+                    if (!step.MatchesIssuedProof(proof.StepIndex, proof.Action, proof.Operation))
                     {
                         return false;
                     }
@@ -246,9 +244,22 @@ namespace Zantetsu.Observability
                 internal PreparedStepProof(CaptureRunPublicationCaptureCompleteCleanupPreparedStep step)
                 {
                     Step = step;
-                    StepIndex = step.StepIndex;
-                    Action = step.Action;
-                    Operation = step.CleanupOperation;
+                    if (step != null
+                        && step.TryGetIssuedIdentity(
+                            out int stepIndex,
+                            out CaptureRunPublicationCaptureCompleteCleanupAction action,
+                            out CaptureRunPublicationCaptureCompleteCleanupOperation operation))
+                    {
+                        StepIndex = stepIndex;
+                        Action = action;
+                        Operation = operation;
+                    }
+                    else
+                    {
+                        StepIndex = -1;
+                        Action = default(CaptureRunPublicationCaptureCompleteCleanupAction);
+                        Operation = null;
+                    }
                 }
             }
         }

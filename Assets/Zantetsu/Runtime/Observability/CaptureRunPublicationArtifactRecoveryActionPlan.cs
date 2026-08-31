@@ -162,14 +162,52 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Non-validating mint reachable only from the single combined plan
-            /// validation: the caller has already proven this action plan valid
-            /// in the same pass, so this must never re-walk the plan. No
-            /// caller-facing API bypasses <see cref="Acquire"/>.
+            /// Non-validating mint gated on an opaque validation proof that only
+            /// the single combined plan validation can produce. The proof must
+            /// be issued for this action plan's exact inspection operation, so
+            /// it cannot mint a token for a different or unvalidated plan.
             /// </summary>
-            internal static ValidationToken AcquireFromValidatedPlan(CaptureRunPublicationArtifactRecoveryActionPlan plan)
+            internal static ValidationToken AcquireFromValidatedPlan(
+                CaptureRunPublicationArtifactRecoveryActionPlan plan,
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof)
             {
+                if (plan == null)
+                {
+                    throw new ArgumentNullException(nameof(plan));
+                }
+
+                if (validationProof == null)
+                {
+                    throw new ArgumentNullException(nameof(validationProof));
+                }
+
+                if (!IsProofBoundToPlan(plan, validationProof))
+                {
+                    throw new ArgumentException(
+                        "Validation proof must be issued for the action plan's inspection operation.",
+                        nameof(validationProof));
+                }
+
                 return new ValidationToken(plan);
+            }
+
+            private static bool IsProofBoundToPlan(
+                CaptureRunPublicationArtifactRecoveryActionPlan plan,
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken validationProof)
+            {
+                CaptureRunPublicationArtifactRecoveryDecision decision = plan.Decision;
+                if (decision == null)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
+                if (snapshot == null)
+                {
+                    return false;
+                }
+
+                return validationProof.IsIssuedFor(snapshot.Operation);
             }
         }
 

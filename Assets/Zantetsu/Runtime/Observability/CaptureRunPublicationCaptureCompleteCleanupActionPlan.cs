@@ -81,6 +81,23 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Exception-safe read of the step at the given index: returns false
+        /// when the step array or the element is missing, so a forged null step
+        /// array never escapes as a NullReferenceException.
+        /// </summary>
+        internal bool TryGetStep(int index, out CaptureRunPublicationCaptureCompleteCleanupStep step)
+        {
+            step = null;
+            if (_steps == null || index < 0 || index >= _steps.Length)
+            {
+                return false;
+            }
+
+            step = _steps[index];
+            return step != null;
+        }
+
+        /// <summary>
         /// Re-derives the expected step count from the current result graph and
         /// compares each held step against its expected value as a virtual
         /// sequence, without allocating any array or step objects and without
@@ -444,6 +461,7 @@ namespace Zantetsu.Observability
 
                 if (!CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquireFromValidatedResult(
                         result.ExecutionResult,
+                        inspectionToken,
                         out CaptureRunPublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken))
                 {
                     return false;
