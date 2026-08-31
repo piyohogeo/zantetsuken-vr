@@ -241,21 +241,14 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// O(1) check that the step at the given index is reference-identical
-        /// to the step the token snapshotted when it was minted, so an in-place
-        /// element replacement within the same array is rejected even though
-        /// the array reference itself is unchanged.
+        /// O(1) check that the step at the given index matches the proof
+        /// snapshot: the same instance (rejecting in-place replacement) and
+        /// the same action/entry-index/artifact-kind values (rejecting
+        /// reflection-based mutation of the step's own fields).
         /// </summary>
         internal bool IsStepIdentityAt(ValidationToken token, int stepIndex)
         {
-            CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
-            CaptureRunPublicationCaptureCompleteCleanupStep issued = token.GetIssuedStep(stepIndex);
-            if (step == null || issued == null || !ReferenceEquals(step, issued))
-            {
-                return false;
-            }
-
-            return step.IsValid;
+            return token.IsIssuedStepIdentityAt(stepIndex, _steps[stepIndex]);
         }
 
         /// <summary>
@@ -305,12 +298,12 @@ namespace Zantetsu.Observability
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan _plan;
             private readonly CaptureRunPublicationArtifactInspectionOperation.ValidationToken _inspectionToken;
-            private readonly CaptureRunPublicationCaptureCompleteCleanupStep[] _issuedSteps;
+            private readonly IssuedStepProof[] _issuedSteps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
                 CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken,
-                CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps)
+                IssuedStepProof[] issuedSteps)
             {
                 _plan = plan;
                 _inspectionToken = inspectionToken;
@@ -320,18 +313,26 @@ namespace Zantetsu.Observability
             internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
 
             /// <summary>
-            /// Number of step references snapshotted at issuance. Exposes only
-            /// the count, never the snapshot array itself.
+            /// Number of step proofs snapshotted at issuance. Exposes only the
+            /// count, never the snapshot array itself.
             /// </summary>
             internal int IssuedStepCount => _issuedSteps.Length;
 
             /// <summary>
-            /// The step reference snapshotted at the given index at issuance.
-            /// Exposes a single element, never the snapshot array itself.
+            /// O(1) check that the current step at the given index is the same
+            /// instance and carries the same action/entry-index/artifact-kind
+            /// values as when the token was minted. Exposes no array and no
+            /// step reference.
             /// </summary>
-            internal CaptureRunPublicationCaptureCompleteCleanupStep GetIssuedStep(int index)
+            internal bool IsIssuedStepIdentityAt(int index, CaptureRunPublicationCaptureCompleteCleanupStep step)
             {
-                return _issuedSteps[index];
+                IssuedStepProof issued = _issuedSteps[index];
+                if (step == null || issued.Step == null || !ReferenceEquals(step, issued.Step))
+                {
+                    return false;
+                }
+
+                return step.Matches(issued.Action, issued.EntryIndex, issued.ArtifactKind);
             }
 
             /// <summary>
@@ -347,38 +348,104 @@ namespace Zantetsu.Observability
             /// <summary>
             /// Performs the full plan validation exactly once (which validates
             /// the plan and its whole inspection graph), then mints the
-            /// inspection token via the plan-proof-gated non-validating mint
-            /// and captures a defensive snapshot of the current step
-            /// references. The snapshot is a separate proof allocation from
-            /// the plan's own step array, so in-place element replacement is
-            /// detectable.
+            /// inspection token via the proof-gated non-validating mint and
+            /// captures a defensive proof snapshot of each current step's
+            /// reference and value triple.
             /// </summary>
             internal static bool TryAcquire(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
                 out ValidationToken token)
             {
                 token = null;
+                if (plan == null)
+                {
+                    return false;
+                }
+
+                if (!ValidationProof.TryMint(plan, out ValidationProof proof))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
+                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaProof(
+                        proof, inspection,
+                        out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken))
+                {
+                    return false;
+                }
+
+                IssuedStepProof[] issuedSteps = new IssuedStepProof[plan._steps.Length];
+                for (int i = 0; i < issuedSteps.Length; i++)
+                {
+                    issuedSteps[i] = new IssuedStepProof(plan._steps[i]);
+                }
+
+                token = new ValidationToken(plan, inspectionToken, issuedSteps);
+                return true;
+            }
+
+            /// <summary>
+            /// Private proof of one issued step: the step instance plus the
+            /// independent value snapshot of its action, entry index, and
+            /// artifact kind. Never exposed outside the token.
+            /// </summary>
+            private readonly struct IssuedStepProof
+            {
+                internal readonly CaptureRunPublicationCaptureCompleteCleanupStep Step;
+                internal readonly CaptureRunPublicationCaptureCompleteCleanupAction Action;
+                internal readonly int EntryIndex;
+                internal readonly CaptureRunPublicationArtifactKind ArtifactKind;
+
+                internal IssuedStepProof(CaptureRunPublicationCaptureCompleteCleanupStep step)
+                {
+                    Step = step;
+                    Action = step.Action;
+                    EntryIndex = step.EntryIndex;
+                    ArtifactKind = step.ArtifactKind;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Unforgeable proof that this plan completed its single-pass full
+        /// validation. The constructor is private, so the proof can only be
+        /// minted by <see cref="TryMint"/> — which performs the full plan
+        /// validation — and never by arbitrary same-assembly callers. The
+        /// proof records the exact inspection operation that was validated.
+        /// </summary>
+        internal sealed class ValidationProof
+        {
+            private readonly CaptureRunPublicationArtifactInspectionOperation _operation;
+
+            private ValidationProof(CaptureRunPublicationArtifactInspectionOperation operation)
+            {
+                _operation = operation;
+            }
+
+            internal bool IsFor(CaptureRunPublicationArtifactInspectionOperation operation)
+            {
+                return operation != null && ReferenceEquals(_operation, operation);
+            }
+
+            /// <summary>
+            /// Mints the proof only after a full, current
+            /// <see cref="CaptureRunPublicationCaptureCompleteCleanupActionPlan.IsValid"/>
+            /// pass succeeds, so holding a proof guarantees the plan and its
+            /// inspection operation were valid at mint time.
+            /// </summary>
+            internal static bool TryMint(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+                out ValidationProof proof)
+            {
+                proof = null;
                 if (plan == null || !plan.IsValid)
                 {
                     return false;
                 }
 
                 CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                if (!CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaValidatedPlan(
-                        plan, inspection,
-                        out CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken))
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps =
-                    new CaptureRunPublicationCaptureCompleteCleanupStep[plan._steps.Length];
-                for (int i = 0; i < issuedSteps.Length; i++)
-                {
-                    issuedSteps[i] = plan._steps[i];
-                }
-
-                token = new ValidationToken(plan, inspectionToken, issuedSteps);
+                proof = new ValidationProof(inspection);
                 return true;
             }
         }

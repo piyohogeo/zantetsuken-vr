@@ -1460,20 +1460,64 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void InspectionToken_NonValidatingMintRequiresCorrelatedPlan()
+        public void InspectionToken_NonValidatingMintRequiresCorrelatedOperation()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             CaptureRunPublicationArtifactInspectionOperation other =
                 BuildPlan(commitRoute: true).OrchestrationResult.InspectionSnapshot.Operation;
 
             // The proof-gated non-validating mint must refuse an operation that
-            // the supplied plan did not inspect, so it cannot be aimed at an
-            // unrelated operation without first validating a correlated plan.
-            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaValidatedPlan(
-                plan, other, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
+            // the validated plan did not inspect, so it cannot be aimed at an
+            // unrelated operation.
+            Assert.That(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof.TryMint(
+                    plan, out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof proof),
+                Is.True);
+
+            bool minted = CaptureRunPublicationArtifactInspectionOperation.ValidationToken.TryAcquireViaProof(
+                proof, other, out CaptureRunPublicationArtifactInspectionOperation.ValidationToken token);
 
             Assert.That(minted, Is.False);
             Assert.That(token, Is.Null);
+        }
+
+        [Test]
+        public void InspectionToken_NonValidatingMintRejectsCorruptedOperationBeforeIssuance()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationArtifactInspectionOperation operation = plan.OrchestrationResult.InspectionSnapshot.Operation;
+
+            // Corrupt the operation before minting. The proof can only be
+            // minted through a full current validation, which must now fail.
+            SetField(operation, "_artifactPaths", null);
+
+            bool minted = CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof.TryMint(
+                plan, out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof proof);
+            Assert.That(minted, Is.False);
+            Assert.That(proof, Is.Null);
+
+            Assert.That(plan.TryValidate(out _), Is.False);
+        }
+
+        [Test]
+        public void TrustedConstructor_StepFieldMutationAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            // Mutate the same step instance's three fields into a different
+            // valid combination; the reference is unchanged, so only a value
+            // snapshot can detect this. Step 0 is a staging-artifact step, so
+            // a publication-plan deletion is a valid but different combination.
+            SetField(plan.GetStep(0), "_action", CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan);
+            SetField(plan.GetStep(0), "_entryIndex", -1);
+            SetField(plan.GetStep(0), "_artifactKind", CaptureRunPublicationArtifactKind.None);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
         }
 
         [Test]

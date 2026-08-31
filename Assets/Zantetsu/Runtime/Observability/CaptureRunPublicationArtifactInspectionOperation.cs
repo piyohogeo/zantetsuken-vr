@@ -84,25 +84,20 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Non-validating mint gated by the plan whose single-pass
-            /// validation already proved this operation valid. The plan's
-            /// inspection operation must be this exact operation, so arbitrary
-            /// callers cannot mint a token for an unrelated or invalid
-            /// operation without first validating a plan that inspected it.
+            /// Non-validating mint gated by an opaque plan validation proof.
+            /// The proof can only be minted by the plan's own single-pass full
+            /// validation (its constructor is private), and the operation must
+            /// be the exact operation that proof validated. Arbitrary callers
+            /// cannot mint a token for a corrupted operation because they can
+            /// never obtain a proof without re-running the full validation.
             /// </summary>
-            internal static bool TryAcquireViaValidatedPlan(
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
+            internal static bool TryAcquireViaProof(
+                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationProof proof,
                 CaptureRunPublicationArtifactInspectionOperation operation,
                 out ValidationToken token)
             {
                 token = null;
-                if (plan == null || operation == null)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactInspectionOperation planInspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                if (!ReferenceEquals(planInspection, operation))
+                if (proof == null || operation == null || !proof.IsFor(operation))
                 {
                     return false;
                 }
