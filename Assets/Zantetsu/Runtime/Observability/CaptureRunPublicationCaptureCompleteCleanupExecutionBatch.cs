@@ -189,16 +189,21 @@ namespace Zantetsu.Observability
 
             /// <summary>
             /// Exception-safe check that this token was minted for the given
-            /// batch, that the batch still holds the exact prepared-step array,
-            /// and that each prepared step is still the same instance and still
-            /// satisfies the shared index-local correlation predicate (action
-            /// plan, publication paths, marker paths, step identity, and
-            /// cleanup operation correlation). Never throws and never exposes
-            /// the prepared-step array.
+            /// batch, that the batch still holds the exact action plan and the
+            /// exact prepared-step array, and that each prepared step is still
+            /// the same instance and still satisfies the shared index-local
+            /// correlation predicate (action plan, publication paths, marker
+            /// paths, step identity, and cleanup operation correlation). Never
+            /// throws and never exposes the prepared-step array.
             /// </summary>
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch)
             {
                 if (batch == null || !ReferenceEquals(_batch, batch) || batch._steps == null)
+                {
+                    return false;
+                }
+
+                if (batch._actionPlan == null || !_actionPlanToken.IsIssuedFor(batch._actionPlan))
                 {
                     return false;
                 }
@@ -229,6 +234,66 @@ namespace Zantetsu.Observability
                     }
                 }
 
+                return true;
+            }
+
+            /// <summary>
+            /// O(1), exception-safe exact-index proof: reports whether this
+            /// token was minted for the given batch and the prepared step at
+            /// <paramref name="index"/> is still the exact issued step. It
+            /// verifies the exact batch reference, the exact action plan
+            /// reference, the exact issued prepared-step array reference, the
+            /// index range, the issued-versus-current element reference, the
+            /// prepared step's own <c>StepIndex</c>, and the prepared step's
+            /// full index-local correlation. Never throws and never exposes the
+            /// prepared-step array.
+            /// </summary>
+            internal bool TryGetIssuedStep(
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
+                int index,
+                out CaptureRunPublicationCaptureCompleteCleanupPreparedStep preparedStep)
+            {
+                preparedStep = null;
+                if (batch == null || !ReferenceEquals(_batch, batch))
+                {
+                    return false;
+                }
+
+                if (batch._actionPlan == null || !_actionPlanToken.IsIssuedFor(batch._actionPlan))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] current = batch._steps;
+                if (current == null || !ReferenceEquals(_issuedStepsArray, current))
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] issued = _issuedSteps;
+                if (issued == null || current.Length != issued.Length
+                    || index < 0 || index >= issued.Length)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep step = current[index];
+                if (step == null || !ReferenceEquals(step, issued[index]))
+                {
+                    return false;
+                }
+
+                if (step.StepIndex != index)
+                {
+                    return false;
+                }
+
+                if (!step.IsValidIndexLocal(_actionPlanToken))
+                {
+                    return false;
+                }
+
+                preparedStep = step;
                 return true;
             }
         }

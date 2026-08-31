@@ -31,29 +31,30 @@ namespace Zantetsu.Observability
         /// Proof that this exact execution result instance and its completed
         /// step sequence were fully validated. The token is bound to the result
         /// by reference, binds to the exact completed-step array and element
-        /// references, and carries the action plan validation token acquired
-        /// during that validation.
+        /// references, and carries the exact batch validation token acquired
+        /// during that validation, so batch action plan replacement, array
+        /// replacement, and reordering after issuance all fail closed.
         /// </summary>
         internal sealed class ValidationToken
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupExecutionResult _result;
-            private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken _actionPlanToken;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken _batchToken;
             private readonly CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] _issuedStepsArray;
             private readonly CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] _issuedSteps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupExecutionResult result,
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken,
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken,
                 CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] issuedStepsArray,
                 CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] issuedSteps)
             {
                 _result = result;
-                _actionPlanToken = actionPlanToken;
+                _batchToken = batchToken;
                 _issuedStepsArray = issuedStepsArray;
                 _issuedSteps = issuedSteps;
             }
 
-            internal CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken ActionPlanToken => _actionPlanToken;
+            internal CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken ActionPlanToken => _batchToken.ActionPlanToken;
 
             /// <summary>
             /// Single atomic validated mint: fully validates the result exactly
@@ -72,13 +73,13 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken;
-                if (!TryAcquireToken(result._batch, out actionPlanToken))
+                CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken;
+                if (!TryAcquireToken(result._batch, out batchToken))
                 {
                     return false;
                 }
 
-                if (!IsCorrelated(result._issuedBy, result._batch, result._completedSteps, actionPlanToken))
+                if (!IsCorrelated(result._issuedBy, result._batch, result._completedSteps, batchToken))
                 {
                     return false;
                 }
@@ -91,7 +92,7 @@ namespace Zantetsu.Observability
                     issued[i] = steps[i];
                 }
 
-                token = new ValidationToken(result, actionPlanToken, steps, issued);
+                token = new ValidationToken(result, batchToken, steps, issued);
                 return true;
             }
 
@@ -131,7 +132,7 @@ namespace Zantetsu.Observability
                     }
                 }
 
-                return result.IsIndexLocalIntact(_actionPlanToken);
+                return result.IsIndexLocalIntact(_batchToken);
             }
         }
 
@@ -155,13 +156,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(completedSteps));
             }
 
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
-            if (!TryAcquireToken(batch, out token))
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken;
+            if (!TryAcquireToken(batch, out batchToken))
             {
                 throw new ArgumentException("Execution batch must be valid.", nameof(batch));
             }
 
-            if (!IsCorrelated(issuedBy, batch, completedSteps, token))
+            if (!IsCorrelated(issuedBy, batch, completedSteps, batchToken))
             {
                 throw new ArgumentException("Completed steps must be fully correlated with the issuing coordinator and batch.", nameof(completedSteps));
             }
@@ -173,15 +174,16 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Token-gated construction path used by a coordinator that has already
-        /// acquired the plan validation token once. It confirms the token binds
-        /// to the batch's action plan and re-verifies the completed-step
-        /// correlation index-locally, never re-running the full plan validation.
+        /// acquired the exact batch validation token once. It confirms the
+        /// token still binds to the exact batch and its prepared-step array and
+        /// re-verifies the completed-step correlation index-locally, never
+        /// re-running the full plan validation.
         /// </summary>
         internal CaptureRunPublicationCaptureCompleteCleanupExecutionResult(
             CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator issuedBy,
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
             CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps,
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
             if (issuedBy == null)
             {
@@ -198,17 +200,17 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(completedSteps));
             }
 
-            if (token == null)
+            if (batchToken == null)
             {
-                throw new ArgumentNullException(nameof(token));
+                throw new ArgumentNullException(nameof(batchToken));
             }
 
-            if (!token.IsIssuedFor(batch.ActionPlan))
+            if (!batchToken.IsIssuedFor(batch))
             {
-                throw new ArgumentException("Token must be issued for the batch's action plan.", nameof(token));
+                throw new ArgumentException("Token must be issued for the exact execution batch.", nameof(batchToken));
             }
 
-            if (!IsCorrelated(issuedBy, batch, completedSteps, token))
+            if (!IsCorrelated(issuedBy, batch, completedSteps, batchToken))
             {
                 throw new ArgumentException("Completed steps must be fully correlated with the issuing coordinator and batch.", nameof(completedSteps));
             }
@@ -264,35 +266,35 @@ namespace Zantetsu.Observability
         /// <summary>
         /// O(n), exception-safe re-check that the completed-step array and its
         /// receipts are still correlated to this result's batch and issuer,
-        /// using an already acquired action plan token.
+        /// using an already acquired exact batch validation token.
         /// </summary>
-        internal bool IsIndexLocalIntact(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken)
+        internal bool IsIndexLocalIntact(CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
-            return IsStepsIndexLocalCorrelated(_issuedBy, _batch, _completedSteps, actionPlanToken);
+            return IsStepsIndexLocalCorrelated(_issuedBy, _batch, _completedSteps, batchToken);
         }
 
         private static bool IsCorrelated(
             CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator issuedBy,
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
             CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps,
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
-            if (issuedBy == null || batch == null || completedSteps == null || token == null)
+            if (issuedBy == null || batch == null || completedSteps == null || batchToken == null)
             {
                 return false;
             }
 
-            return IsStepsIndexLocalCorrelated(issuedBy, batch, completedSteps, token);
+            return IsStepsIndexLocalCorrelated(issuedBy, batch, completedSteps, batchToken);
         }
 
         private static bool IsStepsIndexLocalCorrelated(
             CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator issuedBy,
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
             CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps,
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
-            if (issuedBy == null || batch == null || completedSteps == null || token == null
-                || !batch.IsIndexLocalStructureIntact())
+            if (issuedBy == null || batch == null || completedSteps == null || batchToken == null
+                || !batchToken.IsIssuedFor(batch))
             {
                 return false;
             }
@@ -302,6 +304,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken = batchToken.ActionPlanToken;
+
             for (int i = 0; i < completedSteps.Length; i++)
             {
                 CaptureRunPublicationCaptureCompleteCleanupCompletedStep completed = completedSteps[i];
@@ -310,12 +314,17 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!ReferenceEquals(completed.PreparedStep, batch.GetStep(i)))
+                if (!batchToken.TryGetIssuedStep(batch, i, out CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared))
                 {
                     return false;
                 }
 
-                if (!completed.IsValidIndexLocal(token))
+                if (!ReferenceEquals(completed.PreparedStep, prepared))
+                {
+                    return false;
+                }
+
+                if (!completed.IsValidIndexLocal(actionPlanToken))
                 {
                     return false;
                 }
@@ -332,22 +341,21 @@ namespace Zantetsu.Observability
 
         private static bool TryAcquireToken(
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch,
-            out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+            out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken)
         {
-            token = null;
+            batchToken = null;
 
             if (batch == null)
             {
                 return false;
             }
 
-            if (!batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken))
+            if (!batch.TryValidate(out batchToken))
             {
                 return false;
             }
 
-            token = batchToken.ActionPlanToken;
-            return token != null;
+            return batchToken != null;
         }
 
         private static CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] Copy(

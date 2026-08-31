@@ -70,27 +70,37 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Execution batch must be valid.", nameof(batch));
             }
 
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = batchToken.ActionPlanToken;
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken actionPlanToken = batchToken.ActionPlanToken;
 
+            int count = batch.Count;
             CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completedSteps =
-                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[batch.Count];
+                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[count];
 
-            for (int i = 0; i < batch.Count; i++)
+            for (int i = 0; i < count; i++)
             {
-                CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(i);
+                // Re-prove, immediately before any backend contact, that the
+                // step at the current index is still the exact step the batch
+                // token was minted for. A backend that reorders or replaces the
+                // batch's steps during an earlier call is detected here and the
+                // remaining steps are never contacted.
+                if (!batchToken.TryGetIssuedStep(batch, i, out CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared))
+                {
+                    throw new InvalidOperationException(
+                        "The execution batch must remain the exact validated batch for every step; the prepared step at index " + i + " is no longer the issued step.");
+                }
 
                 CaptureRunPublicationCaptureCompleteCleanupReceipt receipt = null;
                 if (prepared.Action != CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
                 {
                     receipt = _backend.Execute(prepared.CleanupOperation);
-                    VerifyReceipt(receipt, prepared, token);
+                    VerifyReceipt(receipt, prepared, actionPlanToken);
                 }
 
                 completedSteps[i] = new CaptureRunPublicationCaptureCompleteCleanupCompletedStep(
-                    prepared, receipt, token);
+                    prepared, receipt, actionPlanToken);
             }
 
-            return new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(this, batch, completedSteps, token);
+            return new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(this, batch, completedSteps, batchToken);
         }
 
         private void VerifyReceipt(

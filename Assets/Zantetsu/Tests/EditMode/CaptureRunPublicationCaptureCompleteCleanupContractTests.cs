@@ -590,6 +590,8 @@ namespace Zantetsu.Core.Tests
 
             public Exception ExceptionToThrow { get; set; }
 
+            public Action ExecuteMutator { get; set; }
+
             public Func<CaptureRunPublicationCaptureCompleteCleanupOperation, CaptureRunPublicationCaptureCompleteCleanupReceipt> ReceiptOverride { get; set; }
 
             public CaptureRunPublicationCaptureCompleteCleanupReceipt Execute(CaptureRunPublicationCaptureCompleteCleanupOperation operation)
@@ -597,6 +599,8 @@ namespace Zantetsu.Core.Tests
                 CallCount++;
                 LastOperation = operation;
                 _log?.Add("cleanup:" + operation.StepIndex + ":" + operation.Action);
+
+                ExecuteMutator?.Invoke();
 
                 if (ExceptionToThrow != null)
                 {
@@ -2848,6 +2852,29 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.IsIssuedFor(batch), Is.False);
         }
 
+        [Test]
+        public void Batch_Token_TryGetIssuedStep_ExactIndexProof()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken token),
+                Is.True);
+
+            Assert.That(
+                token.TryGetIssuedStep(batch, 0, out CaptureRunPublicationCaptureCompleteCleanupPreparedStep step0),
+                Is.True);
+            Assert.That(ReferenceEquals(step0, batch.GetStep(0)), Is.True);
+
+            Assert.That(token.TryGetIssuedStep(batch, -1, out _), Is.False);
+            Assert.That(token.TryGetIssuedStep(batch, batch.Count, out _), Is.False);
+            Assert.That(token.TryGetIssuedStep(null, 0, out _), Is.False);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch otherBatch = BuildBatch(plan);
+            Assert.That(token.TryGetIssuedStep(otherBatch, 0, out _), Is.False);
+        }
+
         // ---- Execution batch: shape and O(n) ----
 
         [Test]
@@ -3268,6 +3295,87 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Coordinator_StepsInPlaceReorderDuringFirstExecute_StopsBeforeSecondCall()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ExecuteMutator = () =>
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                    (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep swap = steps[1];
+                steps[1] = steps[2];
+                steps[2] = swap;
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+            Assert.That(backend.CallCount, Is.EqualTo(1), "Execution must stop before the second backend call.");
+        }
+
+        [Test]
+        public void Coordinator_StepsArrayReplacementDuringFirstExecute_StopsBeforeSecondCall()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ExecuteMutator = () =>
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] original =
+                    (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+                SetField(batch, "_steps", ((CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone()));
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+            Assert.That(backend.CallCount, Is.EqualTo(1), "Execution must stop before the second backend call.");
+        }
+
+        [Test]
+        public void Coordinator_ForeignPreparedStepDuringFirstExecute_StopsBeforeSecondCall()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch otherBatch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ExecuteMutator = () =>
+            {
+                CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                    (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+                steps[1] = otherBatch.GetStep(1);
+            };
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+            Assert.That(backend.CallCount, Is.EqualTo(1), "Execution must stop before the second backend call.");
+        }
+
+        [Test]
+        public void Coordinator_ActionPlanReplacementDuringFirstExecute_StopsBeforeSecondCall()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan =
+                BuildCommitPlanWithPublicationPlanTemporary();
+
+            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
+            backend.ExecuteMutator = () => SetField(batch, "_actionPlan", otherPlan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+            Assert.That(backend.CallCount, Is.EqualTo(1), "Execution must stop before the second backend call.");
+        }
+
+        [Test]
         public void Result_ArrayDefensiveCopyAndNonExposure()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
@@ -3408,6 +3516,159 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Result_TrustedCtorRejectsForeignBatchToken()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch otherBatch =
+                BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult good = coordinator.Execute(batch);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completed =
+                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[good.Count];
+            for (int i = 0; i < good.Count; i++)
+            {
+                completed[i] = good.GetStep(i);
+            }
+
+            Assert.That(
+                otherBatch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken foreignToken),
+                Is.True);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(coordinator, batch, completed, foreignToken));
+
+            Assert.That(ex.ParamName, Is.EqualTo("batchToken"));
+        }
+
+        [Test]
+        public void Result_TrustedCtorRejectsBatchStepsReorderedAfterToken()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult good = coordinator.Execute(batch);
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep[] completed =
+                new CaptureRunPublicationCaptureCompleteCleanupCompletedStep[good.Count];
+            for (int i = 0; i < good.Count; i++)
+            {
+                completed[i] = good.GetStep(i);
+            }
+
+            Assert.That(
+                batch.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.ValidationToken batchToken),
+                Is.True);
+
+            // Reorder the batch's prepared steps after the token was minted.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] preparedSteps =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep preparedSwap = preparedSteps[1];
+            preparedSteps[1] = preparedSteps[2];
+            preparedSteps[2] = preparedSwap;
+
+            // Mirror the reorder in the completed steps so a correlation that
+            // only compared the current array contents would accept them.
+            CaptureRunPublicationCaptureCompleteCleanupCompletedStep completedSwap = completed[1];
+            completed[1] = completed[2];
+            completed[2] = completedSwap;
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupExecutionResult(coordinator, batch, completed, batchToken));
+        }
+
+        [Test]
+        public void Result_TokenDetectsBatchActionPlanReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(result), Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan otherPlan = BuildCommitPlanWithPublicationPlanTemporary();
+            SetField(result.Batch, "_actionPlan", otherPlan);
+
+            Assert.That(token.IsIssuedFor(result), Is.False);
+        }
+
+        [Test]
+        public void Result_TokenDetectsBatchStepsArrayReplacement()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(result), Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] original =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(result.Batch, "_steps");
+            SetField(result.Batch, "_steps", ((CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone()));
+
+            Assert.That(token.IsIssuedFor(result), Is.False);
+        }
+
+        [Test]
+        public void Result_TokenDetectsBatchStepsInPlaceReorder()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token),
+                Is.True);
+            Assert.That(token.IsIssuedFor(result), Is.True);
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] steps =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(result.Batch, "_steps");
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep swap = steps[1];
+            steps[1] = steps[2];
+            steps[2] = swap;
+
+            Assert.That(token.IsIssuedFor(result), Is.False);
+        }
+
+        [Test]
+        public void Result_TokenFailsClosedOnCorruptedBatchWithoutThrowing()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(new FakePublicationCleanupBackend());
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+            Assert.That(
+                result.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken token),
+                Is.True);
+
+            SetField(result.Batch, "_steps", null);
+            Assert.That(token.IsIssuedFor(result), Is.False);
+
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch secondBatch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
+            CaptureRunPublicationCaptureCompleteCleanupExecutionResult second = coordinator.Execute(secondBatch);
+            Assert.That(
+                second.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupExecutionResult.ValidationToken secondToken),
+                Is.True);
+
+            SetField(second.Batch, "_actionPlan", null);
+            Assert.That(secondToken.IsIssuedFor(second), Is.False);
+        }
+
+        [Test]
         public void CompletedStep_ReceiptExclusivityTable()
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
@@ -3523,7 +3784,7 @@ namespace Zantetsu.Core.Tests
             string coordinatorSource = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"));
 
-            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < batch.Count; i++)", StringComparison.Ordinal);
+            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < count; i++)", StringComparison.Ordinal);
             Assert.That(loopIndex, Is.GreaterThan(0));
 
             int resultIndex = coordinatorSource.IndexOf("return new CaptureRunPublicationCaptureCompleteCleanupExecutionResult", StringComparison.Ordinal);
