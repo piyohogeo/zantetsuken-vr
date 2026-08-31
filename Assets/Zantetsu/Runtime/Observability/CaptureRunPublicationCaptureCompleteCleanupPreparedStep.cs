@@ -130,8 +130,11 @@ namespace Zantetsu.Observability
         /// <summary>
         /// O(1), exception-safe index-local check: the token must bind to the
         /// plan's exact step array, the nested structure must be intact, and a
-        /// side-effecting step must hold exactly one correlated cleanup
-        /// operation while <c>CaptureCompleteReady</c> holds none.
+        /// side-effecting step must hold exactly one cleanup operation whose
+        /// full token-gated correlation is re-verified, while
+        /// <c>CaptureCompleteReady</c> holds none but still re-confirms the
+        /// exact publication path set instance, both path sets' validity and
+        /// root layout correlation, and lease liveness.
         /// </summary>
         internal bool IsValidIndexLocal(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
@@ -170,7 +173,16 @@ namespace Zantetsu.Observability
 
             if (action == CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady)
             {
-                return _cleanupOperation == null;
+                if (_cleanupOperation != null)
+                {
+                    return false;
+                }
+
+                return ReferenceEquals(_publicationPaths, PublicationInspectionPaths())
+                    && ReferenceEquals(_publicationPaths.RootLayout, _actionPlan.RootLayout)
+                    && _publicationPaths.IsValid
+                    && ReferenceEquals(_markerPaths.RootLayout, _actionPlan.RootLayout)
+                    && _markerPaths.IsValid;
             }
 
             if (_cleanupOperation == null)
@@ -180,29 +192,56 @@ namespace Zantetsu.Observability
 
             if (!ReferenceEquals(_cleanupOperation.ActionPlan, _actionPlan)
                 || !ReferenceEquals(_cleanupOperation.PublicationPaths, _publicationPaths)
-                || !ReferenceEquals(_cleanupOperation.MarkerPaths, _markerPaths))
-            {
-                return false;
-            }
-
-            if (_cleanupOperation.StepIndex != _stepIndex)
-            {
-                return false;
-            }
-
-            if (_cleanupOperation.Action != action
+                || !ReferenceEquals(_cleanupOperation.MarkerPaths, _markerPaths)
+                || _cleanupOperation.StepIndex != _stepIndex
+                || _cleanupOperation.Action != action
                 || _cleanupOperation.EntryIndex != step.EntryIndex
                 || _cleanupOperation.ArtifactKind != step.ArtifactKind)
             {
                 return false;
             }
 
-            if (string.IsNullOrEmpty(_cleanupOperation.TargetPath))
+            // Re-verify the operation's full token-gated correlation, including
+            // the exact path set instance and validity, lease liveness,
+            // inspection correlation, artifact path set and observation
+            // index-local validity, evidence status, and plan entry correlation.
+            return _cleanupOperation.IsValidIndexLocal(token);
+        }
+
+        private CaptureRunPublicationPathSet PublicationInspectionPaths()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result =
+                _actionPlan == null ? null : _actionPlan.OrchestrationResult;
+            if (result == null)
             {
-                return false;
+                return null;
             }
 
-            return true;
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            if (snapshot == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryDecision decision = snapshot.Decision;
+            if (decision == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = decision.Snapshot;
+            if (publicationSnapshot == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryInspectionOperation publicationInspection = publicationSnapshot.Operation;
+            if (publicationInspection == null)
+            {
+                return null;
+            }
+
+            return publicationInspection.PublicationPaths;
         }
     }
 }

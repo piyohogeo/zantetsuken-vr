@@ -114,8 +114,9 @@ namespace Zantetsu.Observability
         /// Performs the full plan validation and token acquisition exactly once,
         /// then verifies the prepared-step array length, per-step correlation,
         /// shared path set identity, step order, and terminal
-        /// <c>CaptureCompleteReady</c> position. The returned token can be
-        /// reused by the execution coordinator.
+        /// <c>CaptureCompleteReady</c> position. The returned token is non-null
+        /// only when every check succeeds, so the execution coordinator can
+        /// reuse it as proof of a fully valid batch.
         /// </summary>
         internal bool TryValidate(out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
@@ -126,11 +127,22 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!_actionPlan.TryValidate(out token))
+            if (!_actionPlan.TryValidate(out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken acquired))
             {
                 return false;
             }
 
+            if (!IsValidatedSequence(acquired))
+            {
+                return false;
+            }
+
+            token = acquired;
+            return true;
+        }
+
+        private bool IsValidatedSequence(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+        {
             if (_steps.Length != _actionPlan.Count)
             {
                 return false;

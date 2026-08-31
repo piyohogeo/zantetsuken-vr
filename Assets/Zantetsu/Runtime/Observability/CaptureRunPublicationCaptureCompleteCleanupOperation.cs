@@ -244,6 +244,22 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// O(1), exception-safe index-local correlation against a plan's
+        /// validation token. It reuses the token-gated correlation path, so a
+        /// prepared step can re-verify its operation after the token was
+        /// issued without re-walking the whole plan, while still re-checking
+        /// the exact publication path set instance and validity, both path
+        /// sets' root layout correlation, lease liveness, inspection
+        /// correlation, and, for artifact steps, the index-local observation
+        /// and artifact path set predicates, evidence status, and plan entry
+        /// correlation.
+        /// </summary>
+        internal bool IsValidIndexLocal(CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
+        {
+            return TryCorrelateTrusted(_actionPlan, _publicationPaths, _markerPaths, _stepIndex, token, out _);
+        }
+
         private CaptureRunPublicationArtifactInspectionOperation InspectionOperation =>
             _actionPlan.OrchestrationResult.InspectionSnapshot.Operation;
 

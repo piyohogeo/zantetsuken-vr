@@ -2251,6 +2251,157 @@ namespace Zantetsu.Core.Tests
             Assert.That(forged.IsValid, Is.False);
         }
 
+        // ---- Execution batch: full token-gated correlation ----
+
+        [Test]
+        public void PreparedStep_SideEffect_ObservationCorruptedAfterToken_IsInvalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(0);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.True);
+
+            CaptureRunPublicationArtifactEntryObservation observation =
+                plan.OrchestrationResult.InspectionSnapshot.GetEntry(0);
+            SetField(observation, "_stagingPngStatus", CaptureRunPublicationEvidenceStatus.Absent);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.False);
+            Assert.That(prepared.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_SideEffect_PathSetCorruptedAfterToken_IsInvalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(0);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.True);
+
+            SetField(GetPublicationPaths(plan), "_publicationPlanPath", null);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.False);
+            Assert.That(prepared.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_SideEffect_OperationInternalSwapAfterToken_IsInvalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupOperation op =
+                new CaptureRunPublicationCaptureCompleteCleanupOperation(plan, publicationPaths, markerPaths, 0, token);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep prepared =
+                ForgePreparedStep(plan, publicationPaths, markerPaths, 0, op);
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.True);
+
+            SetField(op, "_publicationPaths", new CaptureRunPublicationPathSet(plan.RootLayout));
+
+            Assert.That(prepared.IsValidIndexLocal(token), Is.False);
+            Assert.That(prepared.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_Routing_ForeignPathSet_IsInvalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep forged =
+                ForgePreparedStep(plan, new CaptureRunPublicationPathSet(plan.RootLayout), markerPaths, readyIndex, null);
+
+            Assert.That(forged.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_Routing_InvalidPathSet_IsInvalid()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+            int readyIndex = plan.Count - 1;
+
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep forged =
+                ForgePreparedStep(plan, publicationPaths, markerPaths, readyIndex, null);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            Assert.That(forged.IsValidIndexLocal(token), Is.True);
+
+            SetField(publicationPaths, "_publicationPlanPath", null);
+
+            Assert.That(forged.IsValidIndexLocal(token), Is.False);
+            Assert.That(forged.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Batch_TryValidate_NullTokenOnEveryFailure()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] original =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])GetField(batch, "_steps");
+
+            // Length mismatch (shorter).
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] shorter =
+                new CaptureRunPublicationCaptureCompleteCleanupPreparedStep[original.Length - 1];
+            Array.Copy(original, shorter, shorter.Length);
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, shorter));
+
+            // Length mismatch (longer).
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] longer =
+                new CaptureRunPublicationCaptureCompleteCleanupPreparedStep[original.Length + 1];
+            Array.Copy(original, longer, original.Length);
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, longer));
+
+            // Empty array.
+            AssertTryValidateFailsWithNullToken(
+                ForgeBatch(plan, new CaptureRunPublicationCaptureCompleteCleanupPreparedStep[0]));
+
+            // Null element.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] withNull =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            withNull[0] = null;
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, withNull));
+
+            // Reordered elements.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] reordered =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            reordered[0] = original[1];
+            reordered[1] = original[0];
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, reordered));
+
+            // First step with a null publication path set: the plan token was
+            // already acquired, so the later path set check must null it.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] nullPaths =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            nullPaths[0] = ForgePreparedStep(plan, null, batch.GetStep(0).MarkerPaths, 0, null);
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, nullPaths));
+
+            // First step with a null marker path set.
+            CaptureRunPublicationCaptureCompleteCleanupPreparedStep[] nullMarkers =
+                (CaptureRunPublicationCaptureCompleteCleanupPreparedStep[])original.Clone();
+            nullMarkers[0] = ForgePreparedStep(plan, batch.GetStep(0).PublicationPaths, null, 0, null);
+            AssertTryValidateFailsWithNullToken(ForgeBatch(plan, nullMarkers));
+        }
+
+        private static void AssertTryValidateFailsWithNullToken(
+            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch candidate)
+        {
+            bool valid = candidate.TryValidate(
+                out CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token);
+
+            Assert.That(valid, Is.False);
+            Assert.That(token, Is.Null);
+        }
+
         // ---- Execution batch: shape and O(n) ----
 
         [Test]
