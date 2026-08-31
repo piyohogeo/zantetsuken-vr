@@ -1297,6 +1297,99 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void TrustedConstructor_StepSwapAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupStep[] steps = new CaptureRunPublicationCaptureCompleteCleanupStep[plan.Count];
+            for (int i = 0; i < steps.Length; i++)
+            {
+                steps[i] = plan.GetStep(i);
+            }
+
+            steps[0] = new CaptureRunPublicationCaptureCompleteCleanupStep(
+                CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan, -1, CaptureRunPublicationArtifactKind.None);
+            SetField(plan, "_steps", steps);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void TrustedConstructor_StepReorderAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            CaptureRunPublicationCaptureCompleteCleanupStep[] steps = new CaptureRunPublicationCaptureCompleteCleanupStep[plan.Count];
+            for (int i = 0; i < steps.Length; i++)
+            {
+                steps[i] = plan.GetStep(i);
+            }
+
+            CaptureRunPublicationCaptureCompleteCleanupStep tmp = steps[0];
+            steps[0] = steps[1];
+            steps[1] = tmp;
+            SetField(plan, "_steps", steps);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void TrustedConstructor_NullStepsAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan, "_steps", null);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void TrustedConstructor_NullSnapshotEntriesAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan.OrchestrationResult.InspectionSnapshot, "_entries", null);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
+        public void TrustedConstructor_NullArtifactPathsAfterToken_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteCleanupActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan.OrchestrationResult.InspectionSnapshot.Operation, "_artifactPaths", null);
+
+            Assert.That(plan.IsValidIndexLocal(token, 0), Is.False);
+
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteCleanupOperation(
+                    plan, GetPublicationPaths(plan), new CaptureRunMarkerPathSet(plan.RootLayout), 0, token));
+        }
+
+        [Test]
         public void Source_NoUnconditionalCatchInPredicates()
         {
             string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupOperation.cs"));

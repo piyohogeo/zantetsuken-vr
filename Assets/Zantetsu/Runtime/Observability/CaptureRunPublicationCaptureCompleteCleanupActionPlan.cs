@@ -167,35 +167,151 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Issues a validation token only after a full plan and artifact
         /// inspection validation pass. The token is bound to this exact plan
-        /// instance and carries the artifact inspection token so trusted
-        /// consumers can perform index-local validation without re-walking the
-        /// whole plan.
+        /// instance, carries the artifact inspection token, and binds to the
+        /// exact step array so trusted consumers can perform O(1) index-local
+        /// validation without re-walking the whole plan.
         /// </summary>
         internal ValidationToken AcquireValidationToken()
         {
-            return ValidationToken.Acquire(this);
+            if (!TryValidate(out ValidationToken token))
+            {
+                throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
+            }
+
+            return token;
+        }
+
+        /// <summary>
+        /// Single combined validation path: performs the full plan validation
+        /// once, then mints a token bound to this plan, to the artifact
+        /// inspection token, and to the exact step array, without re-walking
+        /// the inspection graph.
+        /// </summary>
+        internal bool TryValidate(out ValidationToken token)
+        {
+            if (!IsValid)
+            {
+                token = null;
+                return false;
+            }
+
+            token = ValidationToken.AcquireTrusted(this);
+            return true;
+        }
+
+        /// <summary>
+        /// O(1), exception-safe index-local check that a validation token still
+        /// matches this plan's current step array at the given index, that the
+        /// step and nested arrays are present, and that the lease is still
+        /// live. Rejects step substitution, reordering, null arrays, and stale
+        /// tokens without walking the whole plan.
+        /// </summary>
+        internal bool IsValidIndexLocal(ValidationToken token, int stepIndex)
+        {
+            if (!IsStepArrayBound(token))
+            {
+                return false;
+            }
+
+            if (stepIndex < 0 || stepIndex >= _steps.Length)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
+            if (step == null || !step.IsValid)
+            {
+                return false;
+            }
+
+            return IsIndexLocalStructureIntact();
+        }
+
+        /// <summary>
+        /// O(1) check that a validation token still binds to this plan's exact
+        /// current step array: the token must be issued for this plan and the
+        /// stored step array must be reference-identical to the array the token
+        /// captured when it was minted. Rejects stale tokens, null arrays, and
+        /// reflection-based step substitution or reordering.
+        /// </summary>
+        internal bool IsStepArrayBound(ValidationToken token)
+        {
+            if (token == null || !token.IsIssuedFor(this))
+            {
+                return false;
+            }
+
+            CaptureRunPublicationCaptureCompleteCleanupStep[] issuedSteps = token.Steps;
+            if (_steps == null || issuedSteps == null || !ReferenceEquals(_steps, issuedSteps))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// O(1), exception-safe check that the index-local core structure this
+        /// plan exposes — its orchestration result, inspection snapshot,
+        /// inspection operation, and live lock lease — is present and
+        /// correlated, so a stale validation token cannot navigate a partially
+        /// corrupted plan.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult result = _orchestrationResult;
+            if (result == null)
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            if (snapshot == null || !snapshot.IsIndexLocalStructureIntact())
+            {
+                return false;
+            }
+
+            CaptureRunPublicationArtifactInspectionOperation inspection = snapshot.Operation;
+            if (inspection == null || !inspection.IsIndexLocalStructureIntact())
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lease = result.LockLease;
+            if (lease == null || !lease.IsCreated || !ReferenceEquals(lease, inspection.LockLease))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
         /// Proof that this plan and its underlying artifact inspection graph
         /// were fully validated at a single point in time. The token is bound
-        /// to the exact plan instance and carries the artifact inspection
-        /// operation's validation token.
+        /// to the exact plan instance, carries the artifact inspection token,
+        /// and binds to the exact step array for index-local step identity
+        /// checks.
         /// </summary>
         internal sealed class ValidationToken
         {
             private readonly CaptureRunPublicationCaptureCompleteCleanupActionPlan _plan;
             private readonly CaptureRunPublicationArtifactInspectionOperation.ValidationToken _inspectionToken;
+            private readonly CaptureRunPublicationCaptureCompleteCleanupStep[] _steps;
 
             private ValidationToken(
                 CaptureRunPublicationCaptureCompleteCleanupActionPlan plan,
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken)
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken,
+                CaptureRunPublicationCaptureCompleteCleanupStep[] steps)
             {
                 _plan = plan;
                 _inspectionToken = inspectionToken;
+                _steps = steps;
             }
 
             internal CaptureRunPublicationArtifactInspectionOperation.ValidationToken InspectionToken => _inspectionToken;
+
+            internal CaptureRunPublicationCaptureCompleteCleanupStep[] Steps => _steps;
 
             /// <summary>
             /// Reports whether this token was issued for the given plan. The
@@ -207,22 +323,24 @@ namespace Zantetsu.Observability
                 return plan != null && ReferenceEquals(_plan, plan);
             }
 
-            internal static ValidationToken Acquire(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
+            /// <summary>
+            /// Mints a token without re-validating. The caller must have just
+            /// completed a full validation of the plan and its inspection
+            /// graph. The token binds to the plan's current step array without
+            /// copying it.
+            /// </summary>
+            internal static ValidationToken AcquireTrusted(CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
             {
                 if (plan == null)
                 {
                     throw new ArgumentNullException(nameof(plan));
                 }
 
-                if (!plan.IsValid)
-                {
-                    throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
-                }
-
                 CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
-                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken = inspection.AcquireValidationToken();
+                CaptureRunPublicationArtifactInspectionOperation.ValidationToken inspectionToken =
+                    CaptureRunPublicationArtifactInspectionOperation.ValidationToken.AcquireTrusted(inspection);
 
-                return new ValidationToken(plan, inspectionToken);
+                return new ValidationToken(plan, inspectionToken, plan._steps);
             }
         }
 

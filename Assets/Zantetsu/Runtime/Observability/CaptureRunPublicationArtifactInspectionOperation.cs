@@ -63,6 +63,22 @@ namespace Zantetsu.Observability
 
                 return new ValidationToken(operation);
             }
+
+            /// <summary>
+            /// Mints a token without re-validating the operation. Only callers
+            /// that have already completed a full validation of the operation
+            /// graph (for example the action plan's combined validation path)
+            /// may use this.
+            /// </summary>
+            internal static ValidationToken AcquireTrusted(CaptureRunPublicationArtifactInspectionOperation operation)
+            {
+                if (operation == null)
+                {
+                    throw new ArgumentNullException(nameof(operation));
+                }
+
+                return new ValidationToken(operation);
+            }
         }
 
         /// <summary>
@@ -209,6 +225,16 @@ namespace Zantetsu.Observability
 
             paths = _artifactPaths[index];
             return true;
+        }
+
+        /// <summary>
+        /// O(1), exception-safe check that the index-local core structure this
+        /// operation exposes — its artifact path array — is present, so a stale
+        /// validation token cannot navigate a partially corrupted operation.
+        /// </summary>
+        internal bool IsIndexLocalStructureIntact()
+        {
+            return _artifactPaths != null;
         }
 
         /// <summary>
