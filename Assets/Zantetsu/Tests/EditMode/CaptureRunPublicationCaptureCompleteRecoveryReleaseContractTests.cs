@@ -865,8 +865,77 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation second = MakeReleaseOperation();
 
             // Swap second's proof to first's proof: the proof no longer binds.
-            SetField(second, "_issuanceProof", first.Proof);
+            SetField(second, "_issuanceProof", GetField(first, "_issuanceProof"));
+            Assert.That(second.IsValid, Is.False);
             Assert.That(second.CanRelease, Is.False);
+        }
+
+        [Test]
+        public void Operation_SameEvidenceProofSwap_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation a =
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation b =
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence);
+
+            // Same evidence (same outcome and lease), different operations.
+            Assert.That(a.IsValid, Is.True);
+            Assert.That(b.IsValid, Is.True);
+
+            SetField(b, "_issuanceProof", GetField(a, "_issuanceProof"));
+            Assert.That(b.IsValid, Is.False);
+            Assert.That(b.CanRelease, Is.False);
+        }
+
+        [Test]
+        public void Operation_PostIssuanceReferenceSwap_RejectedByCanReleaseAndReceipt()
+        {
+            // Evidence reference swap after issuance.
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            SetField(operation, "_lifecycleEvidence", MakeRecoveryEvidence());
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(operation.CanRelease, Is.False);
+
+            // Notification reference swap after issuance: CanRelease false and
+            // the receipt rejects even after the outcome is released.
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation2 = MakeReleaseOperation();
+            SetField(operation2, "_notificationResult", MakeNotificationResult(commitRoute: true));
+            Assert.That(operation2.IsValid, Is.False);
+            Assert.That(operation2.CanRelease, Is.False);
+
+            operation2.OpenOutcome.Dispose();
+            FakeReleaser releaser = new FakeReleaser();
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation2));
+        }
+
+        [Test]
+        public void Operation_ProofGetterAbsent()
+        {
+            Assert.That(
+                typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation).GetProperty(
+                    "Proof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+            Assert.That(
+                typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation).GetProperty(
+                    "IssuanceProof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+        }
+
+        [Test]
+        public void IssuanceProof_MintRequiresOperationNotReferences()
+        {
+            Type proofType = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation).GetNestedType(
+                "IssuanceProof", BindingFlags.NonPublic);
+            Assert.That(proofType, Is.Not.Null);
+            Assert.That(proofType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            MethodInfo acquire = proofType.GetMethod("Acquire", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(acquire, Is.Not.Null);
+            ParameterInfo[] parameters = acquire.GetParameters();
+            Assert.That(parameters.Length, Is.EqualTo(1));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation)));
         }
 
         // ---- Partial release failure and retry ----

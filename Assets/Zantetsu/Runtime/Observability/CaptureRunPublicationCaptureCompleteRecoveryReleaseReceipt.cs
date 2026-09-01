@@ -102,8 +102,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.IssuanceProof proof = operation.Proof;
-            if (proof == null || !proof.IsIssuedFor(operation))
+            if (!operation.IsIssuanceProofIntact)
             {
                 return false;
             }

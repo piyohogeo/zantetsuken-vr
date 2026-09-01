@@ -37,9 +37,12 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The nested <see cref="IssuanceProof"/> is an opaque correlation proof
-    /// minted only inside <see cref="From"/>. Its constructor is private and it
-    /// binds to the exact open outcome and lock lease, so a proof cannot be
-    /// reused for a different owner.
+    /// minted only inside <see cref="From"/>. Its constructor is private and
+    /// it binds to this exact operation's private issuance nonce and to the
+    /// issuance-time evidence, notification result, open outcome, and lock
+    /// lease, so a proof cannot be reused for a different operation — even one
+    /// built from the same evidence — and cannot be minted for arbitrary
+    /// references.
     /// </para>
     /// <para>
     /// This type performs no filesystem work, owns and disposes nothing, and is
@@ -50,43 +53,58 @@ namespace Zantetsu.Observability
     {
         /// <summary>
         /// Opaque proof minted only inside <see cref="From"/> after the full
-        /// issuance validation. It binds to the exact open outcome and lock
-        /// lease, so it is not fabricable by callers and cannot be reused for
-        /// an operation whose owner was substituted.
+        /// issuance validation. It binds to this exact operation's private
+        /// issuance nonce and to the issuance-time evidence, notification
+        /// result, open outcome, and lock lease, so it cannot be reused for a
+        /// different operation — even one built from the same evidence — and
+        /// cannot be minted for arbitrary references.
         /// </summary>
         internal sealed class IssuanceProof
         {
+            private readonly object _nonce;
+            private readonly CaptureRunPublicationCaptureCompleteLifecycleEvidence _evidence;
+            private readonly CaptureRunPublicationCaptureCompleteNotificationResult _notificationResult;
             private readonly CaptureRunInitializationOpenOutcome _openOutcome;
             private readonly CaptureRunLockLease _lockLease;
 
-            private IssuanceProof(CaptureRunInitializationOpenOutcome openOutcome, CaptureRunLockLease lockLease)
+            private IssuanceProof(
+                object nonce,
+                CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence,
+                CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
+                CaptureRunInitializationOpenOutcome openOutcome,
+                CaptureRunLockLease lockLease)
             {
+                _nonce = nonce;
+                _evidence = evidence;
+                _notificationResult = notificationResult;
                 _openOutcome = openOutcome;
                 _lockLease = lockLease;
             }
 
             internal static IssuanceProof Acquire(
-                CaptureRunInitializationOpenOutcome openOutcome,
-                CaptureRunLockLease lockLease)
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
             {
-                if (openOutcome == null)
+                if (operation == null)
                 {
-                    throw new ArgumentNullException(nameof(openOutcome));
+                    throw new ArgumentNullException(nameof(operation));
                 }
 
-                if (lockLease == null)
-                {
-                    throw new ArgumentNullException(nameof(lockLease));
-                }
-
-                return new IssuanceProof(openOutcome, lockLease);
+                return new IssuanceProof(
+                    operation._issuanceNonce,
+                    operation._lifecycleEvidence,
+                    operation._notificationResult,
+                    operation._openOutcome,
+                    operation._lockLease);
             }
 
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
             {
                 return operation != null
-                    && ReferenceEquals(operation.OpenOutcome, _openOutcome)
-                    && ReferenceEquals(operation.LockLease, _lockLease);
+                    && ReferenceEquals(operation._issuanceNonce, _nonce)
+                    && ReferenceEquals(operation._lifecycleEvidence, _evidence)
+                    && ReferenceEquals(operation._notificationResult, _notificationResult)
+                    && ReferenceEquals(operation._openOutcome, _openOutcome)
+                    && ReferenceEquals(operation._lockLease, _lockLease);
             }
         }
 
@@ -94,6 +112,7 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationCaptureCompleteNotificationResult _notificationResult;
         private readonly CaptureRunInitializationOpenOutcome _openOutcome;
         private readonly CaptureRunLockLease _lockLease;
+        private readonly object _issuanceNonce;
         private readonly IssuanceProof _issuanceProof;
 
         private CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation(
@@ -103,7 +122,8 @@ namespace Zantetsu.Observability
             _notificationResult = lifecycleEvidence.NotificationResult;
             _openOutcome = lifecycleEvidence.OpenOutcome;
             _lockLease = lifecycleEvidence.LockLease;
-            _issuanceProof = IssuanceProof.Acquire(_openOutcome, _lockLease);
+            _issuanceNonce = new object();
+            _issuanceProof = IssuanceProof.Acquire(this);
         }
 
         internal static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation From(
@@ -142,45 +162,35 @@ namespace Zantetsu.Observability
 
         internal string CaptureIndexPath => _notificationResult.CaptureIndexPath;
 
-        internal IssuanceProof Proof => _issuanceProof;
+        /// <summary>
+        /// Exception-safe predicate shared by <see cref="IsValid"/>,
+        /// <see cref="CanRelease"/>, and the release receipt: the issuance
+        /// proof must still bind to this exact operation and to its
+        /// issuance-time evidence, notification result, open outcome, and lock
+        /// lease. <c>false</c> when any of those references was swapped or
+        /// forged after issuance.
+        /// </summary>
+        internal bool IsIssuanceProofIntact => _issuanceProof != null && _issuanceProof.IsIssuedFor(this);
 
         /// <summary>
         /// Exception-safe recomputation of the full issuance correlation.
-        /// <c>false</c> after the lease is released or the evidence, outcome,
-        /// lease, or proof is forged, replaced, or corrupted.
+        /// <c>false</c> once the lease is released or when the proof, evidence,
+        /// outcome, lease, or notification result is forged, replaced, or
+        /// corrupted.
         /// </summary>
-        internal bool IsValid
-        {
-            get
-            {
-                if (_lifecycleEvidence == null || _issuanceProof == null)
-                {
-                    return false;
-                }
-
-                if (!ReferenceEquals(_openOutcome, _lifecycleEvidence.OpenOutcome)
-                    || !ReferenceEquals(_lockLease, _lifecycleEvidence.LockLease)
-                    || !ReferenceEquals(_notificationResult, _lifecycleEvidence.NotificationResult))
-                {
-                    return false;
-                }
-
-                return IsCorrelated(_lifecycleEvidence);
-            }
-        }
+        internal bool IsValid => IsIssuanceProofIntact && IsCorrelated(_lifecycleEvidence);
 
         /// <summary>
-        /// Exception-safe retryable condition after issuance: the exact open
-        /// outcome must still be created and the issuance proof must still bind
-        /// to the operation's current owner. It intentionally does not require
-        /// the lock lease to be created, so a partially released lease can be
-        /// retried.
+        /// Exception-safe retryable condition after issuance: the issuance proof
+        /// must still bind to this exact operation and the exact open outcome
+        /// must still be created. It intentionally does not require the lock
+        /// lease to be created, so a partially released lease can be retried.
         /// </summary>
         internal bool CanRelease
         {
             get
             {
-                if (_issuanceProof == null || !_issuanceProof.IsIssuedFor(this))
+                if (!IsIssuanceProofIntact)
                 {
                     return false;
                 }
