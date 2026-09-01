@@ -131,6 +131,35 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("Thread"));
         }
 
+        private static string ExtractMethodBody(string source, string signatureMarker)
+        {
+            int start = source.IndexOf(signatureMarker, StringComparison.Ordinal);
+            Assert.That(start, Is.GreaterThanOrEqualTo(0), "Method not found: " + signatureMarker);
+
+            int open = source.IndexOf('{', start);
+            Assert.That(open, Is.GreaterThanOrEqualTo(0), "Opening brace not found for: " + signatureMarker);
+
+            int depth = 0;
+            for (int i = open; i < source.Length; i++)
+            {
+                if (source[i] == '{')
+                {
+                    depth++;
+                }
+                else if (source[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        return source.Substring(open, i - open + 1);
+                    }
+                }
+            }
+
+            Assert.Fail("Unbalanced braces for method: " + signatureMarker);
+            return null;
+        }
+
         // ---- Fakes ----
 
         private sealed class FakeHandle : ICaptureRunLockHandle
@@ -1029,15 +1058,40 @@ namespace Zantetsu.Core.Tests
 
             AssertNoForbiddenDependencies(source);
 
-            Assert.That(CountOccurrences(source, "recoveryDecision.IsValid"), Is.EqualTo(2));
-            Assert.That(CountOccurrences(source, "freshSeed.IsValid"), Is.EqualTo(2));
-            Assert.That(source, Does.Not.Contain("snapshot.IsValid"));
-            Assert.That(source, Does.Not.Contain("plan.IsValid"));
-            Assert.That(source, Does.Not.Contain("binding.IsValid"));
-            Assert.That(source, Does.Not.Contain("genericPlan.IsValid"));
-            Assert.That(source, Does.Not.Contain("legacyPlan.IsValid"));
-            Assert.That(source, Does.Not.Contain("frozen.IsValid"));
-            Assert.That(source, Does.Not.Contain("FrozenPublicationResult.IsValid"));
+            // Each input's full validation runs exactly once, inside its
+            // predicate; the factories delegate and never call it directly.
+            Assert.That(CountOccurrences(source, "recoveryDecision.IsValid"), Is.EqualTo(1));
+            Assert.That(CountOccurrences(source, "freshSeed.IsValid"), Is.EqualTo(1));
+
+            string fromRecovery = ExtractMethodBody(source, "static PngJsonCapturePublicationArtifactInspectionAuthority FromRecovery(");
+            string fromFresh = ExtractMethodBody(source, "static PngJsonCapturePublicationArtifactInspectionAuthority FromFresh(");
+            string recoveryPredicate = ExtractMethodBody(source, "static bool IsRecoveryDecisionCorrelated(");
+            string freshPredicate = ExtractMethodBody(source, "static bool IsFreshSeedCorrelated(");
+
+            Assert.That(fromRecovery, Does.Not.Contain("recoveryDecision.IsValid"));
+            Assert.That(CountOccurrences(fromRecovery, "IsRecoveryDecisionCorrelated("), Is.EqualTo(1));
+            Assert.That(fromFresh, Does.Not.Contain("freshSeed.IsValid"));
+            Assert.That(CountOccurrences(fromFresh, "IsFreshSeedCorrelated("), Is.EqualTo(1));
+
+            // Each predicate runs the input's full validation exactly once and
+            // then only non-null guards, reference identity, value equality,
+            // and lease liveness — never a child graph bare IsValid.
+            Assert.That(CountOccurrences(recoveryPredicate, "recoveryDecision.IsValid"), Is.EqualTo(1));
+            Assert.That(recoveryPredicate, Does.Not.Contain("snapshot.IsValid"));
+            Assert.That(recoveryPredicate, Does.Not.Contain("operation.IsValid"));
+            Assert.That(recoveryPredicate, Does.Not.Contain("publicationPaths.IsValid"));
+            Assert.That(recoveryPredicate, Does.Not.Contain("rootLayout.IsValid"));
+            Assert.That(recoveryPredicate, Does.Not.Contain("plan.IsValid"));
+
+            Assert.That(CountOccurrences(freshPredicate, "freshSeed.IsValid"), Is.EqualTo(1));
+            Assert.That(freshPredicate, Does.Not.Contain("binding.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("frozen.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("FrozenPublicationResult.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("genericPlan.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("legacyPlan.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("rootLayout.IsValid"));
+            Assert.That(freshPredicate, Does.Not.Contain("publicationPaths.IsValid"));
+
             Assert.That(source, Does.Not.Contain("new CaptureRunPublicationPathSet"));
             Assert.That(source, Does.Not.Contain("new PngJsonCapturePublicationPlan"));
             Assert.That(source, Does.Not.Contain("new CaptureRunPublicationRecoveryInspectionSnapshot"));

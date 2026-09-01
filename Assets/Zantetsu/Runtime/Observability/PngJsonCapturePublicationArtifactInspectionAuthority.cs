@@ -64,11 +64,6 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(recoveryDecision));
             }
 
-            if (!recoveryDecision.IsValid)
-            {
-                throw new ArgumentException("Recovery decision must remain valid.", nameof(recoveryDecision));
-            }
-
             if (!IsRecoveryDecisionCorrelated(recoveryDecision))
             {
                 throw new ArgumentException(
@@ -90,11 +85,6 @@ namespace Zantetsu.Observability
             if (freshSeed == null)
             {
                 throw new ArgumentNullException(nameof(freshSeed));
-            }
-
-            if (!freshSeed.IsValid)
-            {
-                throw new ArgumentException("Fresh seed must remain valid.", nameof(freshSeed));
             }
 
             if (!IsFreshSeedCorrelated(freshSeed))
@@ -338,19 +328,19 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationRecoveryInspectionOperation operation = snapshot.Operation;
-            if (operation == null || !operation.IsValid)
+            if (operation == null)
             {
                 return false;
             }
 
             CaptureRunPublicationPathSet publicationPaths = operation.PublicationPaths;
-            if (publicationPaths == null || !publicationPaths.IsValid)
+            if (publicationPaths == null)
             {
                 return false;
             }
 
             CaptureRunRootLayout rootLayout = recoveryDecision.RootLayout;
-            if (rootLayout == null || !rootLayout.IsValid)
+            if (rootLayout == null)
             {
                 return false;
             }
@@ -417,7 +407,7 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunRootLayout rootLayout = freshSeed.RootLayout;
-            if (rootLayout == null || !rootLayout.IsValid)
+            if (rootLayout == null)
             {
                 return false;
             }
