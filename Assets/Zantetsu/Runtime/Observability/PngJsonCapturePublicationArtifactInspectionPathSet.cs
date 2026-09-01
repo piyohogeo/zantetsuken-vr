@@ -53,25 +53,21 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(authority));
             }
 
-            if (!PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.TryAcquire(authority, out _))
+            if (!PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.TryAcquire(
+                authority,
+                out PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token))
             {
                 throw new ArgumentException("Authority must be fully valid.", nameof(authority));
             }
 
-            Derive(
-                authority,
-                entryIndex,
-                out string stagingPngPath,
-                out string stagingSidecarPath,
-                out string finalPngPath,
-                out string finalSidecarPath);
+            PngJsonCapturePublicationArtifactInspectionPathSet built = CreateIndexLocal(token, authority, entryIndex);
 
-            _authority = authority;
-            _entryIndex = entryIndex;
-            _stagingPngPath = stagingPngPath;
-            _stagingSidecarPath = stagingSidecarPath;
-            _finalPngPath = finalPngPath;
-            _finalSidecarPath = finalSidecarPath;
+            _authority = built._authority;
+            _entryIndex = built._entryIndex;
+            _stagingPngPath = built._stagingPngPath;
+            _stagingSidecarPath = built._stagingSidecarPath;
+            _finalPngPath = built._finalPngPath;
+            _finalSidecarPath = built._finalSidecarPath;
         }
 
         private PngJsonCapturePublicationArtifactInspectionPathSet(
@@ -175,6 +171,31 @@ namespace Zantetsu.Observability
             if (authority == null)
             {
                 throw new ArgumentNullException(nameof(authority));
+            }
+
+            if (!token.IsIssuedFor(authority))
+            {
+                throw new ArgumentException("Token must be issued for the exact authority.", nameof(token));
+            }
+
+            PngJsonCapturePublicationPlan plan;
+            try
+            {
+                plan = authority.AuthoritativePlan;
+            }
+            catch (Exception)
+            {
+                throw new ArgumentException("Authority graph must remain uncorrupted.", nameof(authority));
+            }
+
+            if (plan == null)
+            {
+                throw new ArgumentException("Authority must hold an authoritative plan.", nameof(authority));
+            }
+
+            if (entryIndex < 0 || entryIndex >= plan.EntryCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(entryIndex), entryIndex, "Entry index must be within the authoritative plan entry count.");
             }
 
             if (!token.IsIndexLocalCorrelated(authority, entryIndex))

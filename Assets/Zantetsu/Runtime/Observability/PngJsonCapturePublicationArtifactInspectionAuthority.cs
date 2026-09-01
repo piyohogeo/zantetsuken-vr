@@ -500,7 +500,56 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationPlan _plan;
             private readonly CaptureRunPublicationPathSet _publicationPaths;
             private readonly CaptureRunRootLayout _rootLayout;
-            private readonly PngJsonCapturePublicationPlanEntry[] _entries;
+            private readonly EntrySnapshot[] _entries;
+
+            /// <summary>
+            /// Immutable snapshot of one plan entry's exact reference and all
+            /// nine value fields, captured once at token issuance so that a
+            /// later reference or value mutation is detected at the target
+            /// index in O(1).
+            /// </summary>
+            private readonly struct EntrySnapshot
+            {
+                private readonly PngJsonCapturePublicationPlanEntry _entry;
+                private readonly long _captureFrameId;
+                private readonly string _pngStagingRelativePath;
+                private readonly string _sidecarStagingRelativePath;
+                private readonly string _pngFinalRelativePath;
+                private readonly string _sidecarFinalRelativePath;
+                private readonly long _pngByteLength;
+                private readonly long _sidecarByteLength;
+                private readonly string _pngContentSha256;
+                private readonly string _sidecarContentSha256;
+
+                internal EntrySnapshot(PngJsonCapturePublicationPlanEntry entry)
+                {
+                    _entry = entry;
+                    _captureFrameId = entry.CaptureFrameId;
+                    _pngStagingRelativePath = entry.PngStagingRelativePath;
+                    _sidecarStagingRelativePath = entry.SidecarStagingRelativePath;
+                    _pngFinalRelativePath = entry.PngFinalRelativePath;
+                    _sidecarFinalRelativePath = entry.SidecarFinalRelativePath;
+                    _pngByteLength = entry.PngByteLength;
+                    _sidecarByteLength = entry.SidecarByteLength;
+                    _pngContentSha256 = entry.PngContentSha256;
+                    _sidecarContentSha256 = entry.SidecarContentSha256;
+                }
+
+                internal bool Matches(PngJsonCapturePublicationPlanEntry entry)
+                {
+                    return entry != null
+                        && ReferenceEquals(_entry, entry)
+                        && _captureFrameId == entry.CaptureFrameId
+                        && string.Equals(_pngStagingRelativePath, entry.PngStagingRelativePath, StringComparison.Ordinal)
+                        && string.Equals(_sidecarStagingRelativePath, entry.SidecarStagingRelativePath, StringComparison.Ordinal)
+                        && string.Equals(_pngFinalRelativePath, entry.PngFinalRelativePath, StringComparison.Ordinal)
+                        && string.Equals(_sidecarFinalRelativePath, entry.SidecarFinalRelativePath, StringComparison.Ordinal)
+                        && _pngByteLength == entry.PngByteLength
+                        && _sidecarByteLength == entry.SidecarByteLength
+                        && string.Equals(_pngContentSha256, entry.PngContentSha256, StringComparison.Ordinal)
+                        && string.Equals(_sidecarContentSha256, entry.SidecarContentSha256, StringComparison.Ordinal);
+                }
+            }
 
             private ValidationToken(
                 PngJsonCapturePublicationArtifactInspectionAuthority authority,
@@ -508,7 +557,7 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationPlan plan,
                 CaptureRunPublicationPathSet publicationPaths,
                 CaptureRunRootLayout rootLayout,
-                PngJsonCapturePublicationPlanEntry[] entries)
+                EntrySnapshot[] entries)
             {
                 _authority = authority;
                 _lease = lease;
@@ -543,7 +592,13 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (entryIndex < 0 || entryIndex >= _entries.Length)
+                EntrySnapshot[] entries = _entries;
+                if (entries == null)
+                {
+                    return false;
+                }
+
+                if (entryIndex < 0 || entryIndex >= entries.Length)
                 {
                     return false;
                 }
@@ -560,7 +615,7 @@ namespace Zantetsu.Observability
                         && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
                         && ReferenceEquals(authority.RootLayout, _rootLayout)
                         && ReferenceEquals(authority.LockLease, _lease)
-                        && ReferenceEquals(plan.GetEntry(entryIndex), _entries[entryIndex]);
+                        && entries[entryIndex].Matches(plan.GetEntry(entryIndex));
                 }
                 catch (Exception)
                 {
@@ -590,10 +645,10 @@ namespace Zantetsu.Observability
                 CaptureRunLockLease lease = authority.LockLease;
 
                 int count = plan.EntryCount;
-                PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[count];
+                EntrySnapshot[] entries = new EntrySnapshot[count];
                 for (int i = 0; i < count; i++)
                 {
-                    entries[i] = plan.GetEntry(i);
+                    entries[i] = new EntrySnapshot(plan.GetEntry(i));
                 }
 
                 token = new ValidationToken(authority, lease, plan, publicationPaths, rootLayout, entries);

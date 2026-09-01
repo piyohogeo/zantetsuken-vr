@@ -1054,6 +1054,77 @@ namespace Zantetsu.Core.Tests
             Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
         }
 
+        [Test]
+        public void Entry_ByteLengthMutatedToValidValue_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_pngByteLength", 17L);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
+        }
+
+        [Test]
+        public void Entry_HashMutatedToValidValue_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_pngContentSha256", HashB);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
+        }
+
+        // ---- Forged token ----
+
+        [Test]
+        public void Token_EntriesNull_FailsClosed()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(token, "_entries", null);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
+        }
+
+        [Test]
+        public void Token_EntriesShortened_FailsClosed()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(
+                MakePlan(entries: new[] { MakeEntry(10), MakeEntry(20) }));
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 1);
+
+            Type tokenType = typeof(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken);
+            Type snapshotType = tokenType.GetNestedType("EntrySnapshot", BindingFlags.NonPublic);
+            Assert.That(snapshotType, Is.Not.Null);
+            Array empty = Array.CreateInstance(snapshotType, 0);
+            SetField(token, "_entries", empty);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
+        }
+
         // ---- Stored path tamper ----
 
         [Test]
