@@ -26,11 +26,13 @@ namespace Zantetsu.Observability
     /// <see cref="NotSupportedException"/> for every non-null argument pair
     /// until that provenance chain exists. The recovery factory validates:
     /// null notification result, null open outcome, a valid notification
-    /// result, accepted status and disposition, a created and valid outcome,
-    /// publication-recovery-required status, no session, the exact provenance
-    /// open outcome (reference-equal to the notification graph's inspection
-    /// operation outcome), shared root layout, matching ids, the same lock
-    /// lease, and the same lock path set.
+    /// result (whose full validation already proves the publication recovery
+    /// operation and its open outcome), accepted status and disposition, the
+    /// exact provenance open outcome (reference-equal to the notification
+    /// graph's inspection operation outcome), and then only O(1) correlation
+    /// on that same instance: created, publication-recovery-required status,
+    /// no session, shared root layout, matching ids, the same lock lease, and
+    /// the same lock path set.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full correlation from the held
@@ -205,7 +207,16 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!openOutcome.IsCreated || !openOutcome.IsValid)
+            // The notification result's full validation already proves the
+            // publication recovery operation and its open outcome, so require
+            // the exact provenance instance first and then only O(1)
+            // correlation on that same instance.
+            if (!ReferenceEquals(GetProvenanceOpenOutcome(notificationResult), openOutcome))
+            {
+                return false;
+            }
+
+            if (!openOutcome.IsCreated)
             {
                 return false;
             }
@@ -216,11 +227,6 @@ namespace Zantetsu.Observability
             }
 
             if (openOutcome.Session != null)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(GetProvenanceOpenOutcome(notificationResult), openOutcome))
             {
                 return false;
             }

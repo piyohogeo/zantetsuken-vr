@@ -44,7 +44,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!_runSession.IsCreated)
+            if (!_runSession.IsLockOwnershipIntact)
             {
                 return false;
             }

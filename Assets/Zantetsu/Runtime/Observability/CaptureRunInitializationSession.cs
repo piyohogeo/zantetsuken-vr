@@ -135,6 +135,53 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(leasePathSet, sessionPathSet);
         }
 
+        /// <summary>
+        /// Exception-safe structural integrity check for this session's held
+        /// lock ownership and ready evidence. Reports <c>false</c> — never
+        /// throws — when the session is disposed, the held lease is revoked or
+        /// forged null, the ready evidence is forged null or corrupted, or the
+        /// lease path set and ready evidence no longer share the same root
+        /// layout and run identity.
+        /// </summary>
+        internal bool IsLockOwnershipIntact
+        {
+            get
+            {
+                if (_disposed || _lockLease == null || _readyEvidence == null)
+                {
+                    return false;
+                }
+
+                if (!_lockLease.IsCreated)
+                {
+                    return false;
+                }
+
+                if (!_readyEvidence.IsValid)
+                {
+                    return false;
+                }
+
+                CaptureRunLockPathSet pathSet = _lockLease.PathSet;
+                if (pathSet == null || pathSet.RootLayout == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(pathSet.RootLayout, _readyEvidence.RootLayout))
+                {
+                    return false;
+                }
+
+                if (pathSet.RootLayout.TestRunId != _readyEvidence.TestRunId)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed)

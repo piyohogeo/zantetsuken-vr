@@ -5760,6 +5760,20 @@ namespace Zantetsu.Core.Tests
                 object bufferBuilder = GetField(issuedBy, "_bufferBuilder");
                 SetField(bufferBuilder, "_draftRegistry", null);
             });
+
+            // Session 内部の構造破損。
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt.RunSession, "_readyEvidence", null));
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt.RunSession, "_lockLease", null));
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object lease = GetField(receipt.RunSession, "_lockLease");
+                ((CaptureRunLockLease)lease).Dispose();
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object ready = GetField(receipt.RunSession, "_readyEvidence");
+                SetField(ready, "_freshExecutionReceipt", null);
+            });
         }
 
         private static void AssertCorruptedReceiptInvalid(Action<CaptureEvidenceRunFreezeReceipt> corrupt)
@@ -5798,6 +5812,43 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSession session3 = MakeLifecycleSession(layout, lease3);
             session3.Dispose();
             Assert.That(session3.OwnsLockLease(lease3), Is.False);
+        }
+
+        [Test]
+        public void Session_IsLockOwnershipIntact()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+
+            // 正常。
+            CaptureRunInitializationSession intact = MakeLifecycleSession(layout, MakeLease(layout));
+            Assert.That(intact.IsLockOwnershipIntact, Is.True);
+
+            // _readyEvidence null。
+            CaptureRunInitializationSession evidenceBroken = MakeLifecycleSession(layout, MakeLease(layout));
+            SetField(evidenceBroken, "_readyEvidence", null);
+            Assert.That(evidenceBroken.IsLockOwnershipIntact, Is.False);
+
+            // _lockLease null。
+            CaptureRunInitializationSession leaseBroken = MakeLifecycleSession(layout, MakeLease(layout));
+            SetField(leaseBroken, "_lockLease", null);
+            Assert.That(leaseBroken.IsLockOwnershipIntact, Is.False);
+
+            // Lease 失効。
+            CaptureRunLockLease expiringLease = MakeLease(layout);
+            CaptureRunInitializationSession expired = MakeLifecycleSession(layout, expiringLease);
+            expiringLease.Dispose();
+            Assert.That(expired.IsLockOwnershipIntact, Is.False);
+
+            // Ready Evidence の RootLayout／ID 破損（fresh receipt を null 化）。
+            CaptureRunInitializationSession corrupt = MakeLifecycleSession(layout, MakeLease(layout));
+            object ready = GetField(corrupt, "_readyEvidence");
+            SetField(ready, "_freshExecutionReceipt", null);
+            Assert.That(corrupt.IsLockOwnershipIntact, Is.False);
+
+            // Dispose 後。
+            CaptureRunInitializationSession disposed = MakeLifecycleSession(layout, MakeLease(layout));
+            disposed.Dispose();
+            Assert.That(disposed.IsLockOwnershipIntact, Is.False);
         }
 
         [Test]
@@ -5852,6 +5903,20 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteNotifier"));
                 Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteCleanupBackend"));
             }
+        }
+
+        [Test]
+        public void Source_LifecycleRecoveryNoDuplicateOpenOutcomeValidation()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteLifecycleEvidence.cs"));
+
+            // Notification Result の完全検証が Open Outcome を既に証明するため、
+            // 同じ呼び出し内で openOutcome.IsValid を再実行してはならない。
+            Assert.That(source, Does.Not.Contain("openOutcome.IsValid"));
+            Assert.That(CountOccurrences(source, "GetProvenanceOpenOutcome(notificationResult)"), Is.EqualTo(1));
+            Assert.That(source, Does.Contain("ReferenceEquals(GetProvenanceOpenOutcome(notificationResult), openOutcome)"));
+            Assert.That(source, Does.Contain("openOutcome.IsCreated"));
         }
     }
 }
