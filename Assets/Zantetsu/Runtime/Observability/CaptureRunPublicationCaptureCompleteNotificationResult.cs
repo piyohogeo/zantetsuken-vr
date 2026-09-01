@@ -9,9 +9,9 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly three read-only reference fields — the issuing
-    /// coordinator, the notification operation, and the notification receipt —
-    /// and has no public constructor. Every accessor forwards a value from the
+    /// The type owns exactly four read-only reference fields — the issuing
+    /// coordinator, the coordinator-bound issuance proof, the notification
+    /// operation, and the notification receipt — and has no public constructor. Every accessor forwards a value from the
     /// held operation graph: the cleanup orchestration result, cleanup
     /// execution result, root layout, lock lease, test run id, run
     /// initialization id, run manifest content SHA-256, capture index path,
@@ -37,17 +37,24 @@ namespace Zantetsu.Observability
     internal sealed class CaptureRunPublicationCaptureCompleteNotificationResult
     {
         private readonly CaptureRunPublicationCaptureCompleteNotificationCoordinator _issuedBy;
+        private readonly CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof _proof;
         private readonly CaptureRunPublicationCaptureCompleteNotificationOperation _operation;
         private readonly CaptureRunPublicationCaptureCompleteNotificationReceipt _receipt;
 
         internal CaptureRunPublicationCaptureCompleteNotificationResult(
             CaptureRunPublicationCaptureCompleteNotificationCoordinator issuedBy,
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof,
             CaptureRunPublicationCaptureCompleteNotificationOperation operation,
             CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
         {
             if (issuedBy == null)
             {
                 throw new ArgumentNullException(nameof(issuedBy));
+            }
+
+            if (proof == null)
+            {
+                throw new ArgumentNullException(nameof(proof));
             }
 
             if (operation == null)
@@ -60,7 +67,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(receipt));
             }
 
-            if (!IsCorrelated(issuedBy, operation, receipt))
+            if (!IsCorrelated(issuedBy, proof, operation, receipt))
             {
                 throw new ArgumentException(
                     "Notification receipt must be correlated with the issuing coordinator and operation.",
@@ -68,11 +75,14 @@ namespace Zantetsu.Observability
             }
 
             _issuedBy = issuedBy;
+            _proof = proof;
             _operation = operation;
             _receipt = receipt;
         }
 
         internal CaptureRunPublicationCaptureCompleteNotificationCoordinator IssuedBy => _issuedBy;
+
+        internal CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof Proof => _proof;
 
         internal ICaptureRunPublicationCaptureCompleteNotifier Notifier => _issuedBy.Notifier;
 
@@ -109,16 +119,25 @@ namespace Zantetsu.Observability
         {
             get
             {
-                return IsCorrelated(_issuedBy, _operation, _receipt);
+                return IsCorrelated(_issuedBy, _proof, _operation, _receipt);
             }
         }
 
         private static bool IsCorrelated(
             CaptureRunPublicationCaptureCompleteNotificationCoordinator issuedBy,
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof,
             CaptureRunPublicationCaptureCompleteNotificationOperation operation,
             CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
         {
-            if (issuedBy == null || operation == null || receipt == null)
+            if (issuedBy == null || proof == null || operation == null || receipt == null)
+            {
+                return false;
+            }
+
+            // The proof must be minted for this exact coordinator, so a result
+            // cannot be re-bound to a different coordinator that shares the
+            // same notifier.
+            if (!proof.IsMintedFor(issuedBy))
             {
                 return false;
             }

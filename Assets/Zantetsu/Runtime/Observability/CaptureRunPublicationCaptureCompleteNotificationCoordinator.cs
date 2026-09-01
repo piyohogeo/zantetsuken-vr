@@ -42,6 +42,37 @@ namespace Zantetsu.Observability
 
         internal ICaptureRunPublicationCaptureCompleteNotifier Notifier => _notifier;
 
+        /// <summary>
+        /// Opaque coordinator-bound proof minted only inside
+        /// <see cref="Execute"/>. It binds to this exact coordinator by
+        /// reference, so a result built by one coordinator can never be
+        /// re-bound to another coordinator that shares the same notifier.
+        /// </summary>
+        internal sealed class IssuanceProof
+        {
+            private readonly CaptureRunPublicationCaptureCompleteNotificationCoordinator _coordinator;
+
+            private IssuanceProof(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
+            {
+                _coordinator = coordinator;
+            }
+
+            internal static IssuanceProof Mint(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
+            {
+                if (coordinator == null)
+                {
+                    throw new ArgumentNullException(nameof(coordinator));
+                }
+
+                return new IssuanceProof(coordinator);
+            }
+
+            internal bool IsMintedFor(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
+            {
+                return coordinator != null && ReferenceEquals(_coordinator, coordinator);
+            }
+        }
+
         internal CaptureRunPublicationCaptureCompleteNotificationResult Execute(
             CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanupResult)
         {
@@ -55,7 +86,9 @@ namespace Zantetsu.Observability
 
             CaptureRunPublicationCaptureCompleteNotificationReceipt receipt = _notifier.Notify(operation);
 
-            return new CaptureRunPublicationCaptureCompleteNotificationResult(this, operation, receipt);
+            IssuanceProof proof = IssuanceProof.Mint(this);
+
+            return new CaptureRunPublicationCaptureCompleteNotificationResult(this, proof, operation, receipt);
         }
     }
 }
