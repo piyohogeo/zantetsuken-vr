@@ -1270,6 +1270,76 @@ namespace Zantetsu.Core.Tests
             Assert.That(observation, Is.Null);
         }
 
+        [Test]
+        public void Create_EntrySwappedInPlaceAfterToken_Rejects()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMatchesExpected, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.Acquire(snapshot);
+
+            PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken operationToken =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+            PngJsonCapturePublicationArtifactEntryObservation mismatch = MakeIndexObservation(
+                operationToken, operation, 0, EvAbsent, EvAbsent, EvMismatch, EvAbsent);
+
+            PngJsonCapturePublicationArtifactEntryObservation[] entries =
+                (PngJsonCapturePublicationArtifactEntryObservation[])GetField(snapshot, "_entries");
+            entries[0] = mismatch;
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactRecoveryDecision.Create(snapshot, token));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void Create_LeaseDisposedZeroEntry_Rejects()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotArray(
+                MakeRecoveryAuthority(MakePlan(entries: new PngJsonCapturePublicationPlanEntry[0])),
+                EvAbsent, 0,
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0]);
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.Acquire(snapshot);
+
+            snapshot.LockLease.Dispose();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactRecoveryDecision.Create(snapshot, token));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void Create_OperationAuthorityNulled_Rejects()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMatchesExpected, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.Acquire(snapshot);
+
+            SetField(snapshot.Operation, "_authority", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactRecoveryDecision.Create(snapshot, token));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void Create_LegitimateMismatchSnapshot_RunRootCollision()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMismatch, EvAbsent);
+
+            PngJsonCapturePublicationArtifactRecoveryDecision decision = ClassifyDecision(snapshot);
+
+            Assert.That(decision.Disposition, Is.EqualTo(RunRootCollision));
+            Assert.That(decision.IsValid, Is.True);
+        }
+
         // ---- Type shape ----
 
         [Test]
@@ -1357,7 +1427,7 @@ namespace Zantetsu.Core.Tests
             string classifyBody = ExtractMethodBody(source, "internal static PngJsonCapturePublicationArtifactRecoveryDecision Classify(");
             Assert.That(CountOccurrences(classifyBody, "TryValidate("), Is.EqualTo(1));
 
-            string computeBody = ExtractMethodBody(source, "internal static CaptureRunPublicationArtifactRecoveryDisposition ComputeDisposition(");
+            string computeBody = ExtractMethodBody(source, "internal static bool TryComputeDisposition(");
             Assert.That(computeBody, Does.Not.Contain("TryValidate("));
             Assert.That(computeBody, Does.Not.Contain(".IsValid"));
             Assert.That(computeBody, Does.Not.Contain("Acquire("));

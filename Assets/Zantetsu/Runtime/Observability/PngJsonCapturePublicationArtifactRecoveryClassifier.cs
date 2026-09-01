@@ -13,9 +13,10 @@ namespace Zantetsu.Observability
     /// validation token, classifies once in a single linear pass with the same
     /// token, and constructs the decision without re-validating. The
     /// classification loop obtains each entry once through the token's issued
-    /// entry access and reads only that reference, so a caller that mutates a
-    /// snapshot during classification fails closed to
-    /// <see cref="CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision"/>.
+    /// entry access and reads only that reference. A token, structure, or
+    /// entry-proof mismatch fails closed without producing a disposition, and
+    /// only a legitimate classification of the exact snapshot the token proved
+    /// yields a disposition.
     /// </para>
     /// <para>
     /// This type holds no fields and performs no filesystem work, no codec,
@@ -50,59 +51,97 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Pure token-gated linear classification shared with the decision
         /// constructor and its <see cref="PngJsonCapturePublicationArtifactRecoveryDecision.IsValid"/>
-        /// recomputation. Assumes the snapshot was validated and the token was
-        /// issued for it; each entry is obtained once through the token in
-        /// O(1) and never re-validated per entry beyond the token's issued
-        /// entry re-correlation.
+        /// recomputation. Returns <c>false</c> without a disposition when the
+        /// token binding, snapshot structure, lease liveness, or any issued
+        /// entry proof is no longer intact, and returns <c>true</c> with a
+        /// disposition only for a legitimate classification of the exact
+        /// snapshot the token proved. Never throws.
         /// </summary>
-        internal static CaptureRunPublicationArtifactRecoveryDisposition ComputeDisposition(
+        internal static bool TryComputeDisposition(
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
-            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token)
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token,
+            out CaptureRunPublicationArtifactRecoveryDisposition disposition)
         {
+            disposition = CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+
             if (!token.IsIssuedForExactBindings(snapshot))
             {
-                return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                return false;
             }
 
-            CaptureRunPublicationEvidenceStatus traceStatus = snapshot.TraceManifestStatus;
+            CaptureRunPublicationEvidenceStatus traceStatus;
+            PngJsonCapturePublicationArtifactInspectionAuthority authority;
+            PngJsonCapturePublicationArtifactInspectionAuthorityKind authorityKind;
+            CaptureRunPublicationRecoveryDisposition publication;
+            int count;
+
+            try
+            {
+                traceStatus = snapshot.TraceManifestStatus;
+
+                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                authority = operation.Authority;
+                if (authority == null)
+                {
+                    return false;
+                }
+
+                CaptureRunLockLease lease = authority.LockLease;
+                if (lease == null || !lease.IsCreated)
+                {
+                    return false;
+                }
+
+                authorityKind = authority.Kind;
+                publication = authority.Disposition;
+                count = snapshot.Count;
+            }
+            catch (Exception)
+            {
+                disposition = CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                return false;
+            }
 
             if (traceStatus != CaptureRunPublicationEvidenceStatus.Absent
                 && traceStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected)
             {
-                return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                return true;
             }
-
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = snapshot.Authority;
-            PngJsonCapturePublicationArtifactInspectionAuthorityKind authorityKind = snapshot.AuthorityKind;
-            CaptureRunPublicationRecoveryDisposition publication = authority.Disposition;
-            int count = snapshot.Count;
 
             if (traceStatus == CaptureRunPublicationEvidenceStatus.Absent)
             {
-                if (authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision
-                    && !HasAbsentCaptureIndexTemporary(authority))
+                if (authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision)
                 {
-                    return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                    if (!TryGetCaptureIndexTemporaryAbsent(authority, out bool captureIndexTemporaryAbsent))
+                    {
+                        return false;
+                    }
+
+                    if (!captureIndexTemporaryAbsent)
+                    {
+                        return true;
+                    }
                 }
 
                 for (int i = 0; i < count; i++)
                 {
                     if (!token.TryGetIssuedEntry(snapshot, i, out PngJsonCapturePublicationArtifactEntryObservation observation))
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return false;
                     }
 
                     if (HasArtifactAnomaly(observation)
                         || observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.Absent
                         || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.Absent)
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return true;
                     }
                 }
 
-                return publication == CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
+                disposition = publication == CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative
                     ? CaptureRunPublicationArtifactRecoveryDisposition.OrphanedPreTrace
                     : CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                return true;
             }
 
             if (publication == CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative)
@@ -114,12 +153,12 @@ namespace Zantetsu.Observability
                 {
                     if (!token.TryGetIssuedEntry(snapshot, i, out PngJsonCapturePublicationArtifactEntryObservation observation))
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return false;
                     }
 
                     if (HasArtifactAnomaly(observation))
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return true;
                     }
 
                     ClassifyPlanArtifact(
@@ -130,22 +169,25 @@ namespace Zantetsu.Observability
 
                 if (sourceMissing)
                 {
-                    return CaptureRunPublicationArtifactRecoveryDisposition.ArtifactSourceMissing;
+                    disposition = CaptureRunPublicationArtifactRecoveryDisposition.ArtifactSourceMissing;
+                    return true;
                 }
 
                 if (publishable)
                 {
-                    return CaptureRunPublicationArtifactRecoveryDisposition.PublishMissingArtifacts;
+                    disposition = CaptureRunPublicationArtifactRecoveryDisposition.PublishMissingArtifacts;
+                    return true;
                 }
 
-                return CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex;
+                disposition = CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex;
+                return true;
             }
 
             if (publication == CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative)
             {
                 if (authorityKind != PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision)
                 {
-                    return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                    return true;
                 }
 
                 bool anyFinalMissing = false;
@@ -154,12 +196,12 @@ namespace Zantetsu.Observability
                 {
                     if (!token.TryGetIssuedEntry(snapshot, i, out PngJsonCapturePublicationArtifactEntryObservation observation))
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return false;
                     }
 
                     if (HasArtifactAnomaly(observation))
                     {
-                        return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+                        return true;
                     }
 
                     if (observation.FinalPngStatus == CaptureRunPublicationEvidenceStatus.Absent
@@ -169,20 +211,20 @@ namespace Zantetsu.Observability
                     }
                 }
 
-                return anyFinalMissing
+                disposition = anyFinalMissing
                     ? CaptureRunPublicationArtifactRecoveryDisposition.PublishedArtifactMissing
                     : CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete;
+                return true;
             }
 
-            return CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
+            return true;
         }
 
-        private static bool HasAbsentCaptureIndexTemporary(PngJsonCapturePublicationArtifactInspectionAuthority authority)
+        private static bool TryGetCaptureIndexTemporaryAbsent(
+            PngJsonCapturePublicationArtifactInspectionAuthority authority,
+            out bool isAbsent)
         {
-            if (authority == null)
-            {
-                return false;
-            }
+            isAbsent = false;
 
             CaptureRunPublicationRecoveryDecision decision = authority.RecoveryDecision;
             if (decision == null)
@@ -197,8 +239,13 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationDocumentObservation captureIndexTemporary = snapshot.CaptureIndexTemporary;
-            return captureIndexTemporary != null
-                && captureIndexTemporary.Status == CaptureRunPublicationDocumentObservationStatus.Absent;
+            if (captureIndexTemporary == null)
+            {
+                return false;
+            }
+
+            isAbsent = captureIndexTemporary.Status == CaptureRunPublicationDocumentObservationStatus.Absent;
+            return true;
         }
 
         private static bool HasArtifactAnomaly(PngJsonCapturePublicationArtifactEntryObservation observation)

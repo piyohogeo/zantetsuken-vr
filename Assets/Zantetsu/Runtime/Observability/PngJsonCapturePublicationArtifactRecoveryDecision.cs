@@ -36,10 +36,12 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Trusted construction path: confirms the token was issued for the
-        /// exact snapshot in O(1), classifies once with that same token, and
-        /// assigns the two fields. The token is never retained. The private
-        /// constructor keeps the disposition unfabricable by callers.
+        /// Trusted construction path: classifies once with the issued token
+        /// and assigns the two fields only when the token proves the exact
+        /// snapshot and its structure is intact. The token is never retained.
+        /// A stale token, structure mismatch, or entry-proof mismatch is
+        /// rejected before a decision can be issued. The private constructor
+        /// keeps the disposition unfabricable by callers.
         /// </summary>
         internal static PngJsonCapturePublicationArtifactRecoveryDecision Create(
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
@@ -55,13 +57,12 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(token));
             }
 
-            if (!token.IsIssuedForExactBindings(snapshot))
+            if (!PngJsonCapturePublicationArtifactRecoveryClassifier.TryComputeDisposition(
+                snapshot, token, out CaptureRunPublicationArtifactRecoveryDisposition disposition))
             {
-                throw new ArgumentException("Token must be issued for the exact snapshot.", nameof(token));
+                throw new ArgumentException(
+                    "Token must be issued for the exact snapshot and its structure must be intact.", nameof(token));
             }
-
-            CaptureRunPublicationArtifactRecoveryDisposition disposition =
-                PngJsonCapturePublicationArtifactRecoveryClassifier.ComputeDisposition(snapshot, token);
 
             return new PngJsonCapturePublicationArtifactRecoveryDecision(snapshot, disposition);
         }
@@ -92,7 +93,8 @@ namespace Zantetsu.Observability
         /// Exception-safe recomputation: fully validates the snapshot and
         /// issues a token once, recomputes the disposition with the same token
         /// without per-entry full validation or token re-issuance, and reports
-        /// success only when the held disposition matches.
+        /// success only when the computation succeeds and the held disposition
+        /// matches.
         /// </summary>
         internal bool IsValid
         {
@@ -108,8 +110,11 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunPublicationArtifactRecoveryDisposition expected =
-                    PngJsonCapturePublicationArtifactRecoveryClassifier.ComputeDisposition(_snapshot, token);
+                if (!PngJsonCapturePublicationArtifactRecoveryClassifier.TryComputeDisposition(
+                    _snapshot, token, out CaptureRunPublicationArtifactRecoveryDisposition expected))
+                {
+                    return false;
+                }
 
                 return _disposition == expected;
             }
