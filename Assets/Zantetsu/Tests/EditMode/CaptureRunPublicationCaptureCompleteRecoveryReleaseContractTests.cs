@@ -299,10 +299,10 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator(inspector, executionCoordinator);
         }
 
-        private static CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildCommitResult()
+        private static CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildCommitResult(List<string> disposeLog = null)
         {
             PngJsonCapturePublicationPlan plan = MakePlan();
-            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(plan: plan);
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(disposeLog: disposeLog, plan: plan);
 
             CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
                 operation,
@@ -337,11 +337,13 @@ namespace Zantetsu.Core.Tests
                 notifier ?? new FakeNotificationNotifier());
         }
 
-        private static CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(bool commitRoute)
+        private static CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(
+            bool commitRoute,
+            List<string> disposeLog = null)
         {
             return MakeNotificationCoordinator(new FakeNotificationNotifier()).Execute(
                 MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(
-                    BuildCommitResult()));
+                    BuildCommitResult(disposeLog)));
         }
 
         private static CaptureRunInitializationOpenOutcome GetProvenanceOpenOutcome(
@@ -350,24 +352,29 @@ namespace Zantetsu.Core.Tests
             return notificationResult.CleanupResult.OrchestrationResult.InspectionSnapshot.Decision.Snapshot.Operation.OpenOutcome;
         }
 
-        private static CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeRecoveryEvidence()
+        private static CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeRecoveryEvidence(List<string> disposeLog = null)
         {
-            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true, disposeLog: disposeLog);
             CaptureRunInitializationOpenOutcome outcome = GetProvenanceOpenOutcome(notificationResult);
             return CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, outcome);
         }
 
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperation()
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperation(List<string> disposeLog = null)
         {
-            return CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(MakeRecoveryEvidence());
+            return CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(MakeRecoveryEvidence(disposeLog));
         }
 
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperationWithThrowingFirstHandle()
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperationWithThrowingFirstHandle(List<string> disposeLog = null)
         {
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation(disposeLog);
             CaptureRunLockLease lease = operation.LockLease;
             SetField(lease, "_firstHandle", new ThrowingOnceHandle(lease.PathSet.FirstLockPath));
             return operation;
+        }
+
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaser MakeReleaser()
+        {
+            return new CaptureRunPublicationCaptureCompleteRecoveryReleaser();
         }
 
         private static CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt ReleaseSuccessfully(
@@ -405,6 +412,19 @@ namespace Zantetsu.Core.Tests
 
             Assert.Fail("Source file not found: " + relativePath);
             return null;
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            int count = 0;
+            int index = 0;
+            while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
         }
 
         // ---- Fakes ----
@@ -1058,6 +1078,206 @@ namespace Zantetsu.Core.Tests
                 string source = File.ReadAllText(LocateSource(relativePath));
                 Assert.That(source, Does.Not.Contain(".Dispose()"));
             }
+        }
+
+        // ---- Standard releaser ----
+
+        [Test]
+        public void Releaser_NullOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => releaser.Release(null));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Releaser_InvalidOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation uninitialized =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation));
+            Assert.Throws<ArgumentException>(() => releaser.Release(uninitialized));
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation proofCorrupted = MakeReleaseOperation();
+            SetField(proofCorrupted, "_issuanceProof", null);
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => releaser.Release(proofCorrupted));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Releaser_PreCallReferenceSwap_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation evidenceSwap = MakeReleaseOperation();
+            SetField(evidenceSwap, "_lifecycleEvidence", MakeRecoveryEvidence());
+            Assert.Throws<ArgumentException>(() => releaser.Release(evidenceSwap));
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation notificationSwap = MakeReleaseOperation();
+            SetField(notificationSwap, "_notificationResult", MakeNotificationResult(commitRoute: true));
+            Assert.Throws<ArgumentException>(() => releaser.Release(notificationSwap));
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation outcomeSwap = MakeReleaseOperation();
+            SetField(outcomeSwap, "_openOutcome", MakeReleaseOperation().OpenOutcome);
+            Assert.Throws<ArgumentException>(() => releaser.Release(outcomeSwap));
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation leaseSwap = MakeReleaseOperation();
+            SetField(leaseSwap, "_lockLease", MakeLease(MakeLayout()));
+            Assert.Throws<ArgumentException>(() => releaser.Release(leaseSwap));
+        }
+
+        [Test]
+        public void Releaser_NormalRelease_DisposesOnceAndReturnsReceipt()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = releaser.Release(operation);
+
+            Assert.That(receipt, Is.Not.Null);
+            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(ReferenceEquals(receipt.IssuedBy, releaser), Is.True);
+            Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
+            Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
+        }
+
+        [Test]
+        public void Releaser_AlreadyReleased_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            releaser.Release(operation);
+            Assert.Throws<ArgumentException>(() => releaser.Release(operation));
+        }
+
+        [Test]
+        public void Releaser_LockHandlesReleasedInReverseOrder()
+        {
+            List<string> log = new List<string>();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation(log);
+            CaptureRunLockPathSet pathSet = operation.LockLease.PathSet;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            releaser.Release(operation);
+
+            Assert.That(log.Count, Is.EqualTo(2));
+            Assert.That(log[0], Is.EqualTo(pathSet.SecondLockPath));
+            Assert.That(log[1], Is.EqualTo(pathSet.FirstLockPath));
+        }
+
+        [Test]
+        public void Releaser_PartialFailure_PropagatesAndRetries()
+        {
+            List<string> log = new List<string>();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperationWithThrowingFirstHandle(log);
+            CaptureRunLockPathSet pathSet = operation.LockLease.PathSet;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+
+            // First attempt: the aggregate propagates unchanged (single inner failure).
+            AggregateException first = Assert.Throws<AggregateException>(() => releaser.Release(operation));
+            Assert.That(first.InnerExceptions.Count, Is.EqualTo(1));
+            Assert.That(first.InnerExceptions[0], Is.TypeOf<InvalidOperationException>());
+
+            // No receipt; the already-released second handle was not re-disposed.
+            Assert.That(log.Count, Is.EqualTo(1));
+            Assert.That(log[0], Is.EqualTo(pathSet.SecondLockPath));
+
+            // Retryable through the same operation and the exact outcome.
+            Assert.That(operation.CanRelease, Is.True);
+            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+
+            // Second attempt retries only the failed handle and succeeds.
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = releaser.Release(operation);
+            Assert.That(receipt, Is.Not.Null);
+            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(log.Count, Is.EqualTo(1), "The released handle must not be re-disposed.");
+
+            // Third attempt rejects as fully released.
+            Assert.Throws<ArgumentException>(() => releaser.Release(operation));
+        }
+
+        [Test]
+        public void Releaser_OutcomeDisposesWrongLease_FailsClosed()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunInitializationOpenOutcome outcome = operation.OpenOutcome;
+
+            // Swap the outcome's internal lock lease to a different, still-created
+            // lease; the operation's own lock lease reference remains the original.
+            SetField(outcome, "_lockLease", MakeLease(MakeLayout()));
+            Assert.That(operation.CanRelease, Is.True);
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+            Assert.Throws<InvalidOperationException>(() => releaser.Release(operation));
+        }
+
+        [Test]
+        public void Releaser_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaser);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(ICaptureRunPublicationCaptureCompleteRecoveryReleaser).IsAssignableFrom(type), Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            // No instance fields, no static mutable fields.
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Empty);
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+            }
+
+            // Internal constructor only.
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+            Assert.That(type.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Length, Is.EqualTo(1));
+
+            // Exactly one declared interface method.
+            MethodInfo[] methods = type.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            Assert.That(methods.Length, Is.EqualTo(1));
+            Assert.That(methods[0].Name, Is.EqualTo("Release"));
+        }
+
+        [Test]
+        public void Releaser_Source_NoForbiddenDependencies()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteRecoveryReleaser.cs"));
+
+            Assert.That(source, Does.Not.Contain("File."));
+            Assert.That(source, Does.Not.Contain("Directory."));
+            Assert.That(source, Does.Not.Contain("FileStream"));
+            Assert.That(source, Does.Not.Contain("CaptureFrameDraftRegistry"));
+            Assert.That(source, Does.Not.Contain("CaptureArtifactRegistry"));
+            Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteNotifier"));
+            Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteCleanupBackend"));
+            Assert.That(source, Does.Not.Contain("Trace"));
+            Assert.That(source, Does.Not.Contain("Logger"));
+            Assert.That(source, Does.Not.Contain("Task"));
+            Assert.That(source, Does.Not.Contain("Thread"));
+            Assert.That(source, Does.Not.Contain("DateTime"));
+            Assert.That(source, Does.Not.Contain("Random"));
+            Assert.That(source, Does.Not.Contain("using UnityEngine"));
+            Assert.That(source, Does.Not.Contain("using System.Linq"));
+
+            // No direct LockLease.Dispose and exactly one outcome Dispose call.
+            Assert.That(source, Does.Not.Contain("LockLease.Dispose()"));
+            Assert.That(CountOccurrences(source, ".Dispose()"), Is.EqualTo(1));
+
+            // No catch and no retry loop.
+            Assert.That(source, Does.Not.Contain("catch"));
+            Assert.That(source, Does.Not.Contain("for ("));
+            Assert.That(source, Does.Not.Contain("while ("));
         }
     }
 }
