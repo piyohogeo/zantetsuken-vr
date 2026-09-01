@@ -385,6 +385,31 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation);
         }
 
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator MakeCoordinator(
+            ICaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = null)
+        {
+            return new CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator(
+                releaser ?? MakeReleaser());
+        }
+
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseResult MakeResult()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            return MakeCoordinator().Execute(operation);
+        }
+
+        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt ForgeReceipt(
+            ICaptureRunPublicationCaptureCompleteRecoveryReleaser releaser,
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt));
+            SetField(receipt, "_issuedBy", releaser);
+            SetField(receipt, "_operation", operation);
+            return receipt;
+        }
+
         private static string LocateSource(string relativePath)
         {
             if (File.Exists(relativePath))
@@ -425,6 +450,28 @@ namespace Zantetsu.Core.Tests
             }
 
             return count;
+        }
+
+        private static void AssertForbiddenDependencies(string source)
+        {
+            Assert.That(source, Does.Not.Contain("File."));
+            Assert.That(source, Does.Not.Contain("Directory."));
+            Assert.That(source, Does.Not.Contain("FileStream"));
+            Assert.That(source, Does.Not.Contain("CaptureFrameDraftRegistry"));
+            Assert.That(source, Does.Not.Contain("CaptureArtifactRegistry"));
+            Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteNotifier"));
+            Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteCleanupBackend"));
+            Assert.That(source, Does.Not.Contain("Trace"));
+            Assert.That(source, Does.Not.Contain("Logger"));
+            Assert.That(source, Does.Not.Contain("Task"));
+            Assert.That(source, Does.Not.Contain("Thread"));
+            Assert.That(source, Does.Not.Contain("DateTime"));
+            Assert.That(source, Does.Not.Contain("Random"));
+            Assert.That(source, Does.Not.Contain("using UnityEngine"));
+            Assert.That(source, Does.Not.Contain("using System.Linq"));
+            Assert.That(source, Does.Not.Contain("catch"));
+            Assert.That(source, Does.Not.Contain("for ("));
+            Assert.That(source, Does.Not.Contain("while ("));
         }
 
         // ---- Fakes ----
@@ -595,6 +642,60 @@ namespace Zantetsu.Core.Tests
                 CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
             {
                 throw new InvalidOperationException("Not used in contract tests.");
+            }
+        }
+
+        private sealed class CountingReleaser : ICaptureRunPublicationCaptureCompleteRecoveryReleaser
+        {
+            public int ReleaseCallCount { get; private set; }
+
+            public CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation LastOperation { get; private set; }
+
+            public CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt Release(
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
+            {
+                ReleaseCallCount++;
+                LastOperation = operation;
+                operation.OpenOutcome.Dispose();
+                return new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(this, operation);
+            }
+        }
+
+        private sealed class ThrowingReleaser : ICaptureRunPublicationCaptureCompleteRecoveryReleaser
+        {
+            private readonly Exception _exception;
+
+            public int ReleaseCallCount { get; private set; }
+
+            public ThrowingReleaser(Exception exception)
+            {
+                _exception = exception;
+            }
+
+            public CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt Release(
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
+            {
+                ReleaseCallCount++;
+                throw _exception;
+            }
+        }
+
+        private sealed class ReturningReleaser : ICaptureRunPublicationCaptureCompleteRecoveryReleaser
+        {
+            public CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt Receipt { get; set; }
+
+            public int ReleaseCallCount { get; private set; }
+
+            public ReturningReleaser(CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = null)
+            {
+                Receipt = receipt;
+            }
+
+            public CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt Release(
+                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
+            {
+                ReleaseCallCount++;
+                return Receipt;
             }
         }
 
@@ -1278,6 +1379,467 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("catch"));
             Assert.That(source, Does.Not.Contain("for ("));
             Assert.That(source, Does.Not.Contain("while ("));
+        }
+
+        // ---- Coordinator ----
+
+        [Test]
+        public void Coordinator_NullReleaser_Rejected()
+        {
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator(null));
+            Assert.That(ex.ParamName, Is.EqualTo("releaser"));
+        }
+
+        [Test]
+        public void Coordinator_NullOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.Execute(null));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Coordinator_UninitializedOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation));
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Coordinator_ProofCorruptedOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            SetField(operation, "_issuanceProof", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
+            Assert.That(ex.ParamName, Is.EqualTo("operation"));
+        }
+
+        [Test]
+        public void Coordinator_FullyReleasedOperation_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            operation.OpenOutcome.Dispose();
+
+            Assert.That(operation.CanRelease, Is.False);
+            Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
+        }
+
+        [Test]
+        public void Coordinator_CallsReleaserExactlyOnceWithExactOperation()
+        {
+            CountingReleaser releaser = new CountingReleaser();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = coordinator.Execute(operation);
+
+            Assert.That(releaser.ReleaseCallCount, Is.EqualTo(1));
+            Assert.That(ReferenceEquals(releaser.LastOperation, operation), Is.True);
+            Assert.That(result, Is.Not.Null);
+        }
+
+        [Test]
+        public void Coordinator_ReleaserException_PropagatesSameInstance()
+        {
+            InvalidOperationException expected = new InvalidOperationException("boom");
+            ThrowingReleaser releaser = new ThrowingReleaser(expected);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+
+            InvalidOperationException actual = Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+            Assert.That(ReferenceEquals(actual, expected), Is.True);
+        }
+
+        [Test]
+        public void Coordinator_ReleaserException_NoResultAndNoRetry()
+        {
+            ThrowingReleaser releaser = new ThrowingReleaser(new InvalidOperationException("boom"));
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+
+            Assert.That(releaser.ReleaseCallCount, Is.EqualTo(1));
+            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
+            Assert.That(operation.LockLease.IsCreated, Is.True);
+        }
+
+        [Test]
+        public void Coordinator_PartialFailure_SecondAttemptSucceeds()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperationWithThrowingFirstHandle();
+
+            Assert.Throws<AggregateException>(() => coordinator.Execute(operation));
+
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(operation.CanRelease, Is.True);
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = coordinator.Execute(operation);
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+
+            Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
+        }
+
+        [Test]
+        public void Coordinator_NullReceipt_Rejected()
+        {
+            ReturningReleaser releaser = new ReturningReleaser(null);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
+        }
+
+        [Test]
+        public void Coordinator_ForeignIssuerReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            ReturningReleaser releaser = new ReturningReleaser();
+            releaser.Receipt = ForgeReceipt(MakeReleaser(), operation);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+        }
+
+        [Test]
+        public void Coordinator_WrongOperationReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation other = MakeReleaseOperation();
+            ReturningReleaser releaser = new ReturningReleaser();
+            releaser.Receipt = ForgeReceipt(releaser, other);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+        }
+
+        [Test]
+        public void Coordinator_NotReleasedReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            ReturningReleaser releaser = new ReturningReleaser();
+            releaser.Receipt = ForgeReceipt(releaser, operation);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+        }
+
+        [Test]
+        public void Coordinator_DependencyViolation_NoFallback()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            ReturningReleaser releaser = new ReturningReleaser();
+            releaser.Receipt = ForgeReceipt(MakeReleaser(), operation);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator(releaser);
+
+            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
+
+            Assert.That(releaser.ReleaseCallCount, Is.EqualTo(1));
+            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
+            Assert.That(operation.LockLease.IsCreated, Is.True);
+        }
+
+        // ---- Result ----
+
+        [Test]
+        public void Result_NormalConstruction_ForwardsAllValues()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = coordinator.Execute(operation);
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased));
+
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.Releaser, coordinator.Releaser), Is.True);
+            Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
+            Assert.That(result.Receipt, Is.Not.Null);
+            Assert.That(ReferenceEquals(result.Receipt.IssuedBy, coordinator.Releaser), Is.True);
+            Assert.That(ReferenceEquals(result.LifecycleEvidence, operation.LifecycleEvidence), Is.True);
+            Assert.That(ReferenceEquals(result.NotificationResult, operation.NotificationResult), Is.True);
+            Assert.That(ReferenceEquals(result.OpenOutcome, operation.OpenOutcome), Is.True);
+            Assert.That(ReferenceEquals(result.LockLease, operation.LockLease), Is.True);
+            Assert.That(ReferenceEquals(result.RootLayout, operation.RootLayout), Is.True);
+            Assert.That(result.TestRunId, Is.EqualTo(operation.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
+            Assert.That(result.RunManifestContentSha256, Is.EqualTo(operation.RunManifestContentSha256));
+            Assert.That(result.CaptureIndexPath, Is.EqualTo(operation.CaptureIndexPath));
+
+            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
+            Assert.That(operation.LockLease.IsCreated, Is.False);
+        }
+
+        [Test]
+        public void Result_UpstreamInvalidStillValid()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = coordinator.Execute(operation);
+
+            Assert.That(operation.LifecycleEvidence.IsValid, Is.False);
+            Assert.That(operation.NotificationResult.IsValid, Is.False);
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(operation.CanRelease, Is.False);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased));
+        }
+
+        [Test]
+        public void Result_Uninitialized_ConvergesNone()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseResult)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseResult));
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
+        }
+
+        [Test]
+        public void Result_DirectConstruction_NullArguments_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult sample = MakeResult();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = sample.IssuedBy;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof proof =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof)GetField(sample, "_proof");
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = sample.Operation;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = sample.Receipt;
+
+            ArgumentNullException ex0 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(null, proof, operation, receipt));
+            Assert.That(ex0.ParamName, Is.EqualTo("issuedBy"));
+
+            ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, null, operation, receipt));
+            Assert.That(ex1.ParamName, Is.EqualTo("proof"));
+
+            ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, null, receipt));
+            Assert.That(ex2.ParamName, Is.EqualTo("operation"));
+
+            ArgumentNullException ex3 = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, operation, null));
+            Assert.That(ex3.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void Result_DirectConstruction_CorrelationMismatch_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult sample = MakeResult();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = sample.IssuedBy;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof proof =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof)GetField(sample, "_proof");
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = sample.Receipt;
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation other = MakeReleaseOperation();
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, other, receipt));
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void Result_IssuedBySubstitution_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
+            SetField(result, "_issuedBy", MakeCoordinator());
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_SharedReleaserDifferentCoordinator_Rejected()
+        {
+            ICaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator first = MakeCoordinator(releaser);
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator second = MakeCoordinator(releaser);
+
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = first.Execute(operation);
+
+            SetField(result, "_issuedBy", second);
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_CrossProofSubstitution_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult first = MakeResult();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult second = MakeResult();
+
+            SetField(first, "_proof", GetField(second, "_proof"));
+            Assert.That(first.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_CrossOperationSubstitution_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
+            SetField(result, "_operation", MakeReleaseOperation());
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_CrossReceiptSubstitution_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult first = MakeResult();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult second = MakeResult();
+
+            SetField(first, "_receipt", GetField(second, "_receipt"));
+            Assert.That(first.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_ReceiptInternalCorruption_False()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
+            SetField(result.Receipt, "_operation", MakeReleaseOperation());
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_ProofGetterAbsent()
+        {
+            Assert.That(
+                typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseResult).GetProperty(
+                    "Proof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+            Assert.That(
+                typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseResult).GetProperty(
+                    "IssuanceProof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
+        }
+
+        [Test]
+        public void Coordinator_ProofCannotBeExternallyMinted()
+        {
+            Type proofType = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator).GetNestedType(
+                "IssuanceProof", BindingFlags.NonPublic);
+            Assert.That(proofType, Is.Not.Null);
+
+            Assert.That(proofType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+            Assert.That(proofType.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Length, Is.EqualTo(1));
+
+            foreach (MethodInfo method in proofType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+            {
+                Assert.That(method.ReturnType, Is.Not.EqualTo(proofType), method.Name + " must not return the proof.");
+            }
+
+            Type coordinatorType = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator);
+            foreach (MethodInfo method in coordinatorType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                if (method.IsPrivate)
+                {
+                    continue;
+                }
+
+                Assert.That(method.ReturnType, Is.Not.EqualTo(proofType), method.Name + " must not return the proof.");
+            }
+        }
+
+        // ---- Status enum ----
+
+        [Test]
+        public void Status_EnumExplicitValues()
+        {
+            Assert.That(
+                Enum.GetUnderlyingType(typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus)),
+                Is.EqualTo(typeof(int)));
+            Assert.That((int)CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None, Is.EqualTo(0));
+            Assert.That((int)CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased, Is.EqualTo(1));
+        }
+
+        // ---- Type shape ----
+
+        [Test]
+        public void Coordinator_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(2));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+            }
+
+            Assert.That(fields.Any(f => f.FieldType == typeof(ICaptureRunPublicationCaptureCompleteRecoveryReleaser)), Is.True);
+            Assert.That(fields.Any(f => f.FieldType == typeof(object)), Is.True);
+
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+        }
+
+        [Test]
+        public void Result_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseResult);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields, Is.Not.Empty);
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.FieldType.IsValueType, Is.False, field.Name + " must be a reference field.");
+            }
+
+            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+        }
+
+        // ---- Source inspection ----
+
+        [Test]
+        public void Coordinator_Source_NoForbiddenDependencies()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.cs"));
+
+            AssertForbiddenDependencies(source);
+
+            Assert.That(CountOccurrences(source, ".Release("), Is.EqualTo(1));
+            Assert.That(source, Does.Not.Contain(".IsValid"));
+            Assert.That(source, Does.Not.Contain(".Dispose()"));
+        }
+
+        [Test]
+        public void Result_Source_NoForbiddenDependencies()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.cs"));
+
+            AssertForbiddenDependencies(source);
+            Assert.That(source, Does.Not.Contain(".IsValid"));
+            Assert.That(source, Does.Not.Contain(".Dispose()"));
         }
     }
 }
