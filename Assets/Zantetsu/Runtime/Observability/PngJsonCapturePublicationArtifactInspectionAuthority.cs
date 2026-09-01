@@ -580,9 +580,10 @@ namespace Zantetsu.Observability
 
             /// <summary>
             /// O(1), exception-safe exact-binding check: confirms the exact
-            /// authority, the live lease reference, and the exact plan,
-            /// publication path set, and root layout captured at issuance
-            /// without navigating any entry. Never throws.
+            /// authority, the live lease reference, the exact plan, publication
+            /// path set, and root layout captured at issuance, and that both
+            /// the issued entry snapshot length and the plan's current entry
+            /// count match the count captured at issuance. Never throws.
             /// </summary>
             internal bool IsIssuedForExactBindings(PngJsonCapturePublicationArtifactInspectionAuthority authority)
             {
@@ -603,10 +604,15 @@ namespace Zantetsu.Observability
 
                 try
                 {
+                    PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
+
                     return ReferenceEquals(authority.LockLease, _lease)
-                        && ReferenceEquals(authority.AuthoritativePlan, _plan)
+                        && ReferenceEquals(plan, _plan)
                         && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
-                        && ReferenceEquals(authority.RootLayout, _rootLayout);
+                        && ReferenceEquals(authority.RootLayout, _rootLayout)
+                        && _entries.Length == _entryCount
+                        && plan.IsIndexLocalStructureIntact()
+                        && plan.EntryCount == _entryCount;
                 }
                 catch (Exception)
                 {

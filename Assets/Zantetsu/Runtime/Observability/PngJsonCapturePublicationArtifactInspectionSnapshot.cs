@@ -406,6 +406,11 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                if (_entriesArray.Length != _proof.Length)
+                {
+                    return false;
+                }
+
                 if (!ReferenceEquals(_operationToken, _operationTokenProof))
                 {
                     return false;

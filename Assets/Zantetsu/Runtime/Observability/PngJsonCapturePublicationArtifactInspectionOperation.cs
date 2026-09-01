@@ -315,6 +315,11 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                if (_artifactPathsArray.Length != _proof.Length)
+                {
+                    return false;
+                }
+
                 if (!ReferenceEquals(_authorityToken, _authorityTokenProof))
                 {
                     return false;

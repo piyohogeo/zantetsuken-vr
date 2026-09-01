@@ -79,6 +79,13 @@ namespace Zantetsu.Core.Tests
             field.SetValue(target, value);
         }
 
+        private static Type GetNestedType(Type outer, string name)
+        {
+            Type type = outer.GetNestedType(name, BindingFlags.NonPublic);
+            Assert.That(type, Is.Not.Null, name + " nested type not found.");
+            return type;
+        }
+
         private static string LocateSource(string relativePath)
         {
             if (File.Exists(relativePath))
@@ -1443,6 +1450,77 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
 
             Assert.That(token.IsIssuedForExactBindings(null), Is.False);
+        }
+
+        [Test]
+        public void Create_ZeroEntry_PlanEntryCountSwapped_Rejects()
+        {
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: new PngJsonCapturePublicationPlanEntry[0]);
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotArray(
+                MakeRecoveryAuthority(plan),
+                EvAbsent, 0,
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0],
+                new CaptureRunPublicationEvidenceStatus[0]);
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.Acquire(snapshot);
+
+            SetField(plan, "_entries", new[] { MakeEntry(10) });
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactRecoveryDecision.Create(snapshot, token));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
+        }
+
+        [Test]
+        public void AuthorityToken_ProofLengthMismatch_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(MakePlan());
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+
+            Type entrySnapshot = GetNestedType(
+                typeof(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken), "EntrySnapshot");
+
+            SetField(token, "_entries", Array.CreateInstance(entrySnapshot, 0));
+            Assert.That(token.IsIssuedForExactBindings(authority), Is.False);
+
+            SetField(token, "_entries", Array.CreateInstance(entrySnapshot, 2));
+            Assert.That(token.IsIssuedForExactBindings(authority), Is.False);
+        }
+
+        [Test]
+        public void OperationToken_ProofLengthMismatch_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(
+                MakeRecoveryAuthority(MakePlan()));
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+
+            SetField(token, "_proof", new PngJsonCapturePublicationArtifactInspectionPathSet[0]);
+            Assert.That(token.IsIssuedForExactBindings(operation), Is.False);
+
+            SetField(token, "_proof", new PngJsonCapturePublicationArtifactInspectionPathSet[2]);
+            Assert.That(token.IsIssuedForExactBindings(operation), Is.False);
+        }
+
+        [Test]
+        public void SnapshotToken_ProofLengthMismatch_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMatchesExpected, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.Acquire(snapshot);
+
+            Type entryProof = GetNestedType(
+                typeof(PngJsonCapturePublicationArtifactInspectionSnapshot), "EntryProof");
+
+            SetField(token, "_proof", Array.CreateInstance(entryProof, 0));
+            Assert.That(token.IsIssuedForExactBindings(snapshot), Is.False);
+
+            SetField(token, "_proof", Array.CreateInstance(entryProof, 2));
+            Assert.That(token.IsIssuedForExactBindings(snapshot), Is.False);
         }
 
         // ---- Type shape ----
