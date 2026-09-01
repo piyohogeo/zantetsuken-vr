@@ -749,7 +749,22 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+
+            // Exactly one private assignment constructor; no public or internal
+            // constructor accepts a legacy plan.
+            ConstructorInfo[] constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(constructors.Length, Is.EqualTo(1));
+            Assert.That(constructors[0].IsPrivate, Is.True);
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            // The atomic factory takes only the frozen result, so no legacy
+            // plan can be injected from outside.
+            MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(create, Is.Not.Null);
+            Assert.That(create.ReturnType, Is.EqualTo(typeof(PngJsonCaptureFrozenRunPublicationPlanBinding)));
+            ParameterInfo[] parameters = create.GetParameters();
+            Assert.That(parameters.Length, Is.EqualTo(1));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureEvidenceFrozenRunPublicationResult)));
         }
 
         [Test]

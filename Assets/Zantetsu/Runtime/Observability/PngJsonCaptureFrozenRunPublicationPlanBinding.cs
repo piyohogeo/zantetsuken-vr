@@ -11,11 +11,13 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The type owns exactly two read-only reference fields — the frozen
-    /// publication result and the legacy PNG plan — and has no public
-    /// constructor. It duplicates no descriptor, entry, identifier, path,
-    /// hash, or lease; every accessor forwards from the held graph. It is
-    /// constructed only by the validated builder after the generic plan has
-    /// been converted and re-confirmed.
+    /// publication result and the legacy PNG plan — and has no public or
+    /// internal constructor. It duplicates no descriptor, entry, identifier,
+    /// path, hash, or lease; every accessor forwards from the held graph. The
+    /// only construction path is <see cref="Create"/>, which validates the
+    /// frozen result once, converts its generic plan, and assigns the fields
+    /// through the private assignment constructor, so no legacy plan can be
+    /// injected from outside.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the correspondence without throwing and
@@ -35,12 +37,74 @@ namespace Zantetsu.Observability
         private readonly CaptureEvidenceFrozenRunPublicationResult _frozenPublicationResult;
         private readonly PngJsonCapturePublicationPlan _legacyPlan;
 
-        internal PngJsonCaptureFrozenRunPublicationPlanBinding(
+        private PngJsonCaptureFrozenRunPublicationPlanBinding(
             CaptureEvidenceFrozenRunPublicationResult frozenPublicationResult,
             PngJsonCapturePublicationPlan legacyPlan)
         {
             _frozenPublicationResult = frozenPublicationResult;
             _legacyPlan = legacyPlan;
+        }
+
+        /// <summary>
+        /// Atomic validated factory: the single validation-and-conversion site.
+        /// It validates the frozen result once (the sole full generic-plan
+        /// validation boundary), converts the generic plan into the exact
+        /// legacy entries, constructs the legacy plan, re-confirms the
+        /// correspondence, and only then assigns fields.
+        /// </summary>
+        internal static PngJsonCaptureFrozenRunPublicationPlanBinding Create(
+            CaptureEvidenceFrozenRunPublicationResult frozenPublicationResult)
+        {
+            if (frozenPublicationResult == null)
+            {
+                throw new ArgumentNullException(nameof(frozenPublicationResult));
+            }
+
+            if (!frozenPublicationResult.IsValid)
+            {
+                throw new ArgumentException("Frozen publication result must remain valid.", nameof(frozenPublicationResult));
+            }
+
+            CapturePublicationPlan genericPlan = frozenPublicationResult.Plan;
+            if (genericPlan == null)
+            {
+                throw new ArgumentException("Frozen publication result must hold a generic plan.", nameof(frozenPublicationResult));
+            }
+
+            if (genericPlan.TestRunId != frozenPublicationResult.TestRunId
+                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.RunManifestContentHash, StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Generic plan must correlate with the frozen publication result.", nameof(frozenPublicationResult));
+            }
+
+            int frameCount = genericPlan.CaptureFrameEvidenceCount;
+            if (genericPlan.ArtifactCount != checked(2 * frameCount))
+            {
+                throw new ArgumentException("Generic plan must have exactly two artifacts per frame.", nameof(frozenPublicationResult));
+            }
+
+            PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[frameCount];
+            for (int i = 0; i < frameCount; i++)
+            {
+                entries[i] = BuildEntry(genericPlan, i);
+            }
+
+            PngJsonCapturePublicationPlan legacyPlan = new PngJsonCapturePublicationPlan(
+                genericPlan.TestRunId,
+                genericPlan.RunInitializationId,
+                genericPlan.RunManifestContentHash,
+                entries);
+
+            if (legacyPlan.EntryCount != frameCount
+                || legacyPlan.TestRunId != genericPlan.TestRunId
+                || !string.Equals(legacyPlan.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(legacyPlan.RunManifestContentSha256, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Legacy plan does not correspond to the generic plan.");
+            }
+
+            return new PngJsonCaptureFrozenRunPublicationPlanBinding(frozenPublicationResult, legacyPlan);
         }
 
         internal CaptureEvidenceFrozenRunPublicationResult FrozenPublicationResult => _frozenPublicationResult;
@@ -84,12 +148,14 @@ namespace Zantetsu.Observability
             }
 
             CapturePublicationPlan genericPlan = frozenPublicationResult.Plan;
-            if (genericPlan == null || !genericPlan.IsValid)
+            if (genericPlan == null)
             {
                 return false;
             }
 
-            if (!legacyPlan.IsValid)
+            // O(1) exception-safe structural guard on the legacy plan, so no
+            // entry array is navigated before its presence is confirmed.
+            if (!legacyPlan.IsIndexLocalStructureIntact())
             {
                 return false;
             }
@@ -173,6 +239,55 @@ namespace Zantetsu.Observability
                 && string.Equals(image.FinalRelativePath, legacyEntry.PngFinalRelativePath, StringComparison.Ordinal)
                 && string.Equals(metadata.StagingRelativePath, legacyEntry.SidecarStagingRelativePath, StringComparison.Ordinal)
                 && string.Equals(metadata.FinalRelativePath, legacyEntry.SidecarFinalRelativePath, StringComparison.Ordinal);
+        }
+
+        private static PngJsonCapturePublicationPlanEntry BuildEntry(
+            CapturePublicationPlan genericPlan,
+            int index)
+        {
+            CaptureFrameEvidenceEntry evidence = genericPlan.GetCaptureFrameEvidence(index);
+            if (evidence == null || evidence.ArtifactCount != 2)
+            {
+                throw new ArgumentException("Each frame must reference exactly two artifacts.");
+            }
+
+            string id = evidence.CaptureFrameId.ToString(CultureInfo.InvariantCulture);
+            string imageId = "frame/" + id + "/image";
+            string metadataId = "frame/" + id + "/metadata";
+
+            if (!string.Equals(evidence.GetArtifactId(0), imageId, StringComparison.Ordinal)
+                || !string.Equals(evidence.GetArtifactId(1), metadataId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Frame artifacts must be the fixed image and metadata pair in ordinal order.");
+            }
+
+            CaptureArtifactDescriptor image = FindDescriptor(genericPlan, imageId);
+            CaptureArtifactDescriptor metadata = FindDescriptor(genericPlan, metadataId);
+            if (image == null || metadata == null)
+            {
+                throw new ArgumentException("Frame artifacts must resolve to descriptors.");
+            }
+
+            if (!IsImageDescriptor(image, id))
+            {
+                throw new ArgumentException("Image descriptor must match the fixed PNG schema.");
+            }
+
+            if (!IsMetadataDescriptor(metadata, id))
+            {
+                throw new ArgumentException("Metadata descriptor must match the fixed sidecar schema.");
+            }
+
+            return new PngJsonCapturePublicationPlanEntry(
+                evidence.CaptureFrameId,
+                "frames/" + id + ".png.stage",
+                "frames/" + id + ".json.stage",
+                "frames/" + id + ".png",
+                "frames/" + id + ".json",
+                image.ByteLength,
+                metadata.ByteLength,
+                image.ContentHash,
+                metadata.ContentHash);
         }
 
         private static bool IsImageDescriptor(CaptureArtifactDescriptor descriptor, string id)
