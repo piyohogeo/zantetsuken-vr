@@ -428,7 +428,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                return _operationToken.IsIssuedFor(_operation);
+                return _operationToken.IsIssuedForExactBindings(_operation);
             }
 
             /// <summary>

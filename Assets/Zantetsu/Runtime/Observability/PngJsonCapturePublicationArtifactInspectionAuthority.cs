@@ -579,6 +579,42 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// O(1), exception-safe exact-binding check: confirms the exact
+            /// authority, the live lease reference, and the exact plan,
+            /// publication path set, and root layout captured at issuance
+            /// without navigating any entry. Never throws.
+            /// </summary>
+            internal bool IsIssuedForExactBindings(PngJsonCapturePublicationArtifactInspectionAuthority authority)
+            {
+                if (authority == null || !ReferenceEquals(_authority, authority))
+                {
+                    return false;
+                }
+
+                if (_lease == null || _entries == null)
+                {
+                    return false;
+                }
+
+                if (!_lease.IsCreated)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return ReferenceEquals(authority.LockLease, _lease)
+                        && ReferenceEquals(authority.AuthoritativePlan, _plan)
+                        && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
+                        && ReferenceEquals(authority.RootLayout, _rootLayout);
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
+
+            /// <summary>
             /// O(1), exception-safe entry index range check against the entry
             /// count captured at issuance, so a corrupted plan's or token's
             /// entry array is never navigated to determine the range.

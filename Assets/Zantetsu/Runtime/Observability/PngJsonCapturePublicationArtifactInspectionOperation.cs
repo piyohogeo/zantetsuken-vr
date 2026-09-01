@@ -296,6 +296,49 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// O(1), exception-safe exact-binding check: confirms the exact
+            /// operation, authority, authority token binding and lease
+            /// liveness, PNG probe bound, and artifact path array reference
+            /// without touching any path set element. Never throws and never
+            /// exposes the proof array or the authority token.
+            /// </summary>
+            internal bool IsIssuedForExactBindings(PngJsonCapturePublicationArtifactInspectionOperation operation)
+            {
+                if (operation == null || !ReferenceEquals(_operation, operation))
+                {
+                    return false;
+                }
+
+                if (_authority == null || _authorityToken == null || _authorityTokenProof == null
+                    || _artifactPathsArray == null || _proof == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_authorityToken, _authorityTokenProof))
+                {
+                    return false;
+                }
+
+                if (operation._maximumPngByteCount != _maximumPngByteCount)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(operation._artifactPaths, _artifactPathsArray))
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(operation._authority, _authority))
+                {
+                    return false;
+                }
+
+                return _authorityToken.IsIssuedForExactBindings(_authority);
+            }
+
+            /// <summary>
             /// O(1), exception-safe index-local correlation for one index:
             /// confirms the exact operation, authority, authority token, lease
             /// liveness, artifact path array, and path set element reference,

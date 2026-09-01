@@ -64,6 +64,11 @@ namespace Zantetsu.Observability
         {
             disposition = CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision;
 
+            if (snapshot == null || token == null)
+            {
+                return false;
+            }
+
             if (!token.IsIssuedForExactBindings(snapshot))
             {
                 return false;
