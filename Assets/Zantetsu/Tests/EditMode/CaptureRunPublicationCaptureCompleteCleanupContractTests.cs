@@ -4582,8 +4582,29 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakeNotificationNotifier : ICaptureRunPublicationCaptureCompleteNotifier
         {
+            public int CallCount { get; private set; }
+
+            public CaptureRunPublicationCaptureCompleteNotificationOperation LastOperation { get; private set; }
+
+            public Exception ExceptionToThrow { get; set; }
+
+            public Func<CaptureRunPublicationCaptureCompleteNotificationOperation, CaptureRunPublicationCaptureCompleteNotificationReceipt> ReceiptOverride { get; set; }
+
             public CaptureRunPublicationCaptureCompleteNotificationReceipt Notify(CaptureRunPublicationCaptureCompleteNotificationOperation operation)
             {
+                CallCount++;
+                LastOperation = operation;
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (ReceiptOverride != null)
+                {
+                    return ReceiptOverride(operation);
+                }
+
                 return new CaptureRunPublicationCaptureCompleteNotificationReceipt(this, operation);
             }
         }
@@ -4595,6 +4616,20 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
                 coordinator.Execute(commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
             return new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+        }
+
+        private static CaptureRunPublicationCaptureCompleteNotificationCoordinator MakeNotificationCoordinator(
+            FakeNotificationNotifier notifier = null)
+        {
+            return new CaptureRunPublicationCaptureCompleteNotificationCoordinator(
+                notifier ?? new FakeNotificationNotifier());
+        }
+
+        private static CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(bool commitRoute)
+        {
+            return MakeNotificationCoordinator(new FakeNotificationNotifier()).Execute(
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(
+                    commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult()));
         }
 
         [Test]
@@ -4995,6 +5030,368 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("using System.Linq"));
             Assert.That(source, Does.Not.Contain("List<"));
             Assert.That(source, Does.Not.Contain("Array.Copy"));
+        }
+
+        // ---- Capture-complete notification coordinator / result ----
+
+        [Test]
+        public void NotificationCoordinator_NullCleanupResult_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(new FakeNotificationNotifier());
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => coordinator.Execute(null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("cleanupResult"));
+        }
+
+        [Test]
+        public void NotificationCoordinator_InvalidCleanupResult_NotifierNotContacted()
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationCoordinator cleanupCoordinator =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend());
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                cleanupCoordinator.Execute(BuildCommitResult());
+            SetField(cleanup.ExecutionResult, "_completedSteps", null);
+            Assert.That(cleanup.IsValid, Is.False);
+
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+
+            Assert.Throws<ArgumentException>(() => coordinator.Execute(cleanup));
+            Assert.That(notifier.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void NotificationCoordinator_OperationBuiltOnceSameReferencePassed()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+
+            CaptureRunPublicationCaptureCompleteNotificationResult result = coordinator.Execute(cleanup);
+
+            Assert.That(notifier.CallCount, Is.EqualTo(1));
+            Assert.That(ReferenceEquals(notifier.LastOperation, result.Operation), Is.True);
+            Assert.That(ReferenceEquals(notifier.LastOperation.CleanupResult, cleanup), Is.True);
+        }
+
+        [Test]
+        public void NotificationCoordinator_NotifierCalledExactlyOnce()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+
+            coordinator.Execute(cleanup);
+
+            Assert.That(notifier.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void NotificationCoordinator_NotifierExceptionPropagatesSameInstance()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            InvalidOperationException expected = new InvalidOperationException("boom");
+            notifier.ExceptionToThrow = expected;
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+
+            InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(
+                () => coordinator.Execute(cleanup));
+
+            Assert.That(ReferenceEquals(thrown, expected), Is.True);
+        }
+
+        [Test]
+        public void NotificationResult_NullReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(new FakeNotificationNotifier());
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                MakeNotificationOperation(commitRoute: true);
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, operation, null));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationResult_ForeignNotifierReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(new FakeNotificationNotifier());
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                MakeNotificationOperation(commitRoute: true);
+
+            CaptureRunPublicationCaptureCompleteNotificationReceipt foreignReceipt =
+                new CaptureRunPublicationCaptureCompleteNotificationReceipt(new FakeNotificationNotifier(), operation);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, operation, foreignReceipt));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationResult_DifferentOperationReceipt_Rejected()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                MakeNotificationOperation(commitRoute: true);
+            CaptureRunPublicationCaptureCompleteNotificationOperation other =
+                MakeNotificationOperation(commitRoute: false);
+
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
+                new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, other);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, operation, receipt));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationResult_InvalidReceipt_Rejected()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
+                new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
+                new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, operation);
+
+            cleanup.LockLease.Dispose();
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(receipt.IsValid, Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, operation, receipt));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationResult_ForwardsAllValues()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+            CaptureRunPublicationCaptureCompleteNotificationResult result = coordinator.Execute(cleanup);
+
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.Notifier, notifier), Is.True);
+            Assert.That(ReferenceEquals(result.Receipt.IssuedBy, notifier), Is.True);
+            Assert.That(ReferenceEquals(result.Receipt.Operation, result.Operation), Is.True);
+            Assert.That(ReferenceEquals(result.CleanupResult, cleanup), Is.True);
+            Assert.That(ReferenceEquals(result.ExecutionResult, cleanup.ExecutionResult), Is.True);
+            Assert.That(ReferenceEquals(result.RootLayout, cleanup.RootLayout), Is.True);
+            Assert.That(ReferenceEquals(result.LockLease, cleanup.LockLease), Is.True);
+            Assert.That(result.TestRunId, Is.EqualTo(cleanup.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(cleanup.RunInitializationId));
+            Assert.That(result.RunManifestContentSha256, Is.EqualTo(cleanup.ActionPlan.AuthoritativePlan.RunManifestContentSha256));
+            Assert.That(result.CaptureIndexPath, Is.EqualTo(GetPublicationPaths(cleanup.ActionPlan).CaptureIndexPath));
+            Assert.That(result.Disposition, Is.EqualTo(cleanup.Disposition));
+            Assert.That(result.Status, Is.EqualTo(cleanup.Status));
+            Assert.That(result.IsValid, Is.True);
+        }
+
+        [Test]
+        public void NotificationResult_BothDispositionsAccepted()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationResult commit = MakeNotificationResult(commitRoute: true);
+            Assert.That(commit.IsValid, Is.True);
+            Assert.That(commit.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex));
+
+            CaptureRunPublicationCaptureCompleteNotificationResult complete = MakeNotificationResult(commitRoute: false);
+            Assert.That(complete.IsValid, Is.True);
+            Assert.That(complete.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete));
+        }
+
+        [Test]
+        public void NotificationResult_ReceiptOperationReplaced_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationResult result = MakeNotificationResult(commitRoute: true);
+            Assert.That(result.IsValid, Is.True);
+
+            CaptureRunPublicationCaptureCompleteNotificationOperation other =
+                MakeNotificationOperation(commitRoute: false);
+            SetField(result.Receipt, "_operation", other);
+
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void NotificationResult_CorruptedGraphConvergesFalse()
+        {
+            // Cleanup result corrupted inside the operation.
+            CaptureRunPublicationCaptureCompleteNotificationResult r1 = MakeNotificationResult(commitRoute: true);
+            Assert.That(r1.IsValid, Is.True);
+            SetField(r1.Operation, "_cleanupResult", null);
+            Assert.That(r1.IsValid, Is.False);
+
+            // Plan corrupted.
+            CaptureRunPublicationCaptureCompleteNotificationResult r2 = MakeNotificationResult(commitRoute: true);
+            Assert.That(r2.IsValid, Is.True);
+            SetField(r2.CleanupResult.ActionPlan.AuthoritativePlan, "_runManifestContentSha256", "broken");
+            Assert.That(r2.IsValid, Is.False);
+
+            // Path set corrupted.
+            CaptureRunPublicationCaptureCompleteNotificationResult r3 = MakeNotificationResult(commitRoute: true);
+            Assert.That(r3.IsValid, Is.True);
+            CaptureRunPublicationPathSet pathSet = GetPublicationPaths(r3.CleanupResult.ActionPlan);
+            SetField(pathSet, "_captureIndexPath", pathSet.CaptureIndexTemporaryPath);
+            Assert.That(r3.IsValid, Is.False);
+        }
+
+        [Test]
+        public void NotificationResult_LeaseExpired_Invalid()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationResult result = MakeNotificationResult(commitRoute: true);
+            Assert.That(result.IsValid, Is.True);
+
+            result.LockLease.Dispose();
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void NotificationResult_CrossCoordinator_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorA =
+                MakeNotificationCoordinator(new FakeNotificationNotifier());
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorB =
+                MakeNotificationCoordinator(new FakeNotificationNotifier());
+
+            CaptureRunPublicationCaptureCompleteNotificationResult result = coordinatorA.Execute(
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult()));
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteNotificationResult(
+                    coordinatorB, result.Operation, result.Receipt));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationResult_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteNotificationResult);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(3));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+        }
+
+        [Test]
+        public void NotificationCoordinator_TypeShape()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteNotificationCoordinator);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(1));
+            Assert.That(fields[0].IsInitOnly, Is.True);
+            Assert.That(fields[0].IsPrivate, Is.True);
+            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(ICaptureRunPublicationCaptureCompleteNotifier)));
+        }
+
+        [Test]
+        public void Source_NotificationCoordinatorResultNoForbiddenDependencies()
+        {
+            string[] relativePaths =
+            {
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationCoordinator.cs",
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationResult.cs"
+            };
+
+            foreach (string relativePath in relativePaths)
+            {
+                string source = File.ReadAllText(LocateSource(relativePath));
+
+                Assert.That(source, Does.Not.Contain("File."));
+                Assert.That(source, Does.Not.Contain("Directory."));
+                Assert.That(source, Does.Not.Contain("FileStream"));
+                Assert.That(source, Does.Not.Contain("DllImport"));
+                Assert.That(source, Does.Not.Contain("Serialize"));
+                Assert.That(source, Does.Not.Contain("ComputeHash"));
+                Assert.That(source, Does.Not.Contain("Registry"));
+                Assert.That(source, Does.Not.Contain("Draft"));
+                Assert.That(source, Does.Not.Contain("ICaptureRunPublicationCaptureCompleteCleanupBackend"));
+                Assert.That(source, Does.Not.Contain(".Dispose()"));
+                Assert.That(source, Does.Not.Contain("DateTime"));
+                Assert.That(source, Does.Not.Contain("Random"));
+                Assert.That(source, Does.Not.Contain("using System.Linq"));
+                Assert.That(source, Does.Not.Contain("List<"));
+                Assert.That(source, Does.Not.Contain("ToArray"));
+                Assert.That(source, Does.Not.Contain("Array.Copy"));
+            }
+        }
+
+        [Test]
+        public void Source_NotificationCoordinatorNoPrevalidationNoRetryNoCatch()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationCoordinator.cs"));
+
+            // The coordinator never pre-validates the cleanup result; the
+            // operation constructor is the single pre-notification validation
+            // boundary.
+            Assert.That(source, Does.Not.Contain("cleanupResult.IsValid"));
+            Assert.That(CountOccurrences(source, "new CaptureRunPublicationCaptureCompleteNotificationOperation("), Is.EqualTo(1));
+            Assert.That(CountOccurrences(source, "_notifier.Notify"), Is.EqualTo(1));
+
+            // No retry loops and no exception transformation.
+            Assert.That(source, Does.Not.Contain("for ("));
+            Assert.That(source, Does.Not.Contain("while ("));
+            Assert.That(source, Does.Not.Contain("foreach"));
+            Assert.That(source, Does.Not.Contain("catch"));
+        }
+
+        [Test]
+        public void Source_NotificationResultNoDuplicateFullValidation()
+        {
+            string source = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteNotificationResult.cs"));
+
+            // The single post-notification full validation is aggregated into
+            // the IsIssuedFor path; the predicate never calls operation.IsValid
+            // or receipt.IsValid separately.
+            Assert.That(source, Does.Not.Contain("operation.IsValid"));
+            Assert.That(source, Does.Not.Contain("receipt.IsValid"));
+            Assert.That(CountOccurrences(source, "IsIssuedFor("), Is.EqualTo(1));
         }
     }
 }
