@@ -956,6 +956,19 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void EntryArrayNull_ConstructorRejects()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+
+            SetField(authority.AuthoritativePlan, "_entries", null);
+
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
+        }
+
+        [Test]
         public void EntryArraySwap_False()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();

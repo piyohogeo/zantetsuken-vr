@@ -193,7 +193,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Authority must hold an authoritative plan.", nameof(authority));
             }
 
-            if (entryIndex < 0 || entryIndex >= plan.EntryCount)
+            if (!token.IsEntryIndexInRange(entryIndex))
             {
                 throw new ArgumentOutOfRangeException(nameof(entryIndex), entryIndex, "Entry index must be within the authoritative plan entry count.");
             }

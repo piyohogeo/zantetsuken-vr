@@ -500,6 +500,7 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationPlan _plan;
             private readonly CaptureRunPublicationPathSet _publicationPaths;
             private readonly CaptureRunRootLayout _rootLayout;
+            private readonly int _entryCount;
             private readonly EntrySnapshot[] _entries;
 
             /// <summary>
@@ -564,6 +565,7 @@ namespace Zantetsu.Observability
                 _plan = plan;
                 _publicationPaths = publicationPaths;
                 _rootLayout = rootLayout;
+                _entryCount = entries.Length;
                 _entries = entries;
             }
 
@@ -574,6 +576,16 @@ namespace Zantetsu.Observability
             internal bool IsIssuedFor(PngJsonCapturePublicationArtifactInspectionAuthority authority)
             {
                 return authority != null && ReferenceEquals(_authority, authority);
+            }
+
+            /// <summary>
+            /// O(1), exception-safe entry index range check against the entry
+            /// count captured at issuance, so a corrupted plan's or token's
+            /// entry array is never navigated to determine the range.
+            /// </summary>
+            internal bool IsEntryIndexInRange(int entryIndex)
+            {
+                return entryIndex >= 0 && entryIndex < _entryCount;
             }
 
             /// <summary>
