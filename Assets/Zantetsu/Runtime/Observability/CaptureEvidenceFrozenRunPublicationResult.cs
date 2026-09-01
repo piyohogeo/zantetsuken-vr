@@ -11,23 +11,27 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The type owns exactly four read-only reference fields — the issuing
-    /// coordinator, the coordinator's opaque fresh-publication authority, the
-    /// freeze receipt, and the publication-plan write receipt — and has no
-    /// public constructor. Every accessor forwards a value from the held graph:
-    /// the store, plan, draft registry, artifact registry, run session, root
-    /// layout, lock lease, run identity, run initialization id, run manifest
-    /// content hash, publication plan path, and canonical byte count are all
-    /// forwarded rather than duplicated. The authority is never exposed.
+    /// coordinator, the coordinator-minted issuance proof, the freeze receipt,
+    /// and the publication-plan write receipt — and has no public constructor.
+    /// Every accessor forwards a value from the held graph: the store, plan,
+    /// draft registry, artifact registry, run session, root layout, lock lease,
+    /// run identity, run initialization id, run manifest content hash,
+    /// publication plan path, and canonical byte count are all forwarded rather
+    /// than duplicated. The proof is never exposed.
     /// </para>
     /// <para>
-    /// <see cref="Create"/> and <see cref="IsValid"/> share one exception-safe
-    /// correlation predicate. It re-checks the authority binding, the freeze
-    /// receipt validity, the exact store and root layout, the session's live
-    /// lock ownership, the drained registries, and the write receipt's exact
-    /// store, plan, path, and byte count. Any forged, replaced, released, or
-    /// corrupted value converges to <c>false</c> without throwing. Because this
-    /// result proves the current freeze receipt and lock liveness, it becomes
-    /// invalid once the session or lease is released.
+    /// <see cref="Create"/> performs a single O(1) exact-binding check that
+    /// the proof was minted by this coordinator for the exact freeze receipt
+    /// and write receipt, then assigns fields. The full freeze-graph validation
+    /// happened once in the coordinator before persistence, and is re-run only
+    /// by <see cref="IsValid"/> through one exception-safe correlation
+    /// predicate. It re-checks the proof binding, the freeze receipt validity,
+    /// the exact store and root layout, the session's live lock ownership, the
+    /// drained registries, and the write receipt's exact store, plan, path, and
+    /// byte count. Any forged, replaced, released, or corrupted value converges
+    /// to <c>false</c> without throwing. Because this result proves the current
+    /// freeze receipt and lock liveness, it becomes invalid once the session or
+    /// lease is released.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -37,37 +41,38 @@ namespace Zantetsu.Observability
     internal sealed class CaptureEvidenceFrozenRunPublicationResult
     {
         private readonly CaptureEvidenceRunPublicationCoordinator _issuedBy;
-        private readonly object _authority;
+        private readonly CaptureEvidenceRunPublicationCoordinator.IssuanceProof _proof;
         private readonly CaptureEvidenceRunFreezeReceipt _freezeReceipt;
         private readonly CapturePublicationPlanWriteReceipt _writeReceipt;
 
         /// <summary>
         /// Private assignment constructor: stores the already-validated graph
         /// without re-checking it. The only construction path is
-        /// <see cref="Create"/>, which validates once before assigning.
+        /// <see cref="Create"/>, which performs an O(1) exact-binding check
+        /// before assigning.
         /// </summary>
         private CaptureEvidenceFrozenRunPublicationResult(
             CaptureEvidenceRunPublicationCoordinator issuedBy,
-            object authority,
+            CaptureEvidenceRunPublicationCoordinator.IssuanceProof proof,
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
             CapturePublicationPlanWriteReceipt writeReceipt)
         {
             _issuedBy = issuedBy;
-            _authority = authority;
+            _proof = proof;
             _freezeReceipt = freezeReceipt;
             _writeReceipt = writeReceipt;
         }
 
         /// <summary>
-        /// Atomic validated factory: the single validation-and-assignment site.
-        /// It rejects null structural arguments with
-        /// <see cref="ArgumentNullException"/> and any uncorrelated graph with
-        /// <see cref="InvalidOperationException"/>, then assigns fields exactly
-        /// once.
+        /// Atomic factory: performs the single O(1) exact-binding check that
+        /// the proof was minted by the issuing coordinator for the exact freeze
+        /// receipt and write receipt, then assigns fields exactly once. The full
+        /// freeze-graph validation already happened once in the coordinator, and
+        /// is re-run only by <see cref="IsValid"/>.
         /// </summary>
         internal static CaptureEvidenceFrozenRunPublicationResult Create(
             CaptureEvidenceRunPublicationCoordinator issuedBy,
-            object authority,
+            CaptureEvidenceRunPublicationCoordinator.IssuanceProof proof,
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
             CapturePublicationPlanWriteReceipt writeReceipt)
         {
@@ -76,9 +81,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(issuedBy));
             }
 
-            if (authority == null)
+            if (proof == null)
             {
-                throw new ArgumentNullException(nameof(authority));
+                throw new ArgumentNullException(nameof(proof));
             }
 
             if (freezeReceipt == null)
@@ -91,13 +96,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(writeReceipt));
             }
 
-            if (!IsCorrelated(issuedBy, authority, freezeReceipt, writeReceipt))
+            if (!issuedBy.IsMintedByThis(proof, freezeReceipt, writeReceipt))
             {
                 throw new InvalidOperationException(
-                    "Frozen-Run publication evidence is not correlated.");
+                    "Frozen-Run publication proof is not minted by this coordinator for this evidence.");
             }
 
-            return new CaptureEvidenceFrozenRunPublicationResult(issuedBy, authority, freezeReceipt, writeReceipt);
+            return new CaptureEvidenceFrozenRunPublicationResult(issuedBy, proof, freezeReceipt, writeReceipt);
         }
 
         internal CaptureEvidenceRunPublicationCoordinator IssuedBy => _issuedBy;
@@ -135,20 +140,20 @@ namespace Zantetsu.Observability
         /// currently held graph, without throwing. Any corrupted or replaced
         /// value converges to <c>false</c>.
         /// </summary>
-        internal bool IsValid => IsCorrelated(_issuedBy, _authority, _freezeReceipt, _writeReceipt);
+        internal bool IsValid => IsCorrelated(_issuedBy, _proof, _freezeReceipt, _writeReceipt);
 
         private static bool IsCorrelated(
             CaptureEvidenceRunPublicationCoordinator issuedBy,
-            object authority,
+            CaptureEvidenceRunPublicationCoordinator.IssuanceProof proof,
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
             CapturePublicationPlanWriteReceipt writeReceipt)
         {
-            if (issuedBy == null || authority == null || freezeReceipt == null || writeReceipt == null)
+            if (issuedBy == null || proof == null || freezeReceipt == null || writeReceipt == null)
             {
                 return false;
             }
 
-            if (!issuedBy.IsFreshPublicationAuthority(authority))
+            if (!issuedBy.IsMintedByThis(proof, freezeReceipt, writeReceipt))
             {
                 return false;
             }

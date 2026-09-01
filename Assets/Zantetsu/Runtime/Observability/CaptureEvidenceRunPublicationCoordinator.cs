@@ -13,7 +13,7 @@ namespace Zantetsu.Observability
         private readonly CaptureEvidencePublicationCoordinator _publication;
         private readonly CapturePublicationRecoveryCoordinator _recovery;
         private readonly object _recoveryReceiptAuthority;
-        private readonly object _freshPublicationAuthority;
+        private readonly object _freshPublicationGate;
 
         internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)
         {
@@ -21,13 +21,99 @@ namespace Zantetsu.Observability
             _publication = new CaptureEvidencePublicationCoordinator(store);
             _recovery = new CapturePublicationRecoveryCoordinator(store);
             _recoveryReceiptAuthority = new object();
-            _freshPublicationAuthority = new object();
+            _freshPublicationGate = new object();
         }
 
         internal CaptureArtifactFileStore Store => _store;
 
-        internal bool IsFreshPublicationAuthority(object authority) =>
-            ReferenceEquals(_freshPublicationAuthority, authority);
+        /// <summary>
+        /// Per-call opaque proof minted only inside <see cref="PersistFrozenRun"/>
+        /// after the plan was persisted. It binds to this exact coordinator, the
+        /// coordinator's private fresh-publication gate, and the exact freeze
+        /// receipt, write receipt, draft registry, artifact registry, session,
+        /// and lock lease captured before persistence, so a proof cannot be
+        /// reused across calls, coordinators, or swapped references.
+        /// </summary>
+        internal sealed class IssuanceProof
+        {
+            private readonly CaptureEvidenceRunPublicationCoordinator _coordinator;
+            private readonly object _gate;
+            private readonly CaptureEvidenceRunFreezeReceipt _freezeReceipt;
+            private readonly CapturePublicationPlanWriteReceipt _writeReceipt;
+            private readonly CaptureFrameDraftRegistry _drafts;
+            private readonly CaptureArtifactRegistry _artifacts;
+            private readonly CaptureRunInitializationSession _session;
+            private readonly CaptureRunLockLease _lockLease;
+
+            internal IssuanceProof(
+                CaptureEvidenceRunPublicationCoordinator coordinator,
+                object gate,
+                CaptureEvidenceRunFreezeReceipt freezeReceipt,
+                CapturePublicationPlanWriteReceipt writeReceipt,
+                CaptureFrameDraftRegistry drafts,
+                CaptureArtifactRegistry artifacts,
+                CaptureRunInitializationSession session,
+                CaptureRunLockLease lockLease)
+            {
+                _coordinator = coordinator;
+                _gate = gate;
+                _freezeReceipt = freezeReceipt;
+                _writeReceipt = writeReceipt;
+                _drafts = drafts;
+                _artifacts = artifacts;
+                _session = session;
+                _lockLease = lockLease;
+            }
+
+            internal bool IsMintedFor(
+                CaptureEvidenceRunPublicationCoordinator coordinator,
+                object gate,
+                CaptureEvidenceRunFreezeReceipt freezeReceipt,
+                CapturePublicationPlanWriteReceipt writeReceipt,
+                CaptureFrameDraftRegistry drafts,
+                CaptureArtifactRegistry artifacts,
+                CaptureRunInitializationSession session,
+                CaptureRunLockLease lockLease)
+            {
+                return coordinator != null
+                    && gate != null
+                    && freezeReceipt != null
+                    && writeReceipt != null
+                    && drafts != null
+                    && artifacts != null
+                    && session != null
+                    && lockLease != null
+                    && ReferenceEquals(_coordinator, coordinator)
+                    && ReferenceEquals(_gate, gate)
+                    && ReferenceEquals(_freezeReceipt, freezeReceipt)
+                    && ReferenceEquals(_writeReceipt, writeReceipt)
+                    && ReferenceEquals(_drafts, drafts)
+                    && ReferenceEquals(_artifacts, artifacts)
+                    && ReferenceEquals(_session, session)
+                    && ReferenceEquals(_lockLease, lockLease);
+            }
+        }
+
+        internal bool IsMintedByThis(
+            IssuanceProof proof,
+            CaptureEvidenceRunFreezeReceipt freezeReceipt,
+            CapturePublicationPlanWriteReceipt writeReceipt)
+        {
+            if (proof == null || freezeReceipt == null || writeReceipt == null)
+            {
+                return false;
+            }
+
+            return proof.IsMintedFor(
+                this,
+                _freshPublicationGate,
+                freezeReceipt,
+                writeReceipt,
+                freezeReceipt.Drafts,
+                freezeReceipt.Artifacts,
+                freezeReceipt.RunSession,
+                freezeReceipt.LockLease);
+        }
 
         internal CaptureEvidenceFrozenRunPublicationResult PersistFrozenRun(
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
@@ -41,17 +127,28 @@ namespace Zantetsu.Observability
             if (!ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout))
                 throw new ArgumentException("Freeze receipt and store must share the exact Run root layout.", nameof(freezeReceipt));
 
+            CaptureFrameDraftRegistry drafts = freezeReceipt.Drafts;
+            CaptureArtifactRegistry artifacts = freezeReceipt.Artifacts;
+            CaptureRunInitializationSession session = freezeReceipt.RunSession;
+            CaptureRunLockLease lockLease = freezeReceipt.LockLease;
+
             CapturePublicationPlanWriteReceipt writeReceipt = _publication.BuildAndPersist(
-                freezeReceipt.Drafts,
-                freezeReceipt.Artifacts,
+                drafts,
+                artifacts,
                 freezeReceipt.RunInitializationId,
                 runManifestContentHash);
 
-            return CaptureEvidenceFrozenRunPublicationResult.Create(
+            IssuanceProof proof = new IssuanceProof(
                 this,
-                _freshPublicationAuthority,
+                _freshPublicationGate,
                 freezeReceipt,
-                writeReceipt);
+                writeReceipt,
+                drafts,
+                artifacts,
+                session,
+                lockLease);
+
+            return CaptureEvidenceFrozenRunPublicationResult.Create(this, proof, freezeReceipt, writeReceipt);
         }
 
         internal CaptureEvidenceRunRecoveryInspectionReceipt RecoverAfterRestart(

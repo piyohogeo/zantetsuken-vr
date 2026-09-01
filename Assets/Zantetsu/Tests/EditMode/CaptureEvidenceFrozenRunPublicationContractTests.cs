@@ -303,7 +303,7 @@ namespace Zantetsu.Core.Tests
                 (CaptureEvidenceRunPublicationCoordinator)FormatterServices.GetUninitializedObject(
                     typeof(CaptureEvidenceRunPublicationCoordinator));
             SetField(coordinator, "_store", store);
-            SetField(coordinator, "_freshPublicationAuthority", new object());
+            SetField(coordinator, "_freshPublicationGate", new object());
             SetField(coordinator, "_recoveryReceiptAuthority", new object());
 
             CaptureEvidencePublicationCoordinator publication =
@@ -331,6 +331,22 @@ namespace Zantetsu.Core.Tests
             return receipt;
         }
 
+        private static CaptureEvidenceRunPublicationCoordinator.IssuanceProof MintProof(
+            CaptureEvidenceRunPublicationCoordinator coordinator,
+            CaptureEvidenceRunFreezeReceipt freezeReceipt,
+            CapturePublicationPlanWriteReceipt writeReceipt)
+        {
+            return new CaptureEvidenceRunPublicationCoordinator.IssuanceProof(
+                coordinator,
+                GetField(coordinator, "_freshPublicationGate"),
+                freezeReceipt,
+                writeReceipt,
+                freezeReceipt.Drafts,
+                freezeReceipt.Artifacts,
+                freezeReceipt.RunSession,
+                freezeReceipt.LockLease);
+        }
+
         private static CaptureEvidenceFrozenRunPublicationResult MakeResult()
         {
             CaptureRunRootLayout layout = MakeLayout();
@@ -345,8 +361,11 @@ namespace Zantetsu.Core.Tests
                 Array.Empty<CaptureFrameEvidenceEntry>());
             CapturePublicationPlanWriteReceipt writeReceipt = new CapturePublicationPlanWriteReceipt(
                 store, plan, store.PublicationPlanPath, 16);
-            object authority = GetField(coordinator, "_freshPublicationAuthority");
-            return CaptureEvidenceFrozenRunPublicationResult.Create(coordinator, authority, freezeReceipt, writeReceipt);
+            return CaptureEvidenceFrozenRunPublicationResult.Create(
+                coordinator,
+                MintProof(coordinator, freezeReceipt, writeReceipt),
+                freezeReceipt,
+                writeReceipt);
         }
 
         // ---- Coordinator ----
@@ -585,13 +604,35 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_RecoveryAuthorityMismatch_Rejected()
+        public void Result_RecoveryAuthorityCannotMintProof_Rejected()
         {
-            CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
-            object recoveryAuthority = GetField(result.IssuedBy, "_recoveryReceiptAuthority");
-            Assert.That(recoveryAuthority, Is.Not.Null);
-            SetField(result, "_authority", recoveryAuthority);
-            Assert.That(result.IsValid, Is.False);
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureArtifactFileStore store = ForgeStore(layout);
+            CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout);
+            CapturePublicationPlan plan = new CapturePublicationPlan(
+                layout.TestRunId, InitId, HashA,
+                Array.Empty<CaptureArtifactDescriptor>(),
+                Array.Empty<CaptureFrameEvidenceEntry>());
+            CapturePublicationPlanWriteReceipt writeReceipt = new CapturePublicationPlanWriteReceipt(
+                store, plan, store.PublicationPlanPath, 16);
+
+            // A proof minted with the recovery authority instead of the fresh
+            // publication gate is rejected at construction.
+            object recoveryAuthority = GetField(coordinator, "_recoveryReceiptAuthority");
+            CaptureEvidenceRunPublicationCoordinator.IssuanceProof forged =
+                new CaptureEvidenceRunPublicationCoordinator.IssuanceProof(
+                    coordinator,
+                    recoveryAuthority,
+                    freezeReceipt,
+                    writeReceipt,
+                    freezeReceipt.Drafts,
+                    freezeReceipt.Artifacts,
+                    freezeReceipt.RunSession,
+                    freezeReceipt.LockLease);
+
+            Assert.Throws<InvalidOperationException>(
+                () => CaptureEvidenceFrozenRunPublicationResult.Create(coordinator, forged, freezeReceipt, writeReceipt));
         }
 
         [Test]
@@ -605,14 +646,14 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_AuthorityAndReceiptsSubstitution_Rejected()
+        public void Result_ProofAndReceiptsSubstitution_Rejected()
         {
             CaptureEvidenceFrozenRunPublicationResult first = MakeResult();
             CaptureEvidenceFrozenRunPublicationResult second = MakeResult();
 
-            CaptureEvidenceFrozenRunPublicationResult authoritySwapped = MakeResult();
-            SetField(authoritySwapped, "_authority", GetField(second, "_authority"));
-            Assert.That(authoritySwapped.IsValid, Is.False);
+            CaptureEvidenceFrozenRunPublicationResult proofSwapped = MakeResult();
+            SetField(proofSwapped, "_proof", GetField(second, "_proof"));
+            Assert.That(proofSwapped.IsValid, Is.False);
 
             CaptureEvidenceFrozenRunPublicationResult freezeReceiptSwapped = MakeResult();
             SetField(freezeReceiptSwapped, "_freezeReceipt", GetField(second, "_freezeReceipt"));
@@ -624,6 +665,47 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(first.IsValid, Is.True);
             Assert.That(second.IsValid, Is.True);
+        }
+
+        [Test]
+        public void Result_SameCoordinatorCrossCallSubstitution_Rejected()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureArtifactFileStore store = ForgeStore(layout);
+            CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store);
+            CapturePublicationPlan plan = new CapturePublicationPlan(
+                layout.TestRunId, InitId, HashA,
+                Array.Empty<CaptureArtifactDescriptor>(),
+                Array.Empty<CaptureFrameEvidenceEntry>());
+
+            CaptureEvidenceRunFreezeReceipt freeze1 = MakeValidFreezeReceipt(layout);
+            CaptureEvidenceRunFreezeReceipt freeze2 = MakeValidFreezeReceipt(layout);
+            CapturePublicationPlanWriteReceipt write1 = new CapturePublicationPlanWriteReceipt(store, plan, store.PublicationPlanPath, 16);
+            CapturePublicationPlanWriteReceipt write2 = new CapturePublicationPlanWriteReceipt(store, plan, store.PublicationPlanPath, 16);
+
+            CaptureEvidenceFrozenRunPublicationResult first = CaptureEvidenceFrozenRunPublicationResult.Create(
+                coordinator, MintProof(coordinator, freeze1, write1), freeze1, write1);
+            CaptureEvidenceFrozenRunPublicationResult second = CaptureEvidenceFrozenRunPublicationResult.Create(
+                coordinator, MintProof(coordinator, freeze2, write2), freeze2, write2);
+
+            Assert.That(first.IsValid, Is.True);
+            Assert.That(second.IsValid, Is.True);
+
+            // Same coordinator, same run identity, same plan: only the exact
+            // freeze receipt and write receipt references distinguish them, so
+            // the per-call proof must reject cross-substitution.
+            SetField(first, "_freezeReceipt", freeze2);
+            Assert.That(first.IsValid, Is.False);
+
+            CaptureEvidenceFrozenRunPublicationResult writeReceiptSwapped = CaptureEvidenceFrozenRunPublicationResult.Create(
+                coordinator, MintProof(coordinator, freeze2, write2), freeze2, write2);
+            SetField(writeReceiptSwapped, "_writeReceipt", write1);
+            Assert.That(writeReceiptSwapped.IsValid, Is.False);
+
+            CaptureEvidenceFrozenRunPublicationResult proofSwapped = CaptureEvidenceFrozenRunPublicationResult.Create(
+                coordinator, MintProof(coordinator, freeze1, write1), freeze1, write1);
+            SetField(proofSwapped, "_proof", GetField(second, "_proof"));
+            Assert.That(proofSwapped.IsValid, Is.False);
         }
 
         [Test]
@@ -762,7 +844,7 @@ namespace Zantetsu.Core.Tests
         {
             using (TempStore temp = new TempStore())
             {
-                object fresh = GetField(temp.Coordinator, "_freshPublicationAuthority");
+                object fresh = GetField(temp.Coordinator, "_freshPublicationGate");
                 object recovery = GetField(temp.Coordinator, "_recoveryReceiptAuthority");
                 Assert.That(fresh, Is.Not.Null);
                 Assert.That(recovery, Is.Not.Null);
@@ -790,9 +872,12 @@ namespace Zantetsu.Core.Tests
             string source = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureEvidenceFrozenRunPublicationResult.cs"));
 
-            // The atomic factory is the sole predicate invocation on the
-            // construction path: declaration + factory + IsValid property.
-            Assert.That(CountOccurrences(source, "IsCorrelated("), Is.EqualTo(3));
+            // The factory performs only O(1) exact binding; the full predicate
+            // is invoked once by IsValid (declaration + IsValid call), and the
+            // freeze receipt is fully validated only inside that predicate.
+            Assert.That(CountOccurrences(source, "IsCorrelated("), Is.EqualTo(2));
+            Assert.That(CountOccurrences(source, "freezeReceipt.IsValid"), Is.EqualTo(1));
+            Assert.That(CountOccurrences(source, "IsMintedByThis("), Is.EqualTo(2));
 
             Assert.That(source, Does.Not.Contain("File."));
             Assert.That(source, Does.Not.Contain("Directory."));
