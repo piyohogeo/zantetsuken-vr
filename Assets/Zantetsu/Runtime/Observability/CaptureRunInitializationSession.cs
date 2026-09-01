@@ -106,6 +106,35 @@ namespace Zantetsu.Observability
 
         internal bool IsCreated => !_disposed;
 
+        /// <summary>
+        /// Exception-safe ownership check: reports whether this live session
+        /// still owns exactly the given lock lease, without exposing the lease
+        /// itself. Never throws.
+        /// </summary>
+        internal bool OwnsLockLease(CaptureRunLockLease lockLease)
+        {
+            if (_disposed || _lockLease == null || lockLease == null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_lockLease, lockLease))
+            {
+                return false;
+            }
+
+            if (!lockLease.IsCreated)
+            {
+                return false;
+            }
+
+            CaptureRunLockPathSet leasePathSet = lockLease.PathSet;
+            CaptureRunLockPathSet sessionPathSet = _lockLease.PathSet;
+            return leasePathSet != null
+                && sessionPathSet != null
+                && ReferenceEquals(leasePathSet, sessionPathSet);
+        }
+
         public void Dispose()
         {
             if (_disposed)
