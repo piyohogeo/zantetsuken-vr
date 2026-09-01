@@ -386,6 +386,103 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// O(1), exception-safe exact-binding check: confirms the exact
+            /// snapshot, inspector, operation, operation token, trace evidence,
+            /// and entry array reference identity without touching any entry
+            /// element. Never throws and never exposes the proof array or the
+            /// operation token.
+            /// </summary>
+            internal bool IsIssuedForExactBindings(PngJsonCapturePublicationArtifactInspectionSnapshot snapshot)
+            {
+                if (snapshot == null || !ReferenceEquals(_snapshot, snapshot))
+                {
+                    return false;
+                }
+
+                if (_issuedBy == null || _operation == null
+                    || _operationToken == null || _operationTokenProof == null
+                    || _entriesArray == null || _proof == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_operationToken, _operationTokenProof))
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(snapshot.IssuedBy, _issuedBy)
+                    || !ReferenceEquals(snapshot.Operation, _operation))
+                {
+                    return false;
+                }
+
+                if (snapshot._traceManifestStatus != _traceManifestStatus
+                    || snapshot._traceManifestProbedByteCount != _traceManifestProbedByteCount)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(snapshot._entries, _entriesArray))
+                {
+                    return false;
+                }
+
+                return _operationToken.IsIssuedFor(_operation);
+            }
+
+            /// <summary>
+            /// O(1), exception-safe issued-entry access for one index: confirms
+            /// the exact bindings, then re-verifies the issued entry reference
+            /// and its value snapshot before returning it. The caller must use
+            /// only the returned reference. Never throws.
+            /// </summary>
+            internal bool TryGetIssuedEntry(
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
+                int index,
+                out PngJsonCapturePublicationArtifactEntryObservation observation)
+            {
+                observation = null;
+                if (!IsIssuedForExactBindings(snapshot))
+                {
+                    return false;
+                }
+
+                EntryProof[] proof = _proof;
+                if (proof == null || index < 0 || index >= proof.Length)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    PngJsonCapturePublicationArtifactEntryObservation entry = snapshot._entries[index];
+                    if (entry == null || !proof[index].Matches(entry))
+                    {
+                        return false;
+                    }
+
+                    if (!ReferenceEquals(entry.ArtifactPaths, _operation.GetArtifactPaths(index)))
+                    {
+                        return false;
+                    }
+
+                    if (!entry.IsValidIndexLocal(_operationToken))
+                    {
+                        return false;
+                    }
+
+                    observation = entry;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    observation = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
             /// O(1), exception-safe index-local correlation for one index:
             /// confirms the exact snapshot, inspector, operation, operation
             /// token, trace evidence, entry array, and entry element reference,
