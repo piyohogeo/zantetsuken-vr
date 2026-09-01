@@ -28,6 +28,8 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _rootLayout;
 
+        internal string PublicationPlanPath => _publicationPlanPath;
+
         public CapturePublicationPlanWriteReceipt WritePlan(CapturePublicationPlan plan)
         {
             if (plan == null || !plan.IsValid || plan.TestRunId != _testRunId)

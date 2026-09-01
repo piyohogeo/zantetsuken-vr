@@ -13,6 +13,7 @@ namespace Zantetsu.Observability
         private readonly CaptureEvidencePublicationCoordinator _publication;
         private readonly CapturePublicationRecoveryCoordinator _recovery;
         private readonly object _recoveryReceiptAuthority;
+        private readonly object _freshPublicationAuthority;
 
         internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)
         {
@@ -20,21 +21,37 @@ namespace Zantetsu.Observability
             _publication = new CaptureEvidencePublicationCoordinator(store);
             _recovery = new CapturePublicationRecoveryCoordinator(store);
             _recoveryReceiptAuthority = new object();
+            _freshPublicationAuthority = new object();
         }
 
-        internal CapturePublicationPlanWriteReceipt PersistFrozenRun(
+        internal CaptureArtifactFileStore Store => _store;
+
+        internal bool IsFreshPublicationAuthority(object authority) =>
+            ReferenceEquals(_freshPublicationAuthority, authority);
+
+        internal CaptureEvidenceFrozenRunPublicationResult PersistFrozenRun(
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
             string runManifestContentHash)
         {
             if (freezeReceipt == null) throw new ArgumentNullException(nameof(freezeReceipt));
+            if (runManifestContentHash == null) throw new ArgumentNullException(nameof(runManifestContentHash));
+            if (!IsLowerHex(runManifestContentHash, 64))
+                throw new ArgumentException("Manifest hash must be 64 lowercase hex characters.", nameof(runManifestContentHash));
             if (!freezeReceipt.IsValid) throw new ArgumentException("Freeze receipt must remain valid.", nameof(freezeReceipt));
             if (!ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout))
                 throw new ArgumentException("Freeze receipt and store must share the exact Run root layout.", nameof(freezeReceipt));
-            return _publication.BuildAndPersist(
+
+            CapturePublicationPlanWriteReceipt writeReceipt = _publication.BuildAndPersist(
                 freezeReceipt.Drafts,
                 freezeReceipt.Artifacts,
                 freezeReceipt.RunInitializationId,
                 runManifestContentHash);
+
+            return CaptureEvidenceFrozenRunPublicationResult.Create(
+                this,
+                _freshPublicationAuthority,
+                freezeReceipt,
+                writeReceipt);
         }
 
         internal CaptureEvidenceRunRecoveryInspectionReceipt RecoverAfterRestart(
@@ -84,6 +101,25 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Open outcome must hold publication recovery and the OS Run lock.", nameof(openOutcome));
             if (!ReferenceEquals(openOutcome.RootLayout, _store.RootLayout))
                 throw new ArgumentException("Open outcome and store must share the exact Run root layout.", nameof(openOutcome));
+        }
+
+        private static bool IsLowerHex(string value, int length)
+        {
+            if (value == null || value.Length != length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

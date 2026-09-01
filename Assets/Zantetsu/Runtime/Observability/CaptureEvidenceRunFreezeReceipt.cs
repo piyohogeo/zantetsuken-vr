@@ -33,6 +33,7 @@ namespace Zantetsu.Observability
         internal CaptureRunInitializationSession RunSession => _runSession;
         internal FreezeTerminalTraceBuffer TerminalBuffer => _terminalBuffer;
         internal CaptureRunRootLayout RootLayout => _runSession.RootLayout;
+        internal CaptureRunLockLease LockLease => _runSession.LockLease;
         internal long TestRunId => _runSession.TestRunId;
         internal string RunInitializationId => _runSession.RunInitializationId;
         internal bool IsValid => CorrelationsHold();

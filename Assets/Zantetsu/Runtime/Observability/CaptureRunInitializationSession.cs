@@ -104,6 +104,8 @@ namespace Zantetsu.Observability
 
         internal CaptureRunLockPathSet LockPathSet => _lockLease.PathSet;
 
+        internal CaptureRunLockLease LockLease => _lockLease;
+
         internal bool IsCreated => !_disposed;
 
         /// <summary>
