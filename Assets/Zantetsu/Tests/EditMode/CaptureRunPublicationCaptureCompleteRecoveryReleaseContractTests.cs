@@ -1615,7 +1615,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_DirectConstruction_NullArguments_Rejected()
+        public void Result_Create_NullArguments_Rejected()
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult sample = MakeResult();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = sample.IssuedBy;
@@ -1625,24 +1625,34 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = sample.Receipt;
 
             ArgumentNullException ex0 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(null, proof, operation, receipt));
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(null, proof, operation, receipt));
             Assert.That(ex0.ParamName, Is.EqualTo("issuedBy"));
 
             ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, null, operation, receipt));
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(coordinator, null, operation, receipt));
             Assert.That(ex1.ParamName, Is.EqualTo("proof"));
 
             ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, null, receipt));
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(coordinator, proof, null, receipt));
             Assert.That(ex2.ParamName, Is.EqualTo("operation"));
-
-            ArgumentNullException ex3 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, operation, null));
-            Assert.That(ex3.ParamName, Is.EqualTo("receipt"));
         }
 
         [Test]
-        public void Result_DirectConstruction_CorrelationMismatch_Rejected()
+        public void Result_Create_NullReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseResult sample = MakeResult();
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = sample.IssuedBy;
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof proof =
+                (CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof)GetField(sample, "_proof");
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = sample.Operation;
+
+            // A null receipt is a dependency violation, not a structural null.
+            Assert.Throws<InvalidOperationException>(
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(coordinator, proof, operation, null));
+        }
+
+        [Test]
+        public void Result_Create_CorrelationMismatch_Rejected()
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult sample = MakeResult();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = sample.IssuedBy;
@@ -1651,9 +1661,8 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = sample.Receipt;
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation other = MakeReleaseOperation();
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(coordinator, proof, other, receipt));
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+            Assert.Throws<InvalidOperationException>(
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(coordinator, proof, other, receipt));
         }
 
         [Test]
@@ -1662,6 +1671,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
             SetField(result, "_issuedBy", MakeCoordinator());
             Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1676,6 +1686,7 @@ namespace Zantetsu.Core.Tests
 
             SetField(result, "_issuedBy", second);
             Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1686,6 +1697,7 @@ namespace Zantetsu.Core.Tests
 
             SetField(first, "_proof", GetField(second, "_proof"));
             Assert.That(first.IsValid, Is.False);
+            Assert.That(first.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1694,6 +1706,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
             SetField(result, "_operation", MakeReleaseOperation());
             Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1704,6 +1717,7 @@ namespace Zantetsu.Core.Tests
 
             SetField(first, "_receipt", GetField(second, "_receipt"));
             Assert.That(first.IsValid, Is.False);
+            Assert.That(first.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1712,6 +1726,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = MakeResult();
             SetField(result.Receipt, "_operation", MakeReleaseOperation());
             Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None));
         }
 
         [Test]
@@ -1813,7 +1828,17 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+
+            // One private assignment constructor, no public constructor.
+            ConstructorInfo[] constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(constructors.Length, Is.EqualTo(1));
+            Assert.That(constructors[0].IsPrivate, Is.True);
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            // The atomic factory is the single validation-and-assignment path.
+            MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(create, Is.Not.Null);
+            Assert.That(create.ReturnType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseResult)));
         }
 
         // ---- Source inspection ----
@@ -1829,6 +1854,26 @@ namespace Zantetsu.Core.Tests
             Assert.That(CountOccurrences(source, ".Release("), Is.EqualTo(1));
             Assert.That(source, Does.Not.Contain(".IsValid"));
             Assert.That(source, Does.Not.Contain(".Dispose()"));
+        }
+
+        [Test]
+        public void Coordinator_Source_SingleCorrelationPath()
+        {
+            string coordinatorSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.cs"));
+            string resultSource = File.ReadAllText(
+                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.cs"));
+
+            // The coordinator never runs the correlation predicate itself; it
+            // delegates to the atomic factory exactly once.
+            Assert.That(coordinatorSource, Does.Not.Contain("IsCorrelated"));
+            Assert.That(CountOccurrences(coordinatorSource, ".Create("), Is.EqualTo(1));
+
+            // The factory is the sole predicate invocation on the construction
+            // path. The only other occurrence is the IsValid property, which is
+            // not part of construction; the private assignment constructor adds
+            // none.
+            Assert.That(CountOccurrences(resultSource, "IsCorrelated("), Is.EqualTo(3));
         }
 
         [Test]

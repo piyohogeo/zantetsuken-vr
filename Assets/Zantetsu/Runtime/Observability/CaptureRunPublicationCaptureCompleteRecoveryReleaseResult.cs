@@ -17,23 +17,23 @@ namespace Zantetsu.Observability
     /// lifecycle evidence, notification result, open outcome, lock lease, root
     /// layout, test run id, run initialization id, run manifest content
     /// SHA-256, and capture index path are all forwarded rather than
-    /// duplicated. The status is derived from the held terminal state, never
-    /// stored.
+    /// duplicated. The status is mapped from <see cref="IsValid"/>, never
+    /// stored and never derived from the terminal state alone, so a corrupted
+    /// proof, coordinator, or receipt converges to <c>None</c>.
     /// </para>
     /// <para>
-    /// The constructor and <see cref="IsValid"/> share one exception-safe
+    /// <see cref="Create"/> and <see cref="IsValid"/> share one exception-safe
     /// correlation predicate. It re-checks that the coordinator, proof,
     /// operation, and receipt are non-null, that the proof was minted by this
     /// exact coordinator for the exact releaser, operation, and receipt, that
     /// the receipt was issued by the coordinator's releaser and still proves
     /// the exact operation, that the operation's issuance proof is intact,
-    /// that the exact outcome and lock lease are no longer created, that every
-    /// forwarded value matches between receipt and operation, and that the
-    /// derived status is <c>RecoveryOwnerReleased</c>. Any forged, replaced, or
-    /// released value converges to <c>false</c> without throwing. The upstream
-    /// evidence, notification result, and operation are intentionally not
-    /// re-validated here, because a completed release makes them invalid by
-    /// design.
+    /// that the exact outcome and lock lease are no longer created, and that
+    /// every forwarded value matches between receipt and operation. Any
+    /// forged, replaced, or released value converges to <c>false</c> without
+    /// throwing. The upstream evidence, notification result, and operation are
+    /// intentionally not re-validated here, because a completed release makes
+    /// them invalid by design.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -47,7 +47,32 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation _operation;
         private readonly CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt _receipt;
 
-        internal CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(
+        /// <summary>
+        /// Private assignment constructor: stores the already-validated graph
+        /// without re-checking it. The only construction path is
+        /// <see cref="Create"/>, which validates once before assigning.
+        /// </summary>
+        private CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator issuedBy,
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof proof,
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation,
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt)
+        {
+            _issuedBy = issuedBy;
+            _proof = proof;
+            _operation = operation;
+            _receipt = receipt;
+        }
+
+        /// <summary>
+        /// Atomic validated factory: the single validation-and-assignment
+        /// site. It rejects null structural arguments with
+        /// <see cref="ArgumentNullException"/> and any uncorrelated graph —
+        /// including a null, foreign, or unreleased receipt — with
+        /// <see cref="InvalidOperationException"/>, then assigns fields exactly
+        /// once.
+        /// </summary>
+        internal static CaptureRunPublicationCaptureCompleteRecoveryReleaseResult Create(
             CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator issuedBy,
             CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator.IssuanceProof proof,
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation,
@@ -68,22 +93,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(operation));
             }
 
-            if (receipt == null)
-            {
-                throw new ArgumentNullException(nameof(receipt));
-            }
-
             if (!IsCorrelated(issuedBy, proof, operation, receipt))
             {
-                throw new ArgumentException(
-                    "Release receipt must be correlated with the issuing coordinator and operation.",
-                    nameof(receipt));
+                throw new InvalidOperationException(
+                    "Release receipt must be correlated with the issuing coordinator and operation.");
             }
 
-            _issuedBy = issuedBy;
-            _proof = proof;
-            _operation = operation;
-            _receipt = receipt;
+            return new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(issuedBy, proof, operation, receipt);
         }
 
         internal CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator IssuedBy => _issuedBy;
@@ -112,7 +128,10 @@ namespace Zantetsu.Observability
 
         internal string CaptureIndexPath => _operation.CaptureIndexPath;
 
-        internal CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus Status => DeriveStatus(_operation);
+        internal CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus Status
+            => IsValid
+                ? CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased
+                : CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None;
 
         /// <summary>
         /// Exception-safe recomputation of the full correlation from the
@@ -186,30 +205,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (DeriveStatus(operation) != CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased)
-            {
-                return false;
-            }
-
             return true;
-        }
-
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus DeriveStatus(
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
-        {
-            if (operation == null)
-            {
-                return CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None;
-            }
-
-            CaptureRunInitializationOpenOutcome openOutcome = operation.OpenOutcome;
-            CaptureRunLockLease lockLease = operation.LockLease;
-            if (openOutcome == null || lockLease == null || openOutcome.IsCreated || lockLease.IsCreated)
-            {
-                return CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.None;
-            }
-
-            return CaptureRunPublicationCaptureCompleteRecoveryReleaseStatus.RecoveryOwnerReleased;
         }
     }
 }

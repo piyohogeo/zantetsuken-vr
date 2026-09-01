@@ -17,14 +17,13 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="Execute"/> runs the fixed sequence exactly once per call:
     /// reject a null operation, reject an operation that is not currently
-    /// releasable, hand the operation to the releaser exactly once, verify the
-    /// returned receipt with the result's single correlation predicate, and
-    /// return the result bound to this exact coordinator, releaser, operation,
-    /// and receipt. A releaser or outcome disposal exception propagates
-    /// unchanged and unwrapped; no result is produced and the operation is
-    /// never modified, disposed, or destroyed. A partially released operation
-    /// keeps the same instance and can be handed to the same coordinator again
-    /// later.
+    /// releasable, hand the operation to the releaser exactly once, and hand
+    /// the returned receipt to the result's atomic factory, which validates
+    /// and freezes it in a single pass. A releaser or outcome disposal
+    /// exception propagates unchanged and unwrapped; no result is produced and
+    /// the operation is never modified, disposed, or destroyed. A partially
+    /// released operation keeps the same instance and can be handed to the
+    /// same coordinator again later.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator
@@ -124,13 +123,7 @@ namespace Zantetsu.Observability
 
             IssuanceProof proof = new IssuanceProof(this, _issuanceGate, _releaser, operation, receipt);
 
-            if (!CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.IsCorrelated(this, proof, operation, receipt))
-            {
-                throw new InvalidOperationException(
-                    "Releaser returned an invalid release receipt.");
-            }
-
-            return new CaptureRunPublicationCaptureCompleteRecoveryReleaseResult(this, proof, operation, receipt);
+            return CaptureRunPublicationCaptureCompleteRecoveryReleaseResult.Create(this, proof, operation, receipt);
         }
     }
 }
