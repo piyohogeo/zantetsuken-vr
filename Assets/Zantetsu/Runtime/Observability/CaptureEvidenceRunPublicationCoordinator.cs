@@ -104,15 +104,24 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            if (!freezeReceipt.TryGetIssuedBindings(
+                    out CaptureFrameDraftRegistry drafts,
+                    out CaptureArtifactRegistry artifacts,
+                    out CaptureRunInitializationSession session,
+                    out CaptureRunLockLease lockLease))
+            {
+                return false;
+            }
+
             return proof.IsMintedFor(
                 this,
                 _freshPublicationGate,
                 freezeReceipt,
                 writeReceipt,
-                freezeReceipt.Drafts,
-                freezeReceipt.Artifacts,
-                freezeReceipt.RunSession,
-                freezeReceipt.LockLease);
+                drafts,
+                artifacts,
+                session,
+                lockLease);
         }
 
         internal CaptureEvidenceFrozenRunPublicationResult PersistFrozenRun(

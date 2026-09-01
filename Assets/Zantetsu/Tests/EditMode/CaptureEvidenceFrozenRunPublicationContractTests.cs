@@ -772,6 +772,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Result_FreezeReceiptStructuralNullCorruption_False()
+        {
+            CaptureEvidenceFrozenRunPublicationResult evidenceNull = MakeResult();
+            SetField(evidenceNull.FreezeReceipt, "_evidence", null);
+            Assert.That(evidenceNull.IsValid, Is.False);
+
+            CaptureEvidenceFrozenRunPublicationResult sessionNull = MakeResult();
+            SetField(sessionNull.FreezeReceipt, "_runSession", null);
+            Assert.That(sessionNull.IsValid, Is.False);
+        }
+
+        [Test]
         public void Result_ArtifactReservationReappears_False()
         {
             CaptureEvidenceFrozenRunPublicationResult result = MakeResult();

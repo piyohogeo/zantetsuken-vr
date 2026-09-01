@@ -38,6 +38,51 @@ namespace Zantetsu.Observability
         internal string RunInitializationId => _runSession.RunInitializationId;
         internal bool IsValid => CorrelationsHold();
 
+        /// <summary>
+        /// O(1) exception-safe structural guard for proof matching: safely
+        /// reads the current drafts, artifacts, session, and lock lease without
+        /// throwing when the freeze receipt's evidence or session references
+        /// have been nulled after issuance. Returns <c>false</c> for any
+        /// corrupted reference.
+        /// </summary>
+        internal bool TryGetIssuedBindings(
+            out CaptureFrameDraftRegistry drafts,
+            out CaptureArtifactRegistry artifacts,
+            out CaptureRunInitializationSession session,
+            out CaptureRunLockLease lockLease)
+        {
+            drafts = null;
+            artifacts = null;
+            session = null;
+            lockLease = null;
+
+            CaptureEvidenceDraftCoordinator evidence = _evidence;
+            CaptureRunInitializationSession runSession = _runSession;
+            if (evidence == null || runSession == null)
+            {
+                return false;
+            }
+
+            CaptureFrameDraftRegistry d = evidence.Drafts;
+            CaptureArtifactRegistry a = evidence.Artifacts;
+            if (d == null || a == null)
+            {
+                return false;
+            }
+
+            CaptureRunLockLease lease = runSession.LockLease;
+            if (lease == null)
+            {
+                return false;
+            }
+
+            drafts = d;
+            artifacts = a;
+            session = runSession;
+            lockLease = lease;
+            return true;
+        }
+
         private bool CorrelationsHold()
         {
             if (_issuedBy == null || _evidence == null || _runSession == null || _terminalBuffer == null)
