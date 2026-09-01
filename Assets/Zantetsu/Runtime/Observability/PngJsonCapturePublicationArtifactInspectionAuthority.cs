@@ -475,5 +475,150 @@ namespace Zantetsu.Observability
 
             return true;
         }
+
+        /// <summary>
+        /// Issuance proof minted only after the whole authority is fully
+        /// validated once. It captures a linear snapshot of the authoritative
+        /// plan's entry references together with the exact plan, publication
+        /// path set, root layout, and lock lease, so each entry can later be
+        /// validated in O(1) without re-running the full authority validation
+        /// or scanning the plan again.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The token is bound to its exact authority by reference, is never
+        /// held as a field by the authority or by any path set, and exposes no
+        /// proof array or entry reference list. A token presented against a
+        /// different authority, or a stale token whose lease has been
+        /// released, is rejected without throwing.
+        /// </para>
+        /// </remarks>
+        internal sealed class ValidationToken
+        {
+            private readonly PngJsonCapturePublicationArtifactInspectionAuthority _authority;
+            private readonly CaptureRunLockLease _lease;
+            private readonly PngJsonCapturePublicationPlan _plan;
+            private readonly CaptureRunPublicationPathSet _publicationPaths;
+            private readonly CaptureRunRootLayout _rootLayout;
+            private readonly PngJsonCapturePublicationPlanEntry[] _entries;
+
+            private ValidationToken(
+                PngJsonCapturePublicationArtifactInspectionAuthority authority,
+                CaptureRunLockLease lease,
+                PngJsonCapturePublicationPlan plan,
+                CaptureRunPublicationPathSet publicationPaths,
+                CaptureRunRootLayout rootLayout,
+                PngJsonCapturePublicationPlanEntry[] entries)
+            {
+                _authority = authority;
+                _lease = lease;
+                _plan = plan;
+                _publicationPaths = publicationPaths;
+                _rootLayout = rootLayout;
+                _entries = entries;
+            }
+
+            /// <summary>
+            /// Reports whether this token was issued for the given authority.
+            /// The binding is reference-identical.
+            /// </summary>
+            internal bool IsIssuedFor(PngJsonCapturePublicationArtifactInspectionAuthority authority)
+            {
+                return authority != null && ReferenceEquals(_authority, authority);
+            }
+
+            /// <summary>
+            /// O(1), exception-safe index-local correlation: confirms this
+            /// token is bound to the exact authority, the lease is still live,
+            /// the plan, publication path set, root layout, and lease are the
+            /// exact references captured at issuance, and the entry at the
+            /// given index is the exact entry captured at issuance.
+            /// </summary>
+            internal bool IsIndexLocalCorrelated(
+                PngJsonCapturePublicationArtifactInspectionAuthority authority,
+                int entryIndex)
+            {
+                if (authority == null || !ReferenceEquals(_authority, authority))
+                {
+                    return false;
+                }
+
+                if (entryIndex < 0 || entryIndex >= _entries.Length)
+                {
+                    return false;
+                }
+
+                if (_lease == null || !_lease.IsCreated)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
+                    return ReferenceEquals(plan, _plan)
+                        && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
+                        && ReferenceEquals(authority.RootLayout, _rootLayout)
+                        && ReferenceEquals(authority.LockLease, _lease)
+                        && ReferenceEquals(plan.GetEntry(entryIndex), _entries[entryIndex]);
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// Performs the full authority validation exactly once, captures
+            /// the linear entry snapshot, and mints a token only on success.
+            /// The private constructor keeps the token unfabricable by
+            /// callers.
+            /// </summary>
+            internal static bool TryAcquire(
+                PngJsonCapturePublicationArtifactInspectionAuthority authority,
+                out ValidationToken token)
+            {
+                token = null;
+                if (authority == null || !authority.IsValid)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
+                CaptureRunPublicationPathSet publicationPaths = authority.PublicationPaths;
+                CaptureRunRootLayout rootLayout = authority.RootLayout;
+                CaptureRunLockLease lease = authority.LockLease;
+
+                int count = plan.EntryCount;
+                PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[count];
+                for (int i = 0; i < count; i++)
+                {
+                    entries[i] = plan.GetEntry(i);
+                }
+
+                token = new ValidationToken(authority, lease, plan, publicationPaths, rootLayout, entries);
+                return true;
+            }
+
+            /// <summary>
+            /// Throwing mint entry point used by the normal path-set
+            /// constructor: full validation and token issuance happen exactly
+            /// once.
+            /// </summary>
+            internal static ValidationToken Acquire(PngJsonCapturePublicationArtifactInspectionAuthority authority)
+            {
+                if (authority == null)
+                {
+                    throw new ArgumentNullException(nameof(authority));
+                }
+
+                if (!TryAcquire(authority, out ValidationToken token))
+                {
+                    throw new InvalidOperationException("Authority must be fully valid before issuing a validation token.");
+                }
+
+                return token;
+            }
+        }
     }
 }

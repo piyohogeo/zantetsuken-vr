@@ -10,7 +10,7 @@ using Zantetsu.Observability;
 
 namespace Zantetsu.Core.Tests
 {
-    public class PngJsonCapturePublicationArtifactInspectionAuthorityContractTests
+    public class PngJsonCapturePublicationArtifactInspectionPathSetContractTests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
@@ -35,15 +35,6 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunPublicationDocumentObservationStatus DocAbsent => CaptureRunPublicationDocumentObservationStatus.Absent;
 
         private static CaptureRunPublicationDocumentObservationStatus DocCanonical => CaptureRunPublicationDocumentObservationStatus.Canonical;
-
-        private static CaptureRunPublicationRecoveryDisposition NoAuthoritativeDocument =>
-            CaptureRunPublicationRecoveryDisposition.NoAuthoritativeDocument;
-
-        private static PngJsonCapturePublicationArtifactInspectionAuthorityKind None =>
-            PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
-
-        private static PngJsonCapturePublicationArtifactInspectionAuthorityKind FreshFrozenRun =>
-            PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun;
 
         // ---- General helpers ----
 
@@ -89,7 +80,7 @@ namespace Zantetsu.Core.Tests
                 return relativePath;
             }
 
-            string dir = Path.GetDirectoryName(typeof(PngJsonCapturePublicationArtifactInspectionAuthorityContractTests).Assembly.Location);
+            string dir = Path.GetDirectoryName(typeof(PngJsonCapturePublicationArtifactInspectionPathSetContractTests).Assembly.Location);
             while (dir != null)
             {
                 string candidate = Path.Combine(dir, relativePath);
@@ -119,44 +110,23 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("Codec"));
             Assert.That(source, Does.Not.Contain("SHA256"));
             Assert.That(source, Does.Not.Contain("ComputeHash"));
+            Assert.That(source, Does.Not.Contain("Inspector"));
+            Assert.That(source, Does.Not.Contain("Registry"));
+            Assert.That(source, Does.Not.Contain("Draft"));
             Assert.That(source, Does.Not.Contain("using System.Linq"));
             Assert.That(source, Does.Not.Contain(".Where("));
             Assert.That(source, Does.Not.Contain(".Select("));
+            Assert.That(source, Does.Not.Contain("List<"));
+            Assert.That(source, Does.Not.Contain("Dictionary"));
+            Assert.That(source, Does.Not.Contain("HashSet"));
+            Assert.That(source, Does.Not.Contain("ToArray"));
+            Assert.That(source, Does.Not.Contain("Array.Copy"));
             Assert.That(source, Does.Not.Contain("using UnityEngine"));
             Assert.That(source, Does.Not.Contain("Logger"));
             Assert.That(source, Does.Not.Contain("Notifier"));
             Assert.That(source, Does.Not.Contain(".Dispose()"));
             Assert.That(source, Does.Not.Contain("Task"));
             Assert.That(source, Does.Not.Contain("Thread"));
-        }
-
-        private static string ExtractMethodBody(string source, string signatureMarker)
-        {
-            int start = source.IndexOf(signatureMarker, StringComparison.Ordinal);
-            Assert.That(start, Is.GreaterThanOrEqualTo(0), "Method not found: " + signatureMarker);
-
-            int open = source.IndexOf('{', start);
-            Assert.That(open, Is.GreaterThanOrEqualTo(0), "Opening brace not found for: " + signatureMarker);
-
-            int depth = 0;
-            for (int i = open; i < source.Length; i++)
-            {
-                if (source[i] == '{')
-                {
-                    depth++;
-                }
-                else if (source[i] == '}')
-                {
-                    depth--;
-                    if (depth == 0)
-                    {
-                        return source.Substring(open, i - open + 1);
-                    }
-                }
-            }
-
-            Assert.Fail("Unbalanced braces for method: " + signatureMarker);
-            return null;
         }
 
         // ---- Fakes ----
@@ -474,11 +444,6 @@ namespace Zantetsu.Core.Tests
                 hasReadyTmp, readyStatus, readyMarker, hasNonMarker, hasUnknown, false);
         }
 
-        private static CaptureRunInitializationRootObservation MakeAbsent(CaptureRunRootRole role)
-        {
-            return MakeObservation(role, false, Absent, null, Absent, null);
-        }
-
         private static CaptureRunInitializationRootObservation MakeFullyCanonical(CaptureRunRootRole role, CaptureRunMarkerBinding binding)
         {
             CaptureRunInitializationMarker init = role == Staging ? binding.StagingInitialization : binding.FinalInitialization;
@@ -601,9 +566,9 @@ namespace Zantetsu.Core.Tests
             return CaptureRunPublicationRecoveryClassifier.Classify(snapshot);
         }
 
-        private static PngJsonCapturePublicationArtifactInspectionAuthority MakeRecoveryAuthority()
+        private static PngJsonCapturePublicationArtifactInspectionAuthority MakeRecoveryAuthority(PngJsonCapturePublicationPlan plan = null)
         {
-            return PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(MakeDecision());
+            return PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(MakeDecision(plan));
         }
 
         private static PngJsonCapturePublicationArtifactInspectionAuthority MakeFreshAuthority(params long[] frameIds)
@@ -611,27 +576,12 @@ namespace Zantetsu.Core.Tests
             return PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(MakeSeed(frameIds));
         }
 
-        // ---- Enum / shape ----
+        // ---- Shape ----
 
         [Test]
-        public void Enum_UnderlyingTypeAndValues()
+        public void PathSet_TypeShape()
         {
-            Type type = typeof(PngJsonCapturePublicationArtifactInspectionAuthorityKind);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(Enum.GetUnderlyingType(type), Is.EqualTo(typeof(int)));
-            Assert.That(
-                Enum.GetNames(type),
-                Is.EqualTo(new[] { "None", "RecoveryDecision", "FreshFrozenRun" }));
-            Assert.That((int)PngJsonCapturePublicationArtifactInspectionAuthorityKind.None, Is.EqualTo(0));
-            Assert.That((int)PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision, Is.EqualTo(1));
-            Assert.That((int)PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun, Is.EqualTo(2));
-        }
-
-        [Test]
-        public void Authority_TypeShape()
-        {
-            Type type = typeof(PngJsonCapturePublicationArtifactInspectionAuthority);
+            Type type = typeof(PngJsonCapturePublicationArtifactInspectionPathSet);
 
             Assert.That(type.IsPublic, Is.False);
             Assert.That(type.IsSealed, Is.True);
@@ -639,483 +589,534 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
 
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
             FieldInfo[] instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(instanceFields.Length, Is.EqualTo(2));
+            Assert.That(instanceFields.Length, Is.EqualTo(6));
+            int referenceCount = 0;
             foreach (FieldInfo field in instanceFields)
             {
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                Assert.That(field.FieldType.IsValueType, Is.False, field.Name + " must be a reference field.");
+                if (!field.FieldType.IsValueType)
+                {
+                    referenceCount++;
+                }
             }
 
+            Assert.That(referenceCount, Is.EqualTo(5));
             Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
+        }
 
-            ConstructorInfo[] constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        [Test]
+        public void Token_PrivateCtorOnly()
+        {
+            Type tokenType = typeof(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken);
+
+            Assert.That(tokenType.IsPublic, Is.False);
+            Assert.That(tokenType.IsSealed, Is.True);
+
+            ConstructorInfo[] constructors = tokenType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(constructors.Length, Is.EqualTo(1));
             Assert.That(constructors[0].IsPrivate, Is.True);
-            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
-
-            MethodInfo fromRecovery = type.GetMethod("FromRecovery", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(fromRecovery, Is.Not.Null);
-            Assert.That(fromRecovery.ReturnType, Is.EqualTo(type));
-            ParameterInfo[] recoveryParams = fromRecovery.GetParameters();
-            Assert.That(recoveryParams.Length, Is.EqualTo(1));
-            Assert.That(recoveryParams[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationRecoveryDecision)));
-
-            MethodInfo fromFresh = type.GetMethod("FromFresh", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(fromFresh, Is.Not.Null);
-            Assert.That(fromFresh.ReturnType, Is.EqualTo(type));
-            ParameterInfo[] freshParams = fromFresh.GetParameters();
-            Assert.That(freshParams.Length, Is.EqualTo(1));
-            Assert.That(freshParams[0].ParameterType, Is.EqualTo(typeof(PngJsonCaptureFrozenRunArtifactInspectionSeed)));
+            Assert.That(tokenType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
         }
 
-        // ---- Recovery normal ----
+        [Test]
+        public void Token_ExposesNoProofArrayOrEntryList()
+        {
+            Type tokenType = typeof(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken);
+
+            Assert.That(tokenType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Empty);
+
+            foreach (FieldInfo field in tokenType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Assert.That(field.IsPrivate, Is.True, field.Name + " must be private.");
+            }
+        }
 
         [Test]
-        public void Recovery_PublicationPlanAuthoritative_Valid()
+        public void Token_NoNonValidatingMintApi()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority bad =
+                (PngJsonCapturePublicationArtifactInspectionAuthority)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactInspectionAuthority));
+
+            Assert.That(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.TryAcquire(bad, out _), Is.False);
+            Assert.That(PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.TryAcquire(null, out _), Is.False);
+            Assert.Throws<InvalidOperationException>(
+                () => PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(bad));
+        }
+
+        // ---- Normal construction ----
+
+        [Test]
+        public void Recovery_FourPathsExact()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
 
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.Kind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision));
-            Assert.That(authority.IsRecovery, Is.True);
-            Assert.That(authority.IsFresh, Is.False);
-            Assert.That(authority.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative));
+            PngJsonCapturePublicationPlanEntry entry = authority.AuthoritativePlan.GetEntry(0);
+            string id = entry.CaptureFrameId.ToString(CultureInfo.InvariantCulture);
+            CaptureRunPublicationPathSet publicationPaths = authority.PublicationPaths;
+
+            Assert.That(pathSet.IsValid, Is.True);
+            Assert.That(ReferenceEquals(pathSet.Authority, authority), Is.True);
+            Assert.That(pathSet.EntryIndex, Is.EqualTo(0));
+            Assert.That(pathSet.CaptureFrameId, Is.EqualTo(entry.CaptureFrameId));
+            Assert.That(pathSet.StagingPngPath, Is.EqualTo(Path.Combine(publicationPaths.StagingFramesRoot, id + ".png.stage")));
+            Assert.That(pathSet.StagingSidecarPath, Is.EqualTo(Path.Combine(publicationPaths.StagingFramesRoot, id + ".json.stage")));
+            Assert.That(pathSet.FinalPngPath, Is.EqualTo(Path.Combine(publicationPaths.FinalFramesRoot, id + ".png")));
+            Assert.That(pathSet.FinalSidecarPath, Is.EqualTo(Path.Combine(publicationPaths.FinalFramesRoot, id + ".json")));
+            Assert.That(ReferenceEquals(pathSet.RootLayout, authority.RootLayout), Is.True);
+            Assert.That(ReferenceEquals(pathSet.LockLease, authority.LockLease), Is.True);
+            Assert.That(pathSet.TestRunId, Is.EqualTo(authority.TestRunId));
+            Assert.That(pathSet.RunInitializationId, Is.EqualTo(authority.RunInitializationId));
         }
 
         [Test]
-        public void Recovery_CaptureIndexAuthoritative_Valid()
+        public void Fresh_FourPathsExact()
         {
-            CaptureRunPublicationRecoveryDecision decision = MakeDecision(indexAuthoritative: true);
-            PngJsonCapturePublicationArtifactInspectionAuthority authority =
-                PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision);
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1, 2);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 1);
 
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.Kind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision));
-            Assert.That(authority.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative));
-            Assert.That(ReferenceEquals(authority.AuthoritativePlan, decision.AuthoritativePlan), Is.True);
+            PngJsonCapturePublicationPlanEntry entry = authority.AuthoritativePlan.GetEntry(1);
+            string id = entry.CaptureFrameId.ToString(CultureInfo.InvariantCulture);
+            CaptureRunPublicationPathSet publicationPaths = authority.PublicationPaths;
+
+            Assert.That(pathSet.IsValid, Is.True);
+            Assert.That(pathSet.CaptureFrameId, Is.EqualTo(2));
+            Assert.That(pathSet.StagingPngPath, Is.EqualTo(Path.Combine(publicationPaths.StagingFramesRoot, id + ".png.stage")));
+            Assert.That(pathSet.StagingSidecarPath, Is.EqualTo(Path.Combine(publicationPaths.StagingFramesRoot, id + ".json.stage")));
+            Assert.That(pathSet.FinalPngPath, Is.EqualTo(Path.Combine(publicationPaths.FinalFramesRoot, id + ".png")));
+            Assert.That(pathSet.FinalSidecarPath, Is.EqualTo(Path.Combine(publicationPaths.FinalFramesRoot, id + ".json")));
         }
 
         [Test]
-        public void Recovery_ExactForwarding()
+        public void Recovery_MatchesExistingPathSet()
         {
             CaptureRunPublicationRecoveryDecision decision = MakeDecision();
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision);
 
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(ReferenceEquals(authority.RecoveryDecision, decision), Is.True);
-            Assert.That(authority.FreshSeed, Is.Null);
-            Assert.That(ReferenceEquals(authority.AuthoritativePlan, decision.AuthoritativePlan), Is.True);
-            Assert.That(authority.Disposition, Is.EqualTo(decision.Disposition));
-            Assert.That(ReferenceEquals(authority.PublicationPaths, decision.Snapshot.Operation.PublicationPaths), Is.True);
-            Assert.That(ReferenceEquals(authority.RootLayout, decision.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(authority.LockLease, decision.Snapshot.Operation.LockLease), Is.True);
-            Assert.That(authority.TestRunId, Is.EqualTo(decision.TestRunId));
-            Assert.That(authority.RunInitializationId, Is.EqualTo(decision.RunInitializationId));
-            Assert.That(authority.RunManifestContentSha256, Is.EqualTo(decision.AuthoritativePlan.RunManifestContentSha256));
+            CaptureRunPublicationArtifactPathSet existing = new CaptureRunPublicationArtifactPathSet(decision, 0);
+            PngJsonCapturePublicationArtifactInspectionPathSet mine =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
+
+            Assert.That(string.Equals(mine.StagingPngPath, existing.StagingPngPath, StringComparison.Ordinal), Is.True);
+            Assert.That(string.Equals(mine.StagingSidecarPath, existing.StagingSidecarPath, StringComparison.Ordinal), Is.True);
+            Assert.That(string.Equals(mine.FinalPngPath, existing.FinalPngPath, StringComparison.Ordinal), Is.True);
+            Assert.That(string.Equals(mine.FinalSidecarPath, existing.FinalSidecarPath, StringComparison.Ordinal), Is.True);
         }
 
-        // ---- Fresh normal ----
+        [Test]
+        public void PathSet_FirstAndLastIndex()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(
+                MakePlan(entries: new[] { MakeEntry(10), MakeEntry(20), MakeEntry(30) }));
+
+            PngJsonCapturePublicationArtifactInspectionPathSet first =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
+            PngJsonCapturePublicationArtifactInspectionPathSet last =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 2);
+
+            Assert.That(first.IsValid, Is.True);
+            Assert.That(last.IsValid, Is.True);
+            Assert.That(first.CaptureFrameId, Is.EqualTo(10));
+            Assert.That(last.CaptureFrameId, Is.EqualTo(30));
+        }
 
         [Test]
-        public void Fresh_ZeroFrames_Valid()
+        public void PathSet_OutOfRangeIndex_Rejected()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PngJsonCapturePublicationArtifactInspectionPathSet(authority, -1));
+        }
+
+        [Test]
+        public void PathSet_ZeroEntry_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority();
 
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.Kind, Is.EqualTo(FreshFrozenRun));
-            Assert.That(authority.IsFresh, Is.True);
-            Assert.That(authority.IsRecovery, Is.False);
-            Assert.That(authority.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative));
-            Assert.That(authority.AuthoritativePlan.EntryCount, Is.EqualTo(0));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0));
         }
 
-        [Test]
-        public void Fresh_MultipleFrames_Valid()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1, 2, 3);
-
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.Kind, Is.EqualTo(FreshFrozenRun));
-            Assert.That(authority.AuthoritativePlan.EntryCount, Is.EqualTo(3));
-        }
+        // ---- Rejection ----
 
         [Test]
-        public void Fresh_ExactForwarding()
-        {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1, 2);
-            PngJsonCapturePublicationArtifactInspectionAuthority authority =
-                PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed);
-
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.RecoveryDecision, Is.Null);
-            Assert.That(ReferenceEquals(authority.FreshSeed, seed), Is.True);
-            Assert.That(ReferenceEquals(authority.AuthoritativePlan, seed.AuthoritativePlan), Is.True);
-            Assert.That(ReferenceEquals(authority.AuthoritativePlan, seed.PlanBinding.LegacyPlan), Is.True);
-            Assert.That(authority.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative));
-            Assert.That(ReferenceEquals(authority.PublicationPaths, seed.PublicationPaths), Is.True);
-            Assert.That(ReferenceEquals(authority.RootLayout, seed.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(authority.LockLease, seed.LockLease), Is.True);
-            Assert.That(authority.TestRunId, Is.EqualTo(seed.TestRunId));
-            Assert.That(authority.RunInitializationId, Is.EqualTo(seed.RunInitializationId));
-            Assert.That(authority.RunManifestContentSha256, Is.EqualTo(seed.RunManifestContentSha256));
-        }
-
-        // ---- Factory rejection ----
-
-        [Test]
-        public void FromRecovery_Null_Rejected()
+        public void Normal_NullAuthority_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(null));
-            Assert.That(ex.ParamName, Is.EqualTo("recoveryDecision"));
+                () => new PngJsonCapturePublicationArtifactInspectionPathSet(null, 0));
+            Assert.That(ex.ParamName, Is.EqualTo("authority"));
         }
 
         [Test]
-        public void FromFresh_Null_Rejected()
+        public void Normal_InvalidAuthority_Rejected()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority bad =
+                (PngJsonCapturePublicationArtifactInspectionAuthority)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactInspectionAuthority));
+
+            Assert.Throws<ArgumentException>(() => new PngJsonCapturePublicationArtifactInspectionPathSet(bad, 0));
+        }
+
+        [Test]
+        public void Trusted_NullToken_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(null));
-            Assert.That(ex.ParamName, Is.EqualTo("freshSeed"));
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(null, MakeRecoveryAuthority(), 0));
+            Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
         [Test]
-        public void FromRecovery_InvalidDecision_Rejected()
+        public void Trusted_NullAuthority_Rejected()
         {
-            CaptureRunPublicationRecoveryDecision decision = (CaptureRunPublicationRecoveryDecision)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunPublicationRecoveryDecision));
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(MakeRecoveryAuthority());
 
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision));
-            Assert.That(ex.ParamName, Is.EqualTo("recoveryDecision"));
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, null, 0));
+            Assert.That(ex.ParamName, Is.EqualTo("authority"));
         }
 
         [Test]
-        public void FromFresh_InvalidSeed_Rejected()
+        public void Trusted_CrossToken_Rejected()
         {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = (PngJsonCaptureFrozenRunArtifactInspectionSeed)FormatterServices.GetUninitializedObject(
-                typeof(PngJsonCaptureFrozenRunArtifactInspectionSeed));
+            PngJsonCapturePublicationArtifactInspectionAuthority authorityA = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority authorityB = MakeFreshAuthority(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken tokenA =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authorityA);
 
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed));
-            Assert.That(ex.ParamName, Is.EqualTo("freshSeed"));
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(tokenA, authorityB, 0));
         }
 
         [Test]
-        public void FromRecovery_NoAuthoritativeDocument_Rejected()
-        {
-            FakePublicationInspector inspector = new FakePublicationInspector();
-            CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = MakeRecoveryOperation();
-            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = MakeRecoverySnapshot(inspector, recoveryOperation);
-            CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(snapshot);
-
-            Assert.That(decision.Disposition, Is.EqualTo(NoAuthoritativeDocument));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision));
-        }
-
-        [Test]
-        public void FromRecovery_RunRootCollision_Rejected()
-        {
-            FakePublicationInspector inspector = new FakePublicationInspector();
-            CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = MakeRecoveryOperation();
-            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = new CaptureRunPublicationRecoveryInspectionSnapshot(
-                inspector,
-                recoveryOperation,
-                MakeDoc(CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocAbsent),
-                MakeDoc(PublicationPlan, DocAbsent),
-                MakeDoc(CaptureRunPublicationDocumentKind.CaptureIndexTemporary, DocAbsent),
-                MakeDoc(CaptureIndex, DocAbsent),
-                CaptureRunPublicationFramesObservationStatus.Directory,
-                CaptureRunPublicationFramesObservationStatus.Directory,
-                false, false, true, false);
-            CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(snapshot);
-
-            Assert.That(decision.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.RunRootCollision));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision));
-        }
-
-        [Test]
-        public void FromRecovery_ReleasedOutcome_Rejected()
-        {
-            CaptureRunPublicationRecoveryDecision decision = MakeDecision();
-            decision.Snapshot.Operation.OpenOutcome.Dispose();
-
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision));
-        }
-
-        [Test]
-        public void FromFresh_ReleasedSession_Rejected()
-        {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
-            seed.RunSession.Dispose();
-
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed));
-        }
-
-        [Test]
-        public void FromFresh_ReleasedLease_Rejected()
-        {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
-            seed.LockLease.Dispose();
-
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed));
-        }
-
-        // ---- Tamper: Recovery path ----
-
-        [Test]
-        public void Recovery_SnapshotNull_False()
+        public void Trusted_StaleTokenAfterLeaseDispose_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority.RecoveryDecision, "_snapshot", null);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
 
-            Assert.That(authority.IsValid, Is.False);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.True);
+
+            authority.LockLease.Dispose();
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
         }
 
-        [Test]
-        public void Recovery_OperationNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority.RecoveryDecision.Snapshot, "_operation", null);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Recovery_ForeignRootLayout_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            CaptureRunPublicationRecoveryInspectionOperation operation = authority.RecoveryDecision.Snapshot.Operation;
-            CaptureRunPublicationPathSet foreign = new CaptureRunPublicationPathSet(MakeLayout(99));
-            SetField(operation, "_publicationPaths", foreign);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Recovery_TestRunIdMismatch_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority.RecoveryDecision.AuthoritativePlan, "_testRunId", 999L);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Recovery_InitializationIdMismatch_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority.RecoveryDecision.AuthoritativePlan, "_runInitializationId", "ffffffffffffffffffffffffffffffff");
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        // ---- Tamper: Fresh path ----
-
-        [Test]
-        public void Fresh_BindingNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed, "_planBinding", null);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_FrozenResultNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.PlanBinding, "_frozenPublicationResult", null);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_LegacyPlanNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.PlanBinding, "_legacyPlan", null);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_TestRunIdMismatch_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.GenericPlan, "_testRunId", 999L);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_InitializationIdMismatch_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.GenericPlan, "_runInitializationId", "ffffffffffffffffffffffffffffffff");
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_ManifestHashMismatch_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.GenericPlan, "_runManifestContentHash", HashB);
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Fresh_PathSetRootLayoutSwap_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
-            SetField(authority.FreshSeed.PublicationPaths, "_rootLayout", MakeLayout(99));
-
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        // ---- Exclusive state ----
-
-        [Test]
-        public void Authority_BothFieldsNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority, "_recoveryDecision", null);
-
-            Assert.That(authority.Kind, Is.EqualTo(None));
-            Assert.That(authority.IsRecovery, Is.False);
-            Assert.That(authority.IsFresh, Is.False);
-            Assert.That(authority.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Authority_BothFieldsNonNull_False()
-        {
-            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
-            SetField(authority, "_freshSeed", MakeSeed(1));
-
-            Assert.That(authority.Kind, Is.EqualTo(None));
-            Assert.That(authority.IsValid, Is.False);
-        }
+        // ---- Authority reference tamper ----
 
         [Test]
         public void Recovery_SwapFreshSeedIn_False()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
             SetField(authority, "_freshSeed", MakeSeed(1));
 
-            Assert.That(authority.Kind, Is.EqualTo(None));
-            Assert.That(authority.IsRecovery, Is.False);
-            Assert.That(authority.IsFresh, Is.False);
-            Assert.That(authority.IsValid, Is.False);
+            Assert.That(pathSet.IsValid, Is.False);
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
         }
 
         [Test]
         public void Fresh_SwapRecoveryDecisionIn_False()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
             SetField(authority, "_recoveryDecision", MakeDecision());
 
-            Assert.That(authority.Kind, Is.EqualTo(None));
-            Assert.That(authority.IsRecovery, Is.False);
-            Assert.That(authority.IsFresh, Is.False);
-            Assert.That(authority.IsValid, Is.False);
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
         }
 
+        // ---- Recovery graph tamper ----
+
         [Test]
-        public void Authority_Uninitialized_False()
+        public void Recovery_PlanSwap_False()
         {
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision();
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
-                (PngJsonCapturePublicationArtifactInspectionAuthority)FormatterServices.GetUninitializedObject(
-                    typeof(PngJsonCapturePublicationArtifactInspectionAuthority));
+                PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
 
-            Assert.That(authority.Kind, Is.EqualTo(None));
-            Assert.That(authority.IsRecovery, Is.False);
-            Assert.That(authority.IsFresh, Is.False);
-            Assert.That(authority.IsValid, Is.False);
-            Assert.That(authority.RecoveryDecision, Is.Null);
-            Assert.That(authority.FreshSeed, Is.Null);
-            Assert.That(authority.AuthoritativePlan, Is.Null);
-            Assert.That(authority.Disposition, Is.EqualTo(CaptureRunPublicationRecoveryDisposition.None));
-            Assert.That(authority.PublicationPaths, Is.Null);
-            Assert.That(authority.RootLayout, Is.Null);
-            Assert.That(authority.LockLease, Is.Null);
-            Assert.That(authority.TestRunId, Is.EqualTo(0L));
-            Assert.That(authority.RunInitializationId, Is.Null);
-            Assert.That(authority.RunManifestContentSha256, Is.Null);
+            SetField(decision, "_authoritativePlan", MakePlan(entries: new[] { MakeEntry(99) }));
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0));
         }
 
-        // ---- Validation structure ----
+        [Test]
+        public void Recovery_PublicationPathsSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(authority.RecoveryDecision.Snapshot.Operation, "_publicationPaths", new CaptureRunPublicationPathSet(MakeLayout(99)));
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
 
         [Test]
-        public void Authority_Source_ValidationBoundariesAndNoForbiddenDeps()
+        public void Recovery_RootLayoutSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(authority.RecoveryDecision.Snapshot.Operation.PublicationPaths, "_rootLayout", MakeLayout(99));
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        // ---- Fresh graph tamper ----
+
+        [Test]
+        public void Fresh_PlanSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(authority.FreshSeed.PlanBinding, "_legacyPlan", MakeSeed(2).AuthoritativePlan);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void Fresh_PublicationPathsSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(authority.FreshSeed, "_publicationPaths", new CaptureRunPublicationPathSet(MakeLayout(99)));
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void Fresh_RootLayoutSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            CaptureRunRootLayout otherLayout = MakeLayout(99);
+            CaptureRunInitializationSession otherSession = MakeLifecycleSession(otherLayout, MakeLease(otherLayout));
+            SetField(authority.FreshSeed.FreezeReceipt, "_runSession", otherSession);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        // ---- Entry array / element tamper ----
+
+        [Test]
+        public void EntryArrayNull_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(authority.AuthoritativePlan, "_entries", null);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.That(pathSet.IsValid, Is.False);
+        }
+
+        [Test]
+        public void EntryArraySwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
+            PngJsonCapturePublicationPlanEntry[] swapped = new PngJsonCapturePublicationPlanEntry[plan.EntryCount];
+            for (int i = 0; i < swapped.Length; i++)
+            {
+                swapped[i] = MakeEntry(100 + i);
+            }
+
+            SetField(plan, "_entries", swapped);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void EntryElementSwap_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(
+                MakePlan(entries: new[] { MakeEntry(10), MakeEntry(20) }));
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
+            PngJsonCapturePublicationPlanEntry[] swapped = new PngJsonCapturePublicationPlanEntry[2];
+            swapped[0] = plan.GetEntry(1);
+            swapped[1] = plan.GetEntry(0);
+            SetField(plan, "_entries", swapped);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        // ---- Entry value tamper ----
+
+        [Test]
+        public void Entry_PathMutated_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_pngStagingRelativePath", "frames/999.png.stage");
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+            Assert.That(pathSet.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Entry_CaptureFrameIdMutated_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_captureFrameId", 999L);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void Entry_ByteLengthMutated_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_pngByteLength", 0L);
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void Entry_HashMutated_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, 0);
+
+            SetField(pathSet.Entry, "_pngContentSha256", "broken");
+
+            Assert.That(pathSet.IsValidIndexLocal(token), Is.False);
+        }
+
+        // ---- Stored path tamper ----
+
+        [Test]
+        public void FourPathsMutated_IsValidFalse()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority();
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
+
+            SetField(pathSet, "_stagingPngPath", "C:\\wrong\\a.png");
+
+            Assert.That(pathSet.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Uninitialized_IsValidFalse()
+        {
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                (PngJsonCapturePublicationArtifactInspectionPathSet)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactInspectionPathSet));
+
+            Assert.That(pathSet.IsValid, Is.False);
+            Assert.That(pathSet.IsValidIndexLocal(null), Is.False);
+        }
+
+        // ---- Source shape ----
+
+        [Test]
+        public void Source_NoForbiddenDeps()
         {
             string source = File.ReadAllText(
-                LocateSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactInspectionAuthority.cs"));
+                LocateSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactInspectionPathSet.cs"));
 
             AssertNoForbiddenDependencies(source);
-
-            // Each input's full validation runs exactly once, inside its
-            // predicate; the factories delegate and never call it directly.
-            Assert.That(CountOccurrences(source, "recoveryDecision.IsValid"), Is.EqualTo(1));
-            Assert.That(CountOccurrences(source, "freshSeed.IsValid"), Is.EqualTo(1));
-
-            string fromRecovery = ExtractMethodBody(source, "static PngJsonCapturePublicationArtifactInspectionAuthority FromRecovery(");
-            string fromFresh = ExtractMethodBody(source, "static PngJsonCapturePublicationArtifactInspectionAuthority FromFresh(");
-            string recoveryPredicate = ExtractMethodBody(source, "static bool IsRecoveryDecisionCorrelated(");
-            string freshPredicate = ExtractMethodBody(source, "static bool IsFreshSeedCorrelated(");
-
-            Assert.That(fromRecovery, Does.Not.Contain("recoveryDecision.IsValid"));
-            Assert.That(CountOccurrences(fromRecovery, "IsRecoveryDecisionCorrelated("), Is.EqualTo(1));
-            Assert.That(fromFresh, Does.Not.Contain("freshSeed.IsValid"));
-            Assert.That(CountOccurrences(fromFresh, "IsFreshSeedCorrelated("), Is.EqualTo(1));
-
-            // Each predicate runs the input's full validation exactly once and
-            // then only non-null guards, reference identity, value equality,
-            // and lease liveness — never a child graph bare IsValid.
-            Assert.That(CountOccurrences(recoveryPredicate, "recoveryDecision.IsValid"), Is.EqualTo(1));
-            Assert.That(recoveryPredicate, Does.Not.Contain("snapshot.IsValid"));
-            Assert.That(recoveryPredicate, Does.Not.Contain("operation.IsValid"));
-            Assert.That(recoveryPredicate, Does.Not.Contain("publicationPaths.IsValid"));
-            Assert.That(recoveryPredicate, Does.Not.Contain("rootLayout.IsValid"));
-            Assert.That(recoveryPredicate, Does.Not.Contain("plan.IsValid"));
-
-            Assert.That(CountOccurrences(freshPredicate, "freshSeed.IsValid"), Is.EqualTo(1));
-            Assert.That(freshPredicate, Does.Not.Contain("binding.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("frozen.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("FrozenPublicationResult.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("genericPlan.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("legacyPlan.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("rootLayout.IsValid"));
-            Assert.That(freshPredicate, Does.Not.Contain("publicationPaths.IsValid"));
-
-            Assert.That(source, Does.Not.Contain("new CaptureRunPublicationPathSet"));
-            Assert.That(source, Does.Not.Contain("new PngJsonCapturePublicationPlan("));
-            Assert.That(source, Does.Not.Contain("new CaptureRunPublicationRecoveryInspectionSnapshot"));
-            Assert.That(source, Does.Not.Contain("new CaptureEvidenceFrozenRunPublicationResult"));
         }
 
         // ---- Scale ----
 
         [Test]
-        public void Fresh_1000Frames_Authority_Valid()
+        public void Fresh_1000Entries_TrustedLoop()
         {
-            const int frameCount = 1000;
-            long[] frameIds = new long[frameCount];
-            for (int i = 0; i < frameCount; i++)
+            const int entryCount = 1000;
+            long[] frameIds = new long[entryCount];
+            for (int i = 0; i < entryCount; i++)
             {
                 frameIds[i] = i + 1;
             }
 
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(frameIds);
-            PngJsonCapturePublicationArtifactInspectionAuthority authority =
-                PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed);
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeFreshAuthority(frameIds);
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(authority);
 
-            Assert.That(authority.IsValid, Is.True);
-            Assert.That(authority.Kind, Is.EqualTo(FreshFrozenRun));
-            Assert.That(authority.AuthoritativePlan.EntryCount, Is.EqualTo(frameCount));
+            for (int i = 0; i < entryCount; i++)
+            {
+                PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                    PngJsonCapturePublicationArtifactInspectionPathSet.CreateIndexLocal(token, authority, i);
+
+                Assert.That(pathSet.IsValidIndexLocal(token), Is.True);
+                Assert.That(pathSet.CaptureFrameId, Is.EqualTo(i + 1));
+
+                string id = (i + 1).ToString(CultureInfo.InvariantCulture);
+                Assert.That(pathSet.FinalPngPath, Is.EqualTo(Path.Combine(authority.PublicationPaths.FinalFramesRoot, id + ".png")));
+            }
         }
     }
 }
