@@ -4632,13 +4632,6 @@ namespace Zantetsu.Core.Tests
                     commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult()));
         }
 
-        private static CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof MakeProof(
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
-        {
-            return coordinator.Execute(
-                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult())).Proof;
-        }
-
         [Test]
         public void Notification_CommitCaptureIndexRoute_Constructs()
         {
@@ -5119,79 +5112,72 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void NotificationResult_NullReceipt_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
-                MakeNotificationCoordinator(new FakeNotificationNotifier());
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof = MakeProof(coordinator);
-            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
-                MakeNotificationOperation(commitRoute: true);
-
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, proof, operation, null));
-
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
-        }
-
-        [Test]
-        public void NotificationResult_ForeignNotifierReceipt_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
-                MakeNotificationCoordinator(new FakeNotificationNotifier());
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof = MakeProof(coordinator);
-            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
-                MakeNotificationOperation(commitRoute: true);
-
-            CaptureRunPublicationCaptureCompleteNotificationReceipt foreignReceipt =
-                new CaptureRunPublicationCaptureCompleteNotificationReceipt(new FakeNotificationNotifier(), operation);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, proof, operation, foreignReceipt));
-
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
-        }
-
-        [Test]
-        public void NotificationResult_DifferentOperationReceipt_Rejected()
+        public void NotificationCoordinator_NullReceipt_Rejected()
         {
             FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            notifier.ReceiptOverride = op => null;
             CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
                 MakeNotificationCoordinator(notifier);
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof = MakeProof(coordinator);
-            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
-                MakeNotificationOperation(commitRoute: true);
-            CaptureRunPublicationCaptureCompleteNotificationOperation other =
-                MakeNotificationOperation(commitRoute: false);
-
-            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
-                new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, other);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, proof, operation, receipt));
-
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
-        }
-
-        [Test]
-        public void NotificationResult_InvalidReceipt_Rejected()
-        {
-            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
-                MakeNotificationCoordinator(notifier);
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof = MakeProof(coordinator);
             CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
                 MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
-            CaptureRunPublicationCaptureCompleteNotificationOperation operation =
-                new CaptureRunPublicationCaptureCompleteNotificationOperation(cleanup);
-            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt =
-                new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, operation);
 
-            cleanup.LockLease.Dispose();
-            Assert.That(operation.IsValid, Is.False);
-            Assert.That(receipt.IsValid, Is.False);
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                () => coordinator.Execute(cleanup));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationCoordinator_ForeignNotifierReceipt_Rejected()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            notifier.ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteNotificationReceipt(
+                new FakeNotificationNotifier(), op);
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(coordinator, proof, operation, receipt));
+                () => coordinator.Execute(cleanup));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationCoordinator_DifferentOperationReceipt_Rejected()
+        {
+            CaptureRunPublicationCaptureCompleteNotificationOperation other =
+                MakeNotificationOperation(commitRoute: false);
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            notifier.ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteNotificationReceipt(notifier, other);
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => coordinator.Execute(cleanup));
+
+            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
+        }
+
+        [Test]
+        public void NotificationCoordinator_InvalidReceipt_Rejected()
+        {
+            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
+            notifier.ReceiptOverride = op =>
+            {
+                return (CaptureRunPublicationCaptureCompleteNotificationReceipt)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteNotificationReceipt));
+            };
+            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator =
+                MakeNotificationCoordinator(notifier);
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanup =
+                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult());
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => coordinator.Execute(cleanup));
 
             Assert.That(ex.ParamName, Is.EqualTo("receipt"));
         }
@@ -5282,46 +5268,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void NotificationResult_CrossCoordinator_Rejected()
-        {
-            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorA =
-                MakeNotificationCoordinator(notifier);
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorB =
-                MakeNotificationCoordinator(notifier);
-
-            CaptureRunPublicationCaptureCompleteNotificationResult result = coordinatorA.Execute(
-                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult()));
-
-            // Coordinator B shares the same notifier but must still be rejected.
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(
-                    coordinatorB, result.Proof, result.Operation, result.Receipt));
-
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
-        }
-
-        [Test]
-        public void NotificationResult_CrossProofSubstitutionRejected()
-        {
-            FakeNotificationNotifier notifier = new FakeNotificationNotifier();
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorA =
-                MakeNotificationCoordinator(notifier);
-            CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinatorB =
-                MakeNotificationCoordinator(notifier);
-
-            CaptureRunPublicationCaptureCompleteNotificationResult resultB = coordinatorB.Execute(
-                MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(BuildCommitResult()));
-
-            // Coordinator A cannot adopt coordinator B's proof.
-            ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunPublicationCaptureCompleteNotificationResult(
-                    coordinatorA, resultB.Proof, resultB.Operation, resultB.Receipt));
-
-            Assert.That(ex.ParamName, Is.EqualTo("receipt"));
-        }
-
-        [Test]
         public void NotificationResult_IssuedByReplacedSameNotifier_Invalid()
         {
             FakeNotificationNotifier notifier = new FakeNotificationNotifier();
@@ -5347,9 +5293,29 @@ namespace Zantetsu.Core.Tests
             Assert.That(proofType.IsNested, Is.True);
             Assert.That(proofType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
+            // The constructor requires the coordinator's private issuance gate,
+            // which no external code can obtain, so a proof cannot be minted
+            // outside Execute.
             ConstructorInfo[] constructors = proofType.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(constructors.Length, Is.EqualTo(1));
-            Assert.That(constructors[0].IsPrivate, Is.True);
+            Assert.That(constructors[0].IsAssembly, Is.True);
+
+            ParameterInfo[] parameters = constructors[0].GetParameters();
+            Assert.That(parameters.Length, Is.EqualTo(4));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteNotificationCoordinator)));
+            Assert.That(parameters[1].ParameterType, Is.EqualTo(typeof(object)));
+            Assert.That(parameters[2].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteNotificationOperation)));
+            Assert.That(parameters[3].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteNotificationReceipt)));
+        }
+
+        [Test]
+        public void NotificationResult_NoProofGetter()
+        {
+            Type type = typeof(CaptureRunPublicationCaptureCompleteNotificationResult);
+
+            Assert.That(
+                type.GetProperty("Proof", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance),
+                Is.Null);
         }
 
         [Test]
@@ -5386,10 +5352,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(1));
+            Assert.That(fields.Length, Is.EqualTo(2));
             Assert.That(fields[0].IsInitOnly, Is.True);
             Assert.That(fields[0].IsPrivate, Is.True);
             Assert.That(fields[0].FieldType, Is.EqualTo(typeof(ICaptureRunPublicationCaptureCompleteNotifier)));
+            Assert.That(fields[1].IsInitOnly, Is.True);
+            Assert.That(fields[1].IsPrivate, Is.True);
         }
 
         [Test]

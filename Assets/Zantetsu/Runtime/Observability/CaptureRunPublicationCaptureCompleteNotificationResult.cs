@@ -82,8 +82,6 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationCaptureCompleteNotificationCoordinator IssuedBy => _issuedBy;
 
-        internal CaptureRunPublicationCaptureCompleteNotificationCoordinator.IssuanceProof Proof => _proof;
-
         internal ICaptureRunPublicationCaptureCompleteNotifier Notifier => _issuedBy.Notifier;
 
         internal CaptureRunPublicationCaptureCompleteNotificationOperation Operation => _operation;
@@ -134,10 +132,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // The proof must be minted for this exact coordinator, so a result
-            // cannot be re-bound to a different coordinator that shares the
-            // same notifier.
-            if (!proof.IsMintedFor(issuedBy))
+            // The proof must be minted by this exact coordinator for this exact
+            // operation and receipt, so a result cannot be re-bound to another
+            // coordinator, another notification, or a direct-minted receipt.
+            if (!issuedBy.IsMintedByThis(proof, operation, receipt))
             {
                 return false;
             }

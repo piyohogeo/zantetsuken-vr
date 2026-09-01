@@ -28,6 +28,7 @@ namespace Zantetsu.Observability
     internal sealed class CaptureRunPublicationCaptureCompleteNotificationCoordinator
     {
         private readonly ICaptureRunPublicationCaptureCompleteNotifier _notifier;
+        private readonly object _issuanceGate;
 
         internal CaptureRunPublicationCaptureCompleteNotificationCoordinator(
             ICaptureRunPublicationCaptureCompleteNotifier notifier)
@@ -38,39 +39,61 @@ namespace Zantetsu.Observability
             }
 
             _notifier = notifier;
+            _issuanceGate = new object();
         }
 
         internal ICaptureRunPublicationCaptureCompleteNotifier Notifier => _notifier;
 
         /// <summary>
-        /// Opaque coordinator-bound proof minted only inside
-        /// <see cref="Execute"/>. It binds to this exact coordinator by
-        /// reference, so a result built by one coordinator can never be
-        /// re-bound to another coordinator that shares the same notifier.
+        /// Opaque proof minted only inside <see cref="Execute"/> after the
+        /// notifier returned. It binds to this exact coordinator, to the
+        /// coordinator's private issuance gate, and to the exact operation and
+        /// receipt of that single notification, so the same coordinator's
+        /// proof cannot be reused for a different notification and a proof
+        /// cannot be minted without the coordinator's private gate.
         /// </summary>
         internal sealed class IssuanceProof
         {
             private readonly CaptureRunPublicationCaptureCompleteNotificationCoordinator _coordinator;
+            private readonly object _gate;
+            private readonly CaptureRunPublicationCaptureCompleteNotificationOperation _operation;
+            private readonly CaptureRunPublicationCaptureCompleteNotificationReceipt _receipt;
 
-            private IssuanceProof(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
+            internal IssuanceProof(
+                CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator,
+                object gate,
+                CaptureRunPublicationCaptureCompleteNotificationOperation operation,
+                CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
             {
                 _coordinator = coordinator;
+                _gate = gate;
+                _operation = operation;
+                _receipt = receipt;
             }
 
-            internal static IssuanceProof Mint(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
+            internal bool IsMintedFor(
+                CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator,
+                object gate,
+                CaptureRunPublicationCaptureCompleteNotificationOperation operation,
+                CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
             {
-                if (coordinator == null)
-                {
-                    throw new ArgumentNullException(nameof(coordinator));
-                }
-
-                return new IssuanceProof(coordinator);
+                return coordinator != null
+                    && gate != null
+                    && operation != null
+                    && receipt != null
+                    && ReferenceEquals(_coordinator, coordinator)
+                    && ReferenceEquals(_gate, gate)
+                    && ReferenceEquals(_operation, operation)
+                    && ReferenceEquals(_receipt, receipt);
             }
+        }
 
-            internal bool IsMintedFor(CaptureRunPublicationCaptureCompleteNotificationCoordinator coordinator)
-            {
-                return coordinator != null && ReferenceEquals(_coordinator, coordinator);
-            }
+        internal bool IsMintedByThis(
+            IssuanceProof proof,
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation,
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
+        {
+            return proof != null && proof.IsMintedFor(this, _issuanceGate, operation, receipt);
         }
 
         internal CaptureRunPublicationCaptureCompleteNotificationResult Execute(
@@ -86,9 +109,16 @@ namespace Zantetsu.Observability
 
             CaptureRunPublicationCaptureCompleteNotificationReceipt receipt = _notifier.Notify(operation);
 
-            IssuanceProof proof = IssuanceProof.Mint(this);
+            IssuanceProof proof = MintProof(operation, receipt);
 
             return new CaptureRunPublicationCaptureCompleteNotificationResult(this, proof, operation, receipt);
+        }
+
+        private IssuanceProof MintProof(
+            CaptureRunPublicationCaptureCompleteNotificationOperation operation,
+            CaptureRunPublicationCaptureCompleteNotificationReceipt receipt)
+        {
+            return new IssuanceProof(this, _issuanceGate, operation, receipt);
         }
     }
 }
