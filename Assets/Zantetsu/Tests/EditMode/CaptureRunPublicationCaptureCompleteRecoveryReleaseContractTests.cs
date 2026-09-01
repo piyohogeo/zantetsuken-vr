@@ -924,18 +924,54 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void IssuanceProof_MintRequiresOperationNotReferences()
+        public void IssuanceProof_NoProofReturningMintApi()
         {
             Type proofType = typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation).GetNestedType(
                 "IssuanceProof", BindingFlags.NonPublic);
             Assert.That(proofType, Is.Not.Null);
-            Assert.That(proofType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
-            MethodInfo acquire = proofType.GetMethod("Acquire", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(acquire, Is.Not.Null);
-            ParameterInfo[] parameters = acquire.GetParameters();
+            // Proof constructor is private.
+            Assert.That(proofType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+            Assert.That(proofType.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Length, Is.EqualTo(1));
+
+            // No static method returns the proof type: the only static factory
+            // returns the operation, never the proof.
+            foreach (MethodInfo method in proofType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+            {
+                Assert.That(method.ReturnType, Is.Not.EqualTo(proofType), method.Name + " must not return the proof.");
+            }
+
+            // The atomic factory exists and returns only the operation.
+            MethodInfo mint = proofType.GetMethod("Mint", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(mint, Is.Not.Null);
+            Assert.That(mint.ReturnType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation)));
+            ParameterInfo[] parameters = mint.GetParameters();
             Assert.That(parameters.Length, Is.EqualTo(1));
-            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation)));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(CaptureRunPublicationCaptureCompleteLifecycleEvidence)));
+        }
+
+        [Test]
+        public void From_AtomicFactoryRejectsCorruptedEvidence()
+        {
+            // Corrupted outcome (foreign instance, same result and lease).
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence();
+            CaptureRunInitializationOpenOutcome provenance = evidence.OpenOutcome;
+            SetField(evidence, "_openOutcome", ForgeOutcome(
+                provenance.OrchestrationResult, provenance.OrchestrationResult.LockLease));
+            Assert.Throws<ArgumentException>(
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence));
+
+            // Corrupted notification (lease released).
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence2 = MakeRecoveryEvidence();
+            evidence2.LockLease.Dispose();
+            Assert.Throws<ArgumentException>(
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence2));
+
+            // Corrupted lease (outcome released).
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence3 = MakeRecoveryEvidence();
+            evidence3.OpenOutcome.Dispose();
+            Assert.Throws<ArgumentException>(
+                () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence3));
         }
 
         // ---- Partial release failure and retry ----

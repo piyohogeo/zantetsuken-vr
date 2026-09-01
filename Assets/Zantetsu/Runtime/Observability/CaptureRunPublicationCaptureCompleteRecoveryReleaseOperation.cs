@@ -52,12 +52,12 @@ namespace Zantetsu.Observability
     internal sealed class CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation
     {
         /// <summary>
-        /// Opaque proof minted only inside <see cref="From"/> after the full
-        /// issuance validation. It binds to this exact operation's private
-        /// issuance nonce and to the issuance-time evidence, notification
-        /// result, open outcome, and lock lease, so it cannot be reused for a
-        /// different operation — even one built from the same evidence — and
-        /// cannot be minted for arbitrary references.
+        /// Opaque proof minted only inside the atomic nested factory
+        /// <see cref="Mint"/> after the full issuance validation. It binds to
+        /// this exact operation's private issuance nonce and to the
+        /// issuance-time evidence, notification result, open outcome, and lock
+        /// lease, so it cannot be reused for a different operation — even one
+        /// built from the same evidence — and it is never returned to callers.
         /// </summary>
         internal sealed class IssuanceProof
         {
@@ -81,20 +81,37 @@ namespace Zantetsu.Observability
                 _lockLease = lockLease;
             }
 
-            internal static IssuanceProof Acquire(
-                CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
+            /// <summary>
+            /// Atomic validated mint: fully validates the lifecycle evidence,
+            /// generates the private per-operation nonce, mints the proof, and
+            /// constructs the operation — returning only the operation and
+            /// never exposing the proof. A proof can therefore only exist for
+            /// an operation issued from a fully valid evidence.
+            /// </summary>
+            internal static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation Mint(
+                CaptureRunPublicationCaptureCompleteLifecycleEvidence lifecycleEvidence)
             {
-                if (operation == null)
+                if (lifecycleEvidence == null)
                 {
-                    throw new ArgumentNullException(nameof(operation));
+                    throw new ArgumentNullException(nameof(lifecycleEvidence));
                 }
 
-                return new IssuanceProof(
-                    operation._issuanceNonce,
-                    operation._lifecycleEvidence,
-                    operation._notificationResult,
-                    operation._openOutcome,
-                    operation._lockLease);
+                if (!CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.IsCorrelated(lifecycleEvidence))
+                {
+                    throw new ArgumentException(
+                        "Lifecycle evidence must be recovery-owner correlated and releasable.",
+                        nameof(lifecycleEvidence));
+                }
+
+                object nonce = new object();
+                IssuanceProof proof = new IssuanceProof(
+                    nonce,
+                    lifecycleEvidence,
+                    lifecycleEvidence.NotificationResult,
+                    lifecycleEvidence.OpenOutcome,
+                    lifecycleEvidence.LockLease);
+
+                return new CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation(lifecycleEvidence, nonce, proof);
             }
 
             internal bool IsIssuedFor(CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
@@ -116,32 +133,22 @@ namespace Zantetsu.Observability
         private readonly IssuanceProof _issuanceProof;
 
         private CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation(
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence lifecycleEvidence)
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence lifecycleEvidence,
+            object issuanceNonce,
+            IssuanceProof issuanceProof)
         {
             _lifecycleEvidence = lifecycleEvidence;
             _notificationResult = lifecycleEvidence.NotificationResult;
             _openOutcome = lifecycleEvidence.OpenOutcome;
             _lockLease = lifecycleEvidence.LockLease;
-            _issuanceNonce = new object();
-            _issuanceProof = IssuanceProof.Acquire(this);
+            _issuanceNonce = issuanceNonce;
+            _issuanceProof = issuanceProof;
         }
 
         internal static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation From(
             CaptureRunPublicationCaptureCompleteLifecycleEvidence lifecycleEvidence)
         {
-            if (lifecycleEvidence == null)
-            {
-                throw new ArgumentNullException(nameof(lifecycleEvidence));
-            }
-
-            if (!IsCorrelated(lifecycleEvidence))
-            {
-                throw new ArgumentException(
-                    "Lifecycle evidence must be recovery-owner correlated and releasable.",
-                    nameof(lifecycleEvidence));
-            }
-
-            return new CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation(lifecycleEvidence);
+            return IssuanceProof.Mint(lifecycleEvidence);
         }
 
         internal CaptureRunPublicationCaptureCompleteLifecycleEvidence LifecycleEvidence => _lifecycleEvidence;
