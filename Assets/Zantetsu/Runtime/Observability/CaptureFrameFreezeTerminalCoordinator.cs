@@ -55,8 +55,13 @@ namespace Zantetsu.Observability
         }
 
         internal bool IsFrozenFor(long testRunId) => testRunId > 0
+            && _recorder != null
             && _recorder.State == TraceFlightRecorderState.Frozen
+            && _recorder.Logger != null
             && _recorder.Logger.TestRunId == testRunId
+            && _bufferBuilder != null
+            && _bufferBuilder.Registry != null
+            && _bufferBuilder.Registry.Run != null
             && _bufferBuilder.Registry.Run.TestRunId == testRunId;
 
         /// <summary>

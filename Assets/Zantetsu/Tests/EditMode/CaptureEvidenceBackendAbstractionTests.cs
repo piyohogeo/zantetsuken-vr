@@ -343,7 +343,7 @@ namespace Zantetsu.Core.Tests
 
             string freezeReceipt = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunFreezeReceipt.cs"));
-            Assert.That(freezeReceipt, Does.Contain("_evidence.Artifacts.ReservedArtifactCount == 0"));
+            Assert.That(freezeReceipt, Does.Contain("artifacts.ReservedArtifactCount != 0"));
             Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(_runSession.TestRunId)"));
 
             string recoveryReceipt = File.ReadAllText(Path.Combine(

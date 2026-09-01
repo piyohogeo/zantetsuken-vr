@@ -11,24 +11,26 @@ namespace Zantetsu.Observability
     /// <para>
     /// The type owns exactly three read-only reference fields — the
     /// notification result, the fresh freeze receipt, and the recovery open
-    /// outcome — and has no public constructor. The fresh and recovery
-    /// factories accept exactly one owner and reject the other, so no caller
-    /// can inject an arbitrary three-reference combination. <see cref="Kind"/>
-    /// is derived from the exclusive owner state, never from a duplicated
-    /// field.
+    /// outcome — and has no public constructor. The recovery factory accepts
+    /// the exact provenance open outcome and rejects a fresh receipt, so no
+    /// caller can inject an arbitrary three-reference combination. The fresh
+    /// factory is not yet accepting because no fresh publication provenance
+    /// chain exists. <see cref="Kind"/> is derived from the exclusive owner
+    /// state, never from a duplicated field.
     /// </para>
     /// <para>
-    /// The fresh factory validates in a fixed order: null notification result,
-    /// null freeze receipt, a valid notification result, accepted status and
-    /// disposition, a valid freeze receipt, a live session, non-null draft and
-    /// artifact registries, fully drained registries, shared root layout,
-    /// matching test run id, ordinally matching run initialization id, session
-    /// lease ownership, and shared lock path set. The recovery factory
-    /// validates: null notification result, null open outcome, a valid
-    /// notification result, accepted status and disposition, a created and
-    /// valid outcome, publication-recovery-required status, no session, a
-    /// present orchestration result, shared root layout, matching ids, the
-    /// same lock lease, and the same lock path set.
+    /// The fresh factory rejects: the capture-complete notification result
+    /// graph is recovery-originated and no reference chain yet connects a
+    /// freeze receipt or draft/artifact registry through publication and
+    /// cleanup to a notification result, so <see cref="FromFresh"/> throws
+    /// <see cref="NotSupportedException"/> for every non-null argument pair
+    /// until that provenance chain exists. The recovery factory validates:
+    /// null notification result, null open outcome, a valid notification
+    /// result, accepted status and disposition, a created and valid outcome,
+    /// publication-recovery-required status, no session, the exact provenance
+    /// open outcome (reference-equal to the notification graph's inspection
+    /// operation outcome), shared root layout, matching ids, the same lock
+    /// lease, and the same lock path set.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full correlation from the held
@@ -72,14 +74,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(freezeReceipt));
             }
 
-            if (!notificationResult.IsValid || !IsFreshCorrelated(notificationResult, freezeReceipt))
-            {
-                throw new ArgumentException(
-                    "Notification result and freeze receipt must be correlated.",
-                    nameof(freezeReceipt));
-            }
-
-            return new CaptureRunPublicationCaptureCompleteLifecycleEvidence(notificationResult, freezeReceipt, null);
+            // Fresh provenance is not yet implemented: the capture-complete
+            // notification result graph is recovery-originated, and no
+            // reference chain connects a freeze receipt or draft/artifact
+            // registry through publication and cleanup to a notification
+            // result. Until that chain exists, no fresh evidence is accepted.
+            throw new NotSupportedException(
+                "Fresh capture-complete provenance is not yet implemented.");
         }
 
         internal static CaptureRunPublicationCaptureCompleteLifecycleEvidence FromRecovery(
@@ -178,76 +179,11 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
             CaptureEvidenceRunFreezeReceipt freezeReceipt)
         {
-            if (notificationResult == null || freezeReceipt == null)
-            {
-                return false;
-            }
-
-            if (notificationResult.Status != CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady)
-            {
-                return false;
-            }
-
-            if (!IsAcceptedDisposition(notificationResult.Disposition))
-            {
-                return false;
-            }
-
-            if (!freezeReceipt.IsValid)
-            {
-                return false;
-            }
-
-            CaptureRunInitializationSession session = freezeReceipt.RunSession;
-            if (session == null || !session.IsCreated)
-            {
-                return false;
-            }
-
-            CaptureFrameDraftRegistry drafts = freezeReceipt.Drafts;
-            CaptureArtifactRegistry artifacts = freezeReceipt.Artifacts;
-            if (drafts == null || artifacts == null)
-            {
-                return false;
-            }
-
-            if (drafts.PendingCount != 0 || drafts.ReservationCount != 0)
-            {
-                return false;
-            }
-
-            if (artifacts.ReservedArtifactCount != 0)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(freezeReceipt.RootLayout, notificationResult.RootLayout))
-            {
-                return false;
-            }
-
-            if (freezeReceipt.TestRunId != notificationResult.TestRunId)
-            {
-                return false;
-            }
-
-            if (!string.Equals(freezeReceipt.RunInitializationId, notificationResult.RunInitializationId, StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            if (!session.OwnsLockLease(notificationResult.LockLease))
-            {
-                return false;
-            }
-
-            CaptureRunLockLease lockLease = notificationResult.LockLease;
-            if (lockLease == null || lockLease.PathSet == null || !ReferenceEquals(lockLease.PathSet, session.LockPathSet))
-            {
-                return false;
-            }
-
-            return true;
+            // Fresh provenance is not yet implemented: no reference chain
+            // connects a freeze receipt or draft/artifact registry through
+            // publication and cleanup to a notification result. Until that
+            // chain exists, no fresh pairing is correlated.
+            return false;
         }
 
         private static bool IsRecoveryCorrelated(
@@ -280,6 +216,11 @@ namespace Zantetsu.Observability
             }
 
             if (openOutcome.Session != null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(GetProvenanceOpenOutcome(notificationResult), openOutcome))
             {
                 return false;
             }
@@ -317,6 +258,48 @@ namespace Zantetsu.Observability
             }
 
             return true;
+        }
+
+        private static CaptureRunInitializationOpenOutcome GetProvenanceOpenOutcome(
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult)
+        {
+            CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult cleanupResult = notificationResult.CleanupResult;
+            if (cleanupResult == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationArtifactRecoveryOrchestrationResult recoveryResult = cleanupResult.OrchestrationResult;
+            if (recoveryResult == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationArtifactInspectionSnapshot artifactSnapshot = recoveryResult.InspectionSnapshot;
+            if (artifactSnapshot == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryDecision decision = artifactSnapshot.Decision;
+            if (decision == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryInspectionSnapshot recoverySnapshot = decision.Snapshot;
+            if (recoverySnapshot == null)
+            {
+                return null;
+            }
+
+            CaptureRunPublicationRecoveryInspectionOperation operation = recoverySnapshot.Operation;
+            if (operation == null)
+            {
+                return null;
+            }
+
+            return operation.OpenOutcome;
         }
 
         private static bool IsAcceptedDisposition(CaptureRunPublicationArtifactRecoveryDisposition disposition)

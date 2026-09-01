@@ -117,7 +117,9 @@ namespace Zantetsu.Observability
         internal bool IsFullyDrained => _drainStarted
             && _queuedCancelled
             && _joined
+            && _occupied != null
             && !HasOccupiedSlots()
+            && _artifacts != null
             && _artifacts.ReservedArtifactCount == 0;
 
         internal void BeginDrain()

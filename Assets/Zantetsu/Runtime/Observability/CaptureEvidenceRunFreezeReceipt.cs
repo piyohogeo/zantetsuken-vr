@@ -39,16 +39,49 @@ namespace Zantetsu.Observability
 
         private bool CorrelationsHold()
         {
-            return _issuedBy != null
-                && _evidence != null
-                && _runSession != null
-                && _terminalBuffer != null
-                && _runSession.IsCreated
-                && _evidence.IsFullyDrained
-                && _evidence.Artifacts.ReservedArtifactCount == 0
-                && _evidence.Drafts.Run.TestRunId == _runSession.TestRunId
-                && _terminalBuffer.TestRunId == _runSession.TestRunId
-                && _issuedBy.IsFrozenFor(_runSession.TestRunId);
+            if (_issuedBy == null || _evidence == null || _runSession == null || _terminalBuffer == null)
+            {
+                return false;
+            }
+
+            if (!_runSession.IsCreated)
+            {
+                return false;
+            }
+
+            CaptureFrameDraftRegistry drafts = _evidence.Drafts;
+            CaptureArtifactRegistry artifacts = _evidence.Artifacts;
+            if (drafts == null || artifacts == null || drafts.Run == null)
+            {
+                return false;
+            }
+
+            if (!_evidence.IsFullyDrained)
+            {
+                return false;
+            }
+
+            if (artifacts.ReservedArtifactCount != 0)
+            {
+                return false;
+            }
+
+            if (drafts.Run.TestRunId != _runSession.TestRunId)
+            {
+                return false;
+            }
+
+            if (_terminalBuffer.TestRunId != _runSession.TestRunId)
+            {
+                return false;
+            }
+
+            if (!_issuedBy.IsFrozenFor(_runSession.TestRunId))
+            {
+                return false;
+            }
+
+            return true;
         }
     }
 }

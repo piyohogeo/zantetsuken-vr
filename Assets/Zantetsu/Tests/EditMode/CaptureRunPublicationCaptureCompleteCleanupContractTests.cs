@@ -5507,42 +5507,25 @@ namespace Zantetsu.Core.Tests
             return receipt;
         }
 
-        private static CaptureRunInitializationOpenOutcome MakeRecoveryOutcomeWithLayoutAndLease(
-            CaptureRunRootLayout layout,
-            CaptureRunLockLease lease)
-        {
-            CaptureRunMarkerBinding binding = MakeBinding(layout);
-
-            CaptureRunInitializationRootObservation staging = MakeObservation(
-                Staging, true, Canonical, binding.StagingInitialization, Canonical, binding.StagingReady, hasNonMarker: true);
-            CaptureRunInitializationRootObservation final = MakeFullyCanonical(Final, binding);
-
-            FakeInitInspector inspector = new FakeInitInspector(staging, final);
-            CaptureRunInitializationRecoveryExecutionCoordinator execution = new CaptureRunInitializationRecoveryExecutionCoordinator(
-                new FakeCleanupBackend(), new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = new CaptureRunInitializationRecoveryOrchestrationCoordinator(inspector, execution);
-
-            CaptureRunInitializationRecoveryInspectionOperation inspection = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
-            CaptureRunInitializationRecoveryOrchestrationResult result = orchestrator.Execute(inspection);
-
-            return ForgeOutcome(result, lease);
-        }
-
-        private static CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeFreshEvidence()
+        private static CaptureEvidenceRunFreezeReceipt ForgeValidFreezeReceipt()
         {
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
             CaptureRunInitializationSession session = MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease);
             CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
             CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = ForgeFreezeReceipt(session, drafts, artifacts);
-            return CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, freezeReceipt);
+            return ForgeFreezeReceipt(session, drafts, artifacts);
+        }
+
+        private static CaptureRunInitializationOpenOutcome GetProvenanceOpenOutcome(
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult)
+        {
+            return notificationResult.CleanupResult.OrchestrationResult.InspectionSnapshot.Decision.Snapshot.Operation.OpenOutcome;
         }
 
         private static CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeRecoveryEvidence()
         {
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-            CaptureRunInitializationOpenOutcome outcome = MakeRecoveryOutcomeWithLayoutAndLease(
-                notificationResult.RootLayout, notificationResult.LockLease);
+            CaptureRunInitializationOpenOutcome outcome = GetProvenanceOpenOutcome(notificationResult);
             return CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, outcome);
         }
 
@@ -5561,22 +5544,14 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void LifecycleEvidence_FreshConstructs()
+        public void LifecycleEvidence_FreshNotSupported_Rejected()
         {
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeFreshEvidence();
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = ForgeValidFreezeReceipt();
+            Assert.That(freezeReceipt.IsValid, Is.True);
 
-            Assert.That(evidence.IsValid, Is.True);
-            Assert.That(evidence.Kind, Is.EqualTo(CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.FreshSession));
-            Assert.That(evidence.NotificationResult, Is.Not.Null);
-            Assert.That(evidence.FreezeReceipt, Is.Not.Null);
-            Assert.That(evidence.RunSession, Is.Not.Null);
-            Assert.That(evidence.Drafts, Is.Not.Null);
-            Assert.That(evidence.Artifacts, Is.Not.Null);
-            Assert.That(evidence.OpenOutcome, Is.Null);
-            Assert.That(evidence.RootLayout, Is.Not.Null);
-            Assert.That(evidence.LockLease, Is.Not.Null);
-            Assert.That(evidence.RunManifestContentSha256, Is.Not.Null);
-            Assert.That(evidence.CaptureIndexPath, Is.Not.Null);
+            Assert.Throws<NotSupportedException>(
+                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, freezeReceipt));
         }
 
         [Test]
@@ -5598,10 +5573,9 @@ namespace Zantetsu.Core.Tests
         public void LifecycleEvidence_FreshNullArgs_Rejected()
         {
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeFreshEvidence();
 
             ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(null, evidence.FreezeReceipt));
+                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(null, null));
             Assert.That(ex1.ParamName, Is.EqualTo("notificationResult"));
 
             ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(
@@ -5627,149 +5601,33 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void LifecycleEvidence_InvalidNotificationResult_Rejected()
         {
-            CaptureRunPublicationCaptureCompleteNotificationResult invalid = MakeNotificationResult(commitRoute: true);
-            invalid.LockLease.Dispose();
-            Assert.That(invalid.IsValid, Is.False);
-
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh = MakeFreshEvidence();
-            ArgumentException ex1 = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(invalid, fresh.FreezeReceipt));
-            Assert.That(ex1.ParamName, Is.EqualTo("freezeReceipt"));
-
             CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery = MakeRecoveryEvidence();
-            ArgumentException ex2 = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(invalid, recovery.OpenOutcome));
-            Assert.That(ex2.ParamName, Is.EqualTo("openOutcome"));
-        }
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = recovery.NotificationResult;
+            CaptureRunInitializationOpenOutcome outcome = recovery.OpenOutcome;
 
-        [Test]
-        public void LifecycleEvidence_InvalidFreezeReceipt_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-            CaptureRunInitializationSession session = MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease);
-            CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
-            CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = ForgeFreezeReceipt(session, drafts, artifacts);
-
-            SetField(freezeReceipt, "_terminalBuffer", null);
-            Assert.That(freezeReceipt.IsValid, Is.False);
+            notificationResult.LockLease.Dispose();
+            Assert.That(notificationResult.IsValid, Is.False);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, freezeReceipt));
-            Assert.That(ex.ParamName, Is.EqualTo("freezeReceipt"));
+                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, outcome));
+            Assert.That(ex.ParamName, Is.EqualTo("openOutcome"));
         }
 
         [Test]
-        public void LifecycleEvidence_FreshForeignOwnerVariants_Rejected()
+        public void LifecycleEvidence_RecoveryExactOpenOutcome_Rejected()
         {
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-            CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
-            CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
+            CaptureRunInitializationOpenOutcome provenance = GetProvenanceOpenOutcome(notificationResult);
 
-            // 別 Session（別 lease を所有 → OwnsLockLease false）。
-            CaptureRunRootLayout foreignLayout = MakeLayout(2);
-            CaptureRunInitializationSession foreignSession = MakeLifecycleSession(foreignLayout, MakeLease(foreignLayout));
-            CaptureEvidenceRunFreezeReceipt foreignSessionReceipt = ForgeFreezeReceipt(foreignSession, drafts, artifacts);
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, foreignSessionReceipt));
+            // 同じ Orchestration Result と Lease を共有する別インスタンス → 拒否。
+            CaptureRunInitializationOpenOutcome forged = ForgeOutcome(
+                provenance.OrchestrationResult, provenance.OrchestrationResult.LockLease);
+            Assert.That(ReferenceEquals(forged, provenance), Is.False);
+            Assert.That(forged.IsValid, Is.True);
 
-            // 別 Lease（同 layout の別 lease を所有 → OwnsLockLease false）。
-            CaptureRunInitializationSession foreignLeaseSession = MakeLifecycleSession(
-                notificationResult.RootLayout, MakeLease(notificationResult.RootLayout));
-            CaptureEvidenceRunFreezeReceipt foreignLeaseReceipt = ForgeFreezeReceipt(foreignLeaseSession, drafts, artifacts);
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, foreignLeaseReceipt));
-        }
-
-        [Test]
-        public void LifecycleEvidence_FreshPendingReservations_Rejected()
-        {
-            // Pending 残存。
-            {
-                CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-                CaptureRunInitializationSession session = MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease);
-                CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
-                SetField(drafts, "_pendingCount", 1);
-                CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-                CaptureEvidenceRunFreezeReceipt receipt = ForgeFreezeReceipt(session, drafts, artifacts);
-                Assert.Throws<ArgumentException>(
-                    () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, receipt));
-            }
-
-            // Draft reservation 残存。
-            {
-                CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-                CaptureRunInitializationSession session = MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease);
-                CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
-                SetField(drafts, "_reservationCount", 1);
-                CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-                CaptureEvidenceRunFreezeReceipt receipt = ForgeFreezeReceipt(session, drafts, artifacts);
-                Assert.Throws<ArgumentException>(
-                    () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, receipt));
-            }
-
-            // Artifact reservation 残存。
-            {
-                CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-                CaptureRunInitializationSession session = MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease);
-                CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(notificationResult.TestRunId);
-                CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-                SetField(artifacts, "_reservedArtifactCount", 1);
-                CaptureEvidenceRunFreezeReceipt receipt = ForgeFreezeReceipt(session, drafts, artifacts);
-                Assert.Throws<ArgumentException>(
-                    () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromFresh(notificationResult, receipt));
-            }
-        }
-
-        [Test]
-        public void LifecycleEvidence_RecoveryNonPublicationOutcome_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-
-            // SessionReady Outcome（_session 設定）。
-            CaptureRunInitializationOpenOutcome sessionReady = MakeRecoveryOutcomeWithLayoutAndLease(
-                notificationResult.RootLayout, notificationResult.LockLease);
-            SetField(sessionReady, "_session", MakeLifecycleSession(notificationResult.RootLayout, notificationResult.LockLease));
-            SetField(sessionReady, "_lockLease", null);
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, sessionReady));
-
-            // Collision 相当（orchestrationResult なし → Status None）。
-            CaptureRunInitializationOpenOutcome collision = MakeRecoveryOutcomeWithLayoutAndLease(
-                notificationResult.RootLayout, notificationResult.LockLease);
-            SetField(collision, "_orchestrationResult", null);
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, collision));
-        }
-
-        [Test]
-        public void LifecycleEvidence_RecoveryForeignVariants_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true);
-
-            // 別 Lease。
-            CaptureRunInitializationOpenOutcome foreignLease = MakeRecoveryOutcomeWithLayoutAndLease(
-                notificationResult.RootLayout, notificationResult.LockLease);
-            SetField(foreignLease, "_lockLease", MakeLease(notificationResult.RootLayout));
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, foreignLease));
-
-            // 別 RootLayout／別 Run ID（別 layout の outcome）。
-            CaptureRunRootLayout foreignLayout = MakeLayout(2);
-            CaptureRunInitializationOpenOutcome foreignRoot = MakeRecoveryOutcomeWithLayoutAndLease(
-                foreignLayout, MakeLease(foreignLayout));
-            Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, foreignRoot));
-        }
-
-        [Test]
-        public void LifecycleEvidence_FreshRegistryForwarding()
-        {
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeFreshEvidence();
-
-            Assert.That(ReferenceEquals(evidence.Drafts, evidence.FreezeReceipt.Drafts), Is.True);
-            Assert.That(ReferenceEquals(evidence.Artifacts, evidence.FreezeReceipt.Artifacts), Is.True);
-            Assert.That(ReferenceEquals(evidence.RunSession, evidence.FreezeReceipt.RunSession), Is.True);
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, forged));
+            Assert.That(ex.ParamName, Is.EqualTo("openOutcome"));
         }
 
         [Test]
@@ -5787,11 +5645,17 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void LifecycleEvidence_ExclusiveKindStates()
         {
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh = MakeFreshEvidence();
             CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery = MakeRecoveryEvidence();
-
-            Assert.That(fresh.Kind, Is.EqualTo(CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.FreshSession));
             Assert.That(recovery.Kind, Is.EqualTo(CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.RecoveryOpenOutcome));
+
+            // reflection で Fresh 形状（freezeReceipt のみ保持）を forge → FreshSession。
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh =
+                (CaptureRunPublicationCaptureCompleteLifecycleEvidence)FormatterServices.GetUninitializedObject(
+                    typeof(CaptureRunPublicationCaptureCompleteLifecycleEvidence));
+            SetField(fresh, "_notificationResult", recovery.NotificationResult);
+            SetField(fresh, "_freezeReceipt", ForgeValidFreezeReceipt());
+            Assert.That(fresh.Kind, Is.EqualTo(CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.FreshSession));
+            Assert.That(fresh.IsValid, Is.False);
 
             // 両方保持（reflection で排他を破る）→ None。
             SetField(fresh, "_openOutcome", recovery.OpenOutcome);
@@ -5802,38 +5666,35 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void LifecycleEvidence_DisposeConvergesFalse()
         {
-            // Session Dispose。
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh = MakeFreshEvidence();
-            Assert.That(fresh.IsValid, Is.True);
-            fresh.RunSession.Dispose();
-            Assert.That(fresh.IsValid, Is.False);
-
             // Open Outcome Dispose。
             CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery = MakeRecoveryEvidence();
             Assert.That(recovery.IsValid, Is.True);
             recovery.OpenOutcome.Dispose();
             Assert.That(recovery.IsValid, Is.False);
 
-            // Lease 失効（Fresh の session を dispose しないで lease だけ失効させるのは不可 → 直接 lease dispose）。
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh2 = MakeFreshEvidence();
-            Assert.That(fresh2.IsValid, Is.True);
-            fresh2.LockLease.Dispose();
-            Assert.That(fresh2.IsValid, Is.False);
+            // Lease 失効。
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery2 = MakeRecoveryEvidence();
+            Assert.That(recovery2.IsValid, Is.True);
+            recovery2.LockLease.Dispose();
+            Assert.That(recovery2.IsValid, Is.False);
         }
 
         [Test]
         public void LifecycleEvidence_ReflectionReplacementConvergesFalse()
         {
-            CaptureRunPublicationCaptureCompleteLifecycleEvidence fresh = MakeFreshEvidence();
-            Assert.That(fresh.IsValid, Is.True);
-            SetField(fresh, "_notificationResult", MakeNotificationResult(commitRoute: false));
-            Assert.That(fresh.IsValid, Is.False);
-
+            // OpenOutcome を、同じ Orchestration Result と Lease を持つ別インスタンスに差し替え。
             CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery = MakeRecoveryEvidence();
             Assert.That(recovery.IsValid, Is.True);
-            CaptureRunRootLayout foreignLayout = MakeLayout(2);
-            SetField(recovery, "_openOutcome", MakeRecoveryOutcomeWithLayoutAndLease(foreignLayout, MakeLease(foreignLayout)));
+            SetField(recovery, "_openOutcome", ForgeOutcome(
+                recovery.OpenOutcome.OrchestrationResult,
+                recovery.OpenOutcome.OrchestrationResult.LockLease));
             Assert.That(recovery.IsValid, Is.False);
+
+            // NotificationResult を別インスタンスに差し替え。
+            CaptureRunPublicationCaptureCompleteLifecycleEvidence recovery2 = MakeRecoveryEvidence();
+            Assert.That(recovery2.IsValid, Is.True);
+            SetField(recovery2, "_notificationResult", MakeNotificationResult(commitRoute: false));
+            Assert.That(recovery2.IsValid, Is.False);
         }
 
         [Test]
@@ -5845,6 +5706,69 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(evidence.IsValid, Is.False);
             Assert.That(evidence.Kind, Is.EqualTo(CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.None));
+        }
+
+        [Test]
+        public void FreezeReceipt_IsValidExceptionSafeUnderStructuralCorruption()
+        {
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt, "_issuedBy", null));
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt, "_evidence", null));
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt, "_runSession", null));
+            AssertCorruptedReceiptInvalid(receipt => SetField(receipt, "_terminalBuffer", null));
+
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object evidence = GetField(receipt, "_evidence");
+                SetField(evidence, "_drafts", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object evidence = GetField(receipt, "_evidence");
+                SetField(evidence, "_artifacts", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object evidence = GetField(receipt, "_evidence");
+                SetField(evidence, "_occupied", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object evidence = GetField(receipt, "_evidence");
+                object drafts = GetField(evidence, "_drafts");
+                SetField(drafts, "_run", null);
+            });
+
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object issuedBy = GetField(receipt, "_issuedBy");
+                SetField(issuedBy, "_recorder", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object issuedBy = GetField(receipt, "_issuedBy");
+                object recorder = GetField(issuedBy, "_recorder");
+                SetField(recorder, "_logger", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object issuedBy = GetField(receipt, "_issuedBy");
+                SetField(issuedBy, "_bufferBuilder", null);
+            });
+            AssertCorruptedReceiptInvalid(receipt =>
+            {
+                object issuedBy = GetField(receipt, "_issuedBy");
+                object bufferBuilder = GetField(issuedBy, "_bufferBuilder");
+                SetField(bufferBuilder, "_draftRegistry", null);
+            });
+        }
+
+        private static void AssertCorruptedReceiptInvalid(Action<CaptureEvidenceRunFreezeReceipt> corrupt)
+        {
+            CaptureEvidenceRunFreezeReceipt receipt = ForgeValidFreezeReceipt();
+            Assert.That(receipt.IsValid, Is.True);
+
+            corrupt(receipt);
+            Assert.That(receipt.IsValid, Is.False);
         }
 
         [Test]
