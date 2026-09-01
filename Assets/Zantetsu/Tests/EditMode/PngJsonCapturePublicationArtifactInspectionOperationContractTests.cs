@@ -1137,6 +1137,34 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Token_PngByteCountSwapped_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(MakeRecoveryAuthority(), 1000);
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+
+            SetField(operation, "_maximumPngByteCount", 2000L);
+
+            Assert.That(token.IsIndexLocalCorrelated(operation, 0), Is.False);
+        }
+
+        [Test]
+        public void TokenAuthorityTokenSwappedToSameAuthority_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(MakeRecoveryAuthority());
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+
+            SetField(operation.GetArtifactPaths(0).Entry, "_pngByteLength", 17L);
+
+            PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken freshAuthorityToken =
+                PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken.Acquire(operation.Authority);
+            SetField(token, "_authorityToken", freshAuthorityToken);
+
+            Assert.That(token.IsIndexLocalCorrelated(operation, 0), Is.False);
+        }
+
+        [Test]
         public void UninitializedOperation_False()
         {
             PngJsonCapturePublicationArtifactInspectionOperation operation =

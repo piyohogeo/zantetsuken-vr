@@ -265,8 +265,10 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationArtifactInspectionOperation _operation;
             private readonly PngJsonCapturePublicationArtifactInspectionAuthority _authority;
             private readonly PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken _authorityToken;
+            private readonly PngJsonCapturePublicationArtifactInspectionAuthority.ValidationToken _authorityTokenProof;
             private readonly PngJsonCapturePublicationArtifactInspectionPathSet[] _artifactPathsArray;
             private readonly PngJsonCapturePublicationArtifactInspectionPathSet[] _proof;
+            private readonly long _maximumPngByteCount;
 
             private ValidationToken(
                 PngJsonCapturePublicationArtifactInspectionOperation operation,
@@ -278,8 +280,10 @@ namespace Zantetsu.Observability
                 _operation = operation;
                 _authority = authority;
                 _authorityToken = authorityToken;
+                _authorityTokenProof = authorityToken;
                 _artifactPathsArray = artifactPathsArray;
                 _proof = proof;
+                _maximumPngByteCount = operation._maximumPngByteCount;
             }
 
             /// <summary>
@@ -318,7 +322,13 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_authority == null || _authorityToken == null)
+                if (_authority == null || _authorityToken == null || _authorityTokenProof == null)
+                {
+                    return false;
+                }
+
+                if (operation._maximumPngByteCount != _maximumPngByteCount
+                    || !ReferenceEquals(_authorityToken, _authorityTokenProof))
                 {
                     return false;
                 }

@@ -159,6 +159,11 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsIndexLocalPathCorrelationIntact()
         {
+            if (_authority == null)
+            {
+                return false;
+            }
+
             return ReDerivesToStored();
         }
 

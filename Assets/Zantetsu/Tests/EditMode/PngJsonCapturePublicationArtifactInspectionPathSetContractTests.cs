@@ -1163,6 +1163,26 @@ namespace Zantetsu.Core.Tests
             Assert.That(pathSet.IsValidIndexLocal(null), Is.False);
         }
 
+        [Test]
+        public void Uninitialized_IndexLocalPathCorrelation_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                (PngJsonCapturePublicationArtifactInspectionPathSet)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactInspectionPathSet));
+
+            Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
+        }
+
+        [Test]
+        public void NullAuthority_IndexLocalPathCorrelation_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(MakeRecoveryAuthority(), 0);
+            SetField(pathSet, "_authority", null);
+
+            Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
+        }
+
         // ---- Source shape ----
 
         [Test]
