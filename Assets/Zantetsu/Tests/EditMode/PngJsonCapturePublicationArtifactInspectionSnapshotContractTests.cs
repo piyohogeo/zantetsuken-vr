@@ -1275,6 +1275,9 @@ namespace Zantetsu.Core.Tests
             string createBody = ExtractMethodBody(source, "static PngJsonCapturePublicationArtifactInspectionSnapshot Create(");
 
             Assert.That(CountOccurrences(createBody, "TryValidate("), Is.EqualTo(1));
+            Assert.That(CountOccurrences(createBody, "for (int i = 0; i < entries.Length; i++)"), Is.EqualTo(1));
+            Assert.That(CountOccurrences(createBody, "entries[i]"), Is.EqualTo(1));
+            Assert.That(CountOccurrences(createBody, "copy[i] = entry"), Is.EqualTo(1));
             Assert.That(source, Does.Not.Contain("new PngJsonCapturePublicationArtifactEntryObservation("));
         }
 

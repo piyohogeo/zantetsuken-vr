@@ -50,10 +50,13 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Atomic validated factory: validates the operation once through its
-        /// validation token, validates the trace manifest evidence, verifies
-        /// every entry in ascending index order, then copies the entry
-        /// references into a private exact-length array once before assigning
-        /// fields.
+        /// validation token, validates the trace manifest evidence, then reads
+        /// each entry once into a local, validates it in ascending index order,
+        /// and stores that same reference into a private exact-length array in
+        /// the same loop. The snapshot is constructed only after every entry
+        /// validates, so a caller that mutates the source array during
+        /// construction cannot smuggle an unvalidated reference past the single
+        /// validation/storage loop.
         /// </summary>
         internal static PngJsonCapturePublicationArtifactInspectionSnapshot Create(
             IPngJsonCapturePublicationArtifactInspector issuedBy,
@@ -94,6 +97,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Entry observation count must match the operation entry count.", nameof(entries));
             }
 
+            PngJsonCapturePublicationArtifactEntryObservation[] copy = new PngJsonCapturePublicationArtifactEntryObservation[entries.Length];
             for (int i = 0; i < entries.Length; i++)
             {
                 PngJsonCapturePublicationArtifactEntryObservation entry = entries[i];
@@ -121,12 +125,8 @@ namespace Zantetsu.Observability
                 {
                     throw new ArgumentException("Entry observation must use the operation's path set for its index.", nameof(entries));
                 }
-            }
 
-            PngJsonCapturePublicationArtifactEntryObservation[] copy = new PngJsonCapturePublicationArtifactEntryObservation[entries.Length];
-            for (int i = 0; i < entries.Length; i++)
-            {
-                copy[i] = entries[i];
+                copy[i] = entry;
             }
 
             return new PngJsonCapturePublicationArtifactInspectionSnapshot(
