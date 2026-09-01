@@ -152,6 +152,17 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// O(1) index-local path re-derivation for a caller that has already
+        /// fully validated the authority: re-derives this single entry's four
+        /// paths and compares them to the stored values without re-running the
+        /// authority's full validation and without a token. Never throws.
+        /// </summary>
+        internal bool IsIndexLocalPathCorrelationIntact()
+        {
+            return ReDerivesToStored();
+        }
+
+        /// <summary>
         /// Trusted index-local construction: assumes the authority was fully
         /// validated and tokenized by the caller, and verifies only the token
         /// binding, lease liveness, and exact plan, entry, publication path
