@@ -248,6 +248,33 @@ namespace Zantetsu.Core.Tests
                 finalSidecarCount);
         }
 
+        private static CaptureRunPublicationArtifactEntryObservation MakeEntryObservationIndexLocal(
+            CaptureRunPublicationArtifactInspectionOperation operation,
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token,
+            CaptureRunPublicationArtifactPathSet artifactPaths,
+            CaptureRunPublicationEvidenceStatus stagingPngStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long stagingPngCount = 0,
+            CaptureRunPublicationEvidenceStatus stagingSidecarStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long stagingSidecarCount = 0,
+            CaptureRunPublicationEvidenceStatus finalPngStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long finalPngCount = 0,
+            CaptureRunPublicationEvidenceStatus finalSidecarStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long finalSidecarCount = 0)
+        {
+            return new CaptureRunPublicationArtifactEntryObservation(
+                operation,
+                token,
+                artifactPaths,
+                stagingPngStatus,
+                stagingPngCount,
+                stagingSidecarStatus,
+                stagingSidecarCount,
+                finalPngStatus,
+                finalPngCount,
+                finalSidecarStatus,
+                finalSidecarCount);
+        }
+
         private static CaptureRunPublicationArtifactInspectionSnapshot MakeArtifactSnapshot(
             ICaptureRunPublicationArtifactInspector issuedBy,
             CaptureRunPublicationArtifactInspectionOperation operation,
@@ -779,11 +806,13 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationPlan planEntries = MakePlan(entries: MakeEntries(count));
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, false, planEntries, count);
 
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken entryToken = operation.AcquireValidationToken();
+
             CaptureRunPublicationArtifactEntryObservation[] entries = new CaptureRunPublicationArtifactEntryObservation[count];
             for (int i = 0; i < count; i++)
             {
-                entries[i] = MakeEntryObservation(
-                    operation, operation.GetArtifactPaths(i),
+                entries[i] = MakeEntryObservationIndexLocal(
+                    operation, entryToken, operation.GetArtifactPaths(i),
                     EvMatchesExpected, PngBytes, EvMatchesExpected, SidecarBytes,
                     EvAbsent, 0, EvAbsent, 0);
             }

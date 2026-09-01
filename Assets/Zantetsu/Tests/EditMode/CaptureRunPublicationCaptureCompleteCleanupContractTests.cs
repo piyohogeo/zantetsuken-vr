@@ -268,6 +268,33 @@ namespace Zantetsu.Core.Tests
                 finalSidecarCount);
         }
 
+        private static CaptureRunPublicationArtifactEntryObservation MakeEntryObservationIndexLocal(
+            CaptureRunPublicationArtifactInspectionOperation operation,
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token,
+            CaptureRunPublicationArtifactPathSet artifactPaths,
+            CaptureRunPublicationEvidenceStatus stagingPngStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long stagingPngCount = 0,
+            CaptureRunPublicationEvidenceStatus stagingSidecarStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long stagingSidecarCount = 0,
+            CaptureRunPublicationEvidenceStatus finalPngStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long finalPngCount = 0,
+            CaptureRunPublicationEvidenceStatus finalSidecarStatus = CaptureRunPublicationEvidenceStatus.Absent,
+            long finalSidecarCount = 0)
+        {
+            return new CaptureRunPublicationArtifactEntryObservation(
+                operation,
+                token,
+                artifactPaths,
+                stagingPngStatus,
+                stagingPngCount,
+                stagingSidecarStatus,
+                stagingSidecarCount,
+                finalPngStatus,
+                finalPngCount,
+                finalSidecarStatus,
+                finalSidecarCount);
+        }
+
         private static CaptureRunPublicationArtifactInspectionSnapshot MakeArtifactSnapshot(
             ICaptureRunPublicationArtifactInspector issuedBy,
             CaptureRunPublicationArtifactInspectionOperation operation,
@@ -330,11 +357,14 @@ namespace Zantetsu.Core.Tests
                 stagingFramesStatus: stagingFramesStatus,
                 maximumEntryCount: entryCount);
 
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token = operation.AcquireValidationToken();
+
             CaptureRunPublicationArtifactEntryObservation[] entries = new CaptureRunPublicationArtifactEntryObservation[entryCount];
             for (int i = 0; i < entryCount; i++)
             {
-                entries[i] = MakeEntryObservation(
+                entries[i] = MakeEntryObservationIndexLocal(
                     operation,
+                    token,
                     operation.GetArtifactPaths(i),
                     stagingPngStatus: stagingStatus,
                     stagingPngCount: stagingStatus == EvMatchesExpected ? PngBytes : 0,
@@ -371,11 +401,14 @@ namespace Zantetsu.Core.Tests
                 stagingFramesStatus: stagingFramesStatus,
                 maximumEntryCount: entryCount);
 
+            CaptureRunPublicationArtifactInspectionOperation.ValidationToken token = operation.AcquireValidationToken();
+
             CaptureRunPublicationArtifactEntryObservation[] entries = new CaptureRunPublicationArtifactEntryObservation[entryCount];
             for (int i = 0; i < entryCount; i++)
             {
-                entries[i] = MakeEntryObservation(
+                entries[i] = MakeEntryObservationIndexLocal(
                     operation,
+                    token,
                     operation.GetArtifactPaths(i),
                     stagingPngStatus: stagingStatus,
                     stagingPngCount: stagingStatus == EvMatchesExpected ? PngBytes : 0,
