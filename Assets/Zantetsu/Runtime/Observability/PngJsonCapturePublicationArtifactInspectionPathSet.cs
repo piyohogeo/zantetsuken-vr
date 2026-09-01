@@ -235,19 +235,31 @@ namespace Zantetsu.Observability
 
         private bool ReDerivesToStored()
         {
-            PngJsonCapturePublicationPlan plan = _authority.AuthoritativePlan;
-            if (plan == null)
+            PngJsonCapturePublicationPlan plan;
+            CaptureRunRootLayout rootLayout;
+            CaptureRunPublicationPathSet publicationPaths;
+
+            try
+            {
+                plan = _authority.AuthoritativePlan;
+                if (plan == null || !plan.IsIndexLocalStructureIntact())
+                {
+                    return false;
+                }
+
+                if (_entryIndex < 0 || _entryIndex >= plan.EntryCount)
+                {
+                    return false;
+                }
+
+                rootLayout = _authority.RootLayout;
+                publicationPaths = _authority.PublicationPaths;
+            }
+            catch (Exception)
             {
                 return false;
             }
 
-            if (_entryIndex < 0 || _entryIndex >= plan.EntryCount)
-            {
-                return false;
-            }
-
-            CaptureRunRootLayout rootLayout = _authority.RootLayout;
-            CaptureRunPublicationPathSet publicationPaths = _authority.PublicationPaths;
             if (rootLayout == null || publicationPaths == null)
             {
                 return false;

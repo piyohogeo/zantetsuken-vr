@@ -1183,6 +1183,44 @@ namespace Zantetsu.Core.Tests
             Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
         }
 
+        [Test]
+        public void PlanEntryArrayNull_IndexLocalPathCorrelation_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(MakeRecoveryAuthority(), 0);
+            SetField(pathSet.Plan, "_entries", null);
+
+            Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
+        }
+
+        [Test]
+        public void RecoverySnapshotNull_IndexLocalPathCorrelation_False()
+        {
+            CaptureRunPublicationRecoveryDecision decision = MakeDecision();
+            PngJsonCapturePublicationArtifactInspectionAuthority authority =
+                PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
+
+            SetField(decision, "_snapshot", null);
+
+            Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
+        }
+
+        [Test]
+        public void FreshBindingNull_IndexLocalPathCorrelation_False()
+        {
+            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
+            PngJsonCapturePublicationArtifactInspectionAuthority authority =
+                PngJsonCapturePublicationArtifactInspectionAuthority.FromFresh(seed);
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                new PngJsonCapturePublicationArtifactInspectionPathSet(authority, 0);
+
+            SetField(seed, "_planBinding", null);
+
+            Assert.That(pathSet.IsIndexLocalPathCorrelationIntact(), Is.False);
+        }
+
         // ---- Source shape ----
 
         [Test]
