@@ -3,8 +3,8 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Single-attempt boundary that releases the exact recovery open outcome of
-    /// one accepted capture-complete lifecycle evidence and returns a success
+    /// Single-attempt boundary that releases the exact ownership lease of one
+    /// accepted capture-complete lifecycle evidence and returns a success
     /// receipt. The implementation, thread choice, and retry orchestration are
     /// the responsibility of the caller.
     /// </summary>
@@ -25,9 +25,10 @@ namespace Zantetsu.Observability
     /// the same instance and no receipt is returned.
     /// </para>
     /// <para>
-    /// On success the implementation verifies that both the exact open outcome
-    /// and its exact lock lease are no longer created before minting the
-    /// receipt.
+    /// On success the implementation verifies that the ownership lease has
+    /// fully completed release via
+    /// <see cref="CaptureRunInitializationSessionOwnershipLease.IsReleaseComplete"/>
+    /// before minting the receipt.
     /// </para>
     /// </remarks>
     internal interface ICaptureRunPublicationCaptureCompleteRecoveryReleaser

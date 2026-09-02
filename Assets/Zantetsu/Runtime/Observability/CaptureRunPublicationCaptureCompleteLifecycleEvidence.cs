@@ -4,19 +4,22 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable, side-effect-free evidence that correlates an accepted
-    /// capture-complete notification result with exactly one current owner of
-    /// the Run's OS lock: the fresh session or the recovery open outcome.
+    /// capture-complete notification result with the exact ownership lease
+    /// that owns the Run's OS lock. The fresh session and the recovery open
+    /// outcome are non-owning, non-disposable references that only distinguish
+    /// the provenance kind.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly three read-only reference fields — the
-    /// notification result, the fresh freeze receipt, and the recovery open
-    /// outcome — and has no public constructor. The recovery factory accepts
-    /// the exact provenance open outcome and rejects a fresh receipt, so no
-    /// caller can inject an arbitrary three-reference combination. The fresh
-    /// factory is not yet accepting because no fresh publication provenance
-    /// chain exists. <see cref="Kind"/> is derived from the exclusive owner
-    /// state, never from a duplicated field.
+    /// The type owns exactly four read-only reference fields — the
+    /// notification result, the fresh freeze receipt, the recovery open
+    /// outcome, and the ownership lease — and has no public constructor. The
+    /// recovery factory accepts the exact provenance open outcome and the exact
+    /// ownership lease, and rejects a fresh receipt, so no caller can inject an
+    /// arbitrary four-reference combination. The fresh factory is not yet
+    /// accepting because no fresh publication provenance chain exists.
+    /// <see cref="Kind"/> is derived from the exclusive owner state, never from
+    /// a duplicated field.
     /// </para>
     /// <para>
     /// The fresh factory rejects: the capture-complete notification result
@@ -25,21 +28,23 @@ namespace Zantetsu.Observability
     /// cleanup to a notification result, so <see cref="FromFresh"/> throws
     /// <see cref="NotSupportedException"/> for every non-null argument pair
     /// until that provenance chain exists. The recovery factory validates:
-    /// null notification result, null open outcome, a valid notification
-    /// result (whose full validation already proves the publication recovery
-    /// operation and its open outcome), accepted status and disposition, the
-    /// exact provenance open outcome (reference-equal to the notification
-    /// graph's inspection operation outcome), and then only O(1) correlation
-    /// on that same instance: created, publication-recovery-required status,
-    /// no session, shared root layout, matching ids, the same lock lease, and
-    /// the same lock path set.
+    /// null notification result, null open outcome, null ownership lease, a
+    /// valid notification result (whose full validation already proves the
+    /// publication recovery operation and its open outcome), accepted status
+    /// and disposition, the exact provenance open outcome (reference-equal to
+    /// the notification graph's inspection operation outcome), and then only
+    /// O(1) correlation on that same instance: a live open outcome,
+    /// publication-recovery-required status, no session, shared root layout,
+    /// matching ids, the same lock identity evidence, the same ownership
+    /// lease, and the same lock path set.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full correlation from the held
-    /// values without throwing. A released lease, a disposed session or
-    /// outcome, a re-emerged registry reservation, or a reflection-replaced
-    /// owner or notification result all converge to <c>false</c>. The evidence
-    /// never disposes or mutates the registries, session, outcome, or lease.
+    /// values without throwing. A released ownership lease, a re-emerged
+    /// registry reservation, or a reflection-replaced owner, open outcome, or
+    /// notification result all converge to <c>false</c>. The evidence never
+    /// disposes or mutates the registries, session, open outcome, or ownership
+    /// lease.
     /// </para>
     /// <para>
     /// This type performs no filesystem work and is not an

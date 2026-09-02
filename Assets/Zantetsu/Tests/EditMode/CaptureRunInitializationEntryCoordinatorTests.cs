@@ -1046,5 +1046,19 @@ namespace Zantetsu.Core.Tests
             Assert.That(outcome, Does.Not.Contain("Bootstrap"));
             Assert.That(outcome, Does.Not.Contain("CapturePublication"));
         }
+
+        [Test]
+        public void EntryCoordinator_Source_ExclusiveRawOrOwnerCleanup()
+        {
+            string entry = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationEntryCoordinator.cs"));
+
+            // The catch must release exactly one held lock: the ownership lease
+            // once the raw lease has been transferred, or the raw lease itself
+            // when ownership transfer has not yet completed.
+            Assert.That(entry, Does.Contain("if (heldOwnershipLease != null)"));
+            Assert.That(entry, Does.Contain("else if (lease != null)"));
+            Assert.That(entry, Does.Contain("heldOwnershipLease.Dispose();"));
+            Assert.That(entry, Does.Contain("lease.Dispose();"));
+        }
     }
 }

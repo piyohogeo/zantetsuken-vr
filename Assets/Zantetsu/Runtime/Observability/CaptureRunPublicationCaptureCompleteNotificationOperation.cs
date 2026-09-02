@@ -97,8 +97,8 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Exception-safe recomputation of every correlation this operation
-        /// guarantees, from the held graph, without throwing. A released lease,
-        /// a corrupted completed-step or receipt sequence, a replaced path set,
+        /// guarantees, from the held graph, without throwing. A released
+        /// ownership lease, a corrupted completed-step or receipt sequence, a replaced path set,
         /// a corrupted plan, or a replaced result all converge to
         /// <c>false</c>.
         /// </summary>

@@ -18,8 +18,8 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
     /// checks without throwing. They do not require the lifecycle evidence or
-    /// the notification result to remain valid, because the lease release makes
-    /// them invalid by design; instead they verify the opaque issuance proof
+    /// the notification result to remain valid, because the ownership lease
+    /// release makes them invalid by design; instead they verify the opaque issuance proof
     /// and the current release terminal state. Every other accessor forwards a
     /// value from the held operation.
     /// </para>

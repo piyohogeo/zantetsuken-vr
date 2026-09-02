@@ -4,8 +4,8 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable, side-effect-free release operation that targets the exact
-    /// recovery open outcome held by a valid capture-complete lifecycle
-    /// evidence, for the final owner release boundary.
+    /// ownership lease held by a valid capture-complete lifecycle evidence,
+    /// for the final owner release boundary.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -14,26 +14,27 @@ namespace Zantetsu.Observability
     /// <see cref="CaptureRunPublicationCaptureCompleteLifecycleOwnerKind"/> is
     /// <see cref="CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.RecoveryOpenOutcome"/>.
     /// It holds and forwards the evidence, the exact notification result, the
-    /// exact open outcome, and the exact lock lease, and never owns or
-    /// disposes the outcome or the lease.
+    /// exact open outcome, and the exact ownership lease, and never owns or
+    /// disposes the outcome or the ownership lease.
     /// </para>
     /// <para>
     /// Construction validates in a fixed order: null evidence, valid evidence,
     /// recovery owner kind, absent fresh receipt/session/draft/artifact
-    /// references, a created outcome, publication-recovery-required status, no
-    /// session, the exact provenance open outcome, root layout / lock lease /
-    /// test run id / run initialization id correlation, a created lock lease,
-    /// and a shared lock path set. Fields are stored only after every check
-    /// succeeds.
+    /// references, a live open outcome, publication-recovery-required status,
+    /// no session, the exact provenance open outcome, root layout / ownership
+    /// lease / lock identity evidence / test run id / run initialization id
+    /// correlation, a live ownership lease, and a shared lock path set. Fields
+    /// are stored only after every check succeeds.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full issuance correlation without
-    /// throwing, so it becomes <c>false</c> once the lease is released. The
-    /// separate <see cref="CanRelease"/> predicate distinguishes the
-    /// post-issuance retryable condition: the exact open outcome must still be
-    /// created even when the lease is no longer created after a partial release
-    /// failure. There is no mutable completion flag; state is derived from the
-    /// current owner.
+    /// throwing, so it becomes <c>false</c> once the ownership lease is even
+    /// partially released. The separate <see cref="CanRelease"/> predicate
+    /// distinguishes the post-issuance retryable condition: the issuance proof
+    /// must still bind and the ownership lease must still be retryable via
+    /// <see cref="CaptureRunInitializationSessionOwnershipLease.CanRelease"/>
+    /// even after a partial release failure. There is no mutable completion
+    /// flag; state is derived from the current owner.
     /// </para>
     /// <para>
     /// The nested <see cref="IssuanceProof"/> is an opaque correlation proof

@@ -22,12 +22,14 @@ namespace Zantetsu.Observability
     /// <para>
     /// Lock contention returns false with no outcome, no owner, and no
     /// inspection. After the locks are acquired, any failure before both out
-    /// parameters are assigned releases the ownership lease in reverse order,
-    /// rethrows the original exception with its original stack, and reports a
-    /// cleanup failure as an <see cref="AggregateException"/> with the
-    /// original exception first. The outcome and ownership lease out
-    /// parameters are assigned only after every validation succeeds, so a
-    /// thrown or false call never exposes a partially built owner.
+    /// parameters are assigned releases the held lock in reverse order — the
+    /// raw lease if ownership transfer has not yet completed, or the held
+    /// ownership lease once transferred — rethrows the original exception with
+    /// its original stack, and reports a cleanup failure as an
+    /// <see cref="AggregateException"/> with the original exception first. The
+    /// outcome and ownership lease out parameters are assigned only after every
+    /// validation succeeds, so a thrown or false call never exposes a partially
+    /// built owner.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationEntryCoordinator
@@ -176,6 +178,19 @@ namespace Zantetsu.Observability
                     {
                         throw new AggregateException(
                             "Opening the Capture Run failed and lock ownership release also failed.",
+                            new Exception[] { ex, cleanupEx });
+                    }
+                }
+                else if (lease != null)
+                {
+                    try
+                    {
+                        lease.Dispose();
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        throw new AggregateException(
+                            "Opening the Capture Run failed and raw lock lease release also failed.",
                             new Exception[] { ex, cleanupEx });
                     }
                 }

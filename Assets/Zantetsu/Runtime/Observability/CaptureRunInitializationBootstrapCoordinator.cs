@@ -16,11 +16,13 @@ namespace Zantetsu.Observability
     /// because the underlying lock acquisition coordinator is. Lock contention
     /// is ordinary backpressure: it returns false without issuing an ID or
     /// touching documents, markers, or roots. On any failure after the locks
-    /// are acquired, the ownership lease is released in reverse acquisition
-    /// order and the original exception is re-thrown with its original stack;
-    /// if ownership release also fails, an <see cref="AggregateException"/>
-    /// with the original exception first is raised. Only the issued ownership
-    /// lease owns the raw lock; the session itself is non-owning.
+    /// are acquired, the held lock is released in reverse acquisition order —
+    /// the raw lease if ownership transfer has not yet completed, or the
+    /// issued ownership lease once transferred — and the original exception is
+    /// re-thrown with its original stack; if release also fails, an
+    /// <see cref="AggregateException"/> with the original exception first is
+    /// raised. Only the issued ownership lease owns the raw lock; the session
+    /// itself is non-owning.
     /// </para>
     /// <para>
     /// A partial execution failure may leave roots, temporary entries, or
@@ -152,6 +154,19 @@ namespace Zantetsu.Observability
                     {
                         throw new AggregateException(
                             "Initialization failed and lock ownership release also failed.",
+                            new Exception[] { ex, cleanupEx });
+                    }
+                }
+                else if (lease != null)
+                {
+                    try
+                    {
+                        lease.Dispose();
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        throw new AggregateException(
+                            "Initialization failed and raw lock lease release also failed.",
                             new Exception[] { ex, cleanupEx });
                     }
                 }

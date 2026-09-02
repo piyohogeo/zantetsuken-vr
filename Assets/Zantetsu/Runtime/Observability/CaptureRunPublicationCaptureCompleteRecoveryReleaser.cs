@@ -3,28 +3,29 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Standard single-attempt boundary that releases the exact recovery open
-    /// outcome of one accepted capture-complete lifecycle evidence and returns
-    /// a success receipt only after both the outcome and its lock lease are
-    /// released.
+    /// Standard single-attempt boundary that releases the exact ownership
+    /// lease of one accepted capture-complete lifecycle evidence and returns a
+    /// success receipt only after the ownership lease is fully released.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <see cref="Release"/> is synchronous and performs exactly one attempt.
     /// It requires the operation to be retryable via
     /// <see cref="CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.CanRelease"/>,
-    /// not via the full issuance validity, so a partially released lease can be
-    /// retried with the same operation and the same outcome. It disposes the
-    /// exact open outcome once, never a different outcome, session, or raw
-    /// lease, and never retries, rolls back, re-inspects, notifies, touches a
+    /// not via the full issuance validity, so a partially released ownership
+    /// lease can be retried with the same operation. It disposes the exact
+    /// ownership lease once, never a different outcome, session, or raw lease,
+    /// and never retries, rolls back, re-inspects, notifies, touches a
     /// registry, or performs filesystem work.
     /// </para>
     /// <para>
     /// A disposal exception is never caught, wrapped, or replaced; it
     /// propagates on the same instance and no receipt is returned. On normal
-    /// return the implementation verifies that both the outcome and its lock
-    /// lease are no longer created, then mints one receipt and verifies it is
-    /// issued for this releaser and operation.
+    /// return the implementation verifies that the ownership lease has fully
+    /// completed release via
+    /// <see cref="CaptureRunInitializationSessionOwnershipLease.IsReleaseComplete"/>,
+    /// then mints one receipt and verifies it is issued for this releaser and
+    /// operation.
     /// </para>
     /// <para>
     /// The type holds no instance or mutable static state, keeps no retry

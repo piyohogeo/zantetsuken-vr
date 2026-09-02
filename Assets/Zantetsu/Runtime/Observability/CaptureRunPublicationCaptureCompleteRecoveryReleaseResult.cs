@@ -14,8 +14,8 @@ namespace Zantetsu.Observability
     /// coordinator, the coordinator-bound issuance proof, the release
     /// operation, and the release receipt — and has no public constructor.
     /// Every accessor forwards a value from the held graph: the releaser,
-    /// lifecycle evidence, notification result, open outcome, lock lease, root
-    /// layout, test run id, run initialization id, run manifest content
+    /// lifecycle evidence, notification result, open outcome, ownership lease,
+    /// root layout, test run id, run initialization id, run manifest content
     /// SHA-256, and capture index path are all forwarded rather than
     /// duplicated. The status is mapped from <see cref="IsValid"/>, never
     /// stored and never derived from the terminal state alone, so a corrupted
@@ -28,9 +28,10 @@ namespace Zantetsu.Observability
     /// exact coordinator for the exact releaser, operation, and receipt, that
     /// the receipt was issued by the coordinator's releaser and still proves
     /// the exact operation, that the operation's issuance proof is intact,
-    /// that the exact outcome and lock lease are no longer created, and that
-    /// every forwarded value matches between receipt and operation. Any
-    /// forged, replaced, or released value converges to <c>false</c> without
+    /// that the exact ownership lease has fully completed release via
+    /// <see cref="CaptureRunInitializationSessionOwnershipLease.IsReleaseComplete"/>,
+    /// and that every forwarded value matches between receipt and operation.
+    /// Any forged, replaced, or released value converges to <c>false</c> without
     /// throwing. The upstream evidence, notification result, and operation are
     /// intentionally not re-validated here, because a completed release makes
     /// them invalid by design.
