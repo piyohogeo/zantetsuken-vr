@@ -557,12 +557,22 @@ namespace Zantetsu.Core.Tests
 
             public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
             {
-                return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.MatchesExpected, descriptor.ByteLength);
+                return new CaptureArtifactVerificationResult(
+                    descriptor,
+                    CaptureArtifactVerificationExecutionDisposition.Completed,
+                    CaptureArtifactVerificationStatus.MatchesExpected,
+                    CaptureArtifactVerificationFailureReason.None,
+                    descriptor.ByteLength);
             }
 
             public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
             {
-                return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.Absent, 0);
+                return new CaptureArtifactVerificationResult(
+                    descriptor,
+                    CaptureArtifactVerificationExecutionDisposition.Completed,
+                    CaptureArtifactVerificationStatus.Absent,
+                    CaptureArtifactVerificationFailureReason.FileAbsent,
+                    0);
             }
 
             public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)

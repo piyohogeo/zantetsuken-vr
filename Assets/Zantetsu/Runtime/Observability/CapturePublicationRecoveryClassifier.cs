@@ -13,6 +13,15 @@ namespace Zantetsu.Observability
             for (int i = 0; i < snapshot.Count; i++)
             {
                 CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
+
+                // Deferred takes precedence over every content classification
+                // and is never converted into a collision or missing-artifact
+                // disposition.
+                if (observation.IsDeferred)
+                {
+                    return CapturePublicationRecoveryDisposition.Deferred;
+                }
+
                 CaptureArtifactVerificationStatus staging = observation.Staging.Status;
                 CaptureArtifactVerificationStatus final = observation.Final.Status;
                 if (staging == CaptureArtifactVerificationStatus.Invalid

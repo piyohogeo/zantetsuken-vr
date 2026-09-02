@@ -6,6 +6,7 @@ namespace Zantetsu.Observability
         PublishMissingArtifacts = 1,
         CaptureComplete = 2,
         ArtifactSourceMissing = 3,
-        RunRootCollision = 4
+        RunRootCollision = 4,
+        Deferred = 5
     }
 }

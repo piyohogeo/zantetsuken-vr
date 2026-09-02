@@ -13,20 +13,34 @@ namespace Zantetsu.Observability
         private readonly string _finalRunRoot;
         private readonly string _publicationPlanTemporaryPath;
         private readonly string _publicationPlanPath;
+        private readonly CaptureArtifactVerificationBufferPool _verificationBufferPool;
+
+        internal const int VerificationBufferLength = 64 * 1024;
 
         internal CaptureArtifactFileStore(CaptureRunRootLayout rootLayout)
+            : this(rootLayout, new CaptureArtifactVerificationBufferPool(VerificationBufferLength))
+        {
+        }
+
+        internal CaptureArtifactFileStore(
+            CaptureRunRootLayout rootLayout,
+            CaptureArtifactVerificationBufferPool verificationBufferPool)
         {
             if (rootLayout == null) throw new ArgumentNullException(nameof(rootLayout));
             if (!rootLayout.IsValid) throw new ArgumentException("Root layout must be valid.", nameof(rootLayout));
+            if (verificationBufferPool == null) throw new ArgumentNullException(nameof(verificationBufferPool));
             _rootLayout = rootLayout;
             _testRunId = rootLayout.TestRunId;
             _stagingRunRoot = rootLayout.StagingRunRoot;
             _finalRunRoot = rootLayout.FinalRunRoot;
             _publicationPlanTemporaryPath = Path.Combine(_stagingRunRoot, "publication.plan.tmp");
             _publicationPlanPath = Path.Combine(_stagingRunRoot, "publication.plan");
+            _verificationBufferPool = verificationBufferPool;
         }
 
         internal CaptureRunRootLayout RootLayout => _rootLayout;
+
+        internal CaptureArtifactVerificationBufferPool VerificationBufferPool => _verificationBufferPool;
 
         internal string PublicationPlanPath => _publicationPlanPath;
 
@@ -149,14 +163,41 @@ namespace Zantetsu.Observability
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
             string source = Resolve(_stagingRunRoot, descriptor.StagingRelativePath);
             string target = Resolve(_finalRunRoot, descriptor.FinalRelativePath);
+
             CaptureArtifactVerificationResult staging = VerifyAt(descriptor, source);
-            if (staging.Status != CaptureArtifactVerificationStatus.MatchesExpected) throw new InvalidDataException("Staging artifact does not match descriptor.");
+            if (staging.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred)
+                throw new InvalidDataException("Staging verification is deferred; no filesystem change.");
+            if (staging.Status != CaptureArtifactVerificationStatus.MatchesExpected)
+                throw new InvalidDataException("Staging artifact does not match descriptor.");
+
             if (File.Exists(target)) throw new IOException("Final artifact already exists.");
-            Directory.CreateDirectory(Path.GetDirectoryName(target));
-            File.Move(source, target);
-            CaptureArtifactVerificationResult final = VerifyAt(descriptor, target);
-            if (final.Status != CaptureArtifactVerificationStatus.MatchesExpected) throw new IOException("Published artifact verification failed.");
-            return new CaptureArtifactPublishReceipt(this, descriptor, target);
+
+            // Reserve the final verification buffer before any filesystem change
+            // so buffer exhaustion is never discovered only after the move.
+            byte[] finalBuffer = _verificationBufferPool.TryRent();
+            if (finalBuffer == null)
+                throw new IOException("Verification buffer unavailable; no filesystem change.");
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.Move(source, target);
+
+                using (FileStream stream = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    CaptureArtifactVerificationResult final = CaptureArtifactStreamingVerifier.Verify(descriptor, stream, finalBuffer);
+                    if (final.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred)
+                        throw new IOException("Published artifact verification is deferred.");
+                    if (final.Status != CaptureArtifactVerificationStatus.MatchesExpected)
+                        throw new IOException("Published artifact verification failed.");
+                }
+
+                return new CaptureArtifactPublishReceipt(this, descriptor, target);
+            }
+            finally
+            {
+                _verificationBufferPool.Return(finalBuffer);
+            }
         }
 
         public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
@@ -171,17 +212,51 @@ namespace Zantetsu.Observability
             return VerifyAt(descriptor, Resolve(_stagingRunRoot, descriptor.StagingRelativePath));
         }
 
-        private static CaptureArtifactVerificationResult VerifyAt(CaptureArtifactDescriptor descriptor, string path)
+        private CaptureArtifactVerificationResult VerifyAt(CaptureArtifactDescriptor descriptor, string path)
         {
-            if (!File.Exists(path)) return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.Absent, 0);
+            if (!File.Exists(path))
+            {
+                return new CaptureArtifactVerificationResult(
+                    descriptor,
+                    CaptureArtifactVerificationExecutionDisposition.Completed,
+                    CaptureArtifactVerificationStatus.Absent,
+                    CaptureArtifactVerificationFailureReason.FileAbsent,
+                    0);
+            }
+
             FileInfo info = new FileInfo(path);
-            if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.Invalid, info.Length);
-            if (info.Length != descriptor.ByteLength) return new CaptureArtifactVerificationResult(descriptor, CaptureArtifactVerificationStatus.Mismatch, info.Length);
-            byte[] bytes = File.ReadAllBytes(path);
-            CaptureArtifactVerificationStatus status = string.Equals(Hash(bytes), descriptor.ContentHash, StringComparison.Ordinal)
-                ? CaptureArtifactVerificationStatus.MatchesExpected
-                : CaptureArtifactVerificationStatus.Mismatch;
-            return new CaptureArtifactVerificationResult(descriptor, status, info.Length);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                return new CaptureArtifactVerificationResult(
+                    descriptor,
+                    CaptureArtifactVerificationExecutionDisposition.Completed,
+                    CaptureArtifactVerificationStatus.Invalid,
+                    CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind,
+                    info.Length);
+            }
+
+            byte[] buffer = _verificationBufferPool.TryRent();
+            if (buffer == null)
+            {
+                return new CaptureArtifactVerificationResult(
+                    descriptor,
+                    CaptureArtifactVerificationExecutionDisposition.Deferred,
+                    CaptureArtifactVerificationStatus.None,
+                    CaptureArtifactVerificationFailureReason.BufferUnavailable,
+                    0);
+            }
+
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    return CaptureArtifactStreamingVerifier.Verify(descriptor, stream, buffer);
+                }
+            }
+            finally
+            {
+                _verificationBufferPool.Return(buffer);
+            }
         }
 
         private static string Resolve(string root, string relative)

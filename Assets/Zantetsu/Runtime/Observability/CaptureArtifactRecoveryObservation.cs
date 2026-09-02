@@ -20,6 +20,11 @@ namespace Zantetsu.Observability
         internal CaptureArtifactDescriptor Descriptor { get; }
         internal CaptureArtifactVerificationResult Staging { get; }
         internal CaptureArtifactVerificationResult Final { get; }
+
+        internal bool IsDeferred =>
+            Staging.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred
+            || Final.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred;
+
         internal bool IsValid => Descriptor != null
             && Descriptor.IsValid
             && Staging.IsValid
