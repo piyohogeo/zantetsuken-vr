@@ -5,8 +5,9 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Continues a recovery orchestration that resolved to StartFreshRequired
     /// by running the normal two-phase initialization under the already-held
-    /// lock lease, with a newly issued initialization ID, and transferring
-    /// lease ownership to a fresh session only on success.
+    /// lock, with a newly issued initialization ID, and issuing a session
+    /// issue that references the caller's exact ownership lease and identity
+    /// evidence.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -20,20 +21,20 @@ namespace Zantetsu.Observability
     /// All pre-validation happens before any side effect or ID issuance. The
     /// ID is issued exactly once, the document set and write batch are built,
     /// the execution coordinator runs once, and the receipt is verified
-    /// immediately. The session factory call is the single linearization point
-    /// of ownership transfer; no validation or exception-raising work follows
-    /// a successful factory call.
+    /// immediately. The atomic issue factory is the single issuance point,
+    /// referencing the caller's exact ownership lease and identity evidence
+    /// without transferring or releasing them.
     /// </para>
     /// <para>
-    /// On failure the caller's lease reference stays unchanged and ownership
-    /// remains with the caller; this coordinator never disposes the lease. No
-    /// exception is transformed or wrapped, and no retry, rollback,
-    /// compensating deletion, or automatic re-inspection is performed. A
-    /// partial execution failure may leave roots, temporary entries, or
-    /// markers on disk; the caller must restart from a fresh inspection under
-    /// the same held lock. A failed run must not blindly re-run the same
-    /// recovery result or write batch, and a replacement ID is never issued
-    /// within the same call after an earlier issuance.
+    /// On failure the caller's ownership lease and identity evidence stay
+    /// unchanged and this coordinator never disposes them. No exception is
+    /// transformed or wrapped, and no retry, rollback, compensating deletion,
+    /// or automatic re-inspection is performed. A partial execution failure
+    /// may leave roots, temporary entries, or markers on disk; the caller must
+    /// restart from a fresh inspection under the same held lock. A failed run
+    /// must not blindly re-run the same recovery result or write batch, and a
+    /// replacement ID is never issued within the same call after an earlier
+    /// issuance.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationRecoveryStartFreshCoordinator
@@ -63,18 +64,24 @@ namespace Zantetsu.Observability
 
         internal CaptureRunInitializationExecutionCoordinator ExecutionCoordinator => _executionCoordinator;
 
-        internal CaptureRunInitializationSession Continue(
+        internal CaptureRunInitializationSessionIssue Continue(
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult,
-            ref CaptureRunLockLease lockLease)
+            CaptureRunInitializationSessionOwnershipLease ownershipLease,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
             if (recoveryResult == null)
             {
                 throw new ArgumentNullException(nameof(recoveryResult));
             }
 
-            if (lockLease == null)
+            if (ownershipLease == null)
             {
-                throw new ArgumentNullException(nameof(lockLease));
+                throw new ArgumentNullException(nameof(ownershipLease));
+            }
+
+            if (lockIdentityEvidence == null)
+            {
+                throw new ArgumentNullException(nameof(lockIdentityEvidence));
             }
 
             if (!recoveryResult.IsValid)
@@ -82,9 +89,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Recovery orchestration result must be valid.", nameof(recoveryResult));
             }
 
-            if (!lockLease.IsCreated)
+            if (!ownershipLease.IsCreated)
             {
-                throw new ArgumentException("Lock lease must be created.", nameof(lockLease));
+                throw new ArgumentException("Ownership lease must be live.", nameof(ownershipLease));
+            }
+
+            if (!lockIdentityEvidence.IsValid)
+            {
+                throw new ArgumentException("Lock identity evidence must be valid.", nameof(lockIdentityEvidence));
+            }
+
+            if (!lockIdentityEvidence.IsIssuedFor(ownershipLease))
+            {
+                throw new ArgumentException("Lock identity evidence must be issued for the exact ownership lease.", nameof(lockIdentityEvidence));
             }
 
             if (recoveryResult.Status != CaptureRunInitializationRecoveryExecutionStatus.StartFreshRequired)
@@ -108,25 +125,25 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Start-fresh recovery result must not carry an expected binding.", nameof(recoveryResult));
             }
 
-            if (!ReferenceEquals(recoveryResult.LockLease, lockLease))
+            if (!ReferenceEquals(recoveryResult.LockIdentityEvidence, lockIdentityEvidence))
             {
-                throw new ArgumentException("Recovery result lease must be the lease being continued.", nameof(lockLease));
+                throw new ArgumentException("Recovery result identity evidence must be the evidence being continued.", nameof(lockIdentityEvidence));
             }
 
-            CaptureRunLockPathSet pathSet = lockLease.PathSet;
+            CaptureRunLockPathSet pathSet = lockIdentityEvidence.LockPathSet;
             if (pathSet == null)
             {
-                throw new ArgumentException("Lock lease must hold a path set.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence must hold a path set.", nameof(lockIdentityEvidence));
             }
 
             if (!ReferenceEquals(pathSet.RootLayout, recoveryResult.RootLayout))
             {
-                throw new ArgumentException("Lock lease and recovery result must share the same root layout.", nameof(recoveryResult));
+                throw new ArgumentException("Lock identity evidence and recovery result must share the same root layout.", nameof(recoveryResult));
             }
 
             if (pathSet.RootLayout.TestRunId != recoveryResult.TestRunId)
             {
-                throw new ArgumentException("Lock lease and recovery result must share the same test run ID.", nameof(recoveryResult));
+                throw new ArgumentException("Lock identity evidence and recovery result must share the same test run ID.", nameof(recoveryResult));
             }
 
             string runInitializationId = _initializationIdSource.Create();
@@ -147,7 +164,7 @@ namespace Zantetsu.Observability
 
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
 
-            return CaptureRunInitializationSessionFactory.Create(ref lockLease, evidence);
+            return CaptureRunInitializationSessionFactory.Create(ownershipLease, lockIdentityEvidence, evidence);
         }
     }
 }

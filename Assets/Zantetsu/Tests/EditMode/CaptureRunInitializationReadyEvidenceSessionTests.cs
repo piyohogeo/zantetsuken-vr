@@ -102,6 +102,22 @@ namespace Zantetsu.Core.Tests
             return MakeLease(layout, disposeLog, out _, out _);
         }
 
+        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle first, out FakeHandle second)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out first, out second);
+            return CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+        }
+
+        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog)
+        {
+            return MakeOwnershipLease(layout, disposeLog, out _, out _);
+        }
+
+        private static CaptureRunLockIdentityEvidence MakeIdentityEvidence(CaptureRunInitializationSessionOwnershipLease ownershipLease)
+        {
+            return CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
+        }
+
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
             CaptureRunInitializationDocumentSet documents = CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
@@ -114,15 +130,15 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationRecoveryOrchestrationResult MakeRecoveryResult(
             CaptureRunInitializationRootObservation staging,
             CaptureRunInitializationRootObservation final,
-            CaptureRunLockLease lease)
+            CaptureRunLockIdentityEvidence identity)
         {
-            CaptureRunRootLayout layout = lease.PathSet.RootLayout;
+            CaptureRunRootLayout layout = identity.RootLayout;
             FakeInspector inspector = MakeInspector(staging, final);
             CaptureRunInitializationRecoveryExecutionCoordinator executionCoordinator = new CaptureRunInitializationRecoveryExecutionCoordinator(
                 new FakeCleanupBackend(), new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = new CaptureRunInitializationRecoveryOrchestrationCoordinator(
                 inspector, executionCoordinator);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             return orchestrator.Execute(operation);
         }
 
@@ -284,13 +300,14 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             CaptureRunInitializationRecoveryOrchestrationResult[] results =
             {
-                MakeRecoveryResult(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), lease), // CompleteMissingPeer
-                MakeRecoveryResult(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeCanonicalInit(Final, binding.FinalInitialization), lease), // CompleteReadyMarkers
-                MakeRecoveryResult(MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), lease) // AlreadyInitialized
+                MakeRecoveryResult(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), identity), // CompleteMissingPeer
+                MakeRecoveryResult(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeCanonicalInit(Final, binding.FinalInitialization), identity), // CompleteReadyMarkers
+                MakeRecoveryResult(MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), identity) // AlreadyInitialized
             };
 
             foreach (CaptureRunInitializationRecoveryOrchestrationResult result in results)
@@ -305,6 +322,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(evidence.RunInitializationId, Is.EqualTo(result.RunInitializationId));
                 Assert.That(evidence.IsValid, Is.True);
             }
+
+            owner.Dispose();
         }
 
         [Test]
@@ -312,14 +331,15 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             CaptureRunInitializationRecoveryOrchestrationResult[] rejected =
             {
-                MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease), // StartFresh
-                MakeRecoveryResult(MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true), MakeAbsent(Final), lease), // CleanupTemporaryAndStartFresh
-                MakeRecoveryResult(MakeObservation(Staging, true, Canonical, binding.StagingInitialization, Canonical, binding.StagingReady, hasNonMarker: true), MakeFullyCanonical(Final, binding), lease), // RequiresPublicationRecovery
-                MakeRecoveryResult(MakeObservation(Staging, true, Absent, null, Absent, null, hasUnknown: true), MakeAbsent(Final), lease) // RunRootCollision
+                MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity), // StartFresh
+                MakeRecoveryResult(MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true), MakeAbsent(Final), identity), // CleanupTemporaryAndStartFresh
+                MakeRecoveryResult(MakeObservation(Staging, true, Canonical, binding.StagingInitialization, Canonical, binding.StagingReady, hasNonMarker: true), MakeFullyCanonical(Final, binding), identity), // RequiresPublicationRecovery
+                MakeRecoveryResult(MakeObservation(Staging, true, Absent, null, Absent, null, hasUnknown: true), MakeAbsent(Final), identity) // RunRootCollision
             };
 
             foreach (CaptureRunInitializationRecoveryOrchestrationResult result in rejected)
@@ -328,6 +348,8 @@ namespace Zantetsu.Core.Tests
                     () => CaptureRunInitializationReadyEvidence.FromRecovery(result));
                 Assert.That(ex.ParamName, Is.EqualTo("result"));
             }
+
+            owner.Dispose();
         }
 
         [Test]
@@ -352,10 +374,11 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunMarkerBinding binding = MakeBinding(layout);
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
-                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), lease);
+                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), identity);
 
             CaptureRunInitializationReadyEvidence forged = (CaptureRunInitializationReadyEvidence)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationReadyEvidence));
@@ -368,6 +391,8 @@ namespace Zantetsu.Core.Tests
             SetField(empty, "_freshExecutionReceipt", null);
             SetField(empty, "_recoveryOrchestrationResult", null);
             Assert.That(empty.IsValid, Is.False);
+
+            owner.Dispose();
         }
 
         [Test]
@@ -393,112 +418,122 @@ namespace Zantetsu.Core.Tests
         // ---- Session factory ----
 
         [Test]
-        public void Factory_Success_NullsCallerLease()
+        public void Factory_Success_ReturnsIssue()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
-            CaptureRunInitializationSession session = CaptureRunInitializationSessionFactory.Create(ref lease, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
 
-            Assert.That(session, Is.Not.Null);
-            Assert.That(lease, Is.Null);
-            Assert.That(session.IsCreated, Is.True);
-            Assert.That(session.ReadyEvidence, Is.SameAs(evidence));
+            Assert.That(issue, Is.Not.Null);
+            Assert.That(issue.IsValid, Is.True);
+            Assert.That(issue.OwnershipLease, Is.SameAs(owner));
+            Assert.That(issue.LockIdentityEvidence, Is.SameAs(identity));
+            Assert.That(issue.Session.ReadyEvidence, Is.SameAs(evidence));
+
+            owner.Dispose();
         }
 
         [Test]
-        public void Factory_Failure_KeepsCallerLease()
+        public void Factory_ForeignRootLayout_Rejected()
         {
             CaptureRunRootLayout layoutA = MakeLayout(1);
             CaptureRunRootLayout layoutB = MakeLayout(2);
-            CaptureRunLockLease lease = MakeLease(layoutA, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layoutA, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layoutB));
 
-            CaptureRunLockLease before = lease;
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(ref lease, evidence));
+                () => CaptureRunInitializationSessionFactory.Create(owner, identity, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("evidence"));
-            Assert.That(lease, Is.SameAs(before));
-            Assert.That(lease.IsCreated, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
+
+            owner.Dispose();
         }
 
         [Test]
         public void Factory_NullEvidence_Rejected()
         {
-            CaptureRunLockLease lease = MakeLease(MakeLayout(), null);
-            CaptureRunLockLease before = lease;
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunInitializationSessionFactory.Create(ref lease, null));
+                () => CaptureRunInitializationSessionFactory.Create(owner, identity, null));
 
             Assert.That(ex.ParamName, Is.EqualTo("evidence"));
-            Assert.That(lease, Is.SameAs(before));
+
+            owner.Dispose();
         }
 
         [Test]
-        public void Factory_NullLease_Rejected()
+        public void Factory_NullOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunLockLease lease = null;
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunInitializationSessionFactory.Create(ref lease, evidence));
+                () => CaptureRunInitializationSessionFactory.Create(null, null, evidence));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
-            Assert.That(lease, Is.Null);
+            Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
         }
 
         [Test]
-        public void Factory_DisposedLease_Rejected()
+        public void Factory_DisposedOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
-            lease.Dispose();
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            owner.Dispose();
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(ref lease, evidence));
+                () => CaptureRunInitializationSessionFactory.Create(owner, identity, evidence));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
+            Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
         }
 
         [Test]
-        public void Factory_RecoveryMismatchedLease_Rejected()
+        public void Factory_RecoveryMismatchedIdentity_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease evidenceLease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease evidenceOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence evidenceIdentity = MakeIdentityEvidence(evidenceOwner);
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
-                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), evidenceLease);
+                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), evidenceIdentity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
 
-            CaptureRunLockLease otherLease = MakeLease(layout, null);
-            CaptureRunLockLease before = otherLease;
+            CaptureRunInitializationSessionOwnershipLease otherOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence otherIdentity = MakeIdentityEvidence(otherOwner);
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(ref otherLease, evidence));
+                () => CaptureRunInitializationSessionFactory.Create(otherOwner, otherIdentity, evidence));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
-            Assert.That(otherLease, Is.SameAs(before));
-            Assert.That(otherLease.IsCreated, Is.True);
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            Assert.That(otherOwner.IsCreated, Is.True);
+
+            evidenceOwner.Dispose();
+            otherOwner.Dispose();
         }
 
         // ---- Recovery session ----
 
         [Test]
-        public void Session_Recovery_ForwardsAndDisposesSecondThenFirst()
+        public void SessionIssue_Recovery_ForwardsAndOwnerDisposesSecondThenFirst()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
             List<string> disposeLog = new List<string>();
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
-                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), lease);
+                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), identity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
 
-            CaptureRunInitializationSession session = new CaptureRunInitializationSession(lease, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSession session = issue.Session;
 
             Assert.That(session.ReadyEvidence, Is.SameAs(evidence));
             Assert.That(session.RecoveryOrchestrationResult, Is.SameAs(result));
@@ -507,69 +542,80 @@ namespace Zantetsu.Core.Tests
             Assert.That(session.TestRunId, Is.EqualTo(result.TestRunId));
             Assert.That(session.RunInitializationId, Is.EqualTo(result.RunInitializationId));
 
-            session.Dispose();
-            Assert.That(disposeLog, Is.EqualTo(new[] { lease.PathSet.SecondLockPath, lease.PathSet.FirstLockPath }));
+            owner.Dispose();
+            Assert.That(disposeLog, Is.EqualTo(new[] { owner.LockPathSet.SecondLockPath, owner.LockPathSet.FirstLockPath }));
             Assert.That(session.ReadyEvidence, Is.SameAs(evidence));
             Assert.That(session.RecoveryOrchestrationResult, Is.SameAs(result));
         }
 
         [Test]
-        public void Session_Recovery_MismatchedLease_Rejected()
+        public void Session_Recovery_MismatchedIdentity_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease evidenceLease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease evidenceOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence evidenceIdentity = MakeIdentityEvidence(evidenceOwner);
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
-                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), evidenceLease);
+                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), evidenceIdentity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
 
-            CaptureRunLockLease otherLease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease otherOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence otherIdentity = MakeIdentityEvidence(otherOwner);
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunInitializationSession(otherLease, evidence));
+                () => CaptureRunInitializationSessionFactory.Create(otherOwner, otherIdentity, evidence));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+
+            evidenceOwner.Dispose();
+            otherOwner.Dispose();
         }
 
         [Test]
-        public void Session_CompatConstructor_DelegatesToFreshEvidence()
+        public void Session_Fresh_ForwardsExecutionReceipt()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
 
-            CaptureRunInitializationSession session = new CaptureRunInitializationSession(lease, receipt);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(
+                owner, identity, CaptureRunInitializationReadyEvidence.FromFresh(receipt));
+            CaptureRunInitializationSession session = issue.Session;
 
             Assert.That(session.ExecutionReceipt, Is.SameAs(receipt));
             Assert.That(session.ReadyEvidence.FreshExecutionReceipt, Is.SameAs(receipt));
             Assert.That(session.ReadyEvidence.IsRecovery, Is.False);
             Assert.That(session.RecoveryOrchestrationResult, Is.Null);
             Assert.That(session.RootLayout, Is.SameAs(receipt.RootLayout));
+
+            owner.Dispose();
         }
 
         [Test]
-        public void Session_Recovery_Dispose_Idempotent_And_RetryAfterFailure()
+        public void Session_Recovery_OwnerDispose_Idempotent_And_RetryAfterFailure()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null, out FakeHandle first, out FakeHandle second);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out FakeHandle first, out FakeHandle second);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
-                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), lease);
+                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), identity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
-            CaptureRunInitializationSession session = new CaptureRunInitializationSession(lease, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
 
             second.ThrowOnDispose = true;
-            Assert.Throws<AggregateException>(() => session.Dispose());
-            Assert.That(session.IsCreated, Is.True);
+            Assert.Throws<AggregateException>(() => owner.Dispose());
+            Assert.That(owner.IsCreated, Is.False);
 
             second.ThrowOnDispose = false;
-            session.Dispose();
-            session.Dispose();
+            owner.Dispose();
+            owner.Dispose();
 
-            Assert.That(session.IsCreated, Is.False);
+            Assert.That(owner.IsCreated, Is.False);
             Assert.That(second.DisposeCount, Is.EqualTo(2));
             Assert.That(first.DisposeCount, Is.EqualTo(1));
-            Assert.That(session.ReadyEvidence, Is.SameAs(evidence));
-            Assert.That(session.RecoveryOrchestrationResult, Is.SameAs(result));
+            Assert.That(issue.Session.ReadyEvidence, Is.SameAs(evidence));
+            Assert.That(issue.Session.RecoveryOrchestrationResult, Is.SameAs(result));
         }
 
         // ---- Shape ----

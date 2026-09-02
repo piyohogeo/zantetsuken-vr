@@ -65,20 +65,23 @@ namespace Zantetsu.Observability
             private readonly CaptureRunPublicationCaptureCompleteLifecycleEvidence _evidence;
             private readonly CaptureRunPublicationCaptureCompleteNotificationResult _notificationResult;
             private readonly CaptureRunInitializationOpenOutcome _openOutcome;
-            private readonly CaptureRunLockLease _lockLease;
+            private readonly CaptureRunInitializationSessionOwnershipLease _ownershipLease;
+            private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
 
             private IssuanceProof(
                 object nonce,
                 CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence,
                 CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
                 CaptureRunInitializationOpenOutcome openOutcome,
-                CaptureRunLockLease lockLease)
+                CaptureRunInitializationSessionOwnershipLease ownershipLease,
+                CaptureRunLockIdentityEvidence lockIdentityEvidence)
             {
                 _nonce = nonce;
                 _evidence = evidence;
                 _notificationResult = notificationResult;
                 _openOutcome = openOutcome;
-                _lockLease = lockLease;
+                _ownershipLease = ownershipLease;
+                _lockIdentityEvidence = lockIdentityEvidence;
             }
 
             /// <summary>
@@ -109,7 +112,8 @@ namespace Zantetsu.Observability
                     lifecycleEvidence,
                     lifecycleEvidence.NotificationResult,
                     lifecycleEvidence.OpenOutcome,
-                    lifecycleEvidence.LockLease);
+                    lifecycleEvidence.OwnershipLease,
+                    lifecycleEvidence.LockIdentityEvidence);
 
                 return new CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation(lifecycleEvidence, nonce, proof);
             }
@@ -121,14 +125,16 @@ namespace Zantetsu.Observability
                     && ReferenceEquals(operation._lifecycleEvidence, _evidence)
                     && ReferenceEquals(operation._notificationResult, _notificationResult)
                     && ReferenceEquals(operation._openOutcome, _openOutcome)
-                    && ReferenceEquals(operation._lockLease, _lockLease);
+                    && ReferenceEquals(operation._ownershipLease, _ownershipLease)
+                    && ReferenceEquals(operation._lockIdentityEvidence, _lockIdentityEvidence);
             }
         }
 
         private readonly CaptureRunPublicationCaptureCompleteLifecycleEvidence _lifecycleEvidence;
         private readonly CaptureRunPublicationCaptureCompleteNotificationResult _notificationResult;
         private readonly CaptureRunInitializationOpenOutcome _openOutcome;
-        private readonly CaptureRunLockLease _lockLease;
+        private readonly CaptureRunInitializationSessionOwnershipLease _ownershipLease;
+        private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
         private readonly object _issuanceNonce;
         private readonly IssuanceProof _issuanceProof;
 
@@ -140,7 +146,8 @@ namespace Zantetsu.Observability
             _lifecycleEvidence = lifecycleEvidence;
             _notificationResult = lifecycleEvidence.NotificationResult;
             _openOutcome = lifecycleEvidence.OpenOutcome;
-            _lockLease = lifecycleEvidence.LockLease;
+            _ownershipLease = lifecycleEvidence.OwnershipLease;
+            _lockIdentityEvidence = lifecycleEvidence.LockIdentityEvidence;
             _issuanceNonce = issuanceNonce;
             _issuanceProof = issuanceProof;
         }
@@ -157,7 +164,9 @@ namespace Zantetsu.Observability
 
         internal CaptureRunInitializationOpenOutcome OpenOutcome => _openOutcome;
 
-        internal CaptureRunLockLease LockLease => _lockLease;
+        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease => _ownershipLease;
+
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
 
         internal CaptureRunRootLayout RootLayout => _notificationResult.RootLayout;
 
@@ -189,9 +198,10 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Exception-safe retryable condition after issuance: the issuance proof
-        /// must still bind to this exact operation and the exact open outcome
-        /// must still be created. It intentionally does not require the lock
-        /// lease to be created, so a partially released lease can be retried.
+        /// must still bind to this exact operation and the ownership lease must
+        /// still be retryable (not yet fully released). It intentionally does
+        /// not require the lock lease to be fully created, so a partially
+        /// released lease can be retried.
         /// </summary>
         internal bool CanRelease
         {
@@ -202,8 +212,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunInitializationOpenOutcome openOutcome = _openOutcome;
-                return openOutcome != null && openOutcome.IsCreated;
+                CaptureRunInitializationSessionOwnershipLease ownershipLease = _ownershipLease;
+                return ownershipLease != null && ownershipLease.CanRelease;
             }
         }
 
@@ -234,7 +244,7 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunInitializationOpenOutcome openOutcome = lifecycleEvidence.OpenOutcome;
-            if (openOutcome == null || !openOutcome.IsCreated)
+            if (openOutcome == null || !openOutcome.IsValid)
             {
                 return false;
             }
@@ -245,6 +255,12 @@ namespace Zantetsu.Observability
             }
 
             if (openOutcome.Session != null)
+            {
+                return false;
+            }
+
+            CaptureRunInitializationSessionOwnershipLease ownershipLease = lifecycleEvidence.OwnershipLease;
+            if (ownershipLease == null || !ownershipLease.IsCreated)
             {
                 return false;
             }
@@ -265,7 +281,18 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!ReferenceEquals(notificationResult.LockLease, lifecycleEvidence.LockLease))
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = notificationResult.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
+            {
+                return false;
+            }
+
+            if (!lockIdentityEvidence.IsIssuedFor(ownershipLease))
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(lockIdentityEvidence, lifecycleEvidence.LockIdentityEvidence))
             {
                 return false;
             }
@@ -280,15 +307,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lockLease = notificationResult.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
-            {
-                return false;
-            }
-
-            if (lockLease.PathSet == null
+            if (lockIdentityEvidence.LockPathSet == null
                 || openOutcome.LockPathSet == null
-                || !ReferenceEquals(lockLease.PathSet, openOutcome.LockPathSet))
+                || !ReferenceEquals(lockIdentityEvidence.LockPathSet, openOutcome.LockPathSet)
+                || !ReferenceEquals(ownershipLease.LockPathSet, openOutcome.LockPathSet))
             {
                 return false;
             }

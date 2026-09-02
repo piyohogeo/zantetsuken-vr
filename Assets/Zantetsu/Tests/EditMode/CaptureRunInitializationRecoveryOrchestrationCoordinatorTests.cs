@@ -31,6 +31,20 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerObservationStatus Canonical => CaptureRunMarkerObservationStatus.Canonical;
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
@@ -105,12 +119,39 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunLockLease(pathSet, first, second);
         }
 
-        private static CaptureRunInitializationRecoveryInspectionOperation MakeInspectionOperation(
+        private CaptureRunInitializationSessionOwnershipLease MakeOwner(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            return owner;
+        }
+
+        private CaptureRunInitializationRecoveryInspectionOperation MakeInspectionOperation(
             CaptureRunRootLayout layout = null,
             List<string> disposeLog = null)
         {
+            return MakeInspectionOperation(layout, disposeLog, out _);
+        }
+
+        private CaptureRunInitializationRecoveryInspectionOperation MakeInspectionOperation(
+            CaptureRunRootLayout layout,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeInspectionOperation(layout, null, out owner);
+        }
+
+        private CaptureRunInitializationRecoveryInspectionOperation MakeInspectionOperation(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
             layout = layout ?? MakeLayout();
-            return new CaptureRunInitializationRecoveryInspectionOperation(layout, MakeLease(layout, disposeLog), 4);
+            owner = MakeOwner(layout, disposeLog);
+            CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+            return new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
         }
 
         private static CaptureRunInitializationRecoveryExecutionCoordinator MakeExecutionCoordinator(List<string> log = null)
@@ -457,7 +498,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Execute_ExecutionFailure_NoSubsequent_NoLeaseDispose()
+        public void Execute_ExecutionFailure_NoSubsequent_NoOwnerDispose()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
@@ -470,7 +511,8 @@ namespace Zantetsu.Core.Tests
                 new FakeCleanupBackend(log), new FakeProvisioner(log), writer);
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, execCoord);
 
-            Assert.Throws<IOException>(() => orchestrator.Execute(MakeInspectionOperation(layout, disposeLog)));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            Assert.Throws<IOException>(() => orchestrator.Execute(MakeInspectionOperation(layout, disposeLog, out owner)));
 
             Assert.That(log, Is.EqualTo(new[]
             {
@@ -478,7 +520,8 @@ namespace Zantetsu.Core.Tests
                 "provision:Final",
                 "write:Final:Initialization"
             }));
-            Assert.That(disposeLog, Is.Empty, "The orchestrator must never dispose the lease on failure.");
+            Assert.That(disposeLog, Is.Empty, "The orchestrator must never dispose the owner on failure.");
+            Assert.That(owner.IsCreated, Is.True);
         }
 
         [Test]
@@ -547,13 +590,33 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.Snapshot, Is.SameAs(executionResult.Batch.ActionPlan.Decision.Snapshot));
             Assert.That(result.Status, Is.EqualTo(executionResult.Status));
             Assert.That(result.RootLayout, Is.SameAs(executionResult.RootLayout));
-            Assert.That(result.LockLease, Is.SameAs(executionResult.LockLease));
+            Assert.That(result.LockIdentityEvidence, Is.SameAs(executionResult.LockIdentityEvidence));
             Assert.That(result.TestRunId, Is.EqualTo(executionResult.TestRunId));
             Assert.That(result.RunInitializationId, Is.EqualTo(executionResult.RunInitializationId));
             Assert.That(result.Snapshot.Operation, Is.SameAs(operation));
-            Assert.That(result.Snapshot.Operation.LockLease, Is.SameAs(result.LockLease));
+            Assert.That(result.Snapshot.Operation.LockIdentityEvidence, Is.SameAs(result.LockIdentityEvidence));
+            Assert.That(result.LockIdentityEvidence.LockPathSet, Is.SameAs(result.Snapshot.Operation.LockIdentityEvidence.LockPathSet));
             Assert.That(result.Snapshot.Operation.RootLayout, Is.SameAs(result.RootLayout));
             Assert.That(result.IsValid, Is.True);
+        }
+
+        [Test]
+        public void Result_ReleasedOwner_IsInvalid()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunMarkerBinding binding = MakeBinding(layout);
+            CaptureRunInitializationRecoveryInspectionOperation operation = MakeInspectionOperation(layout, out CaptureRunInitializationSessionOwnershipLease owner);
+            FakeInspector inspector = MakeInspector(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final));
+            CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = MakeOrchestrator(inspector, MakeExecutionCoordinator());
+
+            CaptureRunInitializationRecoveryOrchestrationResult result = orchestrator.Execute(operation);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
+
+            owner.Dispose();
+
+            Assert.That(result.IsValid, Is.False);
         }
 
         // ---- Result direct-constructor defense ----
@@ -722,6 +785,12 @@ namespace Zantetsu.Core.Tests
                 properties.Any(p => p.PropertyType != typeof(string) && (p.PropertyType.IsArray || typeof(System.Collections.IEnumerable).IsAssignableFrom(p.PropertyType))),
                 Is.False,
                 "The result must not expose arrays or mutable collections.");
+
+            Assert.That(
+                properties.Any(p => p.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease)
+                                   || p.PropertyType == typeof(CaptureRunLockLease)),
+                Is.False,
+                "The result must not expose the ownership lease or raw lock lease.");
         }
 
         // ---- Source inspection ----
@@ -760,7 +829,7 @@ namespace Zantetsu.Core.Tests
 
         // ---- Assertion helpers ----
 
-        private static void AssertStatus(
+        private void AssertStatus(
             CaptureRunInitializationRootObservation staging,
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout,

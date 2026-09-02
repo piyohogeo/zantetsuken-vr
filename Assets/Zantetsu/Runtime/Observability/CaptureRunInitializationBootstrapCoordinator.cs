@@ -5,9 +5,10 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Drives the full Capture Run initialization bootstrap: acquire both OS
-    /// locks, issue the initialization ID exactly once, build the document set
-    /// and write batch, execute the two-phase initialization, and hand the
-    /// lock lease to a session that owns it for the Run's lifetime.
+    /// locks, move the raw lease into an ownership lease, issue the
+    /// initialization ID exactly once, build the document set and write batch,
+    /// execute the two-phase initialization, and issue the session triple
+    /// whose ownership lease owns the lock for the Run's lifetime.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -15,10 +16,11 @@ namespace Zantetsu.Observability
     /// because the underlying lock acquisition coordinator is. Lock contention
     /// is ordinary backpressure: it returns false without issuing an ID or
     /// touching documents, markers, or roots. On any failure after the locks
-    /// are acquired, the lease is released in reverse acquisition order and
-    /// the original exception is re-thrown with its original stack; if lease
-    /// cleanup also fails, an <see cref="AggregateException"/> with the
-    /// original exception first is raised.
+    /// are acquired, the ownership lease is released in reverse acquisition
+    /// order and the original exception is re-thrown with its original stack;
+    /// if ownership release also fails, an <see cref="AggregateException"/>
+    /// with the original exception first is raised. Only the issued ownership
+    /// lease owns the raw lock; the session itself is non-owning.
     /// </para>
     /// <para>
     /// A partial execution failure may leave roots, temporary entries, or
@@ -60,9 +62,9 @@ namespace Zantetsu.Observability
 
         internal bool TryInitialize(
             CaptureRunRootLayout rootLayout,
-            out CaptureRunInitializationSession session)
+            out CaptureRunInitializationSessionIssue issue)
         {
-            session = null;
+            issue = null;
 
             if (rootLayout == null)
             {
@@ -78,6 +80,8 @@ namespace Zantetsu.Observability
             {
                 return false;
             }
+
+            CaptureRunInitializationSessionOwnershipLease ownershipLease = null;
 
             try
             {
@@ -95,6 +99,10 @@ namespace Zantetsu.Observability
                 {
                     throw new InvalidOperationException("Lock lease path set does not match the requested path set.");
                 }
+
+                ownershipLease = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+                CaptureRunLockIdentityEvidence lockIdentityEvidence =
+                    CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
 
                 string runInitializationId = _initializationIdSource.Create();
 
@@ -123,32 +131,27 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Execution receipt initialization ID does not match the issued ID.");
                 }
 
-                CaptureRunInitializationSession createdSession = CaptureRunInitializationSessionFactory.Create(
-                    ref lease,
+                issue = CaptureRunInitializationSessionFactory.Create(
+                    ownershipLease,
+                    lockIdentityEvidence,
                     CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt));
 
-                if (lease != null)
-                {
-                    throw new InvalidOperationException("Session factory did not transfer the lock lease.");
-                }
-
-                session = createdSession;
                 return true;
             }
             catch (Exception ex)
             {
                 ExceptionDispatchInfo captured = ExceptionDispatchInfo.Capture(ex);
 
-                if (lease != null)
+                if (ownershipLease != null)
                 {
                     try
                     {
-                        lease.Dispose();
+                        ownershipLease.Dispose();
                     }
                     catch (Exception cleanupEx)
                     {
                         throw new AggregateException(
-                            "Initialization failed and lock lease cleanup also failed.",
+                            "Initialization failed and lock ownership release also failed.",
                             new Exception[] { ex, cleanupEx });
                     }
                 }

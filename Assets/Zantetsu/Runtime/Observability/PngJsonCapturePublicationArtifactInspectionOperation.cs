@@ -77,11 +77,10 @@ namespace Zantetsu.Observability
             PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
             CaptureRunPublicationPathSet publicationPaths = authority.PublicationPaths;
             CaptureRunRootLayout rootLayout = authority.RootLayout;
-            CaptureRunLockLease lockLease = authority.LockLease;
-            if (plan == null || publicationPaths == null || rootLayout == null || lockLease == null)
+            if (plan == null || publicationPaths == null || rootLayout == null || !authority.IsLockLivenessIntact)
             {
                 throw new ArgumentException(
-                    "Authority must hold an authoritative plan, publication paths, root layout, and lock lease.",
+                    "Authority must hold an authoritative plan, publication paths, root layout, and a live lock.",
                     nameof(authority));
             }
 
@@ -136,7 +135,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _authority.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _authority.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _authority.LockIdentityEvidence;
 
         internal long TestRunId => _authority.TestRunId;
 
@@ -181,8 +180,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunLockLease lockLease = _authority.LockLease;
-                if (lockLease == null || !lockLease.IsCreated)
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = _authority.LockIdentityEvidence;
+                if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
                 {
                     return false;
                 }

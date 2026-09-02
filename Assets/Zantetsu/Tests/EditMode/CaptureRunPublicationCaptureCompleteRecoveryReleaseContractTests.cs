@@ -45,6 +45,20 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationEvidenceStatus EvMatchesExpected => CaptureRunPublicationEvidenceStatus.MatchesExpected;
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
@@ -152,16 +166,34 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationOpenOutcome ForgeOutcome(
             CaptureRunInitializationRecoveryOrchestrationResult result,
-            CaptureRunLockLease lease)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
             CaptureRunInitializationOpenOutcome outcome = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationOpenOutcome));
             SetField(outcome, "_orchestrationResult", result);
-            SetField(outcome, "_lockLease", lease);
+            SetField(outcome, "_sessionIssue", null);
+            SetField(outcome, "_lockIdentityEvidence", lockIdentityEvidence);
             return outcome;
         }
 
-        private static CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(List<string> disposeLog = null)
+        private CaptureRunInitializationSessionOwnershipLease MakeOwner(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            bool throwingFirstHandle,
+            out CaptureRunLockIdentityEvidence identity)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog, throwingFirstHandle);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+            return owner;
+        }
+
+        private CaptureRunInitializationOpenOutcome MakeOutcome(
+            List<string> disposeLog,
+            bool throwingFirstHandle,
+            out CaptureRunInitializationSessionOwnershipLease owner,
+            out CaptureRunLockIdentityEvidence identity)
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
@@ -175,11 +207,32 @@ namespace Zantetsu.Core.Tests
                 new FakeCleanupBackend(), new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = new CaptureRunInitializationRecoveryOrchestrationCoordinator(inspector, execution);
 
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
-            CaptureRunInitializationRecoveryInspectionOperation inspection = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            owner = MakeOwner(layout, disposeLog, throwingFirstHandle, out identity);
+
+            CaptureRunInitializationRecoveryInspectionOperation inspection = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             CaptureRunInitializationRecoveryOrchestrationResult result = orchestrator.Execute(inspection);
 
-            return ForgeOutcome(result, lease);
+            return ForgeOutcome(result, identity);
+        }
+
+        private CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(List<string> disposeLog = null)
+        {
+            return MakePublicationRecoveryOutcome(disposeLog, false, out _);
+        }
+
+        private CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakePublicationRecoveryOutcome(disposeLog, false, out owner);
+        }
+
+        private CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(
+            List<string> disposeLog,
+            bool throwingFirstHandle,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeOutcome(disposeLog, throwingFirstHandle, out owner, out _);
         }
 
         private static CaptureRunPublicationRecoveryInspectionSnapshot MakeRecoverySnapshot(
@@ -203,7 +256,7 @@ namespace Zantetsu.Core.Tests
                 false, false, false, false);
         }
 
-        private static CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
             List<string> disposeLog = null,
             PngJsonCapturePublicationPlan plan = null,
             CaptureRunPublicationDocumentObservation publicationPlanTemporary = null,
@@ -213,7 +266,28 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationFramesObservationStatus stagingFramesStatus = CaptureRunPublicationFramesObservationStatus.Directory,
             int maximumEntryCount = 4)
         {
-            CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
+            return MakeOperation(disposeLog, plan, publicationPlanTemporary, publicationPlan, captureIndexTemporary, captureIndex, stagingFramesStatus, maximumEntryCount, false, out _);
+        }
+
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeOperation(null, null, null, null, null, null, CaptureRunPublicationFramesObservationStatus.Directory, 4, false, out owner);
+        }
+
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+            List<string> disposeLog,
+            PngJsonCapturePublicationPlan plan,
+            CaptureRunPublicationDocumentObservation publicationPlanTemporary,
+            CaptureRunPublicationDocumentObservation publicationPlan,
+            CaptureRunPublicationDocumentObservation captureIndexTemporary,
+            CaptureRunPublicationDocumentObservation captureIndex,
+            CaptureRunPublicationFramesObservationStatus stagingFramesStatus,
+            int maximumEntryCount,
+            bool throwingFirstHandle,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog, throwingFirstHandle, out owner);
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(
                 outcome, 1000, maximumEntryCount, 64);
             FakePublicationInspector inspector = new FakePublicationInspector();
@@ -299,10 +373,21 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunPublicationArtifactRecoveryOrchestrationCoordinator(inspector, executionCoordinator);
         }
 
-        private static CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildCommitResult(List<string> disposeLog = null)
+        private CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildCommitResult(
+            List<string> disposeLog = null,
+            bool throwingFirstHandle = false)
+        {
+            return BuildCommitResult(disposeLog, throwingFirstHandle, out _);
+        }
+
+        private CaptureRunPublicationArtifactRecoveryOrchestrationResult BuildCommitResult(
+            List<string> disposeLog,
+            bool throwingFirstHandle,
+            out CaptureRunInitializationSessionOwnershipLease owner)
         {
             PngJsonCapturePublicationPlan plan = MakePlan();
-            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(disposeLog: disposeLog, plan: plan);
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(
+                disposeLog, plan, null, null, null, null, CaptureRunPublicationFramesObservationStatus.Directory, 4, throwingFirstHandle, out owner);
 
             CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
                 operation,
@@ -337,13 +422,23 @@ namespace Zantetsu.Core.Tests
                 notifier ?? new FakeNotificationNotifier());
         }
 
-        private static CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(
+        private CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(
             bool commitRoute,
-            List<string> disposeLog = null)
+            List<string> disposeLog = null,
+            bool throwingFirstHandle = false)
+        {
+            return MakeNotificationResult(commitRoute, disposeLog, throwingFirstHandle, out _);
+        }
+
+        private CaptureRunPublicationCaptureCompleteNotificationResult MakeNotificationResult(
+            bool commitRoute,
+            List<string> disposeLog,
+            bool throwingFirstHandle,
+            out CaptureRunInitializationSessionOwnershipLease owner)
         {
             return MakeNotificationCoordinator(new FakeNotificationNotifier()).Execute(
                 MakeCleanupOrchestrator(new FakePublicationCleanupBackend()).Execute(
-                    BuildCommitResult(disposeLog)));
+                    BuildCommitResult(disposeLog, throwingFirstHandle, out owner)));
         }
 
         private static CaptureRunInitializationOpenOutcome GetProvenanceOpenOutcome(
@@ -352,24 +447,42 @@ namespace Zantetsu.Core.Tests
             return notificationResult.CleanupResult.OrchestrationResult.InspectionSnapshot.Decision.Snapshot.Operation.OpenOutcome;
         }
 
-        private static CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeRecoveryEvidence(List<string> disposeLog = null)
+        private CaptureRunPublicationCaptureCompleteLifecycleEvidence MakeRecoveryEvidence(
+            List<string> disposeLog = null,
+            bool throwingFirstHandle = false)
         {
-            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(commitRoute: true, disposeLog: disposeLog);
+            CaptureRunPublicationCaptureCompleteNotificationResult notificationResult = MakeNotificationResult(
+                commitRoute: true,
+                disposeLog: disposeLog,
+                throwingFirstHandle: throwingFirstHandle,
+                out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunInitializationOpenOutcome outcome = GetProvenanceOpenOutcome(notificationResult);
-            return CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, outcome);
+            return CaptureRunPublicationCaptureCompleteLifecycleEvidence.FromRecovery(notificationResult, outcome, owner);
         }
 
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperation(List<string> disposeLog = null)
+        private CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperation(
+            List<string> disposeLog = null,
+            bool throwingFirstHandle = false)
         {
-            return CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(MakeRecoveryEvidence(disposeLog));
+            return CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(
+                MakeRecoveryEvidence(disposeLog, throwingFirstHandle));
         }
 
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperationWithThrowingFirstHandle(List<string> disposeLog = null)
+        private CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation MakeReleaseOperationWithThrowingFirstHandle(List<string> disposeLog = null)
         {
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation(disposeLog);
-            CaptureRunLockLease lease = operation.LockLease;
-            SetField(lease, "_firstHandle", new ThrowingOnceHandle(lease.PathSet.FirstLockPath));
-            return operation;
+            // The throwing first handle is embedded in the raw lock lease before
+            // it is transferred to the ownership lease, so the owner, identity
+            // evidence, notification result, lifecycle evidence, and release
+            // operation are all minted from the exact issued owner.
+            return MakeReleaseOperation(disposeLog, throwingFirstHandle: true);
+        }
+
+        private CaptureRunInitializationSessionOwnershipLease MakeForeignOwner(CaptureRunRootLayout layout)
+        {
+            CaptureRunLockLease lease = MakeLease(layout);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            return owner;
         }
 
         private static CaptureRunPublicationCaptureCompleteRecoveryReleaser MakeReleaser()
@@ -381,7 +494,7 @@ namespace Zantetsu.Core.Tests
             ICaptureRunPublicationCaptureCompleteRecoveryReleaser releaser,
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation)
         {
-            operation.OpenOutcome.Dispose();
+            operation.OwnershipLease.Dispose();
             return new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation);
         }
 
@@ -392,7 +505,7 @@ namespace Zantetsu.Core.Tests
                 releaser ?? MakeReleaser());
         }
 
-        private static CaptureRunPublicationCaptureCompleteRecoveryReleaseResult MakeResult()
+        private CaptureRunPublicationCaptureCompleteRecoveryReleaseResult MakeResult()
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
             return MakeCoordinator().Execute(operation);
@@ -519,10 +632,12 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog = null)
+        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog = null, bool throwingFirstHandle = false)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, disposeLog);
+            ICaptureRunLockHandle first = throwingFirstHandle
+                ? new ThrowingOnceHandle(pathSet.FirstLockPath)
+                : (ICaptureRunLockHandle)new FakeHandle(pathSet.FirstLockPath, true, disposeLog);
             FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, disposeLog);
             return new CaptureRunLockLease(pathSet, first, second);
         }
@@ -656,7 +771,7 @@ namespace Zantetsu.Core.Tests
             {
                 ReleaseCallCount++;
                 LastOperation = operation;
-                operation.OpenOutcome.Dispose();
+                operation.OwnershipLease.Dispose();
                 return new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(this, operation);
             }
         }
@@ -714,7 +829,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_InvalidEvidence_Rejected()
         {
             CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence();
-            evidence.LockLease.Dispose();
+            evidence.OwnershipLease.Dispose();
             Assert.That(evidence.IsValid, Is.False);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
@@ -727,7 +842,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_ReleasedOutcome_Rejected()
         {
             CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence();
-            evidence.OpenOutcome.Dispose();
+            evidence.OwnershipLease.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence));
@@ -760,7 +875,7 @@ namespace Zantetsu.Core.Tests
 
             // Same orchestration result and lease, different instance.
             CaptureRunInitializationOpenOutcome forged = ForgeOutcome(
-                provenance.OrchestrationResult, provenance.OrchestrationResult.LockLease);
+                provenance.OrchestrationResult, provenance.OrchestrationResult.LockIdentityEvidence);
             Assert.That(ReferenceEquals(forged, provenance), Is.False);
             Assert.That(forged.IsValid, Is.True);
 
@@ -775,8 +890,8 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
 
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
-            Assert.That(operation.LockLease.IsCreated, Is.True);
+            Assert.That(operation.OpenOutcome.IsValid, Is.True);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.True);
             Assert.That(operation.IsValid, Is.True);
             Assert.That(operation.CanRelease, Is.True);
         }
@@ -791,7 +906,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(operation.LifecycleEvidence, evidence), Is.True);
             Assert.That(ReferenceEquals(operation.NotificationResult, evidence.NotificationResult), Is.True);
             Assert.That(ReferenceEquals(operation.OpenOutcome, evidence.OpenOutcome), Is.True);
-            Assert.That(ReferenceEquals(operation.LockLease, evidence.LockLease), Is.True);
+            Assert.That(ReferenceEquals(operation.OwnershipLease, evidence.OwnershipLease), Is.True);
             Assert.That(ReferenceEquals(operation.RootLayout, evidence.RootLayout), Is.True);
             Assert.That(operation.TestRunId, Is.EqualTo(evidence.TestRunId));
             Assert.That(operation.RunInitializationId, Is.EqualTo(evidence.RunInitializationId));
@@ -827,7 +942,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(operation2.CanRelease, Is.False);
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation3 = MakeReleaseOperation();
-            SetField(operation3, "_lockLease", null);
+            SetField(operation3, "_ownershipLease", null);
             Assert.That(operation3.IsValid, Is.False);
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation4 = MakeReleaseOperation();
@@ -898,8 +1013,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(ReferenceEquals(receipt.IssuedBy, releaser), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OpenOutcome.IsValid, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
 
             // The lease release invalidates the evidence and notification
             // result, but the receipt must remain valid.
@@ -937,7 +1052,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(receipt.LifecycleEvidence, operation.LifecycleEvidence), Is.True);
             Assert.That(ReferenceEquals(receipt.NotificationResult, operation.NotificationResult), Is.True);
             Assert.That(ReferenceEquals(receipt.OpenOutcome, operation.OpenOutcome), Is.True);
-            Assert.That(ReferenceEquals(receipt.LockLease, operation.LockLease), Is.True);
+            Assert.That(ReferenceEquals(receipt.OwnershipLease, operation.OwnershipLease), Is.True);
             Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
             Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
             Assert.That(receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
@@ -1025,7 +1140,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(operation2.IsValid, Is.False);
             Assert.That(operation2.CanRelease, Is.False);
 
-            operation2.OpenOutcome.Dispose();
+            operation2.OwnershipLease.Dispose();
             FakeReleaser releaser = new FakeReleaser();
             Assert.Throws<ArgumentException>(
                 () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation2));
@@ -1078,19 +1193,19 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence();
             CaptureRunInitializationOpenOutcome provenance = evidence.OpenOutcome;
             SetField(evidence, "_openOutcome", ForgeOutcome(
-                provenance.OrchestrationResult, provenance.OrchestrationResult.LockLease));
+                provenance.OrchestrationResult, provenance.OrchestrationResult.LockIdentityEvidence));
             Assert.Throws<ArgumentException>(
                 () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence));
 
-            // Corrupted notification (lease released).
+            // Corrupted notification (owner released).
             CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence2 = MakeRecoveryEvidence();
-            evidence2.LockLease.Dispose();
+            evidence2.OwnershipLease.Dispose();
             Assert.Throws<ArgumentException>(
                 () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence2));
 
-            // Corrupted lease (outcome released).
+            // Corrupted owner (outcome released).
             CaptureRunPublicationCaptureCompleteLifecycleEvidence evidence3 = MakeRecoveryEvidence();
-            evidence3.OpenOutcome.Dispose();
+            evidence3.OwnershipLease.Dispose();
             Assert.Throws<ArgumentException>(
                 () => CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation.From(evidence3));
         }
@@ -1103,14 +1218,13 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperationWithThrowingFirstHandle();
 
             // First attempt partially fails.
-            Assert.Throws<AggregateException>(() => operation.OpenOutcome.Dispose());
+            Assert.Throws<AggregateException>(() => operation.OwnershipLease.Dispose());
 
-            // Partial-failure state: outcome live, lease dead.
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            // Partial-failure state: the ownership lease is no longer live.
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
             Assert.That(operation.IsValid, Is.False);
 
-            // Retryable: the exact outcome is still created.
+            // Retryable: the exact outcome is still held.
             Assert.That(operation.CanRelease, Is.True);
 
             // Receipt cannot be constructed yet.
@@ -1124,17 +1238,64 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperationWithThrowingFirstHandle();
 
-            Assert.Throws<AggregateException>(() => operation.OpenOutcome.Dispose());
-            operation.OpenOutcome.Dispose();
+            Assert.Throws<AggregateException>(() => operation.OwnershipLease.Dispose());
+            operation.OwnershipLease.Dispose();
 
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
             Assert.That(operation.CanRelease, Is.False);
 
             FakeReleaser releaser = new FakeReleaser();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt =
                 new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation);
             Assert.That(receipt.IsValid, Is.True);
+        }
+
+        [Test]
+        public void OwnershipLease_ReleaseStateLifecycle()
+        {
+            // Initial: both handles held.
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunInitializationSessionOwnershipLease owner = operation.OwnershipLease;
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(owner.CanRelease, Is.True);
+            Assert.That(owner.IsReleaseComplete, Is.False);
+
+            // Partial failure: the first handle throws on the first disposal.
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation partial = MakeReleaseOperationWithThrowingFirstHandle();
+            CaptureRunInitializationSessionOwnershipLease partialOwner = partial.OwnershipLease;
+            Assert.Throws<AggregateException>(() => partialOwner.Dispose());
+            Assert.That(partialOwner.IsCreated, Is.False);
+            Assert.That(partialOwner.CanRelease, Is.True);
+            Assert.That(partialOwner.IsReleaseComplete, Is.False);
+
+            // Complete: the retry succeeds and both handles are released.
+            partialOwner.Dispose();
+            Assert.That(partialOwner.IsCreated, Is.False);
+            Assert.That(partialOwner.CanRelease, Is.False);
+            Assert.That(partialOwner.IsReleaseComplete, Is.True);
+        }
+
+        [Test]
+        public void OwnershipLease_DisposedFlagAloneIsNotReleaseComplete()
+        {
+            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
+            CaptureRunInitializationSessionOwnershipLease owner = operation.OwnershipLease;
+
+            // Tamper only the disposal flag; the raw lease handles are still
+            // held, so release must not count as complete.
+            SetField(owner, "_disposed", true);
+
+            Assert.That(owner.IsCreated, Is.False);
+            Assert.That(owner.CanRelease, Is.False);
+            Assert.That(owner.IsReleaseComplete, Is.False);
+
+            // The release operation can no longer release, and no receipt can
+            // be fabricated from the tampered owner.
+            Assert.That(operation.CanRelease, Is.False);
+
+            FakeReleaser releaser = new FakeReleaser();
+            Assert.Throws<ArgumentException>(
+                () => new CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt(releaser, operation));
         }
 
         // ---- Source inspection ----
@@ -1226,7 +1387,8 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentException>(() => releaser.Release(outcomeSwap));
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation leaseSwap = MakeReleaseOperation();
-            SetField(leaseSwap, "_lockLease", MakeLease(MakeLayout()));
+            CaptureRunInitializationSessionOwnershipLease foreignOwner = MakeForeignOwner(MakeLayout());
+            SetField(leaseSwap, "_ownershipLease", foreignOwner);
             Assert.Throws<ArgumentException>(() => releaser.Release(leaseSwap));
         }
 
@@ -1239,8 +1401,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = releaser.Release(operation);
 
             Assert.That(receipt, Is.Not.Null);
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
             Assert.That(ReferenceEquals(receipt.IssuedBy, releaser), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
             Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
@@ -1261,7 +1422,7 @@ namespace Zantetsu.Core.Tests
         {
             List<string> log = new List<string>();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation(log);
-            CaptureRunLockPathSet pathSet = operation.LockLease.PathSet;
+            CaptureRunLockPathSet pathSet = operation.OwnershipLease.LockPathSet;
             CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
 
             releaser.Release(operation);
@@ -1276,7 +1437,7 @@ namespace Zantetsu.Core.Tests
         {
             List<string> log = new List<string>();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperationWithThrowingFirstHandle(log);
-            CaptureRunLockPathSet pathSet = operation.LockLease.PathSet;
+            CaptureRunLockPathSet pathSet = operation.OwnershipLease.LockPathSet;
             CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
 
             // First attempt: the aggregate propagates unchanged (single inner failure).
@@ -1290,14 +1451,12 @@ namespace Zantetsu.Core.Tests
 
             // Retryable through the same operation and the exact outcome.
             Assert.That(operation.CanRelease, Is.True);
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
 
             // Second attempt retries only the failed handle and succeeds.
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = releaser.Release(operation);
             Assert.That(receipt, Is.Not.Null);
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
             Assert.That(log.Count, Is.EqualTo(1), "The released handle must not be re-disposed.");
 
             // Third attempt rejects as fully released.
@@ -1305,18 +1464,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Releaser_OutcomeDisposesWrongLease_FailsClosed()
+        public void Releaser_OwnershipLeaseSwap_FailsClosed()
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
-            CaptureRunInitializationOpenOutcome outcome = operation.OpenOutcome;
 
-            // Swap the outcome's internal lock lease to a different, still-created
-            // lease; the operation's own lock lease reference remains the original.
-            SetField(outcome, "_lockLease", MakeLease(MakeLayout()));
-            Assert.That(operation.CanRelease, Is.True);
+            // Swap the operation's ownership lease to a foreign, still-created
+            // owner; the issuance proof no longer binds.
+            CaptureRunInitializationSessionOwnershipLease foreignOwner = MakeForeignOwner(MakeLayout());
+            SetField(operation, "_ownershipLease", foreignOwner);
+            Assert.That(operation.CanRelease, Is.False);
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = MakeReleaser();
-            Assert.Throws<InvalidOperationException>(() => releaser.Release(operation));
+            Assert.Throws<ArgumentException>(() => releaser.Release(operation));
         }
 
         [Test]
@@ -1371,8 +1530,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("using UnityEngine"));
             Assert.That(source, Does.Not.Contain("using System.Linq"));
 
-            // No direct LockLease.Dispose and exactly one outcome Dispose call.
-            Assert.That(source, Does.Not.Contain("LockLease.Dispose()"));
+            // Exactly one ownership-lease disposal call.
+            Assert.That(source, Does.Contain("ownershipLease.Dispose()"));
             Assert.That(CountOccurrences(source, ".Dispose()"), Is.EqualTo(1));
 
             // No catch and no retry loop.
@@ -1427,7 +1586,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseCoordinator coordinator = MakeCoordinator();
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
-            operation.OpenOutcome.Dispose();
+            operation.OwnershipLease.Dispose();
 
             Assert.That(operation.CanRelease, Is.False);
             Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
@@ -1469,8 +1628,7 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
 
             Assert.That(releaser.ReleaseCallCount, Is.EqualTo(1));
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
-            Assert.That(operation.LockLease.IsCreated, Is.True);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.True);
         }
 
         [Test]
@@ -1487,8 +1645,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseResult result = coordinator.Execute(operation);
             Assert.That(result, Is.Not.Null);
             Assert.That(result.IsValid, Is.True);
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
 
             Assert.Throws<ArgumentException>(() => coordinator.Execute(operation));
         }
@@ -1501,7 +1658,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
 
             Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.True);
         }
 
         [Test]
@@ -1549,8 +1706,7 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<InvalidOperationException>(() => coordinator.Execute(operation));
 
             Assert.That(releaser.ReleaseCallCount, Is.EqualTo(1));
-            Assert.That(operation.OpenOutcome.IsCreated, Is.True);
-            Assert.That(operation.LockLease.IsCreated, Is.True);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.True);
         }
 
         // ---- Result ----
@@ -1575,15 +1731,14 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(result.LifecycleEvidence, operation.LifecycleEvidence), Is.True);
             Assert.That(ReferenceEquals(result.NotificationResult, operation.NotificationResult), Is.True);
             Assert.That(ReferenceEquals(result.OpenOutcome, operation.OpenOutcome), Is.True);
-            Assert.That(ReferenceEquals(result.LockLease, operation.LockLease), Is.True);
+            Assert.That(ReferenceEquals(result.OwnershipLease, operation.OwnershipLease), Is.True);
             Assert.That(ReferenceEquals(result.RootLayout, operation.RootLayout), Is.True);
             Assert.That(result.TestRunId, Is.EqualTo(operation.TestRunId));
             Assert.That(result.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
             Assert.That(result.RunManifestContentSha256, Is.EqualTo(operation.RunManifestContentSha256));
             Assert.That(result.CaptureIndexPath, Is.EqualTo(operation.CaptureIndexPath));
 
-            Assert.That(operation.OpenOutcome.IsCreated, Is.False);
-            Assert.That(operation.LockLease.IsCreated, Is.False);
+            Assert.That(operation.OwnershipLease.IsCreated, Is.False);
         }
 
         [Test]

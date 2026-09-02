@@ -42,8 +42,7 @@ namespace Zantetsu.Observability
             private readonly CapturePublicationPlanWriteReceipt _writeReceipt;
             private readonly CaptureFrameDraftRegistry _drafts;
             private readonly CaptureArtifactRegistry _artifacts;
-            private readonly CaptureRunInitializationSession _session;
-            private readonly CaptureRunLockLease _lockLease;
+            private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
 
             internal IssuanceProof(
                 CaptureEvidenceRunPublicationCoordinator coordinator,
@@ -52,8 +51,7 @@ namespace Zantetsu.Observability
                 CapturePublicationPlanWriteReceipt writeReceipt,
                 CaptureFrameDraftRegistry drafts,
                 CaptureArtifactRegistry artifacts,
-                CaptureRunInitializationSession session,
-                CaptureRunLockLease lockLease)
+                CaptureRunLockIdentityEvidence lockIdentityEvidence)
             {
                 _coordinator = coordinator;
                 _gate = gate;
@@ -61,8 +59,7 @@ namespace Zantetsu.Observability
                 _writeReceipt = writeReceipt;
                 _drafts = drafts;
                 _artifacts = artifacts;
-                _session = session;
-                _lockLease = lockLease;
+                _lockIdentityEvidence = lockIdentityEvidence;
             }
 
             internal bool IsMintedFor(
@@ -72,8 +69,7 @@ namespace Zantetsu.Observability
                 CapturePublicationPlanWriteReceipt writeReceipt,
                 CaptureFrameDraftRegistry drafts,
                 CaptureArtifactRegistry artifacts,
-                CaptureRunInitializationSession session,
-                CaptureRunLockLease lockLease)
+                CaptureRunLockIdentityEvidence lockIdentityEvidence)
             {
                 return coordinator != null
                     && gate != null
@@ -81,16 +77,14 @@ namespace Zantetsu.Observability
                     && writeReceipt != null
                     && drafts != null
                     && artifacts != null
-                    && session != null
-                    && lockLease != null
+                    && lockIdentityEvidence != null
                     && ReferenceEquals(_coordinator, coordinator)
                     && ReferenceEquals(_gate, gate)
                     && ReferenceEquals(_freezeReceipt, freezeReceipt)
                     && ReferenceEquals(_writeReceipt, writeReceipt)
                     && ReferenceEquals(_drafts, drafts)
                     && ReferenceEquals(_artifacts, artifacts)
-                    && ReferenceEquals(_session, session)
-                    && ReferenceEquals(_lockLease, lockLease);
+                    && ReferenceEquals(_lockIdentityEvidence, lockIdentityEvidence);
             }
         }
 
@@ -108,7 +102,7 @@ namespace Zantetsu.Observability
                     out CaptureFrameDraftRegistry drafts,
                     out CaptureArtifactRegistry artifacts,
                     out CaptureRunInitializationSession session,
-                    out CaptureRunLockLease lockLease))
+                    out CaptureRunLockIdentityEvidence lockIdentityEvidence))
             {
                 return false;
             }
@@ -120,8 +114,7 @@ namespace Zantetsu.Observability
                 writeReceipt,
                 drafts,
                 artifacts,
-                session,
-                lockLease);
+                lockIdentityEvidence);
         }
 
         internal CaptureEvidenceFrozenRunPublicationResult PersistFrozenRun(
@@ -138,8 +131,7 @@ namespace Zantetsu.Observability
 
             CaptureFrameDraftRegistry drafts = freezeReceipt.Drafts;
             CaptureArtifactRegistry artifacts = freezeReceipt.Artifacts;
-            CaptureRunInitializationSession session = freezeReceipt.RunSession;
-            CaptureRunLockLease lockLease = freezeReceipt.LockLease;
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = freezeReceipt.LockIdentityEvidence;
 
             CapturePublicationPlanWriteReceipt writeReceipt = _publication.BuildAndPersist(
                 drafts,
@@ -154,8 +146,7 @@ namespace Zantetsu.Observability
                 writeReceipt,
                 drafts,
                 artifacts,
-                session,
-                lockLease);
+                lockIdentityEvidence);
 
             return CaptureEvidenceFrozenRunPublicationResult.Create(this, proof, freezeReceipt, writeReceipt);
         }
@@ -186,7 +177,7 @@ namespace Zantetsu.Observability
             CapturePublicationRecoverySnapshot snapshot)
         {
             if (openOutcome == null || snapshot == null || !snapshot.IsValid) return false;
-            if (!openOutcome.IsCreated || !openOutcome.IsValid
+            if (!openOutcome.IsValid
                 || openOutcome.Status != CaptureRunInitializationOpenStatus.PublicationRecoveryRequired
                 || !ReferenceEquals(openOutcome.RootLayout, _store.RootLayout)) return false;
             CapturePublicationPlan plan = snapshot.Plan;
@@ -202,7 +193,7 @@ namespace Zantetsu.Observability
         private void RequireRecoveryOutcome(CaptureRunInitializationOpenOutcome openOutcome)
         {
             if (openOutcome == null) throw new ArgumentNullException(nameof(openOutcome));
-            if (!openOutcome.IsCreated || !openOutcome.IsValid
+            if (!openOutcome.IsValid
                 || openOutcome.Status != CaptureRunInitializationOpenStatus.PublicationRecoveryRequired)
                 throw new ArgumentException("Open outcome must hold publication recovery and the OS Run lock.", nameof(openOutcome));
             if (!ReferenceEquals(openOutcome.RootLayout, _store.RootLayout))

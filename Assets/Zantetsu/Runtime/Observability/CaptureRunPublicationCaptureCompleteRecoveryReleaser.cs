@@ -54,21 +54,21 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunInitializationOpenOutcome openOutcome = operation.OpenOutcome;
-            CaptureRunLockLease lockLease = operation.LockLease;
+            CaptureRunInitializationSessionOwnershipLease ownershipLease = operation.OwnershipLease;
 
-            if (openOutcome == null || lockLease == null || !operation.IsIssuanceProofIntact)
+            if (openOutcome == null || ownershipLease == null || !operation.IsIssuanceProofIntact)
             {
                 throw new ArgumentException(
                     "Release operation's owner or issuance proof is not intact.",
                     nameof(operation));
             }
 
-            openOutcome.Dispose();
+            ownershipLease.Dispose();
 
-            if (openOutcome.IsCreated || lockLease.IsCreated)
+            if (!ownershipLease.IsReleaseComplete)
             {
                 throw new InvalidOperationException(
-                    "Release did not fully release the outcome and its lock lease.");
+                    "Release did not fully release the ownership lease.");
             }
 
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt =

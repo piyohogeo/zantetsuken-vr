@@ -81,7 +81,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _cleanupResult.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _cleanupResult.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _cleanupResult.LockIdentityEvidence;
 
         internal long TestRunId => _cleanupResult.TestRunId;
 
@@ -166,16 +166,16 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // 7. Lock lease must be present and live.
-            CaptureRunLockLease lockLease = cleanupResult.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
+            // 7. Lock identity evidence must be present and live.
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = cleanupResult.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 return false;
             }
 
-            // 8. Root layout and lock lease must be shared across result, action plan, and inspection operation.
+            // 8. Root layout and lock identity evidence must be shared across result, action plan, and inspection operation.
             if (!ReferenceEquals(actionPlan.RootLayout, rootLayout)
-                || !ReferenceEquals(actionPlan.LockLease, lockLease))
+                || !ReferenceEquals(actionPlan.LockIdentityEvidence, lockIdentityEvidence))
             {
                 return false;
             }
@@ -189,7 +189,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactInspectionOperation inspectionOperation = decision.Operation;
             if (inspectionOperation == null
                 || !ReferenceEquals(inspectionOperation.RootLayout, rootLayout)
-                || !ReferenceEquals(inspectionOperation.LockLease, lockLease))
+                || !ReferenceEquals(inspectionOperation.LockIdentityEvidence, lockIdentityEvidence))
             {
                 return false;
             }

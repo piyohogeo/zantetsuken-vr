@@ -28,12 +28,12 @@ namespace Zantetsu.Observability
         internal const int MaximumAllowedRootEntryCount = 1024;
 
         private readonly CaptureRunRootLayout _rootLayout;
-        private readonly CaptureRunLockLease _lockLease;
+        private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
         private readonly int _maximumRootEntryCount;
 
         internal CaptureRunInitializationRecoveryInspectionOperation(
             CaptureRunRootLayout rootLayout,
-            CaptureRunLockLease lockLease,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence,
             int maximumRootEntryCount)
         {
             if (rootLayout == null)
@@ -41,25 +41,25 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(rootLayout));
             }
 
-            if (lockLease == null)
+            if (lockIdentityEvidence == null)
             {
-                throw new ArgumentNullException(nameof(lockLease));
+                throw new ArgumentNullException(nameof(lockIdentityEvidence));
             }
 
-            if (!lockLease.IsCreated)
+            if (!lockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Lock lease must be created.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence must be valid.", nameof(lockIdentityEvidence));
             }
 
-            CaptureRunLockPathSet pathSet = lockLease.PathSet;
+            CaptureRunLockPathSet pathSet = lockIdentityEvidence.LockPathSet;
             if (pathSet == null)
             {
-                throw new ArgumentException("Lock lease must hold a path set.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence must hold a path set.", nameof(lockIdentityEvidence));
             }
 
             if (!ReferenceEquals(pathSet.RootLayout, rootLayout))
             {
-                throw new ArgumentException("Lock lease path set must share the operation's root layout.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence path set must share the operation's root layout.", nameof(lockIdentityEvidence));
             }
 
             if (maximumRootEntryCount < 1 || maximumRootEntryCount > MaximumAllowedRootEntryCount)
@@ -68,13 +68,13 @@ namespace Zantetsu.Observability
             }
 
             _rootLayout = rootLayout;
-            _lockLease = lockLease;
+            _lockIdentityEvidence = lockIdentityEvidence;
             _maximumRootEntryCount = maximumRootEntryCount;
         }
 
         internal CaptureRunRootLayout RootLayout => _rootLayout;
 
-        internal CaptureRunLockLease LockLease => _lockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
 
         internal int MaximumRootEntryCount => _maximumRootEntryCount;
 
@@ -84,17 +84,17 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_rootLayout == null || _lockLease == null || _maximumRootEntryCount < 1 || _maximumRootEntryCount > MaximumAllowedRootEntryCount)
+                if (_rootLayout == null || _lockIdentityEvidence == null || _maximumRootEntryCount < 1 || _maximumRootEntryCount > MaximumAllowedRootEntryCount)
                 {
                     return false;
                 }
 
-                if (!_lockLease.IsCreated)
+                if (!_lockIdentityEvidence.IsValid)
                 {
                     return false;
                 }
 
-                CaptureRunLockPathSet pathSet = _lockLease.PathSet;
+                CaptureRunLockPathSet pathSet = _lockIdentityEvidence.LockPathSet;
                 return pathSet != null && ReferenceEquals(pathSet.RootLayout, _rootLayout);
             }
         }

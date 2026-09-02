@@ -13,7 +13,7 @@ namespace Zantetsu.Observability
     /// The type owns exactly two read-only reference fields — the frozen
     /// publication result and the legacy PNG plan — and has no public or
     /// internal constructor. It duplicates no descriptor, entry, identifier,
-    /// path, hash, or lease; every accessor forwards from the held graph. The
+    /// path, or hash; every accessor forwards from the held graph. The
     /// only construction path is <see cref="Create"/>, which validates the
     /// frozen result once, converts its generic plan, and assigns the fields
     /// through the private assignment constructor, so no legacy plan can be
@@ -123,7 +123,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _frozenPublicationResult.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _frozenPublicationResult.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _frozenPublicationResult.LockIdentityEvidence;
 
         internal long TestRunId => _frozenPublicationResult.TestRunId;
 

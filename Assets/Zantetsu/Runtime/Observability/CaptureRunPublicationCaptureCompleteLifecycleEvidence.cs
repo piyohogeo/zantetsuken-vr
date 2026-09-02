@@ -51,15 +51,18 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationCaptureCompleteNotificationResult _notificationResult;
         private readonly CaptureEvidenceRunFreezeReceipt _freezeReceipt;
         private readonly CaptureRunInitializationOpenOutcome _openOutcome;
+        private readonly CaptureRunInitializationSessionOwnershipLease _ownershipLease;
 
         private CaptureRunPublicationCaptureCompleteLifecycleEvidence(
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
             CaptureEvidenceRunFreezeReceipt freezeReceipt,
-            CaptureRunInitializationOpenOutcome openOutcome)
+            CaptureRunInitializationOpenOutcome openOutcome,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
         {
             _notificationResult = notificationResult;
             _freezeReceipt = freezeReceipt;
             _openOutcome = openOutcome;
+            _ownershipLease = ownershipLease;
         }
 
         internal static CaptureRunPublicationCaptureCompleteLifecycleEvidence FromFresh(
@@ -87,7 +90,8 @@ namespace Zantetsu.Observability
 
         internal static CaptureRunPublicationCaptureCompleteLifecycleEvidence FromRecovery(
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
-            CaptureRunInitializationOpenOutcome openOutcome)
+            CaptureRunInitializationOpenOutcome openOutcome,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
         {
             if (notificationResult == null)
             {
@@ -99,14 +103,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(openOutcome));
             }
 
-            if (!notificationResult.IsValid || !IsRecoveryCorrelated(notificationResult, openOutcome))
+            if (ownershipLease == null)
+            {
+                throw new ArgumentNullException(nameof(ownershipLease));
+            }
+
+            if (!notificationResult.IsValid || !IsRecoveryCorrelated(notificationResult, openOutcome, ownershipLease))
             {
                 throw new ArgumentException(
-                    "Notification result and open outcome must be correlated.",
+                    "Notification result, open outcome, and ownership lease must be correlated.",
                     nameof(openOutcome));
             }
 
-            return new CaptureRunPublicationCaptureCompleteLifecycleEvidence(notificationResult, null, openOutcome);
+            return new CaptureRunPublicationCaptureCompleteLifecycleEvidence(notificationResult, null, openOutcome, ownershipLease);
         }
 
         internal CaptureRunPublicationCaptureCompleteLifecycleOwnerKind Kind
@@ -142,9 +151,11 @@ namespace Zantetsu.Observability
 
         internal CaptureRunInitializationOpenOutcome OpenOutcome => _openOutcome;
 
+        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease => _ownershipLease;
+
         internal CaptureRunRootLayout RootLayout => _notificationResult.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _notificationResult.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _notificationResult.LockIdentityEvidence;
 
         internal long TestRunId => _notificationResult.TestRunId;
 
@@ -170,7 +181,7 @@ namespace Zantetsu.Observability
 
                 if (_freezeReceipt == null && _openOutcome != null)
                 {
-                    return _notificationResult.IsValid && IsRecoveryCorrelated(_notificationResult, _openOutcome);
+                    return _notificationResult.IsValid && IsRecoveryCorrelated(_notificationResult, _openOutcome, _ownershipLease);
                 }
 
                 return false;
@@ -190,9 +201,10 @@ namespace Zantetsu.Observability
 
         private static bool IsRecoveryCorrelated(
             CaptureRunPublicationCaptureCompleteNotificationResult notificationResult,
-            CaptureRunInitializationOpenOutcome openOutcome)
+            CaptureRunInitializationOpenOutcome openOutcome,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
         {
-            if (notificationResult == null || openOutcome == null)
+            if (notificationResult == null || openOutcome == null || ownershipLease == null)
             {
                 return false;
             }
@@ -216,7 +228,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!openOutcome.IsCreated)
+            if (!openOutcome.IsValid)
             {
                 return false;
             }
@@ -252,13 +264,31 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!ReferenceEquals(orchestrationResult.LockLease, notificationResult.LockLease))
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = notificationResult.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 return false;
             }
 
-            CaptureRunLockLease lockLease = notificationResult.LockLease;
-            if (lockLease == null || lockLease.PathSet == null || !ReferenceEquals(lockLease.PathSet, openOutcome.LockPathSet))
+            if (!lockIdentityEvidence.IsIssuedFor(ownershipLease))
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(orchestrationResult.LockIdentityEvidence, lockIdentityEvidence))
+            {
+                return false;
+            }
+
+            if (!ownershipLease.IsCreated)
+            {
+                return false;
+            }
+
+            if (lockIdentityEvidence.LockPathSet == null
+                || openOutcome.LockPathSet == null
+                || !ReferenceEquals(lockIdentityEvidence.LockPathSet, openOutcome.LockPathSet)
+                || !ReferenceEquals(ownershipLease.LockPathSet, openOutcome.LockPathSet))
             {
                 return false;
             }

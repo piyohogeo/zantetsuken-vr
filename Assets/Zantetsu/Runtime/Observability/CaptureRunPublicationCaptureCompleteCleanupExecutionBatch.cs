@@ -45,9 +45,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Validation token must be issued for the action plan.", nameof(actionPlan));
             }
 
-            if (actionPlan.LockLease == null || !actionPlan.LockLease.IsCreated)
+            if (actionPlan.LockIdentityEvidence == null || !actionPlan.LockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Action plan lock lease must be live.", nameof(actionPlan));
+                throw new ArgumentException("Action plan lock identity evidence must be live.", nameof(actionPlan));
             }
 
             CaptureRunPublicationPathSet publicationPaths =
@@ -86,7 +86,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _actionPlan.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _actionPlan.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _actionPlan.LockIdentityEvidence;
 
         internal long TestRunId => _actionPlan.TestRunId;
 

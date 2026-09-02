@@ -104,18 +104,34 @@ namespace Zantetsu.Core.Tests
             return MakeLease(layout, disposeLog, out _, out _);
         }
 
+        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle first, out FakeHandle second)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out first, out second);
+            return CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+        }
+
+        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog)
+        {
+            return MakeOwnershipLease(layout, disposeLog, out _, out _);
+        }
+
+        private static CaptureRunLockIdentityEvidence MakeIdentityEvidence(CaptureRunInitializationSessionOwnershipLease ownershipLease)
+        {
+            return CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
+        }
+
         private static CaptureRunInitializationRecoveryOrchestrationResult MakeRecoveryResult(
             CaptureRunInitializationRootObservation staging,
             CaptureRunInitializationRootObservation final,
-            CaptureRunLockLease lease)
+            CaptureRunLockIdentityEvidence identity)
         {
-            CaptureRunRootLayout layout = lease.PathSet.RootLayout;
+            CaptureRunRootLayout layout = identity.RootLayout;
             FakeInspector inspector = MakeInspector(staging, final);
             CaptureRunInitializationRecoveryExecutionCoordinator executionCoordinator = new CaptureRunInitializationRecoveryExecutionCoordinator(
                 new FakeRecoveryCleanup(), new FakeProvisioner(null), new FakeWriter(null));
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = new CaptureRunInitializationRecoveryOrchestrationCoordinator(
                 inspector, executionCoordinator);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             return orchestrator.Execute(operation);
         }
 
@@ -301,8 +317,9 @@ namespace Zantetsu.Core.Tests
         public void TryContinue_StartFresh_Completes()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log) { NextId = OtherInitId };
@@ -310,41 +327,44 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
             Assert.That(success, Is.True);
-            Assert.That(session, Is.Not.Null);
-            Assert.That(lease, Is.Null);
-            Assert.That(session.ReadyEvidence.IsRecovery, Is.False);
-            Assert.That(session.ExecutionReceipt, Is.Not.Null);
-            Assert.That(session.RecoveryOrchestrationResult, Is.Null);
-            Assert.That(session.RunInitializationId, Is.EqualTo(OtherInitId));
+            Assert.That(issue, Is.Not.Null);
+            Assert.That(issue.OwnershipLease, Is.SameAs(owner));
+            Assert.That(issue.LockIdentityEvidence, Is.SameAs(identity));
+            Assert.That(issue.Session.ReadyEvidence.IsRecovery, Is.False);
+            Assert.That(issue.Session.ExecutionReceipt, Is.Not.Null);
+            Assert.That(issue.Session.RecoveryOrchestrationResult, Is.Null);
+            Assert.That(issue.Session.RunInitializationId, Is.EqualTo(OtherInitId));
             Assert.That(idSource.CallCount, Is.EqualTo(1));
             Assert.That(provisioner.CallCount, Is.EqualTo(2));
             Assert.That(writer.CallCount, Is.EqualTo(4));
+            owner.Dispose();
         }
 
         [Test]
         public void TryContinue_CleanupTemporaryAndStartFresh_Completes()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
-                MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true), MakeAbsent(Final), lease);
+                MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
             Assert.That(success, Is.True);
-            Assert.That(session, Is.Not.Null);
-            Assert.That(lease, Is.Null);
-            Assert.That(session.ReadyEvidence.IsRecovery, Is.False);
+            Assert.That(issue, Is.Not.Null);
+            Assert.That(issue.Session.ReadyEvidence.IsRecovery, Is.False);
             Assert.That(idSource.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         // ---- Initialization-ready routing ----
@@ -354,9 +374,10 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
-                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), lease);
+                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
@@ -364,10 +385,10 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
-            AssertRecoverySession(success, session, lease, recoveryResult, idSource, provisioner, writer);
+            AssertRecoverySession(success, issue, owner, identity, recoveryResult, idSource, provisioner, writer);
         }
 
         [Test]
@@ -375,9 +396,10 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
-                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeCanonicalInit(Final, binding.FinalInitialization), lease);
+                MakeCanonicalInit(Staging, binding.StagingInitialization), MakeCanonicalInit(Final, binding.FinalInitialization), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
@@ -385,10 +407,10 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
-            AssertRecoverySession(success, session, lease, recoveryResult, idSource, provisioner, writer);
+            AssertRecoverySession(success, issue, owner, identity, recoveryResult, idSource, provisioner, writer);
         }
 
         [Test]
@@ -396,9 +418,10 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
-                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), lease);
+                MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
@@ -406,23 +429,24 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
-            AssertRecoverySession(success, session, lease, recoveryResult, idSource, provisioner, writer);
+            AssertRecoverySession(success, issue, owner, identity, recoveryResult, idSource, provisioner, writer);
         }
 
         // ---- False routing ----
 
         [Test]
-        public void TryContinue_PublicationRecoveryRequired_False_LeaseUnchanged()
+        public void TryContinue_PublicationRecoveryRequired_False_OwnerUnchanged()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
                 MakeObservation(Staging, true, Canonical, binding.StagingInitialization, Canonical, binding.StagingReady, hasNonMarker: true),
-                MakeFullyCanonical(Final, binding), lease);
+                MakeFullyCanonical(Final, binding), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
@@ -430,26 +454,26 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunLockLease before = lease;
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
             Assert.That(success, Is.False);
-            Assert.That(session, Is.Null);
-            Assert.That(lease, Is.SameAs(before));
-            Assert.That(lease.IsCreated, Is.True);
+            Assert.That(issue, Is.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
             Assert.That(writer.CallCount, Is.EqualTo(0));
+            owner.Dispose();
         }
 
         [Test]
-        public void TryContinue_RunRootCollision_False_LeaseUnchanged()
+        public void TryContinue_RunRootCollision_False_OwnerUnchanged()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(
-                MakeObservation(Staging, true, Absent, null, Absent, null, hasUnknown: true), MakeAbsent(Final), lease);
+                MakeObservation(Staging, true, Absent, null, Absent, null, hasUnknown: true), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
@@ -457,113 +481,207 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunLockLease before = lease;
-            CaptureRunInitializationSession session;
-            bool success = coordinator.TryContinueToSession(recoveryResult, ref lease, out session);
+            CaptureRunInitializationSessionIssue issue;
+            bool success = coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue);
 
             Assert.That(success, Is.False);
-            Assert.That(session, Is.Null);
-            Assert.That(lease, Is.SameAs(before));
-            Assert.That(lease.IsCreated, Is.True);
+            Assert.That(issue, Is.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
             Assert.That(writer.CallCount, Is.EqualTo(0));
+            owner.Dispose();
         }
 
         // ---- Rejection ----
 
         [Test]
-        public void TryContinue_NullOrInvalidResult_Rejected_SessionNull()
+        public void TryContinue_NullOrInvalidResult_Rejected_IssueNull()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session = null;
-            ArgumentNullException exNull = Assert.Throws<ArgumentNullException>(() => coordinator.TryContinueToSession(null, ref lease, out session));
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentNullException exNull = Assert.Throws<ArgumentNullException>(() => coordinator.TryContinueToSession(null, owner, identity, out issue));
             Assert.That(exNull.ParamName, Is.EqualTo("recoveryResult"));
-            Assert.That(session, Is.Null);
+            Assert.That(issue, Is.Null);
 
             CaptureRunInitializationRecoveryOrchestrationResult invalid =
                 (CaptureRunInitializationRecoveryOrchestrationResult)FormatterServices.GetUninitializedObject(
                     typeof(CaptureRunInitializationRecoveryOrchestrationResult));
-            ArgumentException exInvalid = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(invalid, ref lease, out session));
+            ArgumentException exInvalid = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(invalid, owner, identity, out issue));
             Assert.That(exInvalid.ParamName, Is.EqualTo("recoveryResult"));
-            Assert.That(session, Is.Null);
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(owner.IsCreated, Is.True);
+            owner.Dispose();
         }
 
         [Test]
-        public void TryContinue_NullLease_Rejected()
+        public void TryContinue_NullOwner_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunLockLease nullLease = null;
-            CaptureRunInitializationSession session = null;
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.TryContinueToSession(recoveryResult, ref nullLease, out session));
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
-            Assert.That(session, Is.Null);
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.TryContinueToSession(recoveryResult, null, identity, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(owner.IsCreated, Is.True);
+            owner.Dispose();
         }
 
         [Test]
-        public void TryContinue_DisposedLease_Rejected()
+        public void TryContinue_NullIdentity_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease evidenceLease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), evidenceLease);
-
-            CaptureRunLockLease disposedLease = MakeLease(layout, null);
-            disposedLease.Dispose();
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session = null;
-            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ref disposedLease, out session));
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
-            Assert.That(session, Is.Null);
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => coordinator.TryContinueToSession(recoveryResult, owner, null, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(owner.IsCreated, Is.True);
+            owner.Dispose();
         }
 
         [Test]
-        public void TryContinue_ForeignLease_Rejected()
+        public void TryContinue_DisposedOwner_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease evidenceLease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), evidenceLease);
+            CaptureRunInitializationSessionOwnershipLease evidenceOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence evidenceIdentity = MakeIdentityEvidence(evidenceOwner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), evidenceIdentity);
 
-            CaptureRunLockLease otherLease = MakeLease(layout, null);
-            CaptureRunLockLease before = otherLease;
+            CaptureRunInitializationSessionOwnershipLease disposedOwner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence disposedIdentity = MakeIdentityEvidence(disposedOwner);
+            disposedOwner.Dispose();
 
             List<string> log = new List<string>();
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session = null;
-            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ref otherLease, out session));
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
-            Assert.That(otherLease, Is.SameAs(before));
-            Assert.That(session, Is.Null);
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, disposedOwner, disposedIdentity, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(evidenceOwner.IsCreated, Is.True);
+            evidenceOwner.Dispose();
+        }
+
+        [Test]
+        public void TryContinue_ExpectedIdentityForeignOwner_Rejected()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identityA);
+
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null);
+            List<string> log = new List<string>();
+            FakeIdSource idSource = new FakeIdSource(log);
+            FakeProvisioner provisioner = new FakeProvisioner(log);
+            FakeWriter writer = new FakeWriter(log);
+            CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
+
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ownerB, identityA, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            Assert.That(issue, Is.Null);
+            Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(provisioner.CallCount, Is.EqualTo(0));
+            Assert.That(writer.CallCount, Is.EqualTo(0));
+            Assert.That(ownerA.IsCreated, Is.True);
+            Assert.That(ownerB.IsCreated, Is.True);
+            ownerA.Dispose();
+            ownerB.Dispose();
+        }
+
+        [Test]
+        public void TryContinue_ExpectedOwnerForeignIdentity_Rejected()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identityA);
+
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identityB = MakeIdentityEvidence(ownerB);
+            List<string> log = new List<string>();
+            FakeIdSource idSource = new FakeIdSource(log);
+            FakeProvisioner provisioner = new FakeProvisioner(log);
+            FakeWriter writer = new FakeWriter(log);
+            CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
+
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ownerA, identityB, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            Assert.That(issue, Is.Null);
+            Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(provisioner.CallCount, Is.EqualTo(0));
+            Assert.That(writer.CallCount, Is.EqualTo(0));
+            Assert.That(ownerA.IsCreated, Is.True);
+            Assert.That(ownerB.IsCreated, Is.True);
+            ownerA.Dispose();
+            ownerB.Dispose();
+        }
+
+        [Test]
+        public void TryContinue_ForeignCorrelatedPair_Rejected()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identityA);
+
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identityB = MakeIdentityEvidence(ownerB);
+            List<string> log = new List<string>();
+            FakeIdSource idSource = new FakeIdSource(log);
+            FakeProvisioner provisioner = new FakeProvisioner(log);
+            FakeWriter writer = new FakeWriter(log);
+            CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
+
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ownerB, identityB, out issue));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            Assert.That(issue, Is.Null);
+            Assert.That(idSource.CallCount, Is.EqualTo(0));
+            Assert.That(provisioner.CallCount, Is.EqualTo(0));
+            Assert.That(writer.CallCount, Is.EqualTo(0));
+            Assert.That(ownerA.IsCreated, Is.True);
+            Assert.That(ownerB.IsCreated, Is.True);
+            ownerA.Dispose();
+            ownerB.Dispose();
         }
 
         [Test]
         public void TryContinue_ForgedRootLayout_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             SetField(recoveryResult.Snapshot.Operation, "_rootLayout", MakeLayout(2));
 
@@ -571,19 +689,21 @@ namespace Zantetsu.Core.Tests
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session = null;
-            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ref lease, out session));
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue));
             Assert.That(ex.ParamName, Is.EqualTo("recoveryResult"));
-            Assert.That(session, Is.Null);
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            owner.Dispose();
         }
 
         [Test]
         public void TryContinue_StatusDispositionMismatch_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             CaptureRunInitializationRecoveryDecision decision = recoveryResult.Batch.ActionPlan.Decision;
             SetField(decision, "_disposition", CaptureRunInitializationRecoveryDisposition.CompleteMissingPeerInitialization);
@@ -592,22 +712,24 @@ namespace Zantetsu.Core.Tests
             FakeIdSource idSource = new FakeIdSource(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, new FakeProvisioner(log), new FakeWriter(log));
 
-            CaptureRunInitializationSession session = null;
-            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, ref lease, out session));
+            CaptureRunInitializationSessionIssue issue = null;
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue));
             Assert.That(ex.ParamName, Is.EqualTo("recoveryResult"));
-            Assert.That(session, Is.Null);
+            Assert.That(issue, Is.Null);
             Assert.That(idSource.CallCount, Is.EqualTo(0));
+            owner.Dispose();
         }
 
         // ---- Exception propagation ----
 
         [Test]
-        public void TryContinue_StartFreshException_PropagatesIdentical_SessionNull_LeaseUnchanged()
+        public void TryContinue_StartFreshException_PropagatesIdentical_IssueNull_OwnerUnchanged()
         {
             CaptureRunRootLayout layout = MakeLayout();
             List<string> disposeLog = new List<string>();
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
-            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), lease);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
+            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
+            CaptureRunInitializationRecoveryOrchestrationResult recoveryResult = MakeRecoveryResult(MakeAbsent(Staging), MakeAbsent(Final), identity);
 
             IOException injected = new IOException("id boom");
             List<string> log = new List<string>();
@@ -616,16 +738,15 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationRecoverySessionRoutingCoordinator coordinator = MakeRoutingCoordinator(idSource, provisioner, writer);
 
-            CaptureRunLockLease before = lease;
-            CaptureRunInitializationSession session = null;
-            IOException ex = Assert.Throws<IOException>(() => coordinator.TryContinueToSession(recoveryResult, ref lease, out session));
+            CaptureRunInitializationSessionIssue issue = null;
+            IOException ex = Assert.Throws<IOException>(() => coordinator.TryContinueToSession(recoveryResult, owner, identity, out issue));
 
             Assert.That(ex, Is.SameAs(injected));
-            Assert.That(session, Is.Null);
-            Assert.That(lease, Is.SameAs(before));
-            Assert.That(lease.IsCreated, Is.True);
+            Assert.That(issue, Is.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(disposeLog, Is.Empty);
             Assert.That(idSource.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         // ---- Shape ----
@@ -681,25 +802,29 @@ namespace Zantetsu.Core.Tests
 
         private static void AssertRecoverySession(
             bool success,
-            CaptureRunInitializationSession session,
-            CaptureRunLockLease lease,
+            CaptureRunInitializationSessionIssue issue,
+            CaptureRunInitializationSessionOwnershipLease owner,
+            CaptureRunLockIdentityEvidence identity,
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult,
             FakeIdSource idSource,
             FakeProvisioner provisioner,
             FakeWriter writer)
         {
             Assert.That(success, Is.True);
-            Assert.That(session, Is.Not.Null);
-            Assert.That(lease, Is.Null);
-            Assert.That(session.ReadyEvidence.IsRecovery, Is.True);
-            Assert.That(session.ExecutionReceipt, Is.Null);
-            Assert.That(session.RecoveryOrchestrationResult, Is.SameAs(recoveryResult));
-            Assert.That(session.RootLayout, Is.SameAs(recoveryResult.RootLayout));
-            Assert.That(session.TestRunId, Is.EqualTo(recoveryResult.TestRunId));
-            Assert.That(session.RunInitializationId, Is.EqualTo(recoveryResult.RunInitializationId));
+            Assert.That(issue, Is.Not.Null);
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(issue.OwnershipLease, Is.SameAs(owner));
+            Assert.That(issue.LockIdentityEvidence, Is.SameAs(identity));
+            Assert.That(issue.Session.ReadyEvidence.IsRecovery, Is.True);
+            Assert.That(issue.Session.ExecutionReceipt, Is.Null);
+            Assert.That(issue.Session.RecoveryOrchestrationResult, Is.SameAs(recoveryResult));
+            Assert.That(issue.Session.RootLayout, Is.SameAs(recoveryResult.RootLayout));
+            Assert.That(issue.Session.TestRunId, Is.EqualTo(recoveryResult.TestRunId));
+            Assert.That(issue.Session.RunInitializationId, Is.EqualTo(recoveryResult.RunInitializationId));
             Assert.That(idSource.CallCount, Is.EqualTo(0));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
             Assert.That(writer.CallCount, Is.EqualTo(0));
+            owner.Dispose();
         }
     }
 }

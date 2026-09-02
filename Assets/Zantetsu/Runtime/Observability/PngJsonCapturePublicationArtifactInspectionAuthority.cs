@@ -201,21 +201,46 @@ namespace Zantetsu.Observability
             }
         }
 
-        internal CaptureRunLockLease LockLease
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence
         {
             get
             {
                 if (IsRecovery)
                 {
-                    return _recoveryDecision.Snapshot.Operation.LockLease;
+                    return _recoveryDecision.Snapshot.Operation.LockIdentityEvidence;
                 }
 
                 if (IsFresh)
                 {
-                    return _freshSeed.LockLease;
+                    return _freshSeed.LockIdentityEvidence;
                 }
 
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// O(1), exception-safe lock-liveness check for the held path: the
+        /// fresh seed's lock identity evidence, or the recovery decision's
+        /// pre-transfer raw lock lease. Never throws.
+        /// </summary>
+        internal bool IsLockLivenessIntact
+        {
+            get
+            {
+                if (IsFresh)
+                {
+                    CaptureRunLockIdentityEvidence evidence = _freshSeed.LockIdentityEvidence;
+                    return evidence != null && evidence.IsValid;
+                }
+
+                if (IsRecovery)
+                {
+                    CaptureRunLockIdentityEvidence evidence = _recoveryDecision.Snapshot.Operation.LockIdentityEvidence;
+                    return evidence != null && evidence.IsValid;
+                }
+
+                return false;
             }
         }
 
@@ -345,8 +370,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lockLease = operation.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 return false;
             }
@@ -357,7 +382,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!ReferenceEquals(lockLease, operation.LockLease))
+            if (!ReferenceEquals(lockIdentityEvidence, operation.LockIdentityEvidence))
             {
                 return false;
             }
@@ -412,8 +437,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lockLease = freshSeed.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = freshSeed.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 return false;
             }
@@ -432,7 +457,9 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!session.OwnsLockLease(lockLease))
+            if (!session.IsValid
+                || session.TestRunId != lockIdentityEvidence.TestRunId
+                || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
             {
                 return false;
             }
@@ -496,7 +523,7 @@ namespace Zantetsu.Observability
         internal sealed class ValidationToken
         {
             private readonly PngJsonCapturePublicationArtifactInspectionAuthority _authority;
-            private readonly CaptureRunLockLease _lease;
+            private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
             private readonly PngJsonCapturePublicationPlan _plan;
             private readonly CaptureRunPublicationPathSet _publicationPaths;
             private readonly CaptureRunRootLayout _rootLayout;
@@ -554,14 +581,14 @@ namespace Zantetsu.Observability
 
             private ValidationToken(
                 PngJsonCapturePublicationArtifactInspectionAuthority authority,
-                CaptureRunLockLease lease,
+                CaptureRunLockIdentityEvidence lockIdentityEvidence,
                 PngJsonCapturePublicationPlan plan,
                 CaptureRunPublicationPathSet publicationPaths,
                 CaptureRunRootLayout rootLayout,
                 EntrySnapshot[] entries)
             {
                 _authority = authority;
-                _lease = lease;
+                _lockIdentityEvidence = lockIdentityEvidence;
                 _plan = plan;
                 _publicationPaths = publicationPaths;
                 _rootLayout = rootLayout;
@@ -592,12 +619,12 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_lease == null || _entries == null)
+                if (_lockIdentityEvidence == null || _entries == null)
                 {
                     return false;
                 }
 
-                if (!_lease.IsCreated)
+                if (!_lockIdentityEvidence.IsValid)
                 {
                     return false;
                 }
@@ -606,7 +633,7 @@ namespace Zantetsu.Observability
                 {
                     PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
 
-                    return ReferenceEquals(authority.LockLease, _lease)
+                    return ReferenceEquals(authority.LockIdentityEvidence, _lockIdentityEvidence)
                         && ReferenceEquals(plan, _plan)
                         && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
                         && ReferenceEquals(authority.RootLayout, _rootLayout)
@@ -657,7 +684,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_lease == null || !_lease.IsCreated)
+                if (_lockIdentityEvidence == null || !_lockIdentityEvidence.IsValid)
                 {
                     return false;
                 }
@@ -668,7 +695,7 @@ namespace Zantetsu.Observability
                     return ReferenceEquals(plan, _plan)
                         && ReferenceEquals(authority.PublicationPaths, _publicationPaths)
                         && ReferenceEquals(authority.RootLayout, _rootLayout)
-                        && ReferenceEquals(authority.LockLease, _lease)
+                        && ReferenceEquals(authority.LockIdentityEvidence, _lockIdentityEvidence)
                         && entries[entryIndex].Matches(plan.GetEntry(entryIndex));
                 }
                 catch (Exception)
@@ -696,7 +723,7 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationPlan plan = authority.AuthoritativePlan;
                 CaptureRunPublicationPathSet publicationPaths = authority.PublicationPaths;
                 CaptureRunRootLayout rootLayout = authority.RootLayout;
-                CaptureRunLockLease lease = authority.LockLease;
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = authority.LockIdentityEvidence;
 
                 int count = plan.EntryCount;
                 EntrySnapshot[] entries = new EntrySnapshot[count];
@@ -705,7 +732,7 @@ namespace Zantetsu.Observability
                     entries[i] = new EntrySnapshot(plan.GetEntry(i));
                 }
 
-                token = new ValidationToken(authority, lease, plan, publicationPaths, rootLayout, entries);
+                token = new ValidationToken(authority, lockIdentityEvidence, plan, publicationPaths, rootLayout, entries);
                 return true;
             }
 

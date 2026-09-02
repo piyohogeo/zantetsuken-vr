@@ -73,7 +73,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _actionPlan.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _actionPlan.Decision.Snapshot.Operation.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _actionPlan.Decision.Snapshot.Operation.LockIdentityEvidence;
 
         internal long TestRunId => _actionPlan.TestRunId;
 

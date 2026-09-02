@@ -103,7 +103,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _executionResult.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _executionResult.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _executionResult.LockIdentityEvidence;
 
         internal long TestRunId => _executionResult.TestRunId;
 
@@ -174,10 +174,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lockLease = operation.LockLease;
-            if (lockLease == null
-                || !ReferenceEquals(lockLease, batch.LockLease)
-                || !ReferenceEquals(lockLease, executionResult.LockLease))
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
+            if (lockIdentityEvidence == null
+                || !ReferenceEquals(lockIdentityEvidence, batch.LockIdentityEvidence)
+                || !ReferenceEquals(lockIdentityEvidence, executionResult.LockIdentityEvidence))
             {
                 return false;
             }

@@ -92,6 +92,16 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunLockLease(pathSet, first, second);
         }
 
+        private static CaptureRunLockIdentityEvidence MakeIdentity(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out _, out _);
+            owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            return CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+        }
+
         private static CaptureRunInitializationMarker MakeInitMarker(CaptureRunRootRole role, long testRunId = 1)
         {
             return new CaptureRunInitializationMarker(testRunId, InitId, role, StagingHash, FinalHash);
@@ -422,34 +432,37 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Operation_NullRootLayout_Rejected()
         {
-            CaptureRunLockLease lease = MakeLease(MakeLayout(), null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(MakeLayout(), null, out owner);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunInitializationRecoveryInspectionOperation(null, lease, 4));
+                () => new CaptureRunInitializationRecoveryInspectionOperation(null, identity, 4));
 
             Assert.That(ex.ParamName, Is.EqualTo("rootLayout"));
+            owner.Dispose();
         }
 
         [Test]
-        public void Operation_NullLease_Rejected()
+        public void Operation_NullIdentity_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => new CaptureRunInitializationRecoveryInspectionOperation(MakeLayout(), null, 4));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
         }
 
         [Test]
-        public void Operation_DisposedLease_Rejected()
+        public void Operation_DisposedOwner_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            lease.Dispose();
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            owner.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4));
+                () => new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
         }
 
         [Test]
@@ -457,66 +470,76 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layoutA = MakeLayout(1);
             CaptureRunRootLayout layoutB = MakeLayout(2);
-            CaptureRunLockLease lease = MakeLease(layoutA, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layoutA, null, out owner);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunInitializationRecoveryInspectionOperation(layoutB, lease, 4));
+                () => new CaptureRunInitializationRecoveryInspectionOperation(layoutB, identity, 4));
 
-            Assert.That(ex.ParamName, Is.EqualTo("lockLease"));
+            Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
+            owner.Dispose();
         }
 
         [Test]
         public void Operation_NonPositiveMaxEntryCount_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
 
             foreach (int count in new[] { 0, -1, int.MinValue })
             {
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, count));
+                    () => new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, count));
 
                 Assert.That(ex.ParamName, Is.EqualTo("maximumRootEntryCount"));
             }
+            owner.Dispose();
         }
 
         [Test]
         public void Operation_MaxEntryCountBoundary_Accepted()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
 
             CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(
-                layout, lease, CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount);
+                layout, identity, CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount);
 
             Assert.That(operation.IsValid, Is.True);
             Assert.That(operation.MaximumRootEntryCount, Is.EqualTo(CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount));
             Assert.That(operation.ProbeCount, Is.EqualTo(CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount + 1));
+            owner.Dispose();
         }
 
         [Test]
         public void Operation_MaxEntryCountPlusOne_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
 
             ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
                 () => new CaptureRunInitializationRecoveryInspectionOperation(
-                    layout, lease, CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount + 1));
+                    layout, identity, CaptureRunInitializationRecoveryInspectionOperation.MaximumAllowedRootEntryCount + 1));
 
             Assert.That(ex.ParamName, Is.EqualTo("maximumRootEntryCount"));
+            owner.Dispose();
         }
 
         [Test]
         public void Operation_IntMaxValue_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
 
             ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                () => new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, int.MaxValue));
+                () => new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, int.MaxValue));
 
             Assert.That(ex.ParamName, Is.EqualTo("maximumRootEntryCount"));
+            owner.Dispose();
         }
 
         [Test]
@@ -533,32 +556,35 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Operation_IsValid_BeforeAndAfterLeaseRelease()
+        public void Operation_IsValid_BeforeAndAfterOwnerRelease()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             Assert.That(operation.IsValid, Is.True);
 
-            lease.Dispose();
+            owner.Dispose();
 
             Assert.That(operation.IsValid, Is.False);
         }
 
         [Test]
-        public void Operation_HoldsByReference_And_DoesNotDisposeLease()
+        public void Operation_HoldsByReference_And_DoesNotDisposeOwner()
         {
             List<string> disposeLog = new List<string>();
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, disposeLog, out owner);
 
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             Assert.That(operation.RootLayout, Is.SameAs(layout));
-            Assert.That(operation.LockLease, Is.SameAs(lease));
+            Assert.That(operation.LockIdentityEvidence, Is.SameAs(identity));
             Assert.That(operation.MaximumRootEntryCount, Is.EqualTo(4));
-            Assert.That(disposeLog, Is.Empty, "The operation must not dispose the lease.");
+            Assert.That(disposeLog, Is.Empty, "The operation must not dispose the owner.");
+            owner.Dispose();
         }
 
         [Test]
@@ -579,19 +605,19 @@ namespace Zantetsu.Core.Tests
             Assert.That(fields.Length, Is.EqualTo(3));
 
             int layoutFields = 0;
-            int leaseFields = 0;
+            int identityFields = 0;
             int intFields = 0;
             foreach (FieldInfo field in fields)
             {
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
                 if (field.FieldType == typeof(CaptureRunRootLayout)) layoutFields++;
-                else if (field.FieldType == typeof(CaptureRunLockLease)) leaseFields++;
+                else if (field.FieldType == typeof(CaptureRunLockIdentityEvidence)) identityFields++;
                 else if (field.FieldType == typeof(int)) intFields++;
                 else Assert.Fail(field.Name + " has unexpected type " + field.FieldType.Name + ".");
             }
 
             Assert.That(layoutFields, Is.EqualTo(1));
-            Assert.That(leaseFields, Is.EqualTo(1));
+            Assert.That(identityFields, Is.EqualTo(1));
             Assert.That(intFields, Is.EqualTo(1));
         }
 
@@ -601,8 +627,9 @@ namespace Zantetsu.Core.Tests
         public void Snapshot_NullArgs_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(() => new CaptureRunInitializationRecoveryInspectionSnapshot(
                 null, operation, MakeStagingObservation(), MakeFinalObservation()));
@@ -619,6 +646,7 @@ namespace Zantetsu.Core.Tests
             ArgumentNullException ex4 = Assert.Throws<ArgumentNullException>(() => new CaptureRunInitializationRecoveryInspectionSnapshot(
                 new FakeInspector(), operation, MakeStagingObservation(), null));
             Assert.That(ex4.ParamName, Is.EqualTo("final"));
+            owner.Dispose();
         }
 
         [Test]
@@ -637,13 +665,15 @@ namespace Zantetsu.Core.Tests
         public void Snapshot_RoleSwap_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() => new CaptureRunInitializationRecoveryInspectionSnapshot(
                 new FakeInspector(), operation, MakeFinalObservation(), MakeStagingObservation()));
 
             Assert.That(ex.ParamName, Is.EqualTo("staging"));
+            owner.Dispose();
         }
 
         [Test]
@@ -651,8 +681,9 @@ namespace Zantetsu.Core.Tests
         {
             FakeInspector inspector = new FakeInspector();
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             CaptureRunInitializationRootObservation staging = MakeStagingObservation();
             CaptureRunInitializationRootObservation final = MakeFinalObservation();
 
@@ -663,6 +694,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(snapshot.Staging, Is.SameAs(staging));
             Assert.That(snapshot.Final, Is.SameAs(final));
             Assert.That(snapshot.IsValid, Is.True);
+            owner.Dispose();
         }
 
         [Test]
@@ -678,21 +710,24 @@ namespace Zantetsu.Core.Tests
         public void Snapshot_ForgedInconsistentStaging_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() => new CaptureRunInitializationRecoveryInspectionSnapshot(
                 new FakeInspector(), operation, MakeForgedInconsistentStaging(), MakeFinalObservation()));
 
             Assert.That(ex.ParamName, Is.EqualTo("staging"));
+            owner.Dispose();
         }
 
         [Test]
         public void Snapshot_IsValid_False_WhenForgedObservationInconsistent()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = (CaptureRunInitializationRecoveryInspectionSnapshot)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationRecoveryInspectionSnapshot));
@@ -702,6 +737,7 @@ namespace Zantetsu.Core.Tests
             SetField(snapshot, "_final", MakeFinalObservation());
 
             Assert.That(snapshot.IsValid, Is.False);
+            owner.Dispose();
         }
 
         [Test]
@@ -730,18 +766,20 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Snapshot_DoesNotDisposeLease()
+        public void Snapshot_DoesNotDisposeOwner()
         {
             List<string> disposeLog = new List<string>();
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, disposeLog, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = new CaptureRunInitializationRecoveryInspectionSnapshot(
                 new FakeInspector(), operation, MakeStagingObservation(), MakeFinalObservation());
 
-            Assert.That(disposeLog, Is.Empty, "The snapshot must not dispose the lease.");
-            Assert.That(snapshot.Operation.LockLease, Is.SameAs(lease));
+            Assert.That(disposeLog, Is.Empty, "The snapshot must not dispose the owner.");
+            Assert.That(snapshot.Operation.LockIdentityEvidence, Is.SameAs(identity));
+            owner.Dispose();
         }
 
         // ---- Inspector boundary ----
@@ -751,8 +789,9 @@ namespace Zantetsu.Core.Tests
         {
             FakeInspector inspector = new FakeInspector();
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = inspector.Inspect(operation);
 
@@ -761,6 +800,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(snapshot.Operation, Is.SameAs(operation));
             Assert.That(inspector.LastOperation, Is.SameAs(operation));
             Assert.That(inspector.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         [Test]
@@ -768,14 +808,16 @@ namespace Zantetsu.Core.Tests
         {
             FakeInspector inspector = new FakeInspector { ExceptionToThrow = new IOException("boom") };
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            CaptureRunLockIdentityEvidence identity = MakeIdentity(layout, null, out owner);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
 
             IOException ex = Assert.Throws<IOException>(() => inspector.Inspect(operation));
 
             Assert.That(ex.Message, Is.EqualTo("boom"));
             Assert.That(inspector.CallCount, Is.EqualTo(1));
             Assert.That(inspector.LastOperation, Is.SameAs(operation));
+            owner.Dispose();
         }
 
         // ---- Shape ----

@@ -338,13 +338,19 @@ namespace Zantetsu.Core.Tests
             Assert.That(freeze, Does.Contain("evidence.BeginDrain()"));
             Assert.That(freeze, Does.Contain("evidence.TryJoin()"));
             Assert.That(freeze, Does.Contain("evidence.IsFullyDrained"));
-            Assert.That(freeze, Does.Contain("runSession.IsCreated"));
+            Assert.That(freeze, Does.Contain("CaptureRunLockIdentityEvidence lockIdentityEvidence"));
+            Assert.That(freeze, Does.Contain("runSession.IsValid"));
+            Assert.That(freeze, Does.Contain("lockIdentityEvidence.IsValid"));
             Assert.That(freeze, Does.Contain("new CaptureEvidenceRunFreezeReceipt"));
+            Assert.That(freeze, Does.Not.Contain("runSession.IsCreated"));
+            Assert.That(freeze, Does.Not.Contain(".LockLease"));
+            Assert.That(freeze, Does.Not.Contain("OwnsLockLease"));
 
             string freezeReceipt = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunFreezeReceipt.cs"));
             Assert.That(freezeReceipt, Does.Contain("artifacts.ReservedArtifactCount != 0"));
-            Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(_runSession.TestRunId)"));
+            Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(runSession.TestRunId)"));
+            Assert.That(freezeReceipt, Does.Not.Contain(".LockLease"));
 
             string recoveryReceipt = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunRecoveryInspectionReceipt.cs"));

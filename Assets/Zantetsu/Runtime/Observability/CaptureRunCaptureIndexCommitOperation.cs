@@ -152,10 +152,10 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Artifact inspection snapshot must hold an operation.", nameof(actionPlan));
             }
 
-            CaptureRunLockLease lease = operation.LockLease;
-            if (lease == null || !lease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Artifact inspection operation must hold a created lock lease.", nameof(actionPlan));
+                throw new ArgumentException("Artifact inspection operation must hold valid lock identity evidence.", nameof(actionPlan));
             }
 
             CaptureRunRootLayout rootLayout = operation.RootLayout;
@@ -440,8 +440,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lease = operation.LockLease;
-            if (lease == null || !lease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 return false;
             }

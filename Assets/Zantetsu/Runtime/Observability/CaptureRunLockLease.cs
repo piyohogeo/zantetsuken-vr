@@ -80,6 +80,8 @@ namespace Zantetsu.Observability
 
         internal bool IsCreated => !_disposed;
 
+        internal bool IsFullyReleased => _firstReleased && _secondReleased;
+
         public void Dispose()
         {
             if (_disposed && _firstReleased && _secondReleased)

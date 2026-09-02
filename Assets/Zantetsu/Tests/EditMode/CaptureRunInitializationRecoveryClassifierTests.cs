@@ -31,6 +31,20 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerObservationStatus Invalid => CaptureRunMarkerObservationStatus.Invalid;
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
@@ -148,15 +162,26 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunLockLease(pathSet, first, second);
         }
 
-        private static CaptureRunInitializationRecoveryInspectionSnapshot MakeSnapshot(
+        private CaptureRunInitializationSessionOwnershipLease MakeOwner(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            return owner;
+        }
+
+        private CaptureRunInitializationRecoveryInspectionSnapshot MakeSnapshot(
             CaptureRunInitializationRootObservation staging,
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null,
             List<string> disposeLog = null)
         {
             layout = layout ?? MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
-            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwner(layout, disposeLog);
+            CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+            CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             return new CaptureRunInitializationRecoveryInspectionSnapshot(new FakeInspector(), operation, staging, final);
         }
 

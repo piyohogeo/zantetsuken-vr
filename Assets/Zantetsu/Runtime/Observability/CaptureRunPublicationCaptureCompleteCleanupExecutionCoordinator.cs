@@ -125,7 +125,7 @@ namespace Zantetsu.Observability
                 || !string.Equals(receipt.TargetPath, operation.TargetPath, StringComparison.Ordinal)
                 || !ReferenceEquals(receipt.ActionPlan, operation.ActionPlan)
                 || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || !ReferenceEquals(receipt.LockLease, operation.LockLease)
+                || !ReferenceEquals(receipt.LockIdentityEvidence, operation.LockIdentityEvidence)
                 || receipt.TestRunId != operation.TestRunId
                 || !string.Equals(receipt.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal))
             {

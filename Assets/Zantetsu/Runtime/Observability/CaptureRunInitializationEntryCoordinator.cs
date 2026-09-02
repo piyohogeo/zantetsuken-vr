@@ -6,8 +6,9 @@ namespace Zantetsu.Observability
     /// <summary>
     /// The regular entry point for opening a Capture Run: acquire the two OS
     /// locks, inspect from scratch, route the recovery result into a session or
-    /// a caller-held outcome, and hand back an outcome that always owns the
-    /// acquired lease.
+    /// a caller-held outcome, and return a non-owning open outcome plus the
+    /// ownership lease that owns the acquired lock via separate out
+    /// parameters.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -19,13 +20,14 @@ namespace Zantetsu.Observability
     /// performs no filesystem work.
     /// </para>
     /// <para>
-    /// Lock contention returns false with no outcome and no inspection. After
-    /// the locks are acquired, any failure before the outcome is complete
-    /// releases the lease in reverse order, rethrows the original exception
-    /// with its original stack, and reports a cleanup failure as an
-    /// <see cref="AggregateException"/> with the original exception first. The
-    /// outcome construction is the last success operation; no validation
-    /// follows the ownership transfer.
+    /// Lock contention returns false with no outcome, no owner, and no
+    /// inspection. After the locks are acquired, any failure before both out
+    /// parameters are assigned releases the ownership lease in reverse order,
+    /// rethrows the original exception with its original stack, and reports a
+    /// cleanup failure as an <see cref="AggregateException"/> with the
+    /// original exception first. The outcome and ownership lease out
+    /// parameters are assigned only after every validation succeeds, so a
+    /// thrown or false call never exposes a partially built owner.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationEntryCoordinator
@@ -68,9 +70,11 @@ namespace Zantetsu.Observability
         internal bool TryOpen(
             CaptureRunRootLayout rootLayout,
             int maximumRootEntryCount,
-            out CaptureRunInitializationOpenOutcome outcome)
+            out CaptureRunInitializationOpenOutcome outcome,
+            out CaptureRunInitializationSessionOwnershipLease ownershipLease)
         {
             outcome = null;
+            ownershipLease = null;
 
             if (rootLayout == null)
             {
@@ -94,6 +98,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            CaptureRunInitializationSessionOwnershipLease heldOwnershipLease = null;
+
             try
             {
                 if (lease == null)
@@ -111,7 +117,11 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Lock lease path set does not match the requested path set.");
                 }
 
-                CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(rootLayout, lease, maximumRootEntryCount);
+                heldOwnershipLease = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+                CaptureRunLockIdentityEvidence lockIdentityEvidence =
+                    CaptureRunLockIdentityEvidence.Create(heldOwnershipLease, heldOwnershipLease.LockPathSet);
+
+                CaptureRunInitializationRecoveryInspectionOperation operation = new CaptureRunInitializationRecoveryInspectionOperation(rootLayout, lockIdentityEvidence, maximumRootEntryCount);
                 CaptureRunInitializationRecoveryOrchestrationResult result = _orchestrationCoordinator.Execute(operation);
 
                 if (result == null)
@@ -129,9 +139,9 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Orchestration result operation does not match the inspection.");
                 }
 
-                if (!ReferenceEquals(result.LockLease, lease))
+                if (!ReferenceEquals(result.LockIdentityEvidence, lockIdentityEvidence))
                 {
-                    throw new InvalidOperationException("Orchestration result lease does not match the held lease.");
+                    throw new InvalidOperationException("Orchestration result identity evidence does not match the held evidence.");
                 }
 
                 if (!ReferenceEquals(result.RootLayout, rootLayout))
@@ -139,26 +149,33 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Orchestration result root layout does not match the input.");
                 }
 
-                CaptureRunInitializationOpenOutcome created = new CaptureRunInitializationOpenOutcome(result, ref lease, _sessionRoutingCoordinator);
+                CaptureRunInitializationSessionIssue issue;
+                bool sessionReady = _sessionRoutingCoordinator.TryContinueToSession(result, heldOwnershipLease, lockIdentityEvidence, out issue);
 
-                lease = null;
+                CaptureRunInitializationOpenOutcome created = new CaptureRunInitializationOpenOutcome(
+                    result,
+                    sessionReady ? issue : null,
+                    lockIdentityEvidence);
+
                 outcome = created;
+                ownershipLease = heldOwnershipLease;
+                heldOwnershipLease = null;
                 return true;
             }
             catch (Exception ex)
             {
                 ExceptionDispatchInfo captured = ExceptionDispatchInfo.Capture(ex);
 
-                if (lease != null)
+                if (heldOwnershipLease != null)
                 {
                     try
                     {
-                        lease.Dispose();
+                        heldOwnershipLease.Dispose();
                     }
                     catch (Exception cleanupEx)
                     {
                         throw new AggregateException(
-                            "Opening the Capture Run failed and lock lease cleanup also failed.",
+                            "Opening the Capture Run failed and lock ownership release also failed.",
                             new Exception[] { ex, cleanupEx });
                     }
                 }

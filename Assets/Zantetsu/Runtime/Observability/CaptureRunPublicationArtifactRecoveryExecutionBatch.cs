@@ -102,7 +102,7 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _actionPlan.RunInitializationId;
 
-        internal CaptureRunLockLease LockLease => _actionPlan.Decision.Snapshot.Operation.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _actionPlan.Decision.Snapshot.Operation.LockIdentityEvidence;
 
         internal int Count => _preparedSteps.Length;
 

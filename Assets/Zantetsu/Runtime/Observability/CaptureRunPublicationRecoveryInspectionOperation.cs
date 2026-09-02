@@ -50,9 +50,9 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(openOutcome));
             }
 
-            if (!openOutcome.IsCreated || !openOutcome.IsValid)
+            if (!openOutcome.IsValid)
             {
-                throw new ArgumentException("Open outcome must be created and valid.", nameof(openOutcome));
+                throw new ArgumentException("Open outcome must be valid.", nameof(openOutcome));
             }
 
             if (openOutcome.Status != CaptureRunInitializationOpenStatus.PublicationRecoveryRequired)
@@ -71,15 +71,15 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Open outcome must hold an orchestration result.", nameof(openOutcome));
             }
 
-            CaptureRunLockLease lockLease = orchestrationResult.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = orchestrationResult.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Open outcome must hold a created lock lease.", nameof(openOutcome));
+                throw new ArgumentException("Open outcome must hold valid lock identity evidence.", nameof(openOutcome));
             }
 
-            if (openOutcome.LockPathSet == null || !ReferenceEquals(lockLease.PathSet, openOutcome.LockPathSet))
+            if (openOutcome.LockPathSet == null || !ReferenceEquals(lockIdentityEvidence.LockPathSet, openOutcome.LockPathSet))
             {
-                throw new ArgumentException("Open outcome lock lease must match its path set.", nameof(openOutcome));
+                throw new ArgumentException("Open outcome lock identity evidence must match its path set.", nameof(openOutcome));
             }
 
             CaptureRunRootLayout rootLayout = openOutcome.RootLayout;
@@ -128,7 +128,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _publicationPaths.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _openOutcome.OrchestrationResult.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _openOutcome.OrchestrationResult.LockIdentityEvidence;
 
         internal long TestRunId => _openOutcome.TestRunId;
 
@@ -150,7 +150,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!_openOutcome.IsCreated || !_openOutcome.IsValid)
+                if (!_openOutcome.IsValid)
                 {
                     return false;
                 }
@@ -171,8 +171,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunLockLease lockLease = orchestrationResult.LockLease;
-                if (lockLease == null || !lockLease.IsCreated || !ReferenceEquals(lockLease.PathSet, _openOutcome.LockPathSet))
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = orchestrationResult.LockIdentityEvidence;
+                if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid || !ReferenceEquals(lockIdentityEvidence.LockPathSet, _openOutcome.LockPathSet))
                 {
                     return false;
                 }

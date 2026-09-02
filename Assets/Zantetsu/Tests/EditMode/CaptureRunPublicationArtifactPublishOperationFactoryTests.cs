@@ -50,6 +50,20 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunPublicationArtifactRecoveryAction PublishArtifact => CaptureRunPublicationArtifactRecoveryAction.PublishArtifact;
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
@@ -155,16 +169,32 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationOpenOutcome ForgeOutcome(
             CaptureRunInitializationRecoveryOrchestrationResult result,
-            CaptureRunLockLease lease)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
             CaptureRunInitializationOpenOutcome outcome = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationOpenOutcome));
             SetField(outcome, "_orchestrationResult", result);
-            SetField(outcome, "_lockLease", lease);
+            SetField(outcome, "_sessionIssue", null);
+            SetField(outcome, "_lockIdentityEvidence", lockIdentityEvidence);
             return outcome;
         }
 
-        private static CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(List<string> disposeLog = null)
+        private CaptureRunInitializationSessionOwnershipLease MakeOwner(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            out CaptureRunLockIdentityEvidence identity)
+        {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+            return owner;
+        }
+
+        private CaptureRunInitializationOpenOutcome MakeOutcome(
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner,
+            out CaptureRunLockIdentityEvidence identity)
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
@@ -178,11 +208,24 @@ namespace Zantetsu.Core.Tests
                 new FakeCleanupBackend(), new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator = new CaptureRunInitializationRecoveryOrchestrationCoordinator(inspector, execution);
 
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
-            CaptureRunInitializationRecoveryInspectionOperation inspection = new CaptureRunInitializationRecoveryInspectionOperation(layout, lease, 4);
+            owner = MakeOwner(layout, disposeLog, out identity);
+
+            CaptureRunInitializationRecoveryInspectionOperation inspection = new CaptureRunInitializationRecoveryInspectionOperation(layout, identity, 4);
             CaptureRunInitializationRecoveryOrchestrationResult result = orchestrator.Execute(inspection);
 
-            return ForgeOutcome(result, lease);
+            return ForgeOutcome(result, identity);
+        }
+
+        private CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(List<string> disposeLog = null)
+        {
+            return MakeOutcome(disposeLog, out _, out _);
+        }
+
+        private CaptureRunInitializationOpenOutcome MakePublicationRecoveryOutcome(
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeOutcome(disposeLog, out owner, out _);
         }
 
         private static CaptureRunPublicationRecoveryInspectionSnapshot MakeRecoverySnapshot(
@@ -205,13 +248,36 @@ namespace Zantetsu.Core.Tests
                 false, false, false, false);
         }
 
-        private static CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
             List<string> disposeLog = null,
             bool indexAuthoritative = false,
             PngJsonCapturePublicationPlan plan = null,
             int maximumEntryCount = 4)
         {
-            CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog);
+            return MakeOperation(disposeLog, indexAuthoritative, plan, maximumEntryCount, out _);
+        }
+
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeOperation(null, false, null, 4, out owner);
+        }
+
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeOperation(disposeLog, false, null, 4, out owner);
+        }
+
+        private CaptureRunPublicationArtifactInspectionOperation MakeOperation(
+            List<string> disposeLog,
+            bool indexAuthoritative,
+            PngJsonCapturePublicationPlan plan,
+            int maximumEntryCount,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            CaptureRunInitializationOpenOutcome outcome = MakePublicationRecoveryOutcome(disposeLog, out owner);
             CaptureRunPublicationRecoveryInspectionOperation recoveryOperation = new CaptureRunPublicationRecoveryInspectionOperation(
                 outcome, 1000, maximumEntryCount, 64);
             FakePublicationInspector inspector = new FakePublicationInspector();
@@ -305,11 +371,19 @@ namespace Zantetsu.Core.Tests
                     MakeArtifactSnapshot(new FakeArtifactInspector(), operation, traceStatus, traceCount, entries)));
         }
 
-        private static CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishPngPlan(
+        private CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishPngPlan(
             out CaptureRunPublicationArtifactInspectionOperation operation,
             out CaptureRunPublicationArtifactEntryObservation observation)
         {
-            operation = MakeOperation();
+            return BuildPublishPngPlan(out operation, out observation, out _);
+        }
+
+        private CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishPngPlan(
+            out CaptureRunPublicationArtifactInspectionOperation operation,
+            out CaptureRunPublicationArtifactEntryObservation observation,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            operation = MakeOperation(out owner);
             observation = MakeEntryObservation(operation, operation.GetArtifactPaths(0),
                 stagingPngStatus: EvMatchesExpected, stagingPngCount: PngBytes,
                 stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: SidecarBytes,
@@ -318,11 +392,19 @@ namespace Zantetsu.Core.Tests
             return BuildPlan(operation, new[] { observation });
         }
 
-        private static CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishSidecarPlan(
+        private CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishSidecarPlan(
             out CaptureRunPublicationArtifactInspectionOperation operation,
             out CaptureRunPublicationArtifactEntryObservation observation)
         {
-            operation = MakeOperation();
+            return BuildPublishSidecarPlan(out operation, out observation, out _);
+        }
+
+        private CaptureRunPublicationArtifactRecoveryActionPlan BuildPublishSidecarPlan(
+            out CaptureRunPublicationArtifactInspectionOperation operation,
+            out CaptureRunPublicationArtifactEntryObservation observation,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            operation = MakeOperation(out owner);
             observation = MakeEntryObservation(operation, operation.GetArtifactPaths(0),
                 stagingPngStatus: EvMatchesExpected, stagingPngCount: PngBytes,
                 stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: SidecarBytes,
@@ -669,10 +751,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Factory_StaleToken_Rejected()
         {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _);
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(
+                out CaptureRunPublicationArtifactInspectionOperation operation,
+                out _,
+                out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
 
-            operation.LockLease.Dispose();
+            owner.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
                 CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
@@ -737,7 +822,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_DoesNotMutateOrDisposeInputs()
         {
             List<string> disposeLog = new List<string>();
-            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(disposeLog);
+            CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunPublicationArtifactEntryObservation observation = MakeEntryObservation(
                 operation, operation.GetArtifactPaths(0),
                 stagingPngStatus: EvMatchesExpected, stagingPngCount: PngBytes,
@@ -748,8 +833,9 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
 
-            Assert.That(disposeLog, Is.Empty, "Factory must not dispose the lease.");
-            Assert.That(operation.LockLease.IsCreated, Is.True);
+            Assert.That(disposeLog, Is.Empty, "Factory must not dispose the owner.");
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(operation.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
             Assert.That(plan.IsValid, Is.True);
             Assert.That(publish.IsValid, Is.True);
         }
@@ -795,6 +881,40 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.IsAbstract, Is.True);
             Assert.That(type.IsSealed, Is.True);
             Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
+        }
+
+        [Test]
+        public void Shape_NoLeaseExposure()
+        {
+            foreach (Type type in new[] { typeof(CaptureRunPublicationArtifactPublishOperation), typeof(CaptureRunPublicationArtifactPublishOperationFactory) })
+            {
+                foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    Assert.That(
+                        field.FieldType == typeof(CaptureRunLockLease)
+                        || field.FieldType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                        Is.False,
+                        type.Name + "." + field.Name + " must not hold a raw or ownership lease.");
+                }
+
+                foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    Assert.That(
+                        prop.PropertyType == typeof(CaptureRunLockLease)
+                        || prop.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                        Is.False,
+                        type.Name + "." + prop.Name + " must not expose a raw or ownership lease.");
+                }
+
+                foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    Assert.That(
+                        method.ReturnType == typeof(CaptureRunLockLease)
+                        || method.ReturnType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                        Is.False,
+                        type.Name + "." + method.Name + " must not return a raw or ownership lease.");
+                }
+            }
         }
 
         // ---- Linearity / source ----

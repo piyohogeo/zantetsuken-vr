@@ -5,8 +5,9 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Routes a completed recovery orchestration result by its terminal status
     /// into either a Run session (start-fresh or initialization-ready) or a
-    /// caller-held false outcome (publication recovery or collision), keeping
-    /// lease ownership with the caller until a session is actually produced.
+    /// caller-held false outcome (publication recovery or collision),
+    /// referencing the caller's exact ownership lease and identity evidence
+    /// without transferring or releasing them.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -17,11 +18,10 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// All pre-validation happens before any ID issuance, evidence creation, or
-    /// session construction. On the start-fresh and initialization-ready paths
-    /// the ownership transfer into the returned session is the linearization
-    /// point; a false result leaves the caller's lease reference and ownership
-    /// untouched. Exceptions propagate unchanged and the lease is never
-    /// released here.
+    /// session issuance. On the start-fresh and initialization-ready paths the
+    /// issued issue references the caller's exact ownership lease and identity
+    /// evidence; a false result leaves them untouched and they are never
+    /// released here. Exceptions propagate unchanged.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationRecoverySessionRoutingCoordinator
@@ -43,19 +43,25 @@ namespace Zantetsu.Observability
 
         internal bool TryContinueToSession(
             CaptureRunInitializationRecoveryOrchestrationResult recoveryResult,
-            ref CaptureRunLockLease lockLease,
-            out CaptureRunInitializationSession session)
+            CaptureRunInitializationSessionOwnershipLease ownershipLease,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence,
+            out CaptureRunInitializationSessionIssue issue)
         {
-            session = null;
+            issue = null;
 
             if (recoveryResult == null)
             {
                 throw new ArgumentNullException(nameof(recoveryResult));
             }
 
-            if (lockLease == null)
+            if (ownershipLease == null)
             {
-                throw new ArgumentNullException(nameof(lockLease));
+                throw new ArgumentNullException(nameof(ownershipLease));
+            }
+
+            if (lockIdentityEvidence == null)
+            {
+                throw new ArgumentNullException(nameof(lockIdentityEvidence));
             }
 
             if (!recoveryResult.IsValid)
@@ -63,30 +69,40 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Recovery orchestration result must be valid.", nameof(recoveryResult));
             }
 
-            if (!lockLease.IsCreated)
+            if (!ownershipLease.IsCreated)
             {
-                throw new ArgumentException("Lock lease must be created.", nameof(lockLease));
+                throw new ArgumentException("Ownership lease must be live.", nameof(ownershipLease));
             }
 
-            if (!ReferenceEquals(recoveryResult.LockLease, lockLease))
+            if (!lockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Recovery result lease must be the lease being routed.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence must be valid.", nameof(lockIdentityEvidence));
             }
 
-            CaptureRunLockPathSet pathSet = lockLease.PathSet;
+            if (!lockIdentityEvidence.IsIssuedFor(ownershipLease))
+            {
+                throw new ArgumentException("Lock identity evidence must be issued for the exact ownership lease.", nameof(lockIdentityEvidence));
+            }
+
+            if (!ReferenceEquals(recoveryResult.LockIdentityEvidence, lockIdentityEvidence))
+            {
+                throw new ArgumentException("Recovery result identity evidence must be the evidence being routed.", nameof(lockIdentityEvidence));
+            }
+
+            CaptureRunLockPathSet pathSet = lockIdentityEvidence.LockPathSet;
             if (pathSet == null)
             {
-                throw new ArgumentException("Lock lease must hold a path set.", nameof(lockLease));
+                throw new ArgumentException("Lock identity evidence must hold a path set.", nameof(lockIdentityEvidence));
             }
 
             if (!ReferenceEquals(pathSet.RootLayout, recoveryResult.RootLayout))
             {
-                throw new ArgumentException("Lock lease and recovery result must share the same root layout.", nameof(recoveryResult));
+                throw new ArgumentException("Lock identity evidence and recovery result must share the same root layout.", nameof(recoveryResult));
             }
 
             if (pathSet.RootLayout.TestRunId != recoveryResult.TestRunId)
             {
-                throw new ArgumentException("Lock lease and recovery result must share the same test run ID.", nameof(recoveryResult));
+                throw new ArgumentException("Lock identity evidence and recovery result must share the same test run ID.", nameof(recoveryResult));
             }
 
             if (recoveryResult.Status != CaptureRunInitializationRecoveryExecutionStatus.StartFreshRequired
@@ -106,7 +122,7 @@ namespace Zantetsu.Observability
                         throw new ArgumentException("StartFreshRequired status must carry a start-fresh disposition.", nameof(recoveryResult));
                     }
 
-                    session = _startFreshCoordinator.Continue(recoveryResult, ref lockLease);
+                    issue = _startFreshCoordinator.Continue(recoveryResult, ownershipLease, lockIdentityEvidence);
                     return true;
 
                 case CaptureRunInitializationRecoveryExecutionStatus.InitializationReady:
@@ -118,7 +134,7 @@ namespace Zantetsu.Observability
                     }
 
                     CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(recoveryResult);
-                    session = CaptureRunInitializationSessionFactory.Create(ref lockLease, evidence);
+                    issue = CaptureRunInitializationSessionFactory.Create(ownershipLease, lockIdentityEvidence, evidence);
                     return true;
 
                 case CaptureRunInitializationRecoveryExecutionStatus.PublicationRecoveryRequired:

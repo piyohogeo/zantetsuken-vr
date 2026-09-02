@@ -91,8 +91,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunLockLease lease = authority.LockLease;
-                if (lease == null || !lease.IsCreated)
+                if (!authority.IsLockLivenessIntact)
                 {
                     return false;
                 }

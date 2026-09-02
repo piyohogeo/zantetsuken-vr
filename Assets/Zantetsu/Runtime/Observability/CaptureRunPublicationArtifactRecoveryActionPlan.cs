@@ -216,8 +216,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockLease lease = operation.LockLease;
-            return lease != null && lease.IsCreated;
+            CaptureRunLockIdentityEvidence evidence = operation.LockIdentityEvidence;
+            return evidence != null && evidence.IsValid;
         }
 
         /// <summary>

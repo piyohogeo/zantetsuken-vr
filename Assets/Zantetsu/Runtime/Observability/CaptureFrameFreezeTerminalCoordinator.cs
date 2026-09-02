@@ -73,6 +73,7 @@ namespace Zantetsu.Observability
         internal bool TryCompleteEvidenceRun(
             CaptureEvidenceDraftCoordinator evidence,
             CaptureRunInitializationSession runSession,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence,
             TraceRunSealReceipt sealReceipt,
             ForcedDropFrameIdSet forcedDropFrameIds,
             in FreezeTerminalCheckpoint checkpoint,
@@ -81,12 +82,15 @@ namespace Zantetsu.Observability
             receipt = null;
             if (evidence == null) throw new ArgumentNullException(nameof(evidence));
             if (runSession == null) throw new ArgumentNullException(nameof(runSession));
-            if (!runSession.IsCreated) throw new ArgumentException("Run session must hold the OS Run lock.", nameof(runSession));
+            if (lockIdentityEvidence == null) throw new ArgumentNullException(nameof(lockIdentityEvidence));
+            if (!runSession.IsValid) throw new ArgumentException("Run session must be valid.", nameof(runSession));
+            if (!lockIdentityEvidence.IsValid) throw new ArgumentException("Run session must hold the OS Run lock.", nameof(lockIdentityEvidence));
             if (!ReferenceEquals(evidence.Drafts, _bufferBuilder.Registry))
                 throw new ArgumentException("Evidence and freeze terminal must share the draft registry.", nameof(evidence));
-            if (runSession.TestRunId != evidence.Drafts.Run.TestRunId
-                || runSession.TestRunId != _recorder.Logger.TestRunId)
-                throw new ArgumentException("Run session must match the evidence and trace run.", nameof(runSession));
+            if (lockIdentityEvidence.TestRunId != runSession.TestRunId
+                || runSession.TestRunId != evidence.Drafts.Run.TestRunId
+                || lockIdentityEvidence.TestRunId != _recorder.Logger.TestRunId)
+                throw new ArgumentException("Run session must match the evidence and trace run.", nameof(lockIdentityEvidence));
 
             evidence.BeginDrain();
             evidence.CancelQueued();
@@ -101,9 +105,9 @@ namespace Zantetsu.Observability
                 forcedDropFrameIds,
                 checkpoint,
                 true);
-            if (!IsFrozenFor(runSession.TestRunId))
+            if (!IsFrozenFor(lockIdentityEvidence.TestRunId))
                 throw new InvalidOperationException("Trace recorder did not reach Frozen.");
-            receipt = new CaptureEvidenceRunFreezeReceipt(this, evidence, runSession, buffer);
+            receipt = new CaptureEvidenceRunFreezeReceipt(this, evidence, runSession, lockIdentityEvidence, buffer);
             return true;
         }
 

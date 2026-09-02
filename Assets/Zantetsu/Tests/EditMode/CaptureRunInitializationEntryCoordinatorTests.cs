@@ -107,6 +107,13 @@ namespace Zantetsu.Core.Tests
             field.SetValue(target, value);
         }
 
+        private static T GetField<T>(object target, string fieldName)
+        {
+            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
+            return (T)field.GetValue(target);
+        }
+
         private static string LocateSource(string relativePath)
         {
             if (File.Exists(relativePath))
@@ -460,9 +467,12 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
 
-            CaptureRunInitializationOpenOutcome outcome;
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => h.Coordinator.TryOpen(null, 4, out outcome));
+            CaptureRunInitializationOpenOutcome outcome = null;
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => h.Coordinator.TryOpen(null, 4, out outcome, out owner));
             Assert.That(ex.ParamName, Is.EqualTo("rootLayout"));
+            Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(h.Backend.AcquireCount, Is.EqualTo(0));
         }
 
@@ -471,9 +481,14 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
 
-            CaptureRunInitializationOpenOutcome outcome;
-            Assert.Throws<ArgumentOutOfRangeException>(() => h.Coordinator.TryOpen(MakeLayout(), 0, out outcome));
-            Assert.Throws<ArgumentOutOfRangeException>(() => h.Coordinator.TryOpen(MakeLayout(), 1025, out outcome));
+            CaptureRunInitializationOpenOutcome outcome = null;
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            Assert.Throws<ArgumentOutOfRangeException>(() => h.Coordinator.TryOpen(MakeLayout(), 0, out outcome, out owner));
+            Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
+            Assert.Throws<ArgumentOutOfRangeException>(() => h.Coordinator.TryOpen(MakeLayout(), 1025, out outcome, out owner));
+            Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(h.Backend.AcquireCount, Is.EqualTo(0));
             Assert.That(h.Inspector.InspectCount, Is.EqualTo(0));
         }
@@ -485,10 +500,12 @@ namespace Zantetsu.Core.Tests
             h.Backend.OnAcquire = _ => false;
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner);
 
             Assert.That(success, Is.False);
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(h.Inspector.InspectCount, Is.EqualTo(0));
             Assert.That(h.IdSource.CallCount, Is.EqualTo(0));
         }
@@ -502,17 +519,22 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final), log);
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
             Assert.That(outcome, Is.Not.Null);
+            Assert.That(owner, Is.Not.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(outcome.IsValid, Is.True);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
             Assert.That(outcome.Session, Is.Not.Null);
+            Assert.That(outcome.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
             Assert.That(outcome.Session.ReadyEvidence.IsRecovery, Is.False);
             Assert.That(outcome.Session.RunInitializationId, Is.EqualTo(OtherInitId));
             Assert.That(outcome.OrchestrationResult, Is.Not.Null);
             Assert.That(h.IdSource.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         [Test]
@@ -522,13 +544,16 @@ namespace Zantetsu.Core.Tests
                 MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true), MakeAbsent(Final));
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
+            Assert.That(owner, Is.Not.Null);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
             Assert.That(outcome.Session.ReadyEvidence.IsRecovery, Is.False);
             Assert.That(outcome.Session.RunInitializationId, Is.EqualTo(OtherInitId));
             Assert.That(h.IdSource.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         [Test]
@@ -539,15 +564,18 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final));
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
+            Assert.That(owner, Is.Not.Null);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
             Assert.That(outcome.Session.ReadyEvidence.IsRecovery, Is.True);
             Assert.That(outcome.Session.ExecutionReceipt, Is.Null);
             Assert.That(outcome.Session.RecoveryOrchestrationResult, Is.SameAs(outcome.OrchestrationResult));
             Assert.That(outcome.Session.RunInitializationId, Is.EqualTo(InitId));
             Assert.That(h.IdSource.CallCount, Is.EqualTo(0), "InitializationReady must not issue a fresh ID.");
+            owner.Dispose();
         }
 
         [Test]
@@ -559,9 +587,11 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), log);
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
+            Assert.That(owner, Is.Not.Null);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
             Assert.That(outcome.Session.ReadyEvidence.IsRecovery, Is.True);
             Assert.That(h.IdSource.CallCount, Is.EqualTo(0));
@@ -569,6 +599,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.FreshWriter.CallCount, Is.EqualTo(0));
             Assert.That(log, Does.Not.Contain("Provision:"));
             Assert.That(log, Does.Not.Contain("Write:"));
+            owner.Dispose();
         }
 
         // ---- Publication / collision paths ----
@@ -586,18 +617,21 @@ namespace Zantetsu.Core.Tests
                 disposeLog);
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
             Assert.That(outcome.Session, Is.Null);
             Assert.That(outcome.LockPathSet, Is.Not.Null);
-            Assert.That(outcome.IsCreated, Is.True);
+            Assert.That(owner, Is.Not.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(h.IdSource.CallCount, Is.EqualTo(0));
 
-            outcome.Dispose();
+            owner.Dispose();
             Assert.That(disposeLog, Is.EqualTo(new[] { outcome.LockPathSet.SecondLockPath, outcome.LockPathSet.FirstLockPath }));
-            Assert.That(outcome.IsCreated, Is.False);
+            Assert.That(owner.IsCreated, Is.False);
+            Assert.That(outcome.IsValid, Is.False);
         }
 
         [Test]
@@ -610,17 +644,21 @@ namespace Zantetsu.Core.Tests
                 MakeObservation(Staging, true, Absent, null, Absent, null, hasUnknown: true), MakeAbsent(Final), log, disposeLog);
 
             CaptureRunInitializationOpenOutcome outcome;
-            bool success = h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            bool success = h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
             Assert.That(success, Is.True);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.RunRootCollision));
             Assert.That(outcome.Session, Is.Null);
             Assert.That(outcome.LockPathSet, Is.Not.Null);
+            Assert.That(owner, Is.Not.Null);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(outcome.IsValid, Is.True);
             Assert.That(h.IdSource.CallCount, Is.EqualTo(0));
             Assert.That(log, Does.Not.Contain("Provision:"));
             Assert.That(log, Does.Not.Contain("Write:"));
             Assert.That(log, Does.Not.Contain("Cleanup:"));
+            owner.Dispose();
         }
 
         // ---- Order ----
@@ -632,7 +670,8 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final), log);
 
             CaptureRunInitializationOpenOutcome outcome;
-            h.Coordinator.TryOpen(MakeLayout(), 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner);
 
             Assert.That(log, Is.EqualTo(new[]
             {
@@ -650,6 +689,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Backend.AcquireCount, Is.EqualTo(2));
             Assert.That(h.Inspector.InspectCount, Is.EqualTo(1));
             Assert.That(h.IdSource.CallCount, Is.EqualTo(1));
+            owner.Dispose();
         }
 
         // ---- Failure propagation ----
@@ -664,10 +704,12 @@ namespace Zantetsu.Core.Tests
             h.Inspector.ThrowOnInspect = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.SecondLockPath, pathSet.FirstLockPath }));
         }
 
@@ -680,8 +722,10 @@ namespace Zantetsu.Core.Tests
             h.Inspector.ReturnNullSnapshot = true;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            Assert.Throws<InvalidOperationException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            Assert.Throws<InvalidOperationException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.SecondLockPath, pathSet.FirstLockPath }));
         }
 
@@ -694,10 +738,12 @@ namespace Zantetsu.Core.Tests
             h.IdSource.Throw = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
         }
 
         [Test]
@@ -709,10 +755,12 @@ namespace Zantetsu.Core.Tests
             h.FreshProvisioner.ExceptionToThrow = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
         }
 
         [Test]
@@ -724,10 +772,12 @@ namespace Zantetsu.Core.Tests
             h.FreshWriter.ExceptionToThrow = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
         }
 
         [Test]
@@ -740,10 +790,12 @@ namespace Zantetsu.Core.Tests
             h.RecoveryCleanup.ExceptionToThrow = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            IOException ex = Assert.Throws<IOException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
         }
 
         [Test]
@@ -756,33 +808,39 @@ namespace Zantetsu.Core.Tests
             h.IdSource.Throw = injected;
 
             CaptureRunInitializationOpenOutcome outcome = null;
-            AggregateException ex = Assert.Throws<AggregateException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome));
+            CaptureRunInitializationSessionOwnershipLease owner = null;
+            AggregateException ex = Assert.Throws<AggregateException>(() => h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner));
 
             Assert.That(outcome, Is.Null);
+            Assert.That(owner, Is.Null);
             Assert.That(ex.InnerExceptions.Count, Is.EqualTo(2));
             Assert.That(ex.InnerExceptions[0], Is.SameAs(injected));
         }
 
-        // ---- Outcome disposal ----
+        // ---- Ownership release ----
 
         [Test]
-        public void Outcome_Dispose_SessionPath()
+        public void Outcome_NonDisposable_SessionPath_OwnerReleases()
         {
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
             CaptureRunInitializationOpenOutcome outcome;
-            h.Coordinator.TryOpen(MakeLayout(), 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            h.Coordinator.TryOpen(MakeLayout(), 4, out outcome, out owner);
 
-            Assert.That(outcome.IsCreated, Is.True);
-            Assert.That(outcome.Session.IsCreated, Is.True);
-            outcome.Dispose();
-            Assert.That(outcome.IsCreated, Is.False);
-            Assert.That(outcome.Session.IsCreated, Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(typeof(CaptureRunInitializationOpenOutcome)), Is.False);
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(outcome.IsValid, Is.True);
+            Assert.That(outcome.Session, Is.Not.Null);
+            Assert.That(outcome.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
+
+            owner.Dispose();
+            Assert.That(owner.IsCreated, Is.False);
             Assert.That(outcome.IsValid, Is.False);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
         }
 
         [Test]
-        public void Outcome_Dispose_Idempotent_And_RetryAfterFailure()
+        public void Owner_Dispose_Idempotent_And_RetryAfterFailure()
         {
             CaptureRunRootLayout layout = MakeLayout();
             List<string> disposeLog = new List<string>();
@@ -791,15 +849,16 @@ namespace Zantetsu.Core.Tests
             h.Backend.ThrowOnDisposeSecond = true;
 
             CaptureRunInitializationOpenOutcome outcome;
-            h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
-            Assert.Throws<AggregateException>(() => outcome.Dispose());
-            Assert.That(outcome.IsCreated, Is.True);
+            Assert.Throws<AggregateException>(() => owner.Dispose());
+            Assert.That(owner.IsCreated, Is.False);
 
             h.Backend.CreatedHandles[1].ThrowOnDispose = false;
-            outcome.Dispose();
-            outcome.Dispose();
-            Assert.That(outcome.IsCreated, Is.False);
+            owner.Dispose();
+            owner.Dispose();
+            Assert.That(owner.IsCreated, Is.False);
             Assert.That(disposeLog, Is.EqualTo(new[]
             {
                 outcome.LockPathSet.SecondLockPath,
@@ -809,7 +868,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Outcome_Dispose_LeasePath_InvalidAfterDispose()
+        public void RecoveryOnlyOutcome_OwnerRelease_InvalidAfterDispose()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
@@ -821,64 +880,42 @@ namespace Zantetsu.Core.Tests
                 disposeLog);
 
             CaptureRunInitializationOpenOutcome outcome;
-            h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
+            Assert.That(outcome.Session, Is.Null);
+            Assert.That(owner, Is.Not.Null);
             Assert.That(outcome.IsValid, Is.True);
 
-            outcome.Dispose();
-            Assert.That(outcome.IsCreated, Is.False);
+            owner.Dispose();
+            Assert.That(owner.IsCreated, Is.False);
             Assert.That(outcome.IsValid, Is.False);
             Assert.That(outcome.Status, Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
         }
 
         [Test]
-        public void Outcome_DisposeFailure_IsCreatedTrue_And_IsValidContract()
+        public void Owner_DisposeFailure_Retryable_And_OutcomeInvalidated()
         {
             CaptureRunRootLayout layout = MakeLayout();
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
             h.Backend.ThrowOnDisposeSecond = true;
 
             CaptureRunInitializationOpenOutcome outcome;
-            h.Coordinator.TryOpen(layout, 4, out outcome);
+            CaptureRunInitializationSessionOwnershipLease owner;
+            h.Coordinator.TryOpen(layout, 4, out outcome, out owner);
 
-            Assert.That(outcome.IsCreated, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
             Assert.That(outcome.IsValid, Is.True);
 
-            Assert.Throws<AggregateException>(() => outcome.Dispose());
-            Assert.That(outcome.IsCreated, Is.True, "A failed dispose keeps the outcome retryable.");
-            Assert.That(outcome.Session.IsCreated, Is.True, "A failed session dispose keeps the session retryable.");
-            Assert.That(outcome.IsValid, Is.False, "A partially released lease invalidates the nested orchestration result.");
+            Assert.Throws<AggregateException>(() => owner.Dispose());
+            Assert.That(owner.IsCreated, Is.False, "A partially released ownership lease is no longer live but remains retryable.");
+            Assert.That(outcome.IsValid, Is.False, "A partially released ownership lease invalidates the outcome identity evidence.");
 
             h.Backend.CreatedHandles[1].ThrowOnDispose = false;
-            outcome.Dispose();
-            Assert.That(outcome.IsCreated, Is.False);
+            owner.Dispose();
+            Assert.That(owner.IsCreated, Is.False);
             Assert.That(outcome.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Outcome_ReflectionDisposedFlag_IsValidFalse()
-        {
-            CaptureRunRootLayout layout = MakeLayout();
-            Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
-            CaptureRunInitializationOpenOutcome good;
-            h.Coordinator.TryOpen(layout, 4, out good);
-
-            CaptureRunInitializationOpenOutcome forgedSession = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationOpenOutcome));
-            SetField(forgedSession, "_orchestrationResult", good.OrchestrationResult);
-            SetField(forgedSession, "_session", good.Session);
-            SetField(forgedSession, "_lockLease", null);
-            SetField(forgedSession, "_disposed", true);
-            Assert.That(forgedSession.IsValid, Is.False);
-
-            CaptureRunInitializationOpenOutcome forgedLease = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationOpenOutcome));
-            SetField(forgedLease, "_orchestrationResult", good.OrchestrationResult);
-            SetField(forgedLease, "_session", null);
-            SetField(forgedLease, "_lockLease", MakeLease(layout));
-            SetField(forgedLease, "_disposed", true);
-            Assert.That(forgedLease.IsValid, Is.False);
         }
 
         // ---- Forged outcome ----
@@ -889,20 +926,37 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             Harness h = MakeHarness(MakeAbsent(Staging), MakeAbsent(Final));
             CaptureRunInitializationOpenOutcome good;
-            h.Coordinator.TryOpen(layout, 4, out good);
+            CaptureRunInitializationSessionOwnershipLease goodOwner;
+            h.Coordinator.TryOpen(layout, 4, out good, out goodOwner);
 
-            // both session and lease non-null is impossible from construction.
-            CaptureRunInitializationOpenOutcome both = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
+            // Missing orchestration result.
+            CaptureRunInitializationOpenOutcome nullOrchestration = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationOpenOutcome));
-            SetField(both, "_orchestrationResult", good.OrchestrationResult);
-            SetField(both, "_session", good.Session);
-            SetField(both, "_lockLease", MakeLease(layout));
-            Assert.That(both.IsValid, Is.False);
+            SetField(nullOrchestration, "_lockIdentityEvidence", good.LockIdentityEvidence);
+            SetField(nullOrchestration, "_sessionIssue", GetField<CaptureRunInitializationSessionIssue>(good, "_sessionIssue"));
+            Assert.That(nullOrchestration.IsValid, Is.False);
 
-            // empty outcome.
+            // Missing identity evidence.
+            CaptureRunInitializationOpenOutcome nullIdentity = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
+                typeof(CaptureRunInitializationOpenOutcome));
+            SetField(nullIdentity, "_orchestrationResult", good.OrchestrationResult);
+            SetField(nullIdentity, "_sessionIssue", GetField<CaptureRunInitializationSessionIssue>(good, "_sessionIssue"));
+            Assert.That(nullIdentity.IsValid, Is.False);
+
+            // Session-ready outcome with its session issue removed.
+            CaptureRunInitializationOpenOutcome noIssue = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
+                typeof(CaptureRunInitializationOpenOutcome));
+            SetField(noIssue, "_orchestrationResult", good.OrchestrationResult);
+            SetField(noIssue, "_lockIdentityEvidence", good.LockIdentityEvidence);
+            SetField(noIssue, "_sessionIssue", null);
+            Assert.That(noIssue.IsValid, Is.False);
+
+            // Empty outcome.
             CaptureRunInitializationOpenOutcome empty = (CaptureRunInitializationOpenOutcome)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationOpenOutcome));
             Assert.That(empty.IsValid, Is.False);
+
+            goodOwner.Dispose();
         }
 
         // ---- Shape ----
@@ -923,14 +977,32 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Outcome_Shape_SessionAndLeaseNeverBoth()
+        public void Outcome_Shape_NonDisposable_ThreeReadonlyFields_IdentityAlwaysHeld()
         {
             Type type = typeof(CaptureRunInitializationOpenOutcome);
 
             Assert.That(type.IsPublic, Is.False);
             Assert.That(type.IsSealed, Is.True);
-            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(fields.Length, Is.EqualTo(3));
+            Assert.That(fields.All(f => f.IsInitOnly), Is.True);
+            Assert.That(fields.Any(f => f.FieldType == typeof(CaptureRunInitializationRecoveryOrchestrationResult)), Is.True);
+            Assert.That(fields.Any(f => f.FieldType == typeof(CaptureRunInitializationSessionIssue)), Is.True);
+            Assert.That(fields.Any(f => f.FieldType == typeof(CaptureRunLockIdentityEvidence)), Is.True);
+            Assert.That(fields.Any(f => f.FieldType == typeof(CaptureRunLockLease)), Is.False);
+            Assert.That(fields.Any(f => f.FieldType == typeof(CaptureRunInitializationSessionOwnershipLease)), Is.False);
+
+            Assert.That(type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Any(p => p.PropertyType == typeof(CaptureRunInitializationSessionIssue)), Is.False);
+            Assert.That(type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Any(p => p.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease)), Is.False);
+            Assert.That(type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Any(m => m.ReturnType == typeof(CaptureRunInitializationSessionIssue)), Is.False);
+            Assert.That(type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Any(m => m.ReturnType == typeof(CaptureRunInitializationSessionOwnershipLease)), Is.False);
         }
 
         // ---- Source inspection ----

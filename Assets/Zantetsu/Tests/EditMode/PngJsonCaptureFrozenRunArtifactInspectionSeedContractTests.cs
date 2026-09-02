@@ -20,6 +20,20 @@ namespace Zantetsu.Core.Tests
 
         private static bool IsWindows => Path.DirectorySeparatorChar == '\\';
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 3)
@@ -110,10 +124,13 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakeHandle : ICaptureRunLockHandle
         {
+            private readonly List<string> _disposeLog;
+
             public FakeHandle(string lockPath, bool isCreated = true, List<string> disposeLog = null)
             {
                 LockPath = lockPath;
                 IsCreated = isCreated;
+                _disposeLog = disposeLog;
             }
 
             public string LockPath { get; }
@@ -122,6 +139,7 @@ namespace Zantetsu.Core.Tests
 
             public void Dispose()
             {
+                _disposeLog?.Add(LockPath);
             }
         }
 
@@ -143,25 +161,34 @@ namespace Zantetsu.Core.Tests
 
         // ---- Freeze receipt forging ----
 
-        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout)
+        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog = null)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, null);
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, null);
+            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, disposeLog);
+            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, disposeLog);
             return new CaptureRunLockLease(pathSet, first, second);
         }
 
-        private static CaptureRunInitializationSession MakeLifecycleSession(
+        private CaptureRunInitializationSession MakeLifecycleSession(
             CaptureRunRootLayout layout,
-            CaptureRunLockLease lease)
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner,
+            out CaptureRunLockIdentityEvidence identity)
         {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+
             CaptureRunInitializationDocumentSet documents = CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator execution = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationExecutionReceipt receipt = execution.Execute(batch);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
-            return new CaptureRunInitializationSession(lease, evidence);
+
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            return issue.Session;
         }
 
         private static CaptureFrameDraftRegistry ForgeDraftRegistry(long testRunId)
@@ -187,6 +214,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureEvidenceRunFreezeReceipt ForgeFreezeReceipt(
             CaptureRunInitializationSession session,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence,
             CaptureFrameDraftRegistry drafts,
             CaptureArtifactRegistry artifacts)
         {
@@ -226,17 +254,32 @@ namespace Zantetsu.Core.Tests
             SetField(receipt, "_issuedBy", issuedBy);
             SetField(receipt, "_evidence", evidence);
             SetField(receipt, "_runSession", session);
+            SetField(receipt, "_lockIdentityEvidence", lockIdentityEvidence);
             SetField(receipt, "_terminalBuffer", terminalBuffer);
             return receipt;
         }
 
-        private static CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(CaptureRunRootLayout layout)
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunLockLease lease = MakeLease(layout);
-            CaptureRunInitializationSession session = MakeLifecycleSession(layout, lease);
+            return MakeValidFreezeReceipt(layout, null, out _);
+        }
+
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(
+            CaptureRunRootLayout layout,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeValidFreezeReceipt(layout, null, out owner);
+        }
+
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            CaptureRunInitializationSession session = MakeLifecycleSession(layout, disposeLog, out owner, out CaptureRunLockIdentityEvidence identity);
             CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(layout.TestRunId);
             CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-            return ForgeFreezeReceipt(session, drafts, artifacts);
+            return ForgeFreezeReceipt(session, identity, drafts, artifacts);
         }
 
         // ---- Store / coordinator forging ----
@@ -273,8 +316,7 @@ namespace Zantetsu.Core.Tests
                 writeReceipt,
                 freezeReceipt.Drafts,
                 freezeReceipt.Artifacts,
-                freezeReceipt.RunSession,
-                freezeReceipt.LockLease);
+                freezeReceipt.LockIdentityEvidence);
         }
 
         // ---- Generic plan building ----
@@ -331,12 +373,27 @@ namespace Zantetsu.Core.Tests
             return new CapturePublicationPlan(testRunId, InitId, HashA, descriptors, evidence);
         }
 
-        private static CaptureEvidenceFrozenRunPublicationResult MakeFrozenResult(CapturePublicationPlan genericPlan)
+        private CaptureEvidenceFrozenRunPublicationResult MakeFrozenResult(CapturePublicationPlan genericPlan)
+        {
+            return MakeFrozenResult(genericPlan, null, out _);
+        }
+
+        private CaptureEvidenceFrozenRunPublicationResult MakeFrozenResult(
+            CapturePublicationPlan genericPlan,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeFrozenResult(genericPlan, null, out owner);
+        }
+
+        private CaptureEvidenceFrozenRunPublicationResult MakeFrozenResult(
+            CapturePublicationPlan genericPlan,
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
         {
             CaptureRunRootLayout layout = MakeLayout(genericPlan.TestRunId);
             CaptureArtifactFileStore store = ForgeStore(layout);
             CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store);
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout, disposeLog, out owner);
             CapturePublicationPlanWriteReceipt writeReceipt = new CapturePublicationPlanWriteReceipt(
                 store, genericPlan, store.PublicationPlanPath, 16);
             return CaptureEvidenceFrozenRunPublicationResult.Create(
@@ -346,16 +403,31 @@ namespace Zantetsu.Core.Tests
                 writeReceipt);
         }
 
-        private static PngJsonCaptureFrozenRunPublicationPlanBinding MakeBinding(params long[] frameIds)
+        private PngJsonCaptureFrozenRunPublicationPlanBinding MakeBinding(params long[] frameIds)
+        {
+            return MakeBinding(frameIds, out _);
+        }
+
+        private PngJsonCaptureFrozenRunPublicationPlanBinding MakeBinding(
+            long[] frameIds,
+            out CaptureRunInitializationSessionOwnershipLease owner)
         {
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, frameIds);
-            CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan);
+            CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, out owner);
             return PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
         }
 
-        private static PngJsonCaptureFrozenRunArtifactInspectionSeed MakeSeed(params long[] frameIds)
+        private PngJsonCaptureFrozenRunArtifactInspectionSeed MakeSeed(params long[] frameIds)
         {
-            return PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(MakeBinding(frameIds));
+            return MakeSeed(frameIds, out _);
+        }
+
+        private PngJsonCaptureFrozenRunArtifactInspectionSeed MakeSeed(
+            long[] frameIds,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(frameIds, out owner);
+            return PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
         }
 
         // ---- Normal ----
@@ -394,20 +466,22 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(seed.Artifacts, binding.Artifacts), Is.True);
             Assert.That(ReferenceEquals(seed.RunSession, binding.RunSession), Is.True);
             Assert.That(ReferenceEquals(seed.RootLayout, binding.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(seed.LockLease, binding.LockLease), Is.True);
+            Assert.That(ReferenceEquals(seed.LockIdentityEvidence, binding.LockIdentityEvidence), Is.True);
             Assert.That(seed.TestRunId, Is.EqualTo(binding.TestRunId));
             Assert.That(seed.RunInitializationId, Is.EqualTo(binding.RunInitializationId));
             Assert.That(seed.RunManifestContentSha256, Is.EqualTo(binding.RunManifestContentHash));
         }
 
         [Test]
-        public void Seed_ExactRootLayoutLeaseSession()
+        public void Seed_ExactRootLayoutIdentitySession()
         {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(new long[] { 1 }, out CaptureRunInitializationSessionOwnershipLease owner);
+            PngJsonCaptureFrozenRunPublicationPlanBinding binding = seed.PlanBinding;
 
             Assert.That(ReferenceEquals(seed.RootLayout, seed.FreezeReceipt.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(seed.LockLease, seed.RunSession.LockLease), Is.True);
-            Assert.That(seed.RunSession.OwnsLockLease(seed.LockLease), Is.True);
+            Assert.That(seed.LockIdentityEvidence, Is.SameAs(binding.LockIdentityEvidence));
+            Assert.That(seed.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
+            Assert.That(seed.RunSession.IsValid, Is.True);
         }
 
         [Test]
@@ -444,8 +518,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Seed_InvalidBinding_Rejected()
         {
-            PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(1);
-            binding.FrozenPublicationResult.RunSession.Dispose();
+            PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(new long[] { 1 }, out CaptureRunInitializationSessionOwnershipLease owner);
+            Assert.That(owner.IsCreated, Is.True);
+            owner.Dispose();
 
             Assert.Throws<ArgumentException>(
                 () => PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding));
@@ -456,8 +531,8 @@ namespace Zantetsu.Core.Tests
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(1);
             CaptureRunRootLayout layout9 = MakeLayout(9);
-            SetField(binding.FrozenPublicationResult.FreezeReceipt, "_runSession",
-                MakeLifecycleSession(layout9, MakeLease(layout9)));
+            CaptureRunInitializationSession foreignSession = MakeLifecycleSession(layout9, null, out _, out _);
+            SetField(binding.FrozenPublicationResult.FreezeReceipt, "_runSession", foreignSession);
 
             Assert.Throws<ArgumentException>(
                 () => PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding));
@@ -548,6 +623,39 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Seed_FreezeReceiptGraphCorruption_False()
+        {
+            // Freeze receipt lock identity evidence nulled.
+            PngJsonCaptureFrozenRunArtifactInspectionSeed identityNull = MakeSeed(1);
+            SetField(identityNull.FreezeReceipt, "_lockIdentityEvidence", null);
+            Assert.That(identityNull.IsValid, Is.False);
+
+            // Foreign lock identity evidence swapped in.
+            CaptureRunRootLayout layout9 = MakeLayout(9);
+            MakeLifecycleSession(layout9, null, out _, out CaptureRunLockIdentityEvidence foreignIdentity);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed identitySwapped = MakeSeed(1);
+            SetField(identitySwapped.FreezeReceipt, "_lockIdentityEvidence", foreignIdentity);
+            Assert.That(identitySwapped.IsValid, Is.False);
+
+            // Foreign session swapped in.
+            CaptureRunInitializationSession foreignSession = MakeLifecycleSession(layout9, null, out _, out _);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed sessionSwapped = MakeSeed(1);
+            SetField(sessionSwapped.FreezeReceipt, "_runSession", foreignSession);
+            Assert.That(sessionSwapped.IsValid, Is.False);
+
+            // Identity evidence internal ownership binding corrupted.
+            PngJsonCaptureFrozenRunArtifactInspectionSeed identityBroken = MakeSeed(1);
+            SetField(identityBroken.FreezeReceipt.LockIdentityEvidence, "_ownershipLease", null);
+            Assert.That(identityBroken.IsValid, Is.False);
+
+            // Plan binding swapped in from a different seed.
+            PngJsonCaptureFrozenRunArtifactInspectionSeed first = MakeSeed(1);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed second = MakeSeed(2);
+            SetField(first, "_planBinding", second.PlanBinding);
+            Assert.That(first.IsValid, Is.False);
+        }
+
+        [Test]
         public void Seed_FreezeReceiptStructuralNull_False()
         {
             PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
@@ -556,12 +664,13 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Seed_SessionLeaseDispose_False()
+        public void Seed_OwnerDispose_False()
         {
-            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(1);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed seed = MakeSeed(new long[] { 1 }, out CaptureRunInitializationSessionOwnershipLease owner);
             Assert.That(seed.IsValid, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
 
-            seed.RunSession.Dispose();
+            owner.Dispose();
             Assert.That(seed.IsValid, Is.False);
         }
 
@@ -573,6 +682,22 @@ namespace Zantetsu.Core.Tests
                     typeof(PngJsonCaptureFrozenRunArtifactInspectionSeed));
 
             Assert.That(seed.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Builder_DoesNotDisposeOwner()
+        {
+            List<string> disposeLog = new List<string>();
+            CapturePublicationPlan genericPlan = MakeGenericPlan(3, new long[] { 1, 2 });
+            CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
+            PngJsonCaptureFrozenRunPublicationPlanBinding binding =
+                PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+            PngJsonCaptureFrozenRunArtifactInspectionSeed seed =
+                PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
+
+            Assert.That(seed.IsValid, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(disposeLog, Is.Empty, "The seed builder must not dispose the owner.");
         }
 
         // ---- Type / source shape ----
@@ -606,13 +731,33 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
             // The atomic factory takes only the plan binding, so no path set,
-            // legacy plan, frozen result, or lease can be injected.
+            // legacy plan, frozen result, or lock identity evidence can be
+            // injected.
             MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(create, Is.Not.Null);
             Assert.That(create.ReturnType, Is.EqualTo(typeof(PngJsonCaptureFrozenRunArtifactInspectionSeed)));
             ParameterInfo[] parameters = create.GetParameters();
             Assert.That(parameters.Length, Is.EqualTo(1));
             Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(PngJsonCaptureFrozenRunPublicationPlanBinding)));
+
+            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(
+                    prop.PropertyType == typeof(CaptureRunLockLease)
+                    || prop.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    prop.Name + " must not expose a raw or ownership lease.");
+            }
+
+            foreach (MethodInfo method in type.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(
+                    method.ReturnType == typeof(CaptureRunLockLease)
+                    || method.ReturnType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    method.Name + " must not return a raw or ownership lease.");
+            }
         }
 
         [Test]

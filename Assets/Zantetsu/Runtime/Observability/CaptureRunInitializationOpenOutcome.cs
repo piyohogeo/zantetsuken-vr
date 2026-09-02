@@ -3,68 +3,139 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Immutable terminal outcome of an opened Capture Run. The outcome always
-    /// owns whatever the lock acquisition produced: a session on the ready
-    /// path, or the raw lease on the publication and collision paths.
+    /// Immutable terminal outcome of an opened Capture Run. The outcome holds
+    /// the recovery orchestration result plus, on the ready path, the session
+    /// and its lock identity evidence. It holds no lock and cannot release
+    /// one; lock ownership lives in the issuing coordinator's ownership lease.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Construction performs the single session routing step and then only
-    /// assigns fields; no validation that could fail after the lease transfer
-    /// is performed. The outcome never holds both a session and a lease.
-    /// <see cref="IsValid"/> recomputes the per-status invariants from the held
-    /// values without throwing, so a forged nested value yields <c>false</c>.
-    /// </para>
-    /// <para>
-    /// Disposal releases the owned object exactly once: the session on the
-    /// ready path, or the held lease on the publication and collision paths.
-    /// The orchestration result is never disposed or mutated. Status, root
-    /// layout, test run ID, and run initialization ID remain readable after
-    /// disposal.
+    /// Construction validates the exact identity evidence, orchestration
+    /// result, and session issue before assigning fields, so a forged or
+    /// cross-substituted issue never reaches the held graph.
+    /// <see cref="IsValid"/> recomputes the per-status invariants from the
+    /// held values without throwing. Status, root layout, test run ID, and
+    /// run initialization ID remain readable.
     /// </para>
     /// </remarks>
-    internal sealed class CaptureRunInitializationOpenOutcome : IDisposable
+    internal sealed class CaptureRunInitializationOpenOutcome
     {
         private readonly CaptureRunInitializationRecoveryOrchestrationResult _orchestrationResult;
-        private readonly CaptureRunInitializationSession _session;
-        private readonly CaptureRunLockLease _lockLease;
-        private bool _disposed;
+        private readonly CaptureRunInitializationSessionIssue _sessionIssue;
+        private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
 
         internal CaptureRunInitializationOpenOutcome(
             CaptureRunInitializationRecoveryOrchestrationResult orchestrationResult,
-            ref CaptureRunLockLease lockLease,
-            CaptureRunInitializationRecoverySessionRoutingCoordinator sessionRoutingCoordinator)
+            CaptureRunInitializationSessionIssue sessionIssue,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
             if (orchestrationResult == null)
             {
                 throw new ArgumentNullException(nameof(orchestrationResult));
             }
 
-            if (sessionRoutingCoordinator == null)
+            if (!orchestrationResult.IsValid)
             {
-                throw new ArgumentNullException(nameof(sessionRoutingCoordinator));
+                throw new ArgumentException("Orchestration result must be valid.", nameof(orchestrationResult));
             }
 
-            if (lockLease == null)
+            if (lockIdentityEvidence == null)
             {
-                throw new ArgumentNullException(nameof(lockLease));
+                throw new ArgumentNullException(nameof(lockIdentityEvidence));
             }
 
-            CaptureRunInitializationSession session;
-            bool sessionReady = sessionRoutingCoordinator.TryContinueToSession(orchestrationResult, ref lockLease, out session);
+            if (!lockIdentityEvidence.IsValid)
+            {
+                throw new ArgumentException("Lock identity evidence must be valid.", nameof(lockIdentityEvidence));
+            }
+
+            if (!ReferenceEquals(orchestrationResult.LockIdentityEvidence, lockIdentityEvidence))
+            {
+                throw new ArgumentException("Open outcome must hold the exact lock identity evidence of its orchestration result.", nameof(lockIdentityEvidence));
+            }
+
+            CaptureRunInitializationRecoveryExecutionStatus status = orchestrationResult.Status;
+
+            switch (status)
+            {
+                case CaptureRunInitializationRecoveryExecutionStatus.StartFreshRequired:
+                    RequireSessionIssue(sessionIssue, lockIdentityEvidence);
+                    RequireFreshSession(sessionIssue.Session);
+                    break;
+
+                case CaptureRunInitializationRecoveryExecutionStatus.InitializationReady:
+                    RequireSessionIssue(sessionIssue, lockIdentityEvidence);
+                    RequireRecoverySession(sessionIssue.Session, orchestrationResult);
+                    break;
+
+                case CaptureRunInitializationRecoveryExecutionStatus.PublicationRecoveryRequired:
+                    RequireNoSessionIssue(sessionIssue);
+                    if (orchestrationResult.Disposition != CaptureRunInitializationRecoveryDisposition.RequiresPublicationRecovery)
+                    {
+                        throw new ArgumentException("Publication-recovery outcome must carry the publication recovery disposition.", nameof(orchestrationResult));
+                    }
+                    break;
+
+                case CaptureRunInitializationRecoveryExecutionStatus.RunRootCollision:
+                    RequireNoSessionIssue(sessionIssue);
+                    if (orchestrationResult.Disposition != CaptureRunInitializationRecoveryDisposition.RunRootCollision)
+                    {
+                        throw new ArgumentException("Collision outcome must carry the collision disposition.", nameof(orchestrationResult));
+                    }
+                    break;
+
+                default:
+                    throw new ArgumentException("Open outcome must carry a defined terminal status.", nameof(orchestrationResult));
+            }
 
             _orchestrationResult = orchestrationResult;
+            _lockIdentityEvidence = lockIdentityEvidence;
+            _sessionIssue = sessionIssue;
+        }
 
-            if (sessionReady)
+        private static void RequireSessionIssue(
+            CaptureRunInitializationSessionIssue sessionIssue,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence)
+        {
+            if (sessionIssue == null)
             {
-                _session = session;
-                _lockLease = null;
+                throw new ArgumentException("Ready outcome must hold a session issue.", nameof(sessionIssue));
             }
-            else
+
+            if (!sessionIssue.IsValid)
             {
-                _session = null;
-                _lockLease = lockLease;
-                lockLease = null;
+                throw new ArgumentException("Session issue must be valid.", nameof(sessionIssue));
+            }
+
+            if (!ReferenceEquals(sessionIssue.LockIdentityEvidence, lockIdentityEvidence))
+            {
+                throw new ArgumentException("Session issue must be issued for the exact lock identity evidence.", nameof(sessionIssue));
+            }
+        }
+
+        private static void RequireNoSessionIssue(CaptureRunInitializationSessionIssue sessionIssue)
+        {
+            if (sessionIssue != null)
+            {
+                throw new ArgumentException("Recovery-only outcome must not hold a session issue.", nameof(sessionIssue));
+            }
+        }
+
+        private static void RequireFreshSession(CaptureRunInitializationSession session)
+        {
+            if (session == null || session.RecoveryOrchestrationResult != null || session.ExecutionReceipt == null)
+            {
+                throw new ArgumentException("Start-fresh outcome must hold a fresh session with no recovery result.", nameof(session));
+            }
+        }
+
+        private static void RequireRecoverySession(
+            CaptureRunInitializationSession session,
+            CaptureRunInitializationRecoveryOrchestrationResult orchestrationResult)
+        {
+            if (session == null || session.ExecutionReceipt != null || !ReferenceEquals(session.RecoveryOrchestrationResult, orchestrationResult))
+            {
+                throw new ArgumentException("Initialization-ready outcome must hold the exact recovery session.", nameof(session));
             }
         }
 
@@ -72,7 +143,7 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_session != null)
+                if (_sessionIssue != null)
                 {
                     return CaptureRunInitializationOpenStatus.SessionReady;
                 }
@@ -98,42 +169,62 @@ namespace Zantetsu.Observability
 
         internal CaptureRunInitializationRecoveryOrchestrationResult OrchestrationResult => _orchestrationResult;
 
-        internal CaptureRunInitializationSession Session => _session;
+        internal CaptureRunInitializationSession Session =>
+            _sessionIssue != null ? _sessionIssue.Session : null;
+
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
+
+        internal CaptureRunLockPathSet LockPathSet =>
+            _lockIdentityEvidence != null ? _lockIdentityEvidence.LockPathSet : null;
 
         internal CaptureRunRootLayout RootLayout =>
-            _session != null ? _session.RootLayout
+            _sessionIssue != null ? _sessionIssue.Session.RootLayout
             : _orchestrationResult != null ? _orchestrationResult.RootLayout
             : null;
 
         internal long TestRunId =>
-            _session != null ? _session.TestRunId
+            _sessionIssue != null ? _sessionIssue.Session.TestRunId
             : _orchestrationResult != null ? _orchestrationResult.TestRunId
             : 0;
 
         internal string RunInitializationId =>
-            _session != null ? _session.RunInitializationId
+            _sessionIssue != null ? _sessionIssue.Session.RunInitializationId
             : _orchestrationResult != null ? _orchestrationResult.RunInitializationId
             : null;
-
-        internal CaptureRunLockPathSet LockPathSet =>
-            _session != null ? _session.LockPathSet
-            : _lockLease != null ? _lockLease.PathSet
-            : null;
-
-        internal bool IsCreated => !_disposed;
 
         internal bool IsValid
         {
             get
             {
-                if (_disposed || _orchestrationResult == null || !_orchestrationResult.IsValid)
+                if (_orchestrationResult == null || !_orchestrationResult.IsValid)
                 {
                     return false;
                 }
 
-                if (_session != null)
+                if (_lockIdentityEvidence == null || !_lockIdentityEvidence.IsValid)
                 {
-                    if (_lockLease != null || !_session.IsCreated)
+                    return false;
+                }
+
+                if (!ReferenceEquals(_orchestrationResult.LockIdentityEvidence, _lockIdentityEvidence))
+                {
+                    return false;
+                }
+
+                if (_sessionIssue != null)
+                {
+                    if (!_sessionIssue.IsValid)
+                    {
+                        return false;
+                    }
+
+                    if (!ReferenceEquals(_sessionIssue.LockIdentityEvidence, _lockIdentityEvidence))
+                    {
+                        return false;
+                    }
+
+                    CaptureRunInitializationSession session = _sessionIssue.Session;
+                    if (session == null)
                     {
                         return false;
                     }
@@ -145,30 +236,20 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (!ReferenceEquals(_session.RootLayout, _orchestrationResult.RootLayout)
-                        || _session.TestRunId != _orchestrationResult.TestRunId)
+                    if (!ReferenceEquals(session.RootLayout, _orchestrationResult.RootLayout)
+                        || session.TestRunId != _orchestrationResult.TestRunId)
                     {
                         return false;
                     }
 
                     if (status == CaptureRunInitializationRecoveryExecutionStatus.InitializationReady)
                     {
-                        return _session.ExecutionReceipt == null
-                            && ReferenceEquals(_session.RecoveryOrchestrationResult, _orchestrationResult);
+                        return session.ExecutionReceipt == null
+                            && ReferenceEquals(session.RecoveryOrchestrationResult, _orchestrationResult);
                     }
 
-                    return _session.RecoveryOrchestrationResult == null
-                        && _session.ExecutionReceipt != null;
-                }
-
-                if (_lockLease == null || !_lockLease.IsCreated)
-                {
-                    return false;
-                }
-
-                if (!ReferenceEquals(_lockLease, _orchestrationResult.LockLease))
-                {
-                    return false;
+                    return session.RecoveryOrchestrationResult == null
+                        && session.ExecutionReceipt != null;
                 }
 
                 if (_orchestrationResult.Status == CaptureRunInitializationRecoveryExecutionStatus.PublicationRecoveryRequired)
@@ -183,30 +264,6 @@ namespace Zantetsu.Observability
 
                 return false;
             }
-        }
-
-        public void Dispose()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            if (_session != null)
-            {
-                _session.Dispose();
-                _disposed = true;
-                return;
-            }
-
-            if (_lockLease != null)
-            {
-                _lockLease.Dispose();
-                _disposed = true;
-                return;
-            }
-
-            _disposed = true;
         }
     }
 }

@@ -19,6 +19,20 @@ namespace Zantetsu.Core.Tests
 
         private static bool IsWindows => Path.DirectorySeparatorChar == '\\';
 
+        private readonly List<CaptureRunInitializationSessionOwnershipLease> _owners =
+            new List<CaptureRunInitializationSessionOwnershipLease>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            for (int i = _owners.Count - 1; i >= 0; i--)
+            {
+                _owners[i].Dispose();
+            }
+
+            _owners.Clear();
+        }
+
         // ---- Helpers ----
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 3)
@@ -188,25 +202,34 @@ namespace Zantetsu.Core.Tests
 
         // ---- Freeze receipt forging ----
 
-        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout)
+        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog = null)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, null);
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, null);
+            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, disposeLog);
+            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, disposeLog);
             return new CaptureRunLockLease(pathSet, first, second);
         }
 
-        private static CaptureRunInitializationSession MakeLifecycleSession(
+        private CaptureRunInitializationSession MakeLifecycleSession(
             CaptureRunRootLayout layout,
-            CaptureRunLockLease lease)
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner,
+            out CaptureRunLockIdentityEvidence identity)
         {
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog);
+            owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(owner);
+            identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+
             CaptureRunInitializationDocumentSet documents = CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator execution = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationExecutionReceipt receipt = execution.Execute(batch);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
-            return new CaptureRunInitializationSession(lease, evidence);
+
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            return issue.Session;
         }
 
         private static CaptureFrameDraftRegistry ForgeDraftRegistry(long testRunId)
@@ -232,6 +255,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureEvidenceRunFreezeReceipt ForgeFreezeReceipt(
             CaptureRunInitializationSession session,
+            CaptureRunLockIdentityEvidence lockIdentityEvidence,
             CaptureFrameDraftRegistry drafts,
             CaptureArtifactRegistry artifacts)
         {
@@ -271,17 +295,32 @@ namespace Zantetsu.Core.Tests
             SetField(receipt, "_issuedBy", issuedBy);
             SetField(receipt, "_evidence", evidence);
             SetField(receipt, "_runSession", session);
+            SetField(receipt, "_lockIdentityEvidence", lockIdentityEvidence);
             SetField(receipt, "_terminalBuffer", terminalBuffer);
             return receipt;
         }
 
-        private static CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(CaptureRunRootLayout layout)
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunLockLease lease = MakeLease(layout);
-            CaptureRunInitializationSession session = MakeLifecycleSession(layout, lease);
+            return MakeValidFreezeReceipt(layout, null, out _);
+        }
+
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(
+            CaptureRunRootLayout layout,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            return MakeValidFreezeReceipt(layout, null, out owner);
+        }
+
+        private CaptureEvidenceRunFreezeReceipt MakeValidFreezeReceipt(
+            CaptureRunRootLayout layout,
+            List<string> disposeLog,
+            out CaptureRunInitializationSessionOwnershipLease owner)
+        {
+            CaptureRunInitializationSession session = MakeLifecycleSession(layout, disposeLog, out owner, out CaptureRunLockIdentityEvidence identity);
             CaptureFrameDraftRegistry drafts = ForgeDraftRegistry(layout.TestRunId);
             CaptureArtifactRegistry artifacts = ForgeArtifactRegistry();
-            return ForgeFreezeReceipt(session, drafts, artifacts);
+            return ForgeFreezeReceipt(session, identity, drafts, artifacts);
         }
 
         // ---- Store / coordinator forging ----
@@ -343,16 +382,21 @@ namespace Zantetsu.Core.Tests
                 writeReceipt,
                 freezeReceipt.Drafts,
                 freezeReceipt.Artifacts,
-                freezeReceipt.RunSession,
-                freezeReceipt.LockLease);
+                freezeReceipt.LockIdentityEvidence);
         }
 
-        private static CaptureEvidenceFrozenRunPublicationResult MakeResult()
+        private CaptureEvidenceFrozenRunPublicationResult MakeResult()
+        {
+            return MakeResult(out _);
+        }
+
+        private CaptureEvidenceFrozenRunPublicationResult MakeResult(
+            out CaptureRunInitializationSessionOwnershipLease owner)
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureArtifactFileStore store = ForgeStore(layout);
             CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store);
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout, out owner);
             CapturePublicationPlan plan = new CapturePublicationPlan(
                 layout.TestRunId,
                 InitId,
@@ -419,8 +463,9 @@ namespace Zantetsu.Core.Tests
         {
             using (TempStore temp = new TempStore())
             {
-                CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(temp.Layout);
-                freezeReceipt.RunSession.Dispose();
+                CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(temp.Layout, out CaptureRunInitializationSessionOwnershipLease owner);
+                Assert.That(owner.IsCreated, Is.True);
+                owner.Dispose();
 
                 Assert.That(freezeReceipt.IsValid, Is.False);
                 ArgumentException ex = Assert.Throws<ArgumentException>(
@@ -462,7 +507,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(result.Artifacts, freezeReceipt.Artifacts), Is.True);
                 Assert.That(ReferenceEquals(result.RunSession, freezeReceipt.RunSession), Is.True);
                 Assert.That(ReferenceEquals(result.RootLayout, temp.Layout), Is.True);
-                Assert.That(ReferenceEquals(result.LockLease, freezeReceipt.LockLease), Is.True);
+                Assert.That(ReferenceEquals(result.LockIdentityEvidence, freezeReceipt.LockIdentityEvidence), Is.True);
                 Assert.That(result.TestRunId, Is.EqualTo(temp.Layout.TestRunId));
                 Assert.That(result.RunInitializationId, Is.EqualTo(freezeReceipt.RunInitializationId));
                 Assert.That(result.RunManifestContentHash, Is.EqualTo(HashA));
@@ -549,21 +594,24 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Coordinator_StoreException_NoRetryNoFallbackNoDispose()
+        public void Coordinator_StoreException_NoRetryNoFallbackNoOwnerDispose()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureArtifactFileStore store = ForgeStore(layout);
+            List<string> disposeLog = new List<string>();
             FakePlanStore fake = new FakePlanStore();
             fake.WriteHandler = plan => throw new InvalidOperationException("boom");
             CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store, fake);
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
 
             Assert.Throws<InvalidOperationException>(() => coordinator.PersistFrozenRun(freezeReceipt, HashA));
 
             Assert.That(fake.WritePlanCallCount, Is.EqualTo(1));
             Assert.That(freezeReceipt.IsValid, Is.True);
-            Assert.That(freezeReceipt.RunSession.IsCreated, Is.True);
-            Assert.That(freezeReceipt.LockLease.IsCreated, Is.True);
+            Assert.That(freezeReceipt.RunSession.IsValid, Is.True);
+            Assert.That(freezeReceipt.LockIdentityEvidence.IsValid, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
+            Assert.That(disposeLog, Is.Empty);
         }
 
         // ---- Result ----
@@ -580,7 +628,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(result.Artifacts, result.FreezeReceipt.Artifacts), Is.True);
             Assert.That(ReferenceEquals(result.RunSession, result.FreezeReceipt.RunSession), Is.True);
             Assert.That(ReferenceEquals(result.RootLayout, result.FreezeReceipt.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(result.LockLease, result.FreezeReceipt.LockLease), Is.True);
+            Assert.That(ReferenceEquals(result.LockIdentityEvidence, result.FreezeReceipt.LockIdentityEvidence), Is.True);
             Assert.That(result.TestRunId, Is.EqualTo(result.FreezeReceipt.TestRunId));
             Assert.That(result.RunInitializationId, Is.EqualTo(result.FreezeReceipt.RunInitializationId));
             Assert.That(result.RunManifestContentHash, Is.EqualTo(HashA));
@@ -628,8 +676,7 @@ namespace Zantetsu.Core.Tests
                     writeReceipt,
                     freezeReceipt.Drafts,
                     freezeReceipt.Artifacts,
-                    freezeReceipt.RunSession,
-                    freezeReceipt.LockLease);
+                    freezeReceipt.LockIdentityEvidence);
 
             Assert.Throws<InvalidOperationException>(
                 () => CaptureEvidenceFrozenRunPublicationResult.Create(coordinator, forged, freezeReceipt, writeReceipt));
@@ -751,7 +798,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_DraftsArtifactsSessionLeaseCorruption_False()
+        public void Result_DraftsArtifactsSessionIdentityCorruption_False()
         {
             CaptureEvidenceFrozenRunPublicationResult draftsNull = MakeResult();
             SetField(GetField(draftsNull.FreezeReceipt, "_evidence"), "_drafts", null);
@@ -761,14 +808,25 @@ namespace Zantetsu.Core.Tests
             SetField(GetField(artifactsNull.FreezeReceipt, "_evidence"), "_artifacts", null);
             Assert.That(artifactsNull.IsValid, Is.False);
 
-            CaptureEvidenceFrozenRunPublicationResult sessionSwapped = MakeResult();
-            CaptureRunRootLayout layout9 = MakeLayout(9);
-            SetField(sessionSwapped.FreezeReceipt, "_runSession", MakeLifecycleSession(layout9, MakeLease(layout9)));
-            Assert.That(sessionSwapped.IsValid, Is.False);
+            // Freeze receipt lock identity evidence nulled.
+            CaptureEvidenceFrozenRunPublicationResult identityNull = MakeResult();
+            SetField(identityNull.FreezeReceipt, "_lockIdentityEvidence", null);
+            Assert.That(identityNull.IsValid, Is.False);
 
-            CaptureEvidenceFrozenRunPublicationResult leaseSwapped = MakeResult();
-            SetField(leaseSwapped.FreezeReceipt.RunSession, "_lockLease", MakeLease(layout9));
-            Assert.That(leaseSwapped.IsValid, Is.False);
+            // Foreign lock identity evidence swapped in. Its owner is also
+            // registered for teardown.
+            CaptureRunRootLayout layout9 = MakeLayout(9);
+            MakeLifecycleSession(layout9, null, out _, out CaptureRunLockIdentityEvidence foreignIdentity);
+            CaptureEvidenceFrozenRunPublicationResult identitySwapped = MakeResult();
+            SetField(identitySwapped.FreezeReceipt, "_lockIdentityEvidence", foreignIdentity);
+            Assert.That(identitySwapped.IsValid, Is.False);
+
+            // Foreign session swapped in: its RootLayout/TestRunId no longer
+            // match the retained lock identity evidence.
+            CaptureRunInitializationSession foreignSession = MakeLifecycleSession(layout9, null, out _, out _);
+            CaptureEvidenceFrozenRunPublicationResult sessionSwapped = MakeResult();
+            SetField(sessionSwapped.FreezeReceipt, "_runSession", foreignSession);
+            Assert.That(sessionSwapped.IsValid, Is.False);
         }
 
         [Test]
@@ -792,12 +850,13 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_SessionLeaseDispose_False()
+        public void Result_OwnerDispose_False()
         {
-            CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
+            CaptureEvidenceFrozenRunPublicationResult result = MakeResult(out CaptureRunInitializationSessionOwnershipLease owner);
             Assert.That(result.IsValid, Is.True);
+            Assert.That(owner.IsCreated, Is.True);
 
-            result.RunSession.Dispose();
+            owner.Dispose();
             Assert.That(result.IsValid, Is.False);
         }
 
@@ -849,6 +908,57 @@ namespace Zantetsu.Core.Tests
             MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(create, Is.Not.Null);
             Assert.That(create.ReturnType, Is.EqualTo(typeof(CaptureEvidenceFrozenRunPublicationResult)));
+
+            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(
+                    prop.PropertyType == typeof(CaptureRunLockLease)
+                    || prop.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    prop.Name + " must not expose a raw or ownership lease.");
+            }
+        }
+
+        [Test]
+        public void FreezeReceipt_Shape_NonOwning_NoLeaseExposure()
+        {
+            Type type = typeof(CaptureEvidenceRunFreezeReceipt);
+
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
+            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
+
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Assert.That(
+                    field.FieldType == typeof(CaptureRunLockLease)
+                    || field.FieldType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    field.Name + " must not hold a raw or ownership lease.");
+            }
+
+            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(
+                    prop.PropertyType == typeof(CaptureRunLockLease)
+                    || prop.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    prop.Name + " must not expose a raw or ownership lease.");
+            }
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(
+                    method.ReturnType == typeof(CaptureRunLockLease)
+                    || method.ReturnType == typeof(CaptureRunInitializationSessionOwnershipLease),
+                    Is.False,
+                    method.Name + " must not return a raw or ownership lease.");
+            }
+
+            // Identity evidence is forwarded; the session is a non-owning reference.
+            Assert.That(type.GetProperty("LockIdentityEvidence", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Not.Null);
         }
 
         [Test]

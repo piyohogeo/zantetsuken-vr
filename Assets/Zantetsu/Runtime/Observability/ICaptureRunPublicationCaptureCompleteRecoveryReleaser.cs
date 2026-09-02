@@ -11,10 +11,10 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// <see cref="Release"/> is synchronous and performs exactly one attempt:
-    /// it calls the operation's exact <c>OpenOutcome.Dispose()</c> once and
-    /// returns a non-null receipt on success. It never disposes a different
-    /// outcome, a session, or a raw lease, and it never retries, rolls back,
-    /// re-inspects, notifies, touches a registry, or performs filesystem work.
+    /// it disposes the operation's exact ownership lease once and returns a
+    /// non-null receipt on success. It never disposes a different outcome, a
+    /// session, or a raw lease, and it never retries, rolls back, re-inspects,
+    /// notifies, touches a registry, or performs filesystem work.
     /// </para>
     /// <para>
     /// The method throws <see cref="ArgumentNullException"/> with

@@ -6,7 +6,7 @@ namespace Zantetsu.Observability
     /// Immutable intermediate provenance of one persisted frozen-Run
     /// publication plan: the issuing coordinator, the exact freeze receipt, and
     /// the exact publication-plan write receipt, correlated through the exact
-    /// store, registries, session, lock lease, and canonical plan.
+    /// store, registries, session, lock identity evidence, and canonical plan.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -14,10 +14,10 @@ namespace Zantetsu.Observability
     /// coordinator, the coordinator-minted issuance proof, the freeze receipt,
     /// and the publication-plan write receipt — and has no public constructor.
     /// Every accessor forwards a value from the held graph: the store, plan,
-    /// draft registry, artifact registry, run session, root layout, lock lease,
-    /// run identity, run initialization id, run manifest content hash,
-    /// publication plan path, and canonical byte count are all forwarded rather
-    /// than duplicated. The proof is never exposed.
+    /// draft registry, artifact registry, run session, root layout, lock
+    /// identity evidence, run identity, run initialization id, run manifest
+    /// content hash, publication plan path, and canonical byte count are all
+    /// forwarded rather than duplicated. The proof is never exposed.
     /// </para>
     /// <para>
     /// <see cref="Create"/> performs a single O(1) exact-binding check that
@@ -26,12 +26,12 @@ namespace Zantetsu.Observability
     /// happened once in the coordinator before persistence, and is re-run only
     /// by <see cref="IsValid"/> through one exception-safe correlation
     /// predicate. It re-checks the proof binding, the freeze receipt validity,
-    /// the exact store and root layout, the session's live lock ownership, the
-    /// drained registries, and the write receipt's exact store, plan, path, and
-    /// byte count. Any forged, replaced, released, or corrupted value converges
-    /// to <c>false</c> without throwing. Because this result proves the current
-    /// freeze receipt and lock liveness, it becomes invalid once the session or
-    /// lease is released.
+    /// the exact store and root layout, the lock identity evidence's live lock
+    /// ownership, the drained registries, and the write receipt's exact store,
+    /// plan, path, and byte count. Any forged, replaced, released, or corrupted
+    /// value converges to <c>false</c> without throwing. Because this result
+    /// proves the current freeze receipt and lock liveness, it becomes invalid
+    /// once the ownership lease is released.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -123,7 +123,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _freezeReceipt.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _freezeReceipt.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _freezeReceipt.LockIdentityEvidence;
 
         internal long TestRunId => _freezeReceipt.TestRunId;
 
@@ -175,8 +175,15 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunInitializationSession session = freezeReceipt.RunSession;
-            CaptureRunLockLease lockLease = freezeReceipt.LockLease;
-            if (session == null || lockLease == null || !session.OwnsLockLease(lockLease))
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = freezeReceipt.LockIdentityEvidence;
+            if (session == null || lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
+            {
+                return false;
+            }
+
+            if (!session.IsValid
+                || session.TestRunId != lockIdentityEvidence.TestRunId
+                || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
             {
                 return false;
             }
@@ -235,7 +242,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunLockPathSet pathSet = lockLease.PathSet;
+            CaptureRunLockPathSet pathSet = lockIdentityEvidence.LockPathSet;
             if (pathSet == null || !ReferenceEquals(pathSet.RootLayout, store.RootLayout))
             {
                 return false;

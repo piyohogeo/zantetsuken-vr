@@ -13,12 +13,11 @@ namespace Zantetsu.Observability
     /// The type owns exactly two read-only reference fields — the plan binding
     /// and the publication path set — and has no public or internal
     /// constructor. It duplicates no descriptor, entry, identifier, path, hash,
-    /// session, or lease; every accessor forwards from the held graph. The only
+    /// or session; every accessor forwards from the held graph. The only
     /// construction path is <see cref="Create"/>, which validates the binding
     /// once, correlates the exact references, builds the path set once, and
     /// assigns the fields through the private assignment constructor, so no
-    /// path set, legacy plan, frozen result, or lease can be injected from
-    /// outside.
+    /// path set, legacy plan, or frozen result can be injected from outside.
     /// </para>
     /// <para>
     /// This seed does not claim that any <c>publication.plan</c> bytes were
@@ -87,17 +86,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Plan binding must hold a valid root layout.", nameof(planBinding));
             }
 
-            CaptureRunLockLease lockLease = planBinding.LockLease;
-            if (lockLease == null || !lockLease.IsCreated)
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = planBinding.LockIdentityEvidence;
+            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
-                throw new ArgumentException("Plan binding must hold a live lock lease.", nameof(planBinding));
+                throw new ArgumentException("Plan binding must hold live lock identity evidence.", nameof(planBinding));
             }
 
             CaptureEvidenceRunFreezeReceipt freezeReceipt = planBinding.FreezeReceipt;
             CaptureRunInitializationSession session = planBinding.RunSession;
-            if (freezeReceipt == null || session == null || !session.OwnsLockLease(lockLease))
+            if (freezeReceipt == null || session == null || !session.IsValid
+                || session.TestRunId != lockIdentityEvidence.TestRunId
+                || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
             {
-                throw new ArgumentException("Plan binding must hold a live session owning the exact lock lease.", nameof(planBinding));
+                throw new ArgumentException("Plan binding must hold a live session bound to the exact lock identity evidence.", nameof(planBinding));
             }
 
             if (planBinding.TestRunId != frozen.TestRunId
@@ -154,7 +155,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _planBinding.RootLayout;
 
-        internal CaptureRunLockLease LockLease => _planBinding.LockLease;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _planBinding.LockIdentityEvidence;
 
         internal long TestRunId => _planBinding.TestRunId;
 
@@ -203,12 +204,14 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                CaptureRunLockLease lockLease = planBinding.LockLease;
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = planBinding.LockIdentityEvidence;
                 CaptureRunInitializationSession session = planBinding.RunSession;
                 CaptureEvidenceRunFreezeReceipt freezeReceipt = planBinding.FreezeReceipt;
-                if (lockLease == null || !lockLease.IsCreated
-                    || session == null || freezeReceipt == null
-                    || !session.OwnsLockLease(lockLease))
+                if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid
+                    || session == null || !session.IsValid
+                    || freezeReceipt == null
+                    || session.TestRunId != lockIdentityEvidence.TestRunId
+                    || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
                 {
                     return false;
                 }

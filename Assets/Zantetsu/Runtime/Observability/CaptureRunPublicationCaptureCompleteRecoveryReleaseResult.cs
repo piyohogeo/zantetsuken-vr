@@ -116,7 +116,7 @@ namespace Zantetsu.Observability
 
         internal CaptureRunInitializationOpenOutcome OpenOutcome => _operation.OpenOutcome;
 
-        internal CaptureRunLockLease LockLease => _operation.LockLease;
+        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease => _operation.OwnershipLease;
 
         internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
 
@@ -186,14 +186,14 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunInitializationOpenOutcome openOutcome = operation.OpenOutcome;
-            CaptureRunLockLease lockLease = operation.LockLease;
-            if (openOutcome == null || lockLease == null || openOutcome.IsCreated || lockLease.IsCreated)
+            CaptureRunInitializationSessionOwnershipLease ownershipLease = operation.OwnershipLease;
+            if (openOutcome == null || ownershipLease == null || !ownershipLease.IsReleaseComplete)
             {
                 return false;
             }
 
             if (!ReferenceEquals(receipt.OpenOutcome, openOutcome)
-                || !ReferenceEquals(receipt.LockLease, lockLease)
+                || !ReferenceEquals(receipt.OwnershipLease, ownershipLease)
                 || !ReferenceEquals(receipt.LifecycleEvidence, operation.LifecycleEvidence)
                 || !ReferenceEquals(receipt.NotificationResult, operation.NotificationResult)
                 || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
