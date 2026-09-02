@@ -8,20 +8,23 @@ namespace Zantetsu.Observability
         {
             if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
             if (!snapshot.IsValid) throw new ArgumentException("Snapshot must be valid.", nameof(snapshot));
+
+            // Deferred-only pass first: any Deferred observation makes the whole
+            // recovery Deferred, independent of artifact order and before any
+            // content classification.
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                if (snapshot.GetObservation(i).IsDeferred)
+                {
+                    return CapturePublicationRecoveryDisposition.Deferred;
+                }
+            }
+
             bool missingFinal = false;
             bool missingSource = false;
             for (int i = 0; i < snapshot.Count; i++)
             {
                 CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
-
-                // Deferred takes precedence over every content classification
-                // and is never converted into a collision or missing-artifact
-                // disposition.
-                if (observation.IsDeferred)
-                {
-                    return CapturePublicationRecoveryDisposition.Deferred;
-                }
-
                 CaptureArtifactVerificationStatus staging = observation.Staging.Status;
                 CaptureArtifactVerificationStatus final = observation.Final.Status;
                 if (staging == CaptureArtifactVerificationStatus.Invalid

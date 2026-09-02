@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
@@ -265,7 +267,7 @@ namespace Zantetsu.Core.Tests
         {
             string store = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactFileStore.cs"));
-            int rent = store.IndexOf("byte[] finalBuffer = _verificationBufferPool.TryRent();", StringComparison.Ordinal);
+            int rent = store.IndexOf("CaptureArtifactVerificationBufferPool.Lease finalLease = _verificationBufferPool.TryRent();", StringComparison.Ordinal);
             int move = store.IndexOf("File.Move(source, target);", StringComparison.Ordinal);
             Assert.That(rent, Is.GreaterThanOrEqualTo(0));
             Assert.That(move, Is.GreaterThan(rent));
@@ -286,7 +288,7 @@ namespace Zantetsu.Core.Tests
                 CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
                 store.WriteStaging(new CaptureArtifactWriteRequest(descriptor, payload));
 
-                byte[] held = pool.TryRent();
+                CaptureArtifactVerificationBufferPool.Lease held = pool.TryRent();
                 Assert.That(held, Is.Not.Null);
                 try
                 {
@@ -310,7 +312,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Store_BufferReturnedExactlyOnce_OnSuccessMismatchAndException()
+        public void Store_BufferReturnedExactlyOnce_OnSuccessMismatchAndInvalid()
         {
             (string sandbox, string staging, string final) = MakeSandbox();
             try
@@ -333,11 +335,16 @@ namespace Zantetsu.Core.Tests
                 Assert.That(store.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Mismatch));
                 Assert.That(pool.OutstandingRentCount, Is.Zero);
 
-                // Exception terminal path: exclusive lock prevents re-open.
+                // I/O failure terminal path: an exclusive lock prevents re-open
+                // and the known open failure converges to Invalid + ReadIoFailure
+                // without leaking, while the buffer is returned exactly once.
                 File.WriteAllBytes(stagingPath, payload);
                 using (FileStream locked = new FileStream(stagingPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
                 {
-                    Assert.Throws<IOException>(() => store.VerifyStaging(descriptor));
+                    CaptureArtifactVerificationResult result = store.VerifyStaging(descriptor);
+                    Assert.That(result.ExecutionDisposition, Is.EqualTo(Completed));
+                    Assert.That(result.Status, Is.EqualTo(CaptureArtifactVerificationStatus.Invalid));
+                    Assert.That(result.FailureReason, Is.EqualTo(CaptureArtifactVerificationFailureReason.ReadIoFailure));
                 }
                 Assert.That(pool.OutstandingRentCount, Is.Zero);
             }
@@ -363,10 +370,10 @@ namespace Zantetsu.Core.Tests
                 string stagingPath = Path.Combine(layout.StagingRunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
                 string finalPath = Path.Combine(layout.FinalRunRoot, descriptor.FinalRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
-                byte[] held = pool.TryRent();
+                CaptureArtifactVerificationBufferPool.Lease held = pool.TryRent();
                 try
                 {
-                    Assert.Throws<InvalidDataException>(() => store.Publish(descriptor));
+                    Assert.Throws<CaptureArtifactVerificationDeferredException>(() => store.Publish(descriptor));
                 }
                 finally
                 {
@@ -380,6 +387,62 @@ namespace Zantetsu.Core.Tests
             {
                 if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
             }
+        }
+
+        [Test]
+        public void BufferPool_StaleReturn_DoesNotReleaseCurrentLease()
+        {
+            CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(64);
+            CaptureArtifactVerificationBufferPool.Lease first = pool.TryRent();
+            Assert.That(first, Is.Not.Null);
+            pool.Return(first);
+            Assert.That(pool.OutstandingRentCount, Is.Zero);
+
+            CaptureArtifactVerificationBufferPool.Lease second = pool.TryRent();
+            Assert.That(second, Is.Not.Null);
+            // A stale return of the first lease must not release the second borrow.
+            pool.Return(first);
+            Assert.That(pool.OutstandingRentCount, Is.EqualTo(1));
+
+            pool.Return(second);
+            Assert.That(pool.OutstandingRentCount, Is.Zero);
+        }
+
+        [Test]
+        public void BufferPool_ConcurrentRent_YieldsAtMostOneLease()
+        {
+            CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(64);
+            int successes = 0;
+            List<CaptureArtifactVerificationBufferPool.Lease> leases = new List<CaptureArtifactVerificationBufferPool.Lease>();
+            object gate = new object();
+            Thread[] threads = new Thread[8];
+            using (ManualResetEvent start = new ManualResetEvent(false))
+            {
+                for (int i = 0; i < threads.Length; i++)
+                {
+                    threads[i] = new Thread(() =>
+                    {
+                        start.WaitOne();
+                        CaptureArtifactVerificationBufferPool.Lease lease = pool.TryRent();
+                        if (lease != null)
+                        {
+                            lock (gate)
+                            {
+                                successes++;
+                                leases.Add(lease);
+                            }
+                        }
+                    });
+                    threads[i].Start();
+                }
+
+                start.Set();
+                for (int i = 0; i < threads.Length; i++) threads[i].Join();
+            }
+
+            Assert.That(successes, Is.EqualTo(1));
+            foreach (CaptureArtifactVerificationBufferPool.Lease lease in leases) pool.Return(lease);
+            Assert.That(pool.OutstandingRentCount, Is.Zero);
         }
 
         // ---- Recovery classification ----
@@ -434,6 +497,25 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Recovery_MismatchBeforeDeferred_YieldsDeferred()
+        {
+            byte[] payload = Encoding.UTF8.GetBytes("artifact");
+            CaptureArtifactDescriptor[] descriptors = { MakeDescriptor("a", payload), MakeDescriptor("b", payload) };
+            CapturePublicationPlan plan = MakePlan(descriptors);
+
+            // Mismatch at index 0, Deferred at index 1: Deferred must win
+            // regardless of artifact order.
+            CapturePublicationRecoverySnapshot snapshot = MakeSnapshot(
+                plan,
+                i => i == 0
+                    ? R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Mismatch, CaptureArtifactVerificationFailureReason.HashMismatch, payload.LongLength)
+                    : R(plan.GetArtifact(i), Deferred, CaptureArtifactVerificationStatus.None, CaptureArtifactVerificationFailureReason.BufferUnavailable, 0),
+                i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength));
+
+            Assert.That(CapturePublicationRecoveryClassifier.Classify(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
+        }
+
+        [Test]
         public void Recovery_DeferredExecutesZeroStoreMutations()
         {
             byte[] payload = Encoding.UTF8.GetBytes("artifact");
@@ -449,6 +531,24 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
             Assert.That(store.PublishCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Recovery_ExecuteMissing_DeferredPublish_Propagates()
+        {
+            byte[] payload = Encoding.UTF8.GetBytes("artifact");
+            CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+            CapturePublicationPlan plan = MakePlan(new[] { descriptor });
+            CapturePublicationRecoverySnapshot snapshot = MakeSnapshot(
+                plan,
+                i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength),
+                i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Absent, CaptureArtifactVerificationFailureReason.FileAbsent, 0));
+
+            DeferredPublishStore store = new DeferredPublishStore();
+            CapturePublicationRecoveryCoordinator coordinator = new CapturePublicationRecoveryCoordinator(store);
+
+            Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
+            Assert.That(store.PublishCalls, Is.EqualTo(1));
         }
 
         [Test]
@@ -613,6 +713,32 @@ namespace Zantetsu.Core.Tests
             {
                 PublishCalls++;
                 return null;
+            }
+
+            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
+            {
+                throw new NotSupportedException();
+            }
+
+            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
+            {
+                throw new NotSupportedException();
+            }
+        }
+
+        private sealed class DeferredPublishStore : ICaptureArtifactStore
+        {
+            internal int PublishCalls;
+
+            public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
+            {
+                throw new NotSupportedException();
+            }
+
+            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
+            {
+                PublishCalls++;
+                throw new CaptureArtifactVerificationDeferredException("buffer unavailable");
             }
 
             public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)

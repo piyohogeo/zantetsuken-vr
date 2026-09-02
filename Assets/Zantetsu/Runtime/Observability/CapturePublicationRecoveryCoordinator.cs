@@ -48,7 +48,19 @@ namespace Zantetsu.Observability
                 CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
                 if (observation.Final.Status == CaptureArtifactVerificationStatus.Absent)
                 {
-                    CaptureArtifactPublishReceipt receipt = _store.Publish(observation.Descriptor);
+                    CaptureArtifactPublishReceipt receipt;
+                    try
+                    {
+                        receipt = _store.Publish(observation.Descriptor);
+                    }
+                    catch (CaptureArtifactVerificationDeferredException)
+                    {
+                        // A buffer that became exhausted after inspection but
+                        // before publication converges back to Deferred rather
+                        // than a content mismatch.
+                        return CapturePublicationRecoveryDisposition.Deferred;
+                    }
+
                     if (receipt == null || !receipt.IsIssuedFor(_store, observation.Descriptor))
                         throw new InvalidOperationException("Store returned an invalid publish receipt.");
                 }
