@@ -661,6 +661,71 @@ namespace Zantetsu.Observability
                     return false;
                 }
             }
+
+            /// <summary>
+            /// O(1), exception-safe index-local commit input access: confirms
+            /// the shared bindings, then re-verifies the target step's
+            /// reference and Action/EntryIndex/ArtifactKind against the
+            /// issuance proof, requires the plan to hold exactly one step
+            /// with Action <see cref="CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex"/>
+            /// and the held <see cref="CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex"/>
+            /// disposition, and returns the exact decision. The snapshot is
+            /// never fully validated, no other step is visited, no entry is
+            /// scanned, and no token is re-issued. Both out parameters are
+            /// assigned only on success.
+            /// </summary>
+            internal bool TryGetIssuedCommitInputs(
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
+                int stepIndex,
+                out CaptureRunPublicationArtifactRecoveryStep step,
+                out PngJsonCapturePublicationArtifactRecoveryDecision decision)
+            {
+                step = null;
+                decision = null;
+
+                if (!IsBindingIntact(plan))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
+                    if (stepIndex < 0 || stepIndex >= steps.Length)
+                    {
+                        return false;
+                    }
+
+                    CaptureRunPublicationArtifactRecoveryStep issuedStep = steps[stepIndex];
+                    if (issuedStep == null || !_proof[stepIndex].Matches(issuedStep))
+                    {
+                        return false;
+                    }
+
+                    if (issuedStep.Action != CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex
+                        || issuedStep.EntryIndex != -1
+                        || issuedStep.ArtifactKind != CaptureRunPublicationArtifactKind.None)
+                    {
+                        return false;
+                    }
+
+                    if (steps.Length != 1
+                        || _disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
+                    {
+                        return false;
+                    }
+
+                    step = issuedStep;
+                    decision = _decision;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    step = null;
+                    decision = null;
+                    return false;
+                }
+            }
         }
 
         /// <summary>
