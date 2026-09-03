@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Zantetsu.Observability
@@ -12,7 +13,8 @@ namespace Zantetsu.Observability
         Absent = 1,
         IoFailure = 2,
         InvalidFileKind = 3,
-        Unsupported = 4
+        Unsupported = 4,
+        EscapesRoot = 5
     }
 
     /// <summary>Result of a no-follow open: either an opened stream or a status.</summary>
@@ -52,19 +54,27 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void Close()
         {
-            _stream?.Dispose();
-            _handle?.Dispose();
+            try
+            {
+                _stream?.Dispose();
+            }
+            finally
+            {
+                _handle?.Dispose();
+            }
         }
     }
 
     /// <summary>
     /// Platform-safe no-follow file open for artifact verification. On Windows
-    /// the exact path is opened with <c>FILE_FLAG_OPEN_REPARSE_POINT</c> and its
-    /// kind is derived from the opened handle, so a regular file swapped for a
-    /// reparse point between inspection and open is never followed; the opened
-    /// handle is the single source of truth. On platforms without a no-follow
-    /// open the attempt reports <see cref="CaptureArtifactNoFollowOpenStatus.Unsupported"/>
-    /// so the caller can fail closed.
+    /// the path is opened relative to a run root with
+    /// <c>FILE_FLAG_OPEN_REPARSE_POINT</c>, its kind is derived from the opened
+    /// handle, and the handle's canonical path is verified to stay inside the
+    /// run root, so neither a final-component reparse point nor a parent
+    /// directory swapped for a junction or symbolic link can be followed. On
+    /// platforms without a no-follow open the attempt reports
+    /// <see cref="CaptureArtifactNoFollowOpenStatus.Unsupported"/> so the
+    /// caller can fail closed.
     /// </summary>
     internal static class CaptureArtifactNoFollowOpen
     {
@@ -80,15 +90,21 @@ namespace Zantetsu.Observability
 
         internal static bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
-        internal static CaptureArtifactNoFollowOpenResult TryOpen(string path)
+        internal static CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
         {
             if (!IsSupported)
             {
                 return CaptureArtifactNoFollowOpenResult.Of(CaptureArtifactNoFollowOpenStatus.Unsupported);
             }
 
+            if (root == null) throw new ArgumentNullException(nameof(root));
+            if (relativePath == null) throw new ArgumentNullException(nameof(relativePath));
+
+            string normalizedRoot = Path.GetFullPath(root);
+            string fullPath = Path.Combine(normalizedRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
             SafeFileHandle handle = CreateFileW(
-                path,
+                fullPath,
                 GenericRead,
                 FileShareRead,
                 IntPtr.Zero,
@@ -119,6 +135,16 @@ namespace Zantetsu.Observability
                 return CaptureArtifactNoFollowOpenResult.Of(CaptureArtifactNoFollowOpenStatus.InvalidFileKind);
             }
 
+            // The opened handle is the single source of truth. Resolve its
+            // canonical path and require it to stay inside the run root, so a
+            // parent directory swapped for a junction or symbolic link cannot
+            // make verification read a file outside the root.
+            if (!IsWithinRoot(handle, normalizedRoot))
+            {
+                handle.Dispose();
+                return CaptureArtifactNoFollowOpenResult.Of(CaptureArtifactNoFollowOpenStatus.EscapesRoot);
+            }
+
             FileStream stream;
             try
             {
@@ -132,6 +158,31 @@ namespace Zantetsu.Observability
 
             return CaptureArtifactNoFollowOpenResult.Opened(stream, handle);
         }
+
+        private static bool IsWithinRoot(SafeFileHandle handle, string root)
+        {
+            StringBuilder builder = new StringBuilder(4096);
+            uint required = GetFinalPathNameByHandle(handle, builder, (uint)builder.Capacity, 0);
+            if (required == 0) return false; // fail closed
+            if (required > builder.Capacity)
+            {
+                builder = new StringBuilder((int)required + 1);
+                required = GetFinalPathNameByHandle(handle, builder, (uint)builder.Capacity, 0);
+                if (required == 0 || required > builder.Capacity) return false;
+            }
+
+            string finalPath = builder.ToString();
+            string expectedRoot = "\\\\?\\" + root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return finalPath.StartsWith(expectedRoot + "\\", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(finalPath, expectedRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern uint GetFinalPathNameByHandle(
+            SafeFileHandle hFile,
+            StringBuilder lpszFilePath,
+            uint cchFilePath,
+            uint dwFlags);
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern SafeFileHandle CreateFileW(

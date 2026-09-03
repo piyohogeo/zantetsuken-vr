@@ -44,19 +44,16 @@ namespace Zantetsu.Observability
             CapturePublicationRecoveryDisposition disposition = CapturePublicationRecoveryClassifier.Classify(snapshot);
             if (disposition != CapturePublicationRecoveryDisposition.PublishMissingArtifacts) return disposition;
 
-            // Reserve the whole execution's verification resource once, before
-            // any filesystem change, so buffer exhaustion can never surface
-            // after an earlier artifact has already been published. A store
-            // without a reserveable buffer falls back to per-artifact publish.
-            CaptureArtifactFileStore fileStore = _store as CaptureArtifactFileStore;
-            CaptureArtifactVerificationBufferPool.Lease reserved = null;
-            if (fileStore != null)
+            // The whole execution must hold one reservation before any
+            // filesystem change, so a Deferred outcome can never surface after
+            // an earlier artifact has already been published. A store without
+            // the reservation capability cannot make that guarantee, so
+            // publication is refused (Deferred) with zero changes.
+            ICaptureArtifactReservationStore reservationStore = _store as ICaptureArtifactReservationStore;
+            CaptureArtifactPublishReservation reservation = reservationStore?.TryReservePublish();
+            if (reservation == null)
             {
-                reserved = fileStore.VerificationBufferPool.TryRent();
-                if (reserved == null)
-                {
-                    return CapturePublicationRecoveryDisposition.Deferred;
-                }
+                return CapturePublicationRecoveryDisposition.Deferred;
             }
 
             try
@@ -66,23 +63,7 @@ namespace Zantetsu.Observability
                     CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
                     if (observation.Final.Status == CaptureArtifactVerificationStatus.Absent)
                     {
-                        CaptureArtifactPublishReceipt receipt;
-                        if (fileStore != null && reserved != null)
-                        {
-                            receipt = fileStore.PublishReserved(observation.Descriptor, reserved);
-                        }
-                        else
-                        {
-                            try
-                            {
-                                receipt = _store.Publish(observation.Descriptor);
-                            }
-                            catch (CaptureArtifactVerificationDeferredException)
-                            {
-                                return CapturePublicationRecoveryDisposition.Deferred;
-                            }
-                        }
-
+                        CaptureArtifactPublishReceipt receipt = reservationStore.PublishReserved(observation.Descriptor, reservation);
                         if (receipt == null || !receipt.IsIssuedFor(_store, observation.Descriptor))
                             throw new InvalidOperationException("Store returned an invalid publish receipt.");
                     }
@@ -91,10 +72,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                if (fileStore != null && reserved != null)
-                {
-                    fileStore.VerificationBufferPool.Return(reserved);
-                }
+                reservationStore.ReleasePublishReservation(reservation);
             }
         }
     }

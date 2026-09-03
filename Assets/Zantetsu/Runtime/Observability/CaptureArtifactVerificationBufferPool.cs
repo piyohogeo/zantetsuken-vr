@@ -56,6 +56,20 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Reports whether a lease is the currently outstanding lease of this
+        /// pool: it must have been minted by this pool and still carry the
+        /// current generation. A foreign, returned, or stale lease is inactive.
+        /// </summary>
+        internal bool IsActive(Lease lease)
+        {
+            if (lease == null) return false;
+            lock (_gate)
+            {
+                return _leased && ReferenceEquals(lease.Pool, this) && lease.Generation == _generation;
+            }
+        }
+
         /// <summary>One-time, generation-bound lease of the single buffer.</summary>
         internal sealed class Lease
         {

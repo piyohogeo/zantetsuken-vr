@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -267,6 +268,7 @@ namespace Zantetsu.Core.Tests
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactNoFollowOpen.cs"));
             Assert.That(noFollow, Does.Contain("FileFlagOpenReparsePoint"));
             Assert.That(noFollow, Does.Contain("GetFileInformationByHandle"));
+            Assert.That(noFollow, Does.Contain("GetFinalPathNameByHandle"));
         }
 
         [Test]
@@ -424,6 +426,116 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Store_PublishReserved_ForeignReservation_Rejected()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact payload");
+                CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactFileStore storeA = new CaptureArtifactFileStore(
+                    layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength));
+                CaptureArtifactFileStore storeB = new CaptureArtifactFileStore(
+                    layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength));
+
+                CaptureArtifactPublishReservation reservationA = storeA.TryReservePublish();
+                Assert.That(reservationA, Is.Not.Null);
+                try
+                {
+                    // A reservation minted by store A must be rejected by store B
+                    // before any filesystem change.
+                    Assert.Throws<ArgumentException>(() => storeB.PublishReserved(descriptor, reservationA));
+                }
+                finally
+                {
+                    storeA.ReleasePublishReservation(reservationA);
+                }
+
+                Assert.That(storeA.VerificationBufferPool.OutstandingRentCount, Is.Zero);
+                Assert.That(storeB.VerificationBufferPool.OutstandingRentCount, Is.Zero);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_PublishReserved_StaleReservation_Rejected()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact payload");
+                CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
+
+                CaptureArtifactPublishReservation reservation = store.TryReservePublish();
+                Assert.That(reservation, Is.Not.Null);
+                store.ReleasePublishReservation(reservation);
+
+                // A returned reservation is no longer active and must be
+                // rejected before any filesystem change.
+                Assert.Throws<InvalidOperationException>(() => store.PublishReserved(descriptor, reservation));
+                Assert.That(pool.OutstandingRentCount, Is.Zero);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_ParentDirectoryJunction_RejectsOutsideRootFile()
+        {
+            if (!CaptureArtifactNoFollowOpen.IsSupported)
+            {
+                Assert.Ignore("Parent-directory junction test requires Windows no-follow open support.");
+            }
+
+            (string sandbox, string staging, string final) = MakeSandbox();
+            string outside = Path.Combine(sandbox, "outside");
+            string junction = null;
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact payload");
+                CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
+                store.WriteStaging(new CaptureArtifactWriteRequest(descriptor, payload));
+
+                string artifactsDir = Path.Combine(layout.StagingRunRoot, "artifacts");
+                Directory.CreateDirectory(outside);
+                File.WriteAllBytes(Path.Combine(outside, "a.stage"), payload);
+
+                // Replace the artifacts directory with a junction to an outside
+                // directory, so the artifact path now traverses a parent
+                // reparse point whose target lies outside the run root.
+                Directory.Delete(artifactsDir, true);
+                CreateJunction(artifactsDir, outside);
+                junction = artifactsDir;
+
+                CaptureArtifactVerificationResult result = store.VerifyStaging(descriptor);
+                Assert.That(result.ExecutionDisposition, Is.EqualTo(Completed));
+                Assert.That(result.Status, Is.EqualTo(CaptureArtifactVerificationStatus.Invalid));
+                Assert.That(result.FailureReason, Is.EqualTo(CaptureArtifactVerificationFailureReason.PathOrRunCorrelationMismatch));
+                Assert.That(pool.OutstandingRentCount, Is.Zero);
+            }
+            finally
+            {
+                if (junction != null && Directory.Exists(junction))
+                {
+                    Directory.Delete(junction, false); // remove the link, not the target
+                }
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
         public void BufferPool_StaleReturn_DoesNotReleaseCurrentLease()
         {
             CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(64);
@@ -568,7 +680,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Recovery_ExecuteMissing_DeferredPublish_Propagates()
+        public void Recovery_ExecuteMissing_NonReservableStore_DeferredWithoutPublish()
         {
             byte[] payload = Encoding.UTF8.GetBytes("artifact");
             CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
@@ -578,11 +690,36 @@ namespace Zantetsu.Core.Tests
                 i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength),
                 i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Absent, CaptureArtifactVerificationFailureReason.FileAbsent, 0));
 
+            // A store without a reservation capability cannot guarantee that a
+            // Deferred outcome leaves the file set unchanged, so publication is
+            // refused before any publish call.
             DeferredPublishStore store = new DeferredPublishStore();
             CapturePublicationRecoveryCoordinator coordinator = new CapturePublicationRecoveryCoordinator(store);
 
             Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
-            Assert.That(store.PublishCalls, Is.EqualTo(1));
+            Assert.That(store.PublishCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Recovery_ExecuteMissing_PartialPublishStore_DeferredWithoutChanges()
+        {
+            byte[] payload = Encoding.UTF8.GetBytes("artifact");
+            CaptureArtifactDescriptor[] descriptors = { MakeDescriptor("a", payload), MakeDescriptor("b", payload) };
+            CapturePublicationPlan plan = MakePlan(descriptors);
+            CapturePublicationRecoverySnapshot snapshot = MakeSnapshot(
+                plan,
+                i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength),
+                i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Absent, CaptureArtifactVerificationFailureReason.FileAbsent, 0));
+
+            // This store would publish the first artifact and then throw
+            // Deferred for the second, but it cannot reserve the whole
+            // execution, so the coordinator must refuse before the first
+            // publish and leave the store untouched.
+            PartialPublishStore store = new PartialPublishStore();
+            CapturePublicationRecoveryCoordinator coordinator = new CapturePublicationRecoveryCoordinator(store);
+
+            Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
+            Assert.That(store.PublishCalls, Is.Zero);
         }
 
         [Test]
@@ -770,6 +907,27 @@ namespace Zantetsu.Core.Tests
             return (sandbox, staging, final);
         }
 
+        private static void CreateJunction(string linkPath, string targetPath)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo(
+                "cmd.exe", "/c mklink /J \"" + linkPath + "\" \"" + targetPath + "\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using (Process process = Process.Start(startInfo))
+            {
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException("mklink /J failed: " + process.StandardError.ReadToEnd());
+                }
+            }
+        }
+
         private sealed class RecordingStream : Stream
         {
             private readonly byte[] _content;
@@ -854,6 +1012,38 @@ namespace Zantetsu.Core.Tests
             public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
             {
                 PublishCalls++;
+                throw new CaptureArtifactVerificationDeferredException("buffer unavailable");
+            }
+
+            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
+            {
+                throw new NotSupportedException();
+            }
+
+            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
+            {
+                throw new NotSupportedException();
+            }
+        }
+
+        private sealed class PartialPublishStore : ICaptureArtifactStore
+        {
+            internal int PublishCalls;
+            private int _published;
+
+            public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
+            {
+                throw new NotSupportedException();
+            }
+
+            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
+            {
+                PublishCalls++;
+                if (_published++ == 0)
+                {
+                    return new CaptureArtifactPublishReceipt(this, descriptor, "C:\\final\\" + descriptor.ArtifactId);
+                }
+
                 throw new CaptureArtifactVerificationDeferredException("buffer unavailable");
             }
 

@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 namespace Zantetsu.Observability
 {
     /// <summary>Format-neutral file store rooted in one staging and one final run.</summary>
-    internal sealed class CaptureArtifactFileStore : ICaptureArtifactStore, ICapturePublicationPlanStore
+    internal sealed class CaptureArtifactFileStore : ICaptureArtifactStore, ICapturePublicationPlanStore, ICaptureArtifactReservationStore
     {
         private readonly CaptureRunRootLayout _rootLayout;
         private readonly long _testRunId;
@@ -164,31 +164,54 @@ namespace Zantetsu.Observability
 
             // Reserve the verification buffer before any filesystem change so
             // buffer exhaustion is never discovered only after the move.
-            CaptureArtifactVerificationBufferPool.Lease lease = _verificationBufferPool.TryRent();
-            if (lease == null)
+            CaptureArtifactPublishReservation reservation = TryReservePublish();
+            if (reservation == null)
                 throw new CaptureArtifactVerificationDeferredException("Verification buffer unavailable; no filesystem change.");
 
             try
             {
-                return PublishReserved(descriptor, lease);
+                return PublishReserved(descriptor, reservation);
             }
             finally
             {
-                _verificationBufferPool.Return(lease);
+                ReleasePublishReservation(reservation);
             }
         }
 
-        internal CaptureArtifactPublishReceipt PublishReserved(
+        public CaptureArtifactPublishReservation TryReservePublish()
+        {
+            CaptureArtifactVerificationBufferPool.Lease lease = _verificationBufferPool.TryRent();
+            return lease == null ? null : new CaptureArtifactPublishReservation(this, lease);
+        }
+
+        public void ReleasePublishReservation(CaptureArtifactPublishReservation reservation)
+        {
+            if (reservation == null) return;
+            if (!ReferenceEquals(reservation.Store, this)) return;
+            _verificationBufferPool.Return(reservation.Lease);
+        }
+
+        public CaptureArtifactPublishReceipt PublishReserved(
             CaptureArtifactDescriptor descriptor,
-            CaptureArtifactVerificationBufferPool.Lease lease)
+            CaptureArtifactPublishReservation reservation)
         {
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
-            if (lease == null) throw new ArgumentNullException(nameof(lease));
+            if (reservation == null) throw new ArgumentNullException(nameof(reservation));
+
+            // The reservation must be minted by this exact store and must still
+            // be the current, outstanding lease of this store's pool. A foreign
+            // store, foreign pool, returned, or stale reservation is rejected
+            // before any filesystem change.
+            if (!ReferenceEquals(reservation.Store, this))
+                throw new ArgumentException("Publication reservation belongs to another store.", nameof(reservation));
+            CaptureArtifactVerificationBufferPool.Lease lease = reservation.Lease;
+            if (lease == null || !_verificationBufferPool.IsActive(lease))
+                throw new InvalidOperationException("Publication reservation is not active.");
 
             string source = Resolve(_stagingRunRoot, descriptor.StagingRelativePath);
             string target = Resolve(_finalRunRoot, descriptor.FinalRelativePath);
 
-            CaptureArtifactVerificationResult staging = VerifyAtReserved(descriptor, source, lease);
+            CaptureArtifactVerificationResult staging = VerifyAtReserved(descriptor, _stagingRunRoot, descriptor.StagingRelativePath, lease);
             if (staging.Status != CaptureArtifactVerificationStatus.MatchesExpected)
                 throw new InvalidDataException("Staging artifact does not match descriptor.");
 
@@ -197,7 +220,7 @@ namespace Zantetsu.Observability
             Directory.CreateDirectory(Path.GetDirectoryName(target));
             File.Move(source, target);
 
-            CaptureArtifactVerificationResult final = VerifyAtReserved(descriptor, target, lease);
+            CaptureArtifactVerificationResult final = VerifyAtReserved(descriptor, _finalRunRoot, descriptor.FinalRelativePath, lease);
             if (final.Status != CaptureArtifactVerificationStatus.MatchesExpected)
                 throw new IOException("Published artifact verification failed.");
 
@@ -207,16 +230,16 @@ namespace Zantetsu.Observability
         public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
         {
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
-            return VerifyAt(descriptor, Resolve(_finalRunRoot, descriptor.FinalRelativePath));
+            return VerifyAt(descriptor, _finalRunRoot, descriptor.FinalRelativePath);
         }
 
         public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
         {
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
-            return VerifyAt(descriptor, Resolve(_stagingRunRoot, descriptor.StagingRelativePath));
+            return VerifyAt(descriptor, _stagingRunRoot, descriptor.StagingRelativePath);
         }
 
-        private CaptureArtifactVerificationResult VerifyAt(CaptureArtifactDescriptor descriptor, string path)
+        private CaptureArtifactVerificationResult VerifyAt(CaptureArtifactDescriptor descriptor, string root, string relativePath)
         {
             CaptureArtifactVerificationBufferPool.Lease lease = _verificationBufferPool.TryRent();
             if (lease == null)
@@ -231,7 +254,7 @@ namespace Zantetsu.Observability
 
             try
             {
-                return VerifyAtReserved(descriptor, path, lease);
+                return VerifyAtReserved(descriptor, root, relativePath, lease);
             }
             finally
             {
@@ -241,10 +264,11 @@ namespace Zantetsu.Observability
 
         private static CaptureArtifactVerificationResult VerifyAtReserved(
             CaptureArtifactDescriptor descriptor,
-            string path,
+            string root,
+            string relativePath,
             CaptureArtifactVerificationBufferPool.Lease lease)
         {
-            CaptureArtifactNoFollowOpenResult opened = CaptureArtifactNoFollowOpen.TryOpen(path);
+            CaptureArtifactNoFollowOpenResult opened = CaptureArtifactNoFollowOpen.TryOpen(root, relativePath);
             switch (opened.Status)
             {
                 case CaptureArtifactNoFollowOpenStatus.Opened:
@@ -264,6 +288,13 @@ namespace Zantetsu.Observability
                         CaptureArtifactVerificationExecutionDisposition.Completed,
                         CaptureArtifactVerificationStatus.Invalid,
                         CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind,
+                        0);
+                case CaptureArtifactNoFollowOpenStatus.EscapesRoot:
+                    return new CaptureArtifactVerificationResult(
+                        descriptor,
+                        CaptureArtifactVerificationExecutionDisposition.Completed,
+                        CaptureArtifactVerificationStatus.Invalid,
+                        CaptureArtifactVerificationFailureReason.PathOrRunCorrelationMismatch,
                         0);
                 case CaptureArtifactNoFollowOpenStatus.IoFailure:
                     return InvalidRead(descriptor, 0);
