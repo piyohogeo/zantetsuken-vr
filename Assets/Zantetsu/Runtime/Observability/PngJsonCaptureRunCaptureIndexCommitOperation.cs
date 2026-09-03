@@ -108,7 +108,12 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Step must be the single commit capture index step bound by the issued token.", nameof(stepIndex));
             }
 
-            if (!TryCorrelate(actionPlan, decision, out CaptureRunPublicationPathSet publicationPaths, out CaptureRunCaptureIndexCommitMode mode))
+            if (!token.TryGetIssuedCommitMode(actionPlan, out CaptureRunCaptureIndexCommitMode mode))
+            {
+                throw new ArgumentException("Commit mode proof must remain intact.", nameof(actionPlan));
+            }
+
+            if (!TryCorrelate(actionPlan, decision, mode, out CaptureRunPublicationPathSet publicationPaths))
             {
                 throw new ArgumentException("Commit capture index correlation must remain intact.", nameof(actionPlan));
             }
@@ -275,7 +280,12 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!TryCorrelate(_actionPlan, decision, out CaptureRunPublicationPathSet publicationPaths, out CaptureRunCaptureIndexCommitMode mode))
+                if (!token.TryGetIssuedCommitMode(_actionPlan, out CaptureRunCaptureIndexCommitMode mode))
+                {
+                    return false;
+                }
+
+                if (!TryCorrelate(_actionPlan, decision, mode, out CaptureRunPublicationPathSet publicationPaths))
                 {
                     return false;
                 }
@@ -292,20 +302,21 @@ namespace Zantetsu.Observability
         /// O(1), exception-safe correlation shared by construction and
         /// validity: confirms the decision's classification proof (the
         /// <c>CommitCaptureIndex</c> disposition, which already proves every
-        /// final PNG and sidecar matches the expected content), the authority's
-        /// lock liveness, the exact authoritative plan and its independent ID
-        /// and hash value correlation, the trace manifest evidence, the exact
-        /// publication path set and root layout, the derived commit mode, and
-        /// the distinct temporary and final paths. It never scans a plan entry.
+        /// final PNG and sidecar matches the expected content and that the
+        /// final capture index is absent), the authority's lock liveness, the
+        /// exact authoritative plan and its independent ID and hash value
+        /// correlation, the trace manifest evidence, the exact publication
+        /// path set and root layout, and the distinct temporary and final
+        /// paths. The commit mode is supplied by the token's O(1) issuance
+        /// proof. It never scans a plan entry.
         /// </summary>
         private static bool TryCorrelate(
             PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan,
             PngJsonCapturePublicationArtifactRecoveryDecision decision,
-            out CaptureRunPublicationPathSet publicationPaths,
-            out CaptureRunCaptureIndexCommitMode mode)
+            CaptureRunCaptureIndexCommitMode mode,
+            out CaptureRunPublicationPathSet publicationPaths)
         {
             publicationPaths = null;
-            mode = CaptureRunCaptureIndexCommitMode.None;
 
             try
             {
@@ -314,7 +325,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (decision.Disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
+                if (decision.Disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex
+                    || mode == CaptureRunCaptureIndexCommitMode.None)
                 {
                     return false;
                 }
@@ -361,11 +373,6 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!TryDeriveMode(authority, authoritativePlan, out mode))
-                {
-                    return false;
-                }
-
                 if (string.Equals(publicationPaths.CaptureIndexTemporaryPath, publicationPaths.CaptureIndexPath, StringComparison.Ordinal))
                 {
                     return false;
@@ -376,74 +383,8 @@ namespace Zantetsu.Observability
             catch (Exception)
             {
                 publicationPaths = null;
-                mode = CaptureRunCaptureIndexCommitMode.None;
                 return false;
             }
-        }
-
-        /// <summary>
-        /// O(1), exception-safe commit-mode derivation: a Fresh frozen run
-        /// always creates a new temporary index without consulting any recovery
-        /// observation; a Recovery decision derives the mode from the observed
-        /// <c>capture.index.tmp</c> status and requires the final
-        /// <c>capture.index</c> to be absent, rejecting a canonical temporary
-        /// whose plan does not exactly match the authoritative plan.
-        /// </summary>
-        private static bool TryDeriveMode(
-            PngJsonCapturePublicationArtifactInspectionAuthority authority,
-            PngJsonCapturePublicationPlan authoritativePlan,
-            out CaptureRunCaptureIndexCommitMode mode)
-        {
-            mode = CaptureRunCaptureIndexCommitMode.None;
-
-            if (authority.IsFresh)
-            {
-                mode = CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit;
-                return true;
-            }
-
-            if (!authority.IsRecovery)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
-            if (recoveryDecision == null)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = recoveryDecision.Snapshot;
-            if (publicationSnapshot == null)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationDocumentObservation captureIndex = publicationSnapshot.CaptureIndex;
-            if (captureIndex == null || !captureIndex.IsValid
-                || captureIndex.Status != CaptureRunPublicationDocumentObservationStatus.Absent)
-            {
-                return false;
-            }
-
-            CaptureRunPublicationDocumentObservation captureIndexTemporary = publicationSnapshot.CaptureIndexTemporary;
-            if (captureIndexTemporary == null || !captureIndexTemporary.IsValid)
-            {
-                return false;
-            }
-
-            if (!TryDeriveModeFromStatus(captureIndexTemporary.Status, out mode))
-            {
-                return false;
-            }
-
-            if (mode == CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit
-                && !CaptureRunPublicationRecoveryClassifier.PlansEqual(captureIndexTemporary.Plan, authoritativePlan))
-            {
-                return false;
-            }
-
-            return true;
         }
 
         private static bool TryDeriveModeFromStatus(

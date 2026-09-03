@@ -765,6 +765,38 @@ namespace Zantetsu.Core.Tests
             return BuildCommitPlan(authority);
         }
 
+        private PngJsonCapturePublicationArtifactRecoveryActionPlan BuildLargeRecoveryCommitPlan(
+            PngJsonCapturePublicationPlan plan)
+        {
+            FakePublicationInspector inspector = new FakePublicationInspector();
+            CaptureRunPublicationRecoveryInspectionOperation operation = MakeRecoveryInspectionOperation(
+                16 * 1024 * 1024, 1000, 512, out _);
+            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = MakeRecoverySnapshot(
+                inspector,
+                operation,
+                publicationPlan: MakeDoc(PublicationPlan, DocCanonical, 100, plan),
+                captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
+            CaptureRunPublicationRecoveryDecision decision = CaptureRunPublicationRecoveryClassifier.Classify(snapshot);
+            PngJsonCapturePublicationArtifactInspectionAuthority authority =
+                PngJsonCapturePublicationArtifactInspectionAuthority.FromRecovery(decision);
+
+            int count = plan.EntryCount;
+            CaptureRunPublicationEvidenceStatus[] stagingPng = new CaptureRunPublicationEvidenceStatus[count];
+            CaptureRunPublicationEvidenceStatus[] stagingSidecar = new CaptureRunPublicationEvidenceStatus[count];
+            CaptureRunPublicationEvidenceStatus[] finalPng = new CaptureRunPublicationEvidenceStatus[count];
+            CaptureRunPublicationEvidenceStatus[] finalSidecar = new CaptureRunPublicationEvidenceStatus[count];
+            for (int i = 0; i < count; i++)
+            {
+                stagingPng[i] = EvAbsent;
+                stagingSidecar[i] = EvAbsent;
+                finalPng[i] = EvMatchesExpected;
+                finalSidecar[i] = EvMatchesExpected;
+            }
+
+            return BuildPlan(MakeSnapshotArray(
+                authority, EvMatchesExpected, 1, stagingPng, stagingSidecar, finalPng, finalSidecar, maximumPngByteCount: 2000));
+        }
+
         private static CaptureRunPublicationPathSet GetPublicationPaths(
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
         {
@@ -1024,6 +1056,74 @@ namespace Zantetsu.Core.Tests
             Assert.That(decision, Is.Null);
         }
 
+        [Test]
+        public void Token_TryGetIssuedCommitMode_Absent_CreateMode()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.True);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_Canonical_ReuseMode()
+        {
+            PngJsonCapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan = BuildRecoveryCommitPlan(
+                out _, plan, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
+
+            Assert.That(token.TryGetIssuedCommitMode(actionPlan, out CaptureRunCaptureIndexCommitMode mode), Is.True);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_Invalid_ReplaceMode()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan = BuildRecoveryCommitPlan(
+                out _, MakePlan(), MakeDoc(CaptureIndexTemporary, DocInvalid, 10));
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
+
+            Assert.That(token.TryGetIssuedCommitMode(actionPlan, out CaptureRunCaptureIndexCommitMode mode), Is.True);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_Fresh_CreateMode()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildFreshCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.True);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_PublishPlan_False()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_IndexSwapped_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(plan.Authority.RecoveryDecision.Snapshot, "_captureIndex",
+                MakeDoc(CaptureIndex, DocCanonical, 100, plan.AuthoritativePlan));
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
         // ---- Recovery mode derivation ----
 
         [Test]
@@ -1096,13 +1196,37 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationPlan plan = MakePlan();
             PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan = BuildRecoveryCommitPlan(
                 out _, plan, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
-            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
 
+            // Forging only the canonical temporary's plan content breaks the
+            // publication classification, so a full validation rejects it.
             SetField(actionPlan.Authority.RecoveryDecision.Snapshot.CaptureIndexTemporary, "_plan", MakePlan(entries: new[] { MakeEntry(11) }));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
+        }
+
+        [Test]
+        public void Operation_CanonicalTemporaryPlanContentForgedAfterToken_IndexLocalTrustsProof()
+        {
+            PngJsonCapturePublicationPlan plan = MakePlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan = BuildRecoveryCommitPlan(
+                out _, plan, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
+            PngJsonCaptureRunCaptureIndexCommitOperation commit =
+                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0);
+
+            Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
+
+            // Forge only the temporary's plan content after token issuance: the
+            // O(1) index-local proof (references + status values) is intact, so
+            // it must not re-scan the plan.
+            SetField(actionPlan.Authority.RecoveryDecision.Snapshot.CaptureIndexTemporary, "_plan", MakePlan(entries: new[] { MakeEntry(11) }));
+
+            Assert.That(commit.IsValidIndexLocal(token), Is.True);
+
+            // A fresh full validation re-proves the classification and rejects.
+            Assert.That(commit.IsValid, Is.False);
         }
 
         [Test]
@@ -1171,7 +1295,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Source_FreshModeDoesNotTouchRecoveryObservations()
         {
-            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperation.cs");
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryActionPlan.cs");
 
             int freshIndex = source.IndexOf("IsFresh", StringComparison.Ordinal);
             Assert.That(freshIndex, Is.GreaterThan(0));
@@ -1184,6 +1308,21 @@ namespace Zantetsu.Core.Tests
             Assert.That(freshBranch, Does.Not.Contain("RecoveryDecision"));
             Assert.That(freshBranch, Does.Not.Contain("CaptureIndexTemporary"));
             Assert.That(freshBranch, Does.Not.Contain(".CaptureIndex"));
+        }
+
+        [Test]
+        public void Source_IndexLocalPathDoesNotScanEntries()
+        {
+            string operationSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperation.cs");
+            string planSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryActionPlan.cs");
+
+            // The canonical temporary match is proven by the publication
+            // classification during full validation; the index-local path must
+            // not re-run a full plan comparison or validate a document's plan.
+            Assert.That(operationSource, Does.Not.Contain("PlansEqual"));
+            Assert.That(planSource, Does.Not.Contain("PlansEqual"));
+            Assert.That(operationSource, Does.Not.Contain("captureIndexTemporary.IsValid"));
+            Assert.That(operationSource, Does.Not.Contain("captureIndex.IsValid"));
         }
 
         // ---- Forwarding / paths / bytes ----
@@ -1695,6 +1834,35 @@ namespace Zantetsu.Core.Tests
             Assert.That(commit.IsValid, Is.True);
 
             byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
+            Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void Recovery_CanonicalLargePlan_SingleTokenSingleSerialization()
+        {
+            const int count = 1000;
+
+            PngJsonCapturePublicationPlanEntry[] entries = new PngJsonCapturePublicationPlanEntry[count];
+            for (int i = 0; i < count; i++)
+            {
+                entries[i] = MakeEntry(i + 1);
+            }
+
+            PngJsonCapturePublicationPlan plan = MakePlan(entries: entries);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan = BuildLargeRecoveryCommitPlan(plan);
+
+            Assert.That(actionPlan.Count, Is.EqualTo(1));
+
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
+
+            PngJsonCaptureRunCaptureIndexCommitOperation commit =
+                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0);
+
+            Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
+            Assert.That(commit.IsValidIndexLocal(token), Is.True);
+            Assert.That(commit.IsValid, Is.True);
+
+            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan);
             Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
         }
     }

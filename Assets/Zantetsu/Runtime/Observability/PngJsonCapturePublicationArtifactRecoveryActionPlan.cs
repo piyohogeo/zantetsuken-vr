@@ -431,6 +431,11 @@ namespace Zantetsu.Observability
             private readonly CaptureRunPublicationArtifactRecoveryDisposition _disposition;
             private readonly CaptureRunPublicationArtifactRecoveryStep[] _steps;
             private readonly StepProof[] _proof;
+            private readonly CaptureRunCaptureIndexCommitMode _commitMode;
+            private readonly CaptureRunPublicationDocumentObservation _commitCaptureIndex;
+            private readonly CaptureRunPublicationDocumentObservation _commitCaptureIndexTemporary;
+            private readonly CaptureRunPublicationDocumentObservationStatus _commitCaptureIndexStatus;
+            private readonly CaptureRunPublicationDocumentObservationStatus _commitCaptureIndexTemporaryStatus;
 
             private ValidationToken(
                 PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
@@ -439,7 +444,12 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
                 CaptureRunPublicationArtifactRecoveryDisposition disposition,
                 CaptureRunPublicationArtifactRecoveryStep[] steps,
-                StepProof[] proof)
+                StepProof[] proof,
+                CaptureRunCaptureIndexCommitMode commitMode,
+                CaptureRunPublicationDocumentObservation commitCaptureIndex,
+                CaptureRunPublicationDocumentObservation commitCaptureIndexTemporary,
+                CaptureRunPublicationDocumentObservationStatus commitCaptureIndexStatus,
+                CaptureRunPublicationDocumentObservationStatus commitCaptureIndexTemporaryStatus)
             {
                 _plan = plan;
                 _decision = decision;
@@ -448,6 +458,11 @@ namespace Zantetsu.Observability
                 _disposition = disposition;
                 _steps = steps;
                 _proof = proof;
+                _commitMode = commitMode;
+                _commitCaptureIndex = commitCaptureIndex;
+                _commitCaptureIndexTemporary = commitCaptureIndexTemporary;
+                _commitCaptureIndexStatus = commitCaptureIndexStatus;
+                _commitCaptureIndexTemporaryStatus = commitCaptureIndexTemporaryStatus;
             }
 
             internal static bool TryAcquire(
@@ -473,6 +488,14 @@ namespace Zantetsu.Observability
                     proof[i] = new StepProof(steps[i]);
                 }
 
+                ComputeCommitProof(
+                    plan._decision,
+                    out CaptureRunCaptureIndexCommitMode commitMode,
+                    out CaptureRunPublicationDocumentObservation commitCaptureIndex,
+                    out CaptureRunPublicationDocumentObservation commitCaptureIndexTemporary,
+                    out CaptureRunPublicationDocumentObservationStatus commitCaptureIndexStatus,
+                    out CaptureRunPublicationDocumentObservationStatus commitCaptureIndexTemporaryStatus);
+
                 token = new ValidationToken(
                     plan,
                     plan._decision,
@@ -480,8 +503,114 @@ namespace Zantetsu.Observability
                     snapshotToken,
                     plan._decision.Disposition,
                     steps,
-                    proof);
+                    proof,
+                    commitMode,
+                    commitCaptureIndex,
+                    commitCaptureIndexTemporary,
+                    commitCaptureIndexStatus,
+                    commitCaptureIndexTemporaryStatus);
                 return true;
+            }
+
+            /// <summary>
+            /// Computes the commit proof exactly once at issuance, after the
+            /// plan's full validation has already re-proven the publication
+            /// classification. The <c>CommitCaptureIndex</c> disposition
+            /// already proves that the final <c>capture.index</c> is absent
+            /// and that a canonical <c>capture.index.tmp</c> exactly matches
+            /// the authoritative plan, so this method only captures the exact
+            /// observation references and status values and selects the mode
+            /// from the temporary status. It never re-scans a plan entry.
+            /// </summary>
+            private static void ComputeCommitProof(
+                PngJsonCapturePublicationArtifactRecoveryDecision decision,
+                out CaptureRunCaptureIndexCommitMode mode,
+                out CaptureRunPublicationDocumentObservation captureIndex,
+                out CaptureRunPublicationDocumentObservation captureIndexTemporary,
+                out CaptureRunPublicationDocumentObservationStatus captureIndexStatus,
+                out CaptureRunPublicationDocumentObservationStatus captureIndexTemporaryStatus)
+            {
+                mode = CaptureRunCaptureIndexCommitMode.None;
+                captureIndex = null;
+                captureIndexTemporary = null;
+                captureIndexStatus = CaptureRunPublicationDocumentObservationStatus.Absent;
+                captureIndexTemporaryStatus = CaptureRunPublicationDocumentObservationStatus.Absent;
+
+                if (decision == null
+                    || decision.Disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
+                {
+                    return;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionAuthority authority = decision.Authority;
+                if (authority == null)
+                {
+                    return;
+                }
+
+                if (authority.IsFresh)
+                {
+                    mode = CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit;
+                    return;
+                }
+
+                if (!authority.IsRecovery)
+                {
+                    return;
+                }
+
+                CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
+                if (recoveryDecision == null)
+                {
+                    return;
+                }
+
+                CaptureRunPublicationRecoveryInspectionSnapshot snapshot = recoveryDecision.Snapshot;
+                if (snapshot == null)
+                {
+                    return;
+                }
+
+                captureIndex = snapshot.CaptureIndex;
+                captureIndexTemporary = snapshot.CaptureIndexTemporary;
+                if (captureIndex == null || captureIndexTemporary == null)
+                {
+                    return;
+                }
+
+                captureIndexStatus = captureIndex.Status;
+                captureIndexTemporaryStatus = captureIndexTemporary.Status;
+
+                if (captureIndexStatus != CaptureRunPublicationDocumentObservationStatus.Absent
+                    || !TryDeriveCommitModeFromStatus(captureIndexTemporaryStatus, out mode))
+                {
+                    mode = CaptureRunCaptureIndexCommitMode.None;
+                    return;
+                }
+            }
+
+            private static bool TryDeriveCommitModeFromStatus(
+                CaptureRunPublicationDocumentObservationStatus status,
+                out CaptureRunCaptureIndexCommitMode mode)
+            {
+                switch (status)
+                {
+                    case CaptureRunPublicationDocumentObservationStatus.Absent:
+                        mode = CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit;
+                        return true;
+
+                    case CaptureRunPublicationDocumentObservationStatus.Canonical:
+                        mode = CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit;
+                        return true;
+
+                    case CaptureRunPublicationDocumentObservationStatus.Invalid:
+                        mode = CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit;
+                        return true;
+
+                    default:
+                        mode = CaptureRunCaptureIndexCommitMode.None;
+                        return false;
+                }
             }
 
             internal static ValidationToken Acquire(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
@@ -725,6 +854,74 @@ namespace Zantetsu.Observability
                     decision = null;
                     return false;
                 }
+            }
+
+            /// <summary>
+            /// O(1), exception-safe commit-mode access: confirms the shared
+            /// bindings, requires the held
+            /// <see cref="CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex"/>
+            /// disposition, and re-verifies in O(1) that the exact
+            /// <c>capture.index</c> and <c>capture.index.tmp</c> observation
+            /// references and status values captured at issuance are still in
+            /// place, then returns the precomputed commit mode. The canonical
+            /// temporary match and the absent final index were already proven
+            /// by the publication classification during full validation, so no
+            /// plan entry is scanned and no plan is re-validated here.
+            /// </summary>
+            internal bool TryGetIssuedCommitMode(
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
+                out CaptureRunCaptureIndexCommitMode mode)
+            {
+                mode = CaptureRunCaptureIndexCommitMode.None;
+
+                if (!IsBindingIntact(plan))
+                {
+                    return false;
+                }
+
+                if (_disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
+                {
+                    return false;
+                }
+
+                if (_commitCaptureIndex != null)
+                {
+                    try
+                    {
+                        PngJsonCapturePublicationArtifactInspectionAuthority authority = _decision.Authority;
+                        if (authority == null)
+                        {
+                            return false;
+                        }
+
+                        CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
+                        if (recoveryDecision == null)
+                        {
+                            return false;
+                        }
+
+                        CaptureRunPublicationRecoveryInspectionSnapshot snapshot = recoveryDecision.Snapshot;
+                        if (snapshot == null)
+                        {
+                            return false;
+                        }
+
+                        if (!ReferenceEquals(snapshot.CaptureIndex, _commitCaptureIndex)
+                            || snapshot.CaptureIndex.Status != _commitCaptureIndexStatus
+                            || !ReferenceEquals(snapshot.CaptureIndexTemporary, _commitCaptureIndexTemporary)
+                            || snapshot.CaptureIndexTemporary.Status != _commitCaptureIndexTemporaryStatus)
+                        {
+                            return false;
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        return false;
+                    }
+                }
+
+                mode = _commitMode;
+                return true;
             }
         }
 
