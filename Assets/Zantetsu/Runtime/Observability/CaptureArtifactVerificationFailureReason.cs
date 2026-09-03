@@ -17,6 +17,7 @@ namespace Zantetsu.Observability
         ReparsePointOrInvalidFileKind = 8,
         PathOrRunCorrelationMismatch = 9,
         BufferUnavailable = 10,
-        Cancelled = 11
+        Cancelled = 11,
+        NoFollowUnavailable = 12
     }
 }

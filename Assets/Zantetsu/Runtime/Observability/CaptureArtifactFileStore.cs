@@ -161,43 +161,47 @@ namespace Zantetsu.Observability
         public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
         {
             if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
+
+            // Reserve the verification buffer before any filesystem change so
+            // buffer exhaustion is never discovered only after the move.
+            CaptureArtifactVerificationBufferPool.Lease lease = _verificationBufferPool.TryRent();
+            if (lease == null)
+                throw new CaptureArtifactVerificationDeferredException("Verification buffer unavailable; no filesystem change.");
+
+            try
+            {
+                return PublishReserved(descriptor, lease);
+            }
+            finally
+            {
+                _verificationBufferPool.Return(lease);
+            }
+        }
+
+        internal CaptureArtifactPublishReceipt PublishReserved(
+            CaptureArtifactDescriptor descriptor,
+            CaptureArtifactVerificationBufferPool.Lease lease)
+        {
+            if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
+            if (lease == null) throw new ArgumentNullException(nameof(lease));
+
             string source = Resolve(_stagingRunRoot, descriptor.StagingRelativePath);
             string target = Resolve(_finalRunRoot, descriptor.FinalRelativePath);
 
-            CaptureArtifactVerificationResult staging = VerifyAt(descriptor, source);
-            if (staging.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred)
-                throw new CaptureArtifactVerificationDeferredException("Staging verification is deferred; no filesystem change.");
+            CaptureArtifactVerificationResult staging = VerifyAtReserved(descriptor, source, lease);
             if (staging.Status != CaptureArtifactVerificationStatus.MatchesExpected)
                 throw new InvalidDataException("Staging artifact does not match descriptor.");
 
             if (File.Exists(target)) throw new IOException("Final artifact already exists.");
 
-            // Reserve the final verification buffer before any filesystem change
-            // so buffer exhaustion is never discovered only after the move.
-            CaptureArtifactVerificationBufferPool.Lease finalLease = _verificationBufferPool.TryRent();
-            if (finalLease == null)
-                throw new CaptureArtifactVerificationDeferredException("Verification buffer unavailable; no filesystem change.");
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            File.Move(source, target);
 
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                File.Move(source, target);
+            CaptureArtifactVerificationResult final = VerifyAtReserved(descriptor, target, lease);
+            if (final.Status != CaptureArtifactVerificationStatus.MatchesExpected)
+                throw new IOException("Published artifact verification failed.");
 
-                using (FileStream stream = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    CaptureArtifactVerificationResult final = CaptureArtifactStreamingVerifier.Verify(descriptor, stream, finalLease.Buffer);
-                    if (final.ExecutionDisposition == CaptureArtifactVerificationExecutionDisposition.Deferred)
-                        throw new CaptureArtifactVerificationDeferredException("Published artifact verification is deferred.");
-                    if (final.Status != CaptureArtifactVerificationStatus.MatchesExpected)
-                        throw new IOException("Published artifact verification failed.");
-                }
-
-                return new CaptureArtifactPublishReceipt(this, descriptor, target);
-            }
-            finally
-            {
-                _verificationBufferPool.Return(finalLease);
-            }
+            return new CaptureArtifactPublishReceipt(this, descriptor, target);
         }
 
         public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
@@ -227,43 +231,50 @@ namespace Zantetsu.Observability
 
             try
             {
-                FileAttributes attributes;
-                try
-                {
-                    attributes = File.GetAttributes(path);
-                }
-                catch (FileNotFoundException) { return Absent(descriptor); }
-                catch (DirectoryNotFoundException) { return Absent(descriptor); }
-                catch (Exception) { return InvalidRead(descriptor, 0); }
+                return VerifyAtReserved(descriptor, path, lease);
+            }
+            finally
+            {
+                _verificationBufferPool.Return(lease);
+            }
+        }
 
-                if ((attributes & FileAttributes.ReparsePoint) != 0
-                    || (attributes & FileAttributes.Directory) != 0)
-                {
+        private static CaptureArtifactVerificationResult VerifyAtReserved(
+            CaptureArtifactDescriptor descriptor,
+            string path,
+            CaptureArtifactVerificationBufferPool.Lease lease)
+        {
+            CaptureArtifactNoFollowOpenResult opened = CaptureArtifactNoFollowOpen.TryOpen(path);
+            switch (opened.Status)
+            {
+                case CaptureArtifactNoFollowOpenStatus.Opened:
+                    try
+                    {
+                        return CaptureArtifactStreamingVerifier.Verify(descriptor, opened.Stream, lease.Buffer);
+                    }
+                    finally
+                    {
+                        opened.Close();
+                    }
+                case CaptureArtifactNoFollowOpenStatus.Absent:
+                    return Absent(descriptor);
+                case CaptureArtifactNoFollowOpenStatus.InvalidFileKind:
                     return new CaptureArtifactVerificationResult(
                         descriptor,
                         CaptureArtifactVerificationExecutionDisposition.Completed,
                         CaptureArtifactVerificationStatus.Invalid,
                         CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind,
                         0);
-                }
-
-                FileStream stream;
-                try
-                {
-                    stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                }
-                catch (FileNotFoundException) { return Absent(descriptor); }
-                catch (DirectoryNotFoundException) { return Absent(descriptor); }
-                catch (Exception) { return InvalidRead(descriptor, 0); }
-
-                using (stream)
-                {
-                    return CaptureArtifactStreamingVerifier.Verify(descriptor, stream, lease.Buffer);
-                }
-            }
-            finally
-            {
-                _verificationBufferPool.Return(lease);
+                case CaptureArtifactNoFollowOpenStatus.IoFailure:
+                    return InvalidRead(descriptor, 0);
+                case CaptureArtifactNoFollowOpenStatus.Unsupported:
+                default:
+                    return new CaptureArtifactVerificationResult(
+                        descriptor,
+                        CaptureArtifactVerificationExecutionDisposition.Completed,
+                        CaptureArtifactVerificationStatus.Invalid,
+                        CaptureArtifactVerificationFailureReason.NoFollowUnavailable,
+                        0);
             }
         }
 

@@ -28,7 +28,8 @@ namespace Zantetsu.Core.Tests
                 "None", "FileAbsent", "ShorterThanDeclared", "LongerThanDeclared",
                 "HashMismatch", "ReadIoFailure", "CheckedLengthOverflow",
                 "FileChangedDuringRead", "ReparsePointOrInvalidFileKind",
-                "PathOrRunCorrelationMismatch", "BufferUnavailable", "Cancelled"
+                "PathOrRunCorrelationMismatch", "BufferUnavailable", "Cancelled",
+                "NoFollowUnavailable"
             });
         }
 
@@ -83,6 +84,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind, payload.LongLength).IsValid, Is.True);
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.PathOrRunCorrelationMismatch, 0).IsValid, Is.True);
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.Cancelled, 0).IsValid, Is.True);
+            Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.NoFollowUnavailable, 0).IsValid, Is.True);
             Assert.That(R(descriptor, Deferred, CaptureArtifactVerificationStatus.None, CaptureArtifactVerificationFailureReason.BufferUnavailable, 0).IsValid, Is.True);
         }
 
@@ -259,7 +261,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(store, Does.Not.Contain("new byte[descriptor.ByteLength"));
             Assert.That(store, Does.Not.Contain("new byte[(int)descriptor.ByteLength"));
             Assert.That(verifier, Does.Not.Contain("new byte[descriptor.ByteLength"));
-            Assert.That(store, Does.Contain("FileAttributes.ReparsePoint"));
+            Assert.That(store, Does.Contain("CaptureArtifactNoFollowOpen.TryOpen"));
+
+            string noFollow = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactNoFollowOpen.cs"));
+            Assert.That(noFollow, Does.Contain("FileFlagOpenReparsePoint"));
+            Assert.That(noFollow, Does.Contain("GetFileInformationByHandle"));
         }
 
         [Test]
@@ -267,7 +274,7 @@ namespace Zantetsu.Core.Tests
         {
             string store = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactFileStore.cs"));
-            int rent = store.IndexOf("CaptureArtifactVerificationBufferPool.Lease finalLease = _verificationBufferPool.TryRent();", StringComparison.Ordinal);
+            int rent = store.IndexOf("CaptureArtifactVerificationBufferPool.Lease lease = _verificationBufferPool.TryRent();", StringComparison.Ordinal);
             int move = store.IndexOf("File.Move(source, target);", StringComparison.Ordinal);
             Assert.That(rent, Is.GreaterThanOrEqualTo(0));
             Assert.That(move, Is.GreaterThan(rent));
@@ -382,6 +389,33 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(File.Exists(stagingPath), Is.True, "Staging must not be moved.");
                 Assert.That(File.Exists(finalPath), Is.False, "Final must not be created.");
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_DirectoryAtArtifactPath_InvalidFileKind()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact payload");
+                CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
+
+                string artifactPath = Path.Combine(layout.StagingRunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(artifactPath);
+
+                CaptureArtifactVerificationResult result = store.VerifyStaging(descriptor);
+                Assert.That(result.ExecutionDisposition, Is.EqualTo(Completed));
+                Assert.That(result.Status, Is.EqualTo(CaptureArtifactVerificationStatus.Invalid));
+                Assert.That(result.FailureReason, Is.EqualTo(CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind));
+                Assert.That(pool.OutstandingRentCount, Is.Zero);
             }
             finally
             {
@@ -549,6 +583,88 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
             Assert.That(store.PublishCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Recovery_ExecuteMissing_PreExhaustedBuffer_ReturnsDeferredWithoutChanges()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact");
+                CaptureArtifactDescriptor a = MakeDescriptor("a", payload);
+                CaptureArtifactDescriptor b = MakeDescriptor("b", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
+                store.WriteStaging(new CaptureArtifactWriteRequest(a, payload));
+                store.WriteStaging(new CaptureArtifactWriteRequest(b, payload));
+
+                CapturePublicationPlan plan = MakePlan(new[] { a, b });
+                CapturePublicationRecoverySnapshot snapshot = MakeSnapshot(
+                    plan,
+                    i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength),
+                    i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Absent, CaptureArtifactVerificationFailureReason.FileAbsent, 0));
+
+                // Exhaust the buffer before ExecuteMissing: the whole execution
+                // must become Deferred with zero filesystem changes.
+                CaptureArtifactVerificationBufferPool.Lease held = pool.TryRent();
+                Assert.That(held, Is.Not.Null);
+                try
+                {
+                    CapturePublicationRecoveryCoordinator coordinator = new CapturePublicationRecoveryCoordinator(store);
+                    Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.Deferred));
+                }
+                finally
+                {
+                    pool.Return(held);
+                }
+
+                Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, a.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.True, "First staging must not be moved.");
+                Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, b.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.True, "Second staging must not be moved.");
+                Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, a.FinalRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.False);
+                Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, b.FinalRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Recovery_ExecuteMissing_PublishesAllWhenBufferAvailable()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact");
+                CaptureArtifactDescriptor a = MakeDescriptor("a", payload);
+                CaptureArtifactDescriptor b = MakeDescriptor("b", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                CaptureArtifactVerificationBufferPool pool = new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout, pool);
+                store.WriteStaging(new CaptureArtifactWriteRequest(a, payload));
+                store.WriteStaging(new CaptureArtifactWriteRequest(b, payload));
+
+                CapturePublicationPlan plan = MakePlan(new[] { a, b });
+                CapturePublicationRecoverySnapshot snapshot = MakeSnapshot(
+                    plan,
+                    i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.MatchesExpected, CaptureArtifactVerificationFailureReason.None, payload.LongLength),
+                    i => R(plan.GetArtifact(i), Completed, CaptureArtifactVerificationStatus.Absent, CaptureArtifactVerificationFailureReason.FileAbsent, 0));
+
+                CapturePublicationRecoveryCoordinator coordinator = new CapturePublicationRecoveryCoordinator(store);
+                Assert.That(coordinator.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
+
+                Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, a.FinalRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.True);
+                Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, b.FinalRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.True);
+                Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, a.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.False);
+                Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, b.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar))), Is.False);
+                Assert.That(pool.OutstandingRentCount, Is.Zero);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
         }
 
         [Test]

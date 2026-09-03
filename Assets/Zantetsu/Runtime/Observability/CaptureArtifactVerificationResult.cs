@@ -73,7 +73,8 @@ namespace Zantetsu.Observability
                                 || reason == CaptureArtifactVerificationFailureReason.FileChangedDuringRead
                                 || reason == CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind
                                 || reason == CaptureArtifactVerificationFailureReason.PathOrRunCorrelationMismatch
-                                || reason == CaptureArtifactVerificationFailureReason.Cancelled;
+                                || reason == CaptureArtifactVerificationFailureReason.Cancelled
+                                || reason == CaptureArtifactVerificationFailureReason.NoFollowUnavailable;
                         default:
                             return false;
                     }

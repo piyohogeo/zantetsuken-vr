@@ -43,29 +43,59 @@ namespace Zantetsu.Observability
             if (!snapshot.IsValid) throw new ArgumentException("Snapshot must be valid.", nameof(snapshot));
             CapturePublicationRecoveryDisposition disposition = CapturePublicationRecoveryClassifier.Classify(snapshot);
             if (disposition != CapturePublicationRecoveryDisposition.PublishMissingArtifacts) return disposition;
-            for (int i = 0; i < snapshot.Count; i++)
-            {
-                CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
-                if (observation.Final.Status == CaptureArtifactVerificationStatus.Absent)
-                {
-                    CaptureArtifactPublishReceipt receipt;
-                    try
-                    {
-                        receipt = _store.Publish(observation.Descriptor);
-                    }
-                    catch (CaptureArtifactVerificationDeferredException)
-                    {
-                        // A buffer that became exhausted after inspection but
-                        // before publication converges back to Deferred rather
-                        // than a content mismatch.
-                        return CapturePublicationRecoveryDisposition.Deferred;
-                    }
 
-                    if (receipt == null || !receipt.IsIssuedFor(_store, observation.Descriptor))
-                        throw new InvalidOperationException("Store returned an invalid publish receipt.");
+            // Reserve the whole execution's verification resource once, before
+            // any filesystem change, so buffer exhaustion can never surface
+            // after an earlier artifact has already been published. A store
+            // without a reserveable buffer falls back to per-artifact publish.
+            CaptureArtifactFileStore fileStore = _store as CaptureArtifactFileStore;
+            CaptureArtifactVerificationBufferPool.Lease reserved = null;
+            if (fileStore != null)
+            {
+                reserved = fileStore.VerificationBufferPool.TryRent();
+                if (reserved == null)
+                {
+                    return CapturePublicationRecoveryDisposition.Deferred;
                 }
             }
-            return CapturePublicationRecoveryDisposition.CaptureComplete;
+
+            try
+            {
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    CaptureArtifactRecoveryObservation observation = snapshot.GetObservation(i);
+                    if (observation.Final.Status == CaptureArtifactVerificationStatus.Absent)
+                    {
+                        CaptureArtifactPublishReceipt receipt;
+                        if (fileStore != null && reserved != null)
+                        {
+                            receipt = fileStore.PublishReserved(observation.Descriptor, reserved);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                receipt = _store.Publish(observation.Descriptor);
+                            }
+                            catch (CaptureArtifactVerificationDeferredException)
+                            {
+                                return CapturePublicationRecoveryDisposition.Deferred;
+                            }
+                        }
+
+                        if (receipt == null || !receipt.IsIssuedFor(_store, observation.Descriptor))
+                            throw new InvalidOperationException("Store returned an invalid publish receipt.");
+                    }
+                }
+                return CapturePublicationRecoveryDisposition.CaptureComplete;
+            }
+            finally
+            {
+                if (fileStore != null && reserved != null)
+                {
+                    fileStore.VerificationBufferPool.Return(reserved);
+                }
+            }
         }
     }
 }
