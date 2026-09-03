@@ -90,33 +90,52 @@ namespace Zantetsu.Observability
         internal CaptureRunPublicationArtifactRecoveryDisposition Disposition => _disposition;
 
         /// <summary>
-        /// Exception-safe recomputation: fully validates the snapshot and
-        /// issues a token once, recomputes the disposition with the same token
-        /// without per-entry full validation or token re-issuance, and reports
-        /// success only when the computation succeeds and the held disposition
-        /// matches.
+        /// Exception-safe recomputation with token issuance: fully validates the
+        /// snapshot and issues its token once, recomputes the disposition with
+        /// the same token without per-entry full validation or token
+        /// re-issuance, and reports success only when the computation succeeds,
+        /// the held disposition matches, and the issued token is returned. The
+        /// token is never retained by this decision.
+        /// </summary>
+        internal bool TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token)
+        {
+            token = null;
+
+            if (_snapshot == null)
+            {
+                return false;
+            }
+
+            if (!_snapshot.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken issued))
+            {
+                return false;
+            }
+
+            if (!PngJsonCapturePublicationArtifactRecoveryClassifier.TryComputeDisposition(
+                _snapshot, issued, out CaptureRunPublicationArtifactRecoveryDisposition expected))
+            {
+                return false;
+            }
+
+            if (_disposition != expected)
+            {
+                return false;
+            }
+
+            token = issued;
+            return true;
+        }
+
+        /// <summary>
+        /// Exception-safe recomputation delegated to
+        /// <see cref="TryValidate"/>, so the single shared predicate issues the
+        /// token once and never re-validates the snapshot twice.
         /// </summary>
         internal bool IsValid
         {
             get
             {
-                if (_snapshot == null)
-                {
-                    return false;
-                }
-
-                if (!_snapshot.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token))
-                {
-                    return false;
-                }
-
-                if (!PngJsonCapturePublicationArtifactRecoveryClassifier.TryComputeDisposition(
-                    _snapshot, token, out CaptureRunPublicationArtifactRecoveryDisposition expected))
-                {
-                    return false;
-                }
-
-                return _disposition == expected;
+                return TryValidate(out _);
             }
         }
     }
