@@ -363,6 +363,90 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
+            /// O(1), exception-safe cleanup-input access: re-confirms the exact
+            /// plan, the plan's held orchestration token identity, and the
+            /// exact step array and step reference/values, then returns the
+            /// step and, for artifact steps only, the exact snapshot entry and
+            /// artifact path set captured at issuance. Non-artifact steps
+            /// return null observation and path set. Never throws and never
+            /// exposes the proof array or an internal token.
+            /// </summary>
+            internal bool TryGetIssuedCleanupInputs(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
+                int stepIndex,
+                out CaptureRunPublicationCaptureCompleteCleanupStep step,
+                out PngJsonCapturePublicationArtifactEntryObservation observation,
+                out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
+            {
+                step = null;
+                observation = null;
+                artifactPaths = null;
+
+                try
+                {
+                    if (plan == null || !ReferenceEquals(_plan, plan))
+                    {
+                        return false;
+                    }
+
+                    if (_orchestrationToken == null
+                        || !ReferenceEquals(_orchestrationToken, plan._orchestrationToken)
+                        || !_orchestrationToken.IsIssuedFor(plan._orchestrationResult))
+                    {
+                        return false;
+                    }
+
+                    IssuedStepProof[] issued = _issuedSteps;
+                    if (issued == null || stepIndex < 0 || stepIndex >= issued.Length)
+                    {
+                        return false;
+                    }
+
+                    CaptureRunPublicationCaptureCompleteCleanupStep[] steps = plan._steps;
+                    if (steps == null || steps.Length != issued.Length || stepIndex >= steps.Length)
+                    {
+                        return false;
+                    }
+
+                    step = steps[stepIndex];
+                    IssuedStepProof proof = issued[stepIndex];
+                    if (step == null || proof.Step == null || !ReferenceEquals(step, proof.Step))
+                    {
+                        step = null;
+                        return false;
+                    }
+
+                    if (!step.Matches(proof.Action, proof.EntryIndex, proof.ArtifactKind))
+                    {
+                        step = null;
+                        return false;
+                    }
+
+                    if (step.Action == CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
+                    {
+                        observation = proof.Observation;
+                        artifactPaths = proof.ArtifactPaths;
+                        if (observation == null || artifactPaths == null)
+                        {
+                            step = null;
+                            observation = null;
+                            artifactPaths = null;
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+                catch (Exception)
+                {
+                    step = null;
+                    observation = null;
+                    artifactPaths = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
             /// Reports whether this token was issued for the given plan. The
             /// binding is reference-identical to the plan and to the exact
             /// orchestration result through the carried orchestration proof,
@@ -401,7 +485,19 @@ namespace Zantetsu.Observability
                 IssuedStepProof[] issuedSteps = new IssuedStepProof[plan._steps.Length];
                 for (int i = 0; i < issuedSteps.Length; i++)
                 {
-                    issuedSteps[i] = new IssuedStepProof(plan._steps[i]);
+                    CaptureRunPublicationCaptureCompleteCleanupStep step = plan._steps[i];
+                    PngJsonCapturePublicationArtifactEntryObservation observation = null;
+                    PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths = null;
+
+                    if (step != null && step.Action == CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
+                    {
+                        if (!plan.TryCaptureArtifactProof(i, out observation, out artifactPaths))
+                        {
+                            return false;
+                        }
+                    }
+
+                    issuedSteps[i] = new IssuedStepProof(step, observation, artifactPaths);
                 }
 
                 token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps);
@@ -419,13 +515,20 @@ namespace Zantetsu.Observability
                 internal readonly CaptureRunPublicationCaptureCompleteCleanupAction Action;
                 internal readonly int EntryIndex;
                 internal readonly CaptureRunPublicationArtifactKind ArtifactKind;
+                internal readonly PngJsonCapturePublicationArtifactEntryObservation Observation;
+                internal readonly PngJsonCapturePublicationArtifactInspectionPathSet ArtifactPaths;
 
-                internal IssuedStepProof(CaptureRunPublicationCaptureCompleteCleanupStep step)
+                internal IssuedStepProof(
+                    CaptureRunPublicationCaptureCompleteCleanupStep step,
+                    PngJsonCapturePublicationArtifactEntryObservation observation,
+                    PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
                 {
                     Step = step;
                     Action = step.Action;
                     EntryIndex = step.EntryIndex;
                     ArtifactKind = step.ArtifactKind;
+                    Observation = observation;
+                    ArtifactPaths = artifactPaths;
                 }
             }
         }
@@ -443,6 +546,67 @@ namespace Zantetsu.Observability
 
             CaptureRunPublicationCaptureCompleteCleanupStep held = _steps[position];
             return held != null && held.Matches(action, entryIndex, artifactKind);
+        }
+
+        /// <summary>
+        /// Captures the exact snapshot entry and artifact path set for one
+        /// staging-artifact step, invoked once during the single full plan
+        /// validation that mints the token. Non-artifact steps return true
+        /// with null outputs. Never throws.
+        /// </summary>
+        private bool TryCaptureArtifactProof(
+            int stepIndex,
+            out PngJsonCapturePublicationArtifactEntryObservation observation,
+            out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
+        {
+            observation = null;
+            artifactPaths = null;
+
+            try
+            {
+                if (stepIndex < 0 || stepIndex >= _steps.Length)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
+                if (step == null || step.Action != CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
+                {
+                    return true;
+                }
+
+                int entryIndex = step.EntryIndex;
+                if (entryIndex < 0)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _orchestrationResult.InspectionSnapshot;
+                if (snapshot == null || entryIndex >= snapshot.Count)
+                {
+                    return false;
+                }
+
+                observation = snapshot.GetEntry(entryIndex);
+                if (observation == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                if (operation == null || !operation.TryGetArtifactPaths(entryIndex, out artifactPaths) || artifactPaths == null)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception)
+            {
+                observation = null;
+                artifactPaths = null;
+                return false;
+            }
         }
 
         /// <summary>
