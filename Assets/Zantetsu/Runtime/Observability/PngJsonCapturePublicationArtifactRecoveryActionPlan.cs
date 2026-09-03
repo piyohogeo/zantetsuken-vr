@@ -104,6 +104,11 @@ namespace Zantetsu.Observability
             return ValidationToken.Acquire(this);
         }
 
+        internal bool TryAcquireValidationToken(out ValidationToken token)
+        {
+            return ValidationToken.TryAcquire(this, out token);
+        }
+
         /// <summary>
         /// O(1), exception-safe check that the held decision graph still exposes
         /// a live lock identity evidence, so a released owner is detected
@@ -445,16 +450,20 @@ namespace Zantetsu.Observability
                 _proof = proof;
             }
 
-            internal static ValidationToken Acquire(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
+            internal static bool TryAcquire(
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
+                out ValidationToken token)
             {
+                token = null;
+
                 if (plan == null)
                 {
-                    throw new ArgumentNullException(nameof(plan));
+                    return false;
                 }
 
                 if (!plan.TryValidateCore(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken))
                 {
-                    throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
+                    return false;
                 }
 
                 CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
@@ -464,7 +473,7 @@ namespace Zantetsu.Observability
                     proof[i] = new StepProof(steps[i]);
                 }
 
-                return new ValidationToken(
+                token = new ValidationToken(
                     plan,
                     plan._decision,
                     plan._decision.Snapshot,
@@ -472,17 +481,31 @@ namespace Zantetsu.Observability
                     plan._decision.Disposition,
                     steps,
                     proof);
+                return true;
+            }
+
+            internal static ValidationToken Acquire(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
+            {
+                if (plan == null)
+                {
+                    throw new ArgumentNullException(nameof(plan));
+                }
+
+                if (!TryAcquire(plan, out ValidationToken token))
+                {
+                    throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
+                }
+
+                return token;
             }
 
             /// <summary>
-            /// O(n), exception-safe exact-binding check: confirms the exact
-            /// plan, decision, snapshot, snapshot validation token, and step
-            /// array references, the held disposition value, that the owner
-            /// lease is still live, and that every step's reference and values
-            /// still match the issuance snapshot. Never throws and never
-            /// exposes a proof array or a lease.
+            /// O(1), exception-safe shared binding predicate: confirms the
+            /// exact plan, decision, snapshot, snapshot validation token, and
+            /// step array references, the held disposition value, and that the
+            /// owner lease is still live, without touching any step element.
             /// </summary>
-            internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
+            private bool IsBindingIntact(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
             {
                 try
                 {
@@ -528,11 +551,29 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (!ReferenceEquals(_steps, steps) || _steps.Length != _proof.Length)
-                    {
-                        return false;
-                    }
+                    return ReferenceEquals(_steps, steps) && _steps.Length == _proof.Length;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
 
+            /// <summary>
+            /// O(n), exception-safe whole-token check: confirms the shared
+            /// bindings and then re-checks every step's reference and values.
+            /// Never throws and never exposes a proof array or a lease.
+            /// </summary>
+            internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
+            {
+                if (!IsBindingIntact(plan))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
                     for (int i = 0; i < steps.Length; i++)
                     {
                         if (!_proof[i].Matches(steps[i]))
@@ -545,6 +586,78 @@ namespace Zantetsu.Observability
                 }
                 catch (Exception)
                 {
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// O(1), exception-safe index-local publish input access: confirms
+            /// the shared bindings, then re-verifies the target step's
+            /// reference and Action/EntryIndex/ArtifactKind against the
+            /// issuance proof, requires
+            /// <see cref="CaptureRunPublicationArtifactRecoveryAction.PublishArtifact"/>,
+            /// and obtains the exact entry observation through the captured
+            /// snapshot token's index-local API. The snapshot is never fully
+            /// validated, no other step is visited, and no token is re-issued.
+            /// Both out parameters are assigned only on success.
+            /// </summary>
+            internal bool TryGetIssuedPublishInputs(
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
+                int stepIndex,
+                out CaptureRunPublicationArtifactRecoveryStep step,
+                out PngJsonCapturePublicationArtifactEntryObservation observation)
+            {
+                step = null;
+                observation = null;
+
+                if (!IsBindingIntact(plan))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
+                    if (stepIndex < 0 || stepIndex >= steps.Length)
+                    {
+                        return false;
+                    }
+
+                    CaptureRunPublicationArtifactRecoveryStep issuedStep = steps[stepIndex];
+                    if (issuedStep == null || !_proof[stepIndex].Matches(issuedStep))
+                    {
+                        return false;
+                    }
+
+                    if (issuedStep.Action != CaptureRunPublicationArtifactRecoveryAction.PublishArtifact)
+                    {
+                        return false;
+                    }
+
+                    int entryIndex = issuedStep.EntryIndex;
+                    if (entryIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    if (!_snapshotToken.TryGetIssuedEntry(_snapshot, entryIndex, out PngJsonCapturePublicationArtifactEntryObservation issuedObservation))
+                    {
+                        return false;
+                    }
+
+                    if (issuedObservation.EntryIndex != entryIndex)
+                    {
+                        return false;
+                    }
+
+                    step = issuedStep;
+                    observation = issuedObservation;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    step = null;
+                    observation = null;
                     return false;
                 }
             }
