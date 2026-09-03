@@ -779,9 +779,11 @@ namespace Zantetsu.Observability
 
                 if (freshRoute)
                 {
-                    // Fresh: staged artifacts prove the parent frames
-                    // directory exists; remove it only when staging steps ran.
-                    removeStagingFramesRoot = stagingStepCount > 0;
+                    // Fresh: any plan entry proves artifacts were staged into
+                    // the parent frames directory; File.Move leaves the empty
+                    // directory behind, so remove it whenever the plan has
+                    // entries, independent of how many staging files remain.
+                    removeStagingFramesRoot = entryCount > 0;
                 }
 
                 ExpectedSequence sequence;

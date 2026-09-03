@@ -1246,8 +1246,8 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan manyPlan =
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(many);
 
-            // Fresh: no staging steps, publication plan + 4 tail steps = 5.
-            Assert.That(manyPlan.Count, Is.EqualTo(5));
+            // Fresh: frames root + publication plan + 4 tail steps = 6.
+            Assert.That(manyPlan.Count, Is.EqualTo(6));
         }
 
         [Test]
@@ -1355,7 +1355,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void FreshRoute_Commit_DeletesPublicationPlan_NoUnprovenSteps()
+        public void FreshRoute_Commit_RemovesFramesRootAndPublicationPlan()
         {
             long[] frameIds = { 1, 2 };
             PngJsonCapturePublicationArtifactInspectionAuthority fresh = MakeFreshAuthority(frameIds);
@@ -1377,22 +1377,23 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
 
-            // Fresh never fabricates temporary-document or frames-root steps
-            // without evidence, but it must delete the proven publication plan.
+            // Fresh never fabricates temporary-document steps, but it must
+            // remove the frames root (any plan entry proves it was created)
+            // and the proven publication plan.
             for (int i = 0; i < plan.Count; i++)
             {
                 CaptureRunPublicationCaptureCompleteCleanupAction action = plan.GetStep(i).Action;
                 Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary));
                 Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary));
-                Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot));
             }
 
-            Assert.That(plan.Count, Is.EqualTo(5));
-            Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
-            Assert.That(plan.GetStep(1).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
-            Assert.That(plan.GetStep(2).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
-            Assert.That(plan.GetStep(3).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
-            Assert.That(plan.GetStep(4).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+            Assert.That(plan.Count, Is.EqualTo(6));
+            Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot));
+            Assert.That(plan.GetStep(1).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
+            Assert.That(plan.GetStep(2).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
+            Assert.That(plan.GetStep(3).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
+            Assert.That(plan.GetStep(4).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+            Assert.That(plan.GetStep(5).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
         }
 
         [Test]
@@ -1431,6 +1432,33 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.GetStep(7).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
             Assert.That(plan.GetStep(8).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
             Assert.That(plan.GetStep(9).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+        }
+
+        [Test]
+        public void FreshRoute_ZeroEntries_NoFramesRoot()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority fresh = MakeFreshAuthority();
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(fresh, 2000);
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+            PngJsonCapturePublicationArtifactEntryObservation[] entries =
+                new PngJsonCapturePublicationArtifactEntryObservation[0];
+            FakeArtifactInspector inspector = MakeArtifactInspector(operation, entries, EvMatchesExpected, 100);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
+
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationArtifactRecoveryExecutionStatus.CaptureCompleteCleanupRequired));
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+
+            // 0 entries: no frames root, but the publication plan is still removed.
+            Assert.That(plan.Count, Is.EqualTo(5));
+            Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
+            Assert.That(plan.GetStep(1).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
+            Assert.That(plan.GetStep(2).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
+            Assert.That(plan.GetStep(3).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+            Assert.That(plan.GetStep(4).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
         }
 
         [Test]
