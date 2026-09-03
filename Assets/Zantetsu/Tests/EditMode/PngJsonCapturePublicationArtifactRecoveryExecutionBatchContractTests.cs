@@ -1102,6 +1102,40 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void PreparedStep_NullStepArray_IsValidIndexLocalFalse_NoException()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep =
+                PngJsonCapturePublicationArtifactRecoveryPreparedStep.CreateIndexLocal(plan, token, 0);
+
+            Assert.That(preparedStep.IsValidIndexLocal(token), Is.True);
+
+            SetField(plan, "_steps", null);
+
+            Assert.That(preparedStep.IsValidIndexLocal(token), Is.False);
+            Assert.That(preparedStep.IsValidWithToken(token), Is.False);
+            Assert.That(preparedStep.IsValid, Is.False);
+        }
+
+        [Test]
+        public void PreparedStep_ShortenedStepArray_IsValidIndexLocalFalse_NoException()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep =
+                PngJsonCapturePublicationArtifactRecoveryPreparedStep.CreateIndexLocal(plan, token, 0);
+
+            Assert.That(preparedStep.IsValidIndexLocal(token), Is.True);
+
+            SetField(plan, "_steps", new CaptureRunPublicationArtifactRecoveryStep[0]);
+
+            Assert.That(preparedStep.IsValidIndexLocal(token), Is.False);
+            Assert.That(preparedStep.IsValidWithToken(token), Is.False);
+            Assert.That(preparedStep.IsValid, Is.False);
+        }
+
         // ---- Owner release ----
 
         [Test]

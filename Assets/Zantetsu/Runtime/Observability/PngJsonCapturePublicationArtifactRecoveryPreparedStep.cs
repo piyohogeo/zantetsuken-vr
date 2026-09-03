@@ -63,13 +63,25 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(token));
             }
 
-            if (stepIndex < 0 || stepIndex >= actionPlan.Count)
-            {
-                throw new ArgumentOutOfRangeException(nameof(stepIndex), stepIndex, "Step index must be within the step count.");
-            }
-
             if (!token.TryGetIssuedStep(actionPlan, stepIndex, out CaptureRunPublicationArtifactRecoveryStep step))
             {
+                // Diagnose an out-of-range index without leaking an exception
+                // from a nulled or shortened step array.
+                int count;
+                try
+                {
+                    count = actionPlan.Count;
+                }
+                catch (Exception)
+                {
+                    throw new ArgumentException("Action plan step array must remain intact.", nameof(stepIndex));
+                }
+
+                if (stepIndex < 0 || stepIndex >= count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(stepIndex), stepIndex, "Step index must be within the step count.");
+                }
+
                 throw new ArgumentException("Step must be bound by the issued token.", nameof(stepIndex));
             }
 
@@ -178,11 +190,6 @@ namespace Zantetsu.Observability
             bool fullCommitValidation)
         {
             if (actionPlan == null || token == null)
-            {
-                return false;
-            }
-
-            if (stepIndex < 0 || stepIndex >= actionPlan.Count)
             {
                 return false;
             }
