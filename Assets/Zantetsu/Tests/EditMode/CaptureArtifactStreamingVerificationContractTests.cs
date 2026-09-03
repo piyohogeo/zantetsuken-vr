@@ -490,7 +490,9 @@ namespace Zantetsu.Core.Tests
 
                 // A separate supported store is unaffected and verifies normally.
                 CaptureArtifactFileStore store = new CaptureArtifactFileStore(
-                    layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength));
+                    layout,
+                    new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength),
+                    new SupportedNoFollowOpener());
                 store.WriteStaging(new CaptureArtifactWriteRequest(descriptor, payload));
                 Assert.That(store.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
             }
@@ -520,7 +522,7 @@ namespace Zantetsu.Core.Tests
                             start.WaitOne();
                             ICaptureArtifactNoFollowOpener opener = useUnsupported
                                 ? (ICaptureArtifactNoFollowOpener)new UnsupportedNoFollowOpener()
-                                : CaptureArtifactNoFollowOpen.Create();
+                                : new SupportedNoFollowOpener();
                             try
                             {
                                 new CaptureArtifactFileStore(
@@ -1190,6 +1192,22 @@ namespace Zantetsu.Core.Tests
             public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
             {
                 throw new NotSupportedException("No-follow open is not supported.");
+            }
+        }
+
+        private sealed class SupportedNoFollowOpener : ICaptureArtifactNoFollowOpener
+        {
+            public bool IsSupported => true;
+
+            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            {
+                // Immutable supported fake used by capability-separation tests.
+                // It opens the file with an ordinary stream so the supported
+                // side is determined purely by injection, independent of the
+                // host OS.
+                string fullPath = Path.Combine(Path.GetFullPath(root), relativePath.Replace('/', Path.DirectorySeparatorChar));
+                return CaptureArtifactNoFollowOpenResult.Opened(
+                    new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read), null);
             }
         }
     }
