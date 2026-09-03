@@ -14,28 +14,40 @@ namespace Zantetsu.Observability
         private readonly string _publicationPlanTemporaryPath;
         private readonly string _publicationPlanPath;
         private readonly CaptureArtifactVerificationBufferPool _verificationBufferPool;
+        private readonly ICaptureArtifactNoFollowOpener _noFollowOpener;
 
         internal const int VerificationBufferLength = 64 * 1024;
 
         internal CaptureArtifactFileStore(CaptureRunRootLayout rootLayout)
-            : this(rootLayout, new CaptureArtifactVerificationBufferPool(VerificationBufferLength))
+            : this(rootLayout, new CaptureArtifactVerificationBufferPool(VerificationBufferLength), CaptureArtifactNoFollowOpen.Create())
         {
         }
 
         internal CaptureArtifactFileStore(
             CaptureRunRootLayout rootLayout,
             CaptureArtifactVerificationBufferPool verificationBufferPool)
+            : this(rootLayout, verificationBufferPool, CaptureArtifactNoFollowOpen.Create())
+        {
+        }
+
+        internal CaptureArtifactFileStore(
+            CaptureRunRootLayout rootLayout,
+            CaptureArtifactVerificationBufferPool verificationBufferPool,
+            ICaptureArtifactNoFollowOpener noFollowOpener)
         {
             if (rootLayout == null) throw new ArgumentNullException(nameof(rootLayout));
             if (!rootLayout.IsValid) throw new ArgumentException("Root layout must be valid.", nameof(rootLayout));
             if (verificationBufferPool == null) throw new ArgumentNullException(nameof(verificationBufferPool));
+            if (noFollowOpener == null) throw new ArgumentNullException(nameof(noFollowOpener));
 
             // Capability insufficiency is not a content mismatch. Refuse to
             // build the store before any Run root, Plan, or chunk exists when
-            // the platform cannot open artifact paths without following
-            // reparse points, so a normal artifact can never be misclassified
-            // as a collision and no filesystem change is made.
-            if (!CaptureArtifactNoFollowOpen.IsSupported)
+            // the opener cannot open artifact paths without following reparse
+            // points, so a normal artifact can never be misclassified as a
+            // collision and no filesystem change is made. The opener is held
+            // immutable, so a store can never be downgraded to unsupported
+            // after construction.
+            if (!noFollowOpener.IsSupported)
             {
                 throw new CaptureArtifactNoFollowUnavailableException(
                     "No-follow artifact open is not supported on this platform.");
@@ -48,6 +60,7 @@ namespace Zantetsu.Observability
             _publicationPlanTemporaryPath = Path.Combine(_stagingRunRoot, "publication.plan.tmp");
             _publicationPlanPath = Path.Combine(_stagingRunRoot, "publication.plan");
             _verificationBufferPool = verificationBufferPool;
+            _noFollowOpener = noFollowOpener;
         }
 
         internal CaptureRunRootLayout RootLayout => _rootLayout;
@@ -274,13 +287,13 @@ namespace Zantetsu.Observability
             }
         }
 
-        private static CaptureArtifactVerificationResult VerifyAtReserved(
+        private CaptureArtifactVerificationResult VerifyAtReserved(
             CaptureArtifactDescriptor descriptor,
             string root,
             string relativePath,
             CaptureArtifactVerificationBufferPool.Lease lease)
         {
-            CaptureArtifactNoFollowOpenResult opened = CaptureArtifactNoFollowOpen.TryOpen(root, relativePath);
+            CaptureArtifactNoFollowOpenResult opened = _noFollowOpener.TryOpen(root, relativePath);
             switch (opened.Status)
             {
                 case CaptureArtifactNoFollowOpenStatus.Opened:

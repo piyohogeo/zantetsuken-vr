@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -260,13 +261,31 @@ namespace Zantetsu.Core.Tests
             Assert.That(store, Does.Not.Contain("new byte[descriptor.ByteLength"));
             Assert.That(store, Does.Not.Contain("new byte[(int)descriptor.ByteLength"));
             Assert.That(verifier, Does.Not.Contain("new byte[descriptor.ByteLength"));
-            Assert.That(store, Does.Contain("CaptureArtifactNoFollowOpen.TryOpen"));
+            Assert.That(store, Does.Contain("_noFollowOpener.TryOpen"));
 
             string noFollow = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactNoFollowOpen.cs"));
             Assert.That(noFollow, Does.Contain("FileFlagOpenReparsePoint"));
             Assert.That(noFollow, Does.Contain("GetFileInformationByHandle"));
             Assert.That(noFollow, Does.Contain("GetFinalPathNameByHandle"));
+        }
+
+        [Test]
+        public void Production_NoFollowOpen_HasNoMutableCapabilityState()
+        {
+            string noFollow = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureArtifactNoFollowOpen.cs"));
+            string opener = File.ReadAllText(Path.Combine(
+                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/ICaptureArtifactNoFollowOpener.cs"));
+
+            // The capability is an immutable per-store dependency: there is no
+            // process-global field or method that can rewrite it after a store
+            // is constructed.
+            Assert.That(noFollow, Does.Not.Contain("OverrideIsSupported"));
+            Assert.That(noFollow, Does.Not.Contain("_isSupportedOverride"));
+            Assert.That(noFollow, Does.Not.Contain("static bool?"));
+            Assert.That(opener, Does.Contain("IsSupported"));
+            Assert.That(noFollow, Does.Contain("ICaptureArtifactNoFollowOpener"));
         }
 
         [Test]
@@ -431,25 +450,99 @@ namespace Zantetsu.Core.Tests
             {
                 CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
 
-                // Inject an unsupported no-follow capability through the seam.
-                // Capability insufficiency is not a content mismatch: the store
-                // must refuse to exist before any Run root, Plan, or chunk is
-                // created, so a normal artifact can never become a collision.
-                CaptureArtifactNoFollowOpen.OverrideIsSupported(false);
-                try
-                {
-                    Assert.Throws<CaptureArtifactNoFollowUnavailableException>(
-                        () => new CaptureArtifactFileStore(
-                            layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength)));
-                }
-                finally
-                {
-                    CaptureArtifactNoFollowOpen.OverrideIsSupported(null);
-                }
+                // Inject an unsupported no-follow capability as an immutable
+                // per-store dependency. Capability insufficiency is not a
+                // content mismatch: the store must refuse to exist before any
+                // Run root, Plan, or chunk is created, so a normal artifact can
+                // never become a collision.
+                Assert.Throws<CaptureArtifactNoFollowUnavailableException>(
+                    () => new CaptureArtifactFileStore(
+                        layout,
+                        new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength),
+                        new UnsupportedNoFollowOpener()));
 
                 // No filesystem change: the run roots were never created.
                 Assert.That(Directory.Exists(layout.StagingRunRoot), Is.False);
                 Assert.That(Directory.Exists(layout.FinalRunRoot), Is.False);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_UnsupportedNoFollow_DoesNotAffectSupportedStore()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes("artifact payload");
+                CaptureArtifactDescriptor descriptor = MakeDescriptor("a", payload);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+
+                // The unsupported opener only poisons its own construction.
+                Assert.Throws<CaptureArtifactNoFollowUnavailableException>(
+                    () => new CaptureArtifactFileStore(
+                        layout,
+                        new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength),
+                        new UnsupportedNoFollowOpener()));
+
+                // A separate supported store is unaffected and verifies normally.
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(
+                    layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength));
+                store.WriteStaging(new CaptureArtifactWriteRequest(descriptor, payload));
+                Assert.That(store.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_NoFollowCapability_DoesNotLeakAcrossParallelConstructions()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+                int supported = 0;
+                int unsupported = 0;
+                Thread[] threads = new Thread[8];
+                using (ManualResetEvent start = new ManualResetEvent(false))
+                {
+                    for (int i = 0; i < threads.Length; i++)
+                    {
+                        bool useUnsupported = (i % 2) == 1;
+                        threads[i] = new Thread(() =>
+                        {
+                            start.WaitOne();
+                            ICaptureArtifactNoFollowOpener opener = useUnsupported
+                                ? (ICaptureArtifactNoFollowOpener)new UnsupportedNoFollowOpener()
+                                : CaptureArtifactNoFollowOpen.Create();
+                            try
+                            {
+                                new CaptureArtifactFileStore(
+                                    layout,
+                                    new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength),
+                                    opener);
+                                Interlocked.Increment(ref supported);
+                            }
+                            catch (CaptureArtifactNoFollowUnavailableException)
+                            {
+                                Interlocked.Increment(ref unsupported);
+                            }
+                        });
+                        threads[i].Start();
+                    }
+
+                    start.Set();
+                    for (int i = 0; i < threads.Length; i++) threads[i].Join();
+                }
+
+                Assert.That(supported, Is.EqualTo(4));
+                Assert.That(unsupported, Is.EqualTo(4));
             }
             finally
             {
@@ -523,7 +616,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Store_ParentDirectoryJunction_RejectsOutsideRootFile()
         {
-            if (!CaptureArtifactNoFollowOpen.IsSupported)
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 Assert.Ignore("Parent-directory junction test requires Windows no-follow open support.");
             }
@@ -1087,6 +1180,16 @@ namespace Zantetsu.Core.Tests
             public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
             {
                 throw new NotSupportedException();
+            }
+        }
+
+        private sealed class UnsupportedNoFollowOpener : ICaptureArtifactNoFollowOpener
+        {
+            public bool IsSupported => false;
+
+            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            {
+                throw new NotSupportedException("No-follow open is not supported.");
             }
         }
     }

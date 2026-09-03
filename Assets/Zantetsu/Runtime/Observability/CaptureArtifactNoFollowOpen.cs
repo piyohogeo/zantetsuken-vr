@@ -66,17 +66,18 @@ namespace Zantetsu.Observability
     }
 
     /// <summary>
-    /// Platform-safe no-follow file open for artifact verification. On Windows
-    /// the path is opened relative to a run root with
+    /// Immutable, per-store platform-safe no-follow file open for artifact
+    /// verification. On Windows the path is opened relative to a run root with
     /// <c>FILE_FLAG_OPEN_REPARSE_POINT</c>, its kind is derived from the opened
     /// handle, and the handle's canonical path is verified to stay inside the
     /// run root, so neither a final-component reparse point nor a parent
     /// directory swapped for a junction or symbolic link can be followed. On
-    /// platforms without a no-follow open the attempt reports
-    /// <see cref="CaptureArtifactNoFollowOpenStatus.Unsupported"/> so the
-    /// caller can fail closed.
+    /// platforms without a no-follow open, <see cref="IsSupported"/> is false
+    /// and <see cref="TryOpen"/> reports
+    /// <see cref="CaptureArtifactNoFollowOpenStatus.Unsupported"/>. There is no
+    /// process-global capability state; each store owns its own opener.
     /// </summary>
-    internal static class CaptureArtifactNoFollowOpen
+    internal sealed class CaptureArtifactNoFollowOpen : ICaptureArtifactNoFollowOpener
     {
         private const uint GenericRead = 0x80000000u;
         private const uint FileShareRead = 0x00000001u;
@@ -88,20 +89,18 @@ namespace Zantetsu.Observability
         private const int ErrorFileNotFound = 2;
         private const int ErrorPathNotFound = 3;
 
-        private static bool? _isSupportedOverride;
-
-        internal static bool IsSupported => _isSupportedOverride ?? RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-        /// <summary>
-        /// Test-only seam for forcing the platform capability check. Pass
-        /// <c>null</c> to restore platform detection.
-        /// </summary>
-        internal static void OverrideIsSupported(bool? value)
+        internal CaptureArtifactNoFollowOpen()
         {
-            _isSupportedOverride = value;
         }
 
-        internal static CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+        internal static CaptureArtifactNoFollowOpen Create()
+        {
+            return new CaptureArtifactNoFollowOpen();
+        }
+
+        public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
         {
             if (!IsSupported)
             {
