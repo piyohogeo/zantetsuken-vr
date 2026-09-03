@@ -197,16 +197,33 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Full validation plus token issuance: issues an execution-result
-        /// validation token bound to this exact instance only after the whole
-        /// result validates, so a stale or corrupted result never produces a
-        /// token. The token carries the already-acquired action plan validation
-        /// token and never re-issues it.
+        /// Full validation plus token issuance: delegates to the shared
+        /// validated mint, so the only way to obtain a proof is through the
+        /// exact full-validation predicate. A stale or corrupted result never
+        /// produces a token. The token carries the already-acquired action plan
+        /// validation token and never re-issues it.
         /// </summary>
         internal bool TryValidate(out ValidationToken token)
         {
-            token = null;
+            return ValidationToken.TryAcquire(this, _token, out token);
+        }
 
+        /// <summary>
+        /// Exception-safe recomputation delegated to
+        /// <see cref="TryValidate"/>.
+        /// </summary>
+        internal bool IsValid => TryValidate(out _);
+
+        /// <summary>
+        /// Single shared full-validation predicate executed exactly once by the
+        /// validated mint: nulls, status, step count and order, exact
+        /// prepared-step references, the action-exclusive receipt shape, each
+        /// receipt's issuer/operation/token correlation, and the owner liveness.
+        /// It never re-issues a token, re-validates the plan, or scans an
+        /// entry.
+        /// </summary>
+        private bool IsFullyValid()
+        {
             try
             {
                 if (_issuedBy == null || _batch == null || _completedSteps == null || _token == null)
@@ -286,36 +303,27 @@ namespace Zantetsu.Observability
                     }
                 }
 
-                token = null;
-                if (!ValidationToken.TryAcquire(this, _token, out token))
-                {
-                    return false;
-                }
-
                 return true;
             }
             catch (Exception)
             {
-                token = null;
                 return false;
             }
         }
 
         /// <summary>
-        /// Exception-safe recomputation delegated to
-        /// <see cref="TryValidate"/>.
-        /// </summary>
-        internal bool IsValid => TryValidate(out _);
-
-        /// <summary>
         /// Opaque proof minted only after this exact execution result validates
-        /// once. It binds to the exact result and carries the action plan
-        /// validation token acquired during that validation, and exposes no
-        /// proof array or token getter.
+        /// once through the shared predicate. It snapshots the exact issuer,
+        /// batch, completed-step array, and held action plan token references
+        /// at issuance, and O(1) re-confirms each against the current result.
+        /// It exposes no proof array or token getter.
         /// </summary>
         internal sealed class ValidationToken
         {
             private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult _result;
+            private readonly PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator _issuedBy;
+            private readonly PngJsonCapturePublicationArtifactRecoveryExecutionBatch _batch;
+            private readonly PngJsonCapturePublicationArtifactRecoveryCompletedStep[] _completedSteps;
             private readonly PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken _actionPlanToken;
 
             private ValidationToken(
@@ -323,14 +331,17 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken)
             {
                 _result = result;
+                _issuedBy = result._issuedBy;
+                _batch = result._batch;
+                _completedSteps = result._completedSteps;
                 _actionPlanToken = actionPlanToken;
             }
 
             /// <summary>
-            /// Mints a token only for an exact, already-validated execution
-            /// result and the action plan token acquired during that
-            /// validation. The private constructor keeps the proof
-            /// unfabricable by callers outside this token.
+            /// Validated mint: runs the exact result's single shared full
+            /// validation predicate and issues a token only on success. The
+            /// private constructor keeps the proof unfabricable by callers
+            /// outside this token.
             /// </summary>
             internal static bool TryAcquire(
                 PngJsonCapturePublicationArtifactRecoveryExecutionResult result,
@@ -339,7 +350,10 @@ namespace Zantetsu.Observability
             {
                 token = null;
 
-                if (result == null || actionPlanToken == null)
+                if (result == null
+                    || actionPlanToken == null
+                    || !ReferenceEquals(actionPlanToken, result._token)
+                    || !result.IsFullyValid())
                 {
                     return false;
                 }
@@ -349,13 +363,20 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// O(1), exception-safe exact binding: reports whether this token
-            /// was issued for the exact execution result. It never re-validates
-            /// the result, re-issues a token, or scans an entry.
+            /// O(1), exception-safe exact binding: re-confirms the exact result,
+            /// issuer, batch, completed-step array, and held action plan token
+            /// references captured at issuance against the current result. It
+            /// never re-validates the result, re-issues a token, or scans an
+            /// entry.
             /// </summary>
             internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryExecutionResult result)
             {
-                return result != null && ReferenceEquals(_result, result);
+                return result != null
+                    && ReferenceEquals(_result, result)
+                    && ReferenceEquals(_issuedBy, result._issuedBy)
+                    && ReferenceEquals(_batch, result._batch)
+                    && ReferenceEquals(_completedSteps, result._completedSteps)
+                    && ReferenceEquals(_actionPlanToken, result._token);
             }
         }
 

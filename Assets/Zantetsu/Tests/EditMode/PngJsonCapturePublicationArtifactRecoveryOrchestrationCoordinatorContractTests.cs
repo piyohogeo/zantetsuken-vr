@@ -1254,6 +1254,43 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
         }
 
+        [Test]
+        public void Result_CorruptedExecutionResult_IsValidFalse()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator coordinator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = coordinator.Execute(operation);
+            Assert.That(result.IsValid, Is.True);
+
+            // Null out the execution result's completed-step array: the held
+            // proof's O(1) exact binding must detect the swap and report false
+            // without throwing.
+            SetField(result.ExecutionResult, "_completedSteps", null);
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_Create_Rejected_AfterExecutionResultCorruption()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator coordinator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = coordinator.Execute(operation);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken)GetField(result, "_token");
+
+            // Corrupt the execution result after issuance; Create must reject
+            // because the proof's O(1) exact binding no longer matches.
+            SetField(result.ExecutionResult, "_completedSteps", null);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.Create(
+                    coordinator, result.ExecutionResult, token));
+            Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
+        }
+
         // ---- Owner / forge ----
 
         [Test]

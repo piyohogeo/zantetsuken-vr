@@ -955,6 +955,22 @@ namespace Zantetsu.Core.Tests
             return steps;
         }
 
+        private static PngJsonCapturePublicationArtifactRecoveryExecutionResult WithSwappedField(
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult template,
+            string fieldName,
+            object value)
+        {
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult forged =
+                (PngJsonCapturePublicationArtifactRecoveryExecutionResult)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactRecoveryExecutionResult));
+            SetField(forged, "_issuedBy", GetField(template, "_issuedBy"));
+            SetField(forged, "_batch", GetField(template, "_batch"));
+            SetField(forged, "_completedSteps", GetField(template, "_completedSteps"));
+            SetField(forged, "_token", GetField(template, "_token"));
+            SetField(forged, fieldName, value);
+            return forged;
+        }
+
         private static void AssertResultRejected(
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator,
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
@@ -1490,6 +1506,68 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Result_ValidationToken_UninitializedOrCorrupted_NoTokenMinted()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
+
+            // An uninitialized instance can never mint a proof through either
+            // entry point.
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult uninitialized =
+                (PngJsonCapturePublicationArtifactRecoveryExecutionResult)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactRecoveryExecutionResult));
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken minted;
+            Assert.That(uninitialized.TryValidate(out minted), Is.False);
+            Assert.That(
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquire(
+                    uninitialized, actionPlanToken, out minted),
+                Is.False);
+
+            // A corrupted instance (null completed steps) can never mint either.
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult corrupted =
+                (PngJsonCapturePublicationArtifactRecoveryExecutionResult)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactRecoveryExecutionResult));
+            SetField(corrupted, "_issuedBy", coordinator);
+            SetField(corrupted, "_batch", batch);
+            SetField(corrupted, "_completedSteps", null);
+            SetField(corrupted, "_token", actionPlanToken);
+            Assert.That(corrupted.TryValidate(out minted), Is.False);
+            Assert.That(
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken.TryAcquire(
+                    corrupted, actionPlanToken, out minted),
+                Is.False);
+        }
+
+        [Test]
+        public void Result_ValidationToken_IssuedForFalse_AfterFieldSwap()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken token;
+            Assert.That(good.TryValidate(out token), Is.True);
+            Assert.That(token.IsIssuedFor(good), Is.True);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator otherCoordinator =
+                MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult other =
+                otherCoordinator.Execute(BuildBatch(BuildPublishPngSidecarPlan()));
+
+            Assert.That(token.IsIssuedFor(WithSwappedField(good, "_issuedBy", otherCoordinator)), Is.False);
+            Assert.That(token.IsIssuedFor(WithSwappedField(good, "_batch", other.Batch)), Is.False);
+            Assert.That(
+                token.IsIssuedFor(WithSwappedField(good, "_completedSteps", new PngJsonCapturePublicationArtifactRecoveryCompletedStep[good.Count])),
+                Is.False);
+            Assert.That(token.IsIssuedFor(WithSwappedField(good, "_token", GetField(other, "_token"))), Is.False);
+        }
+
+        [Test]
         public void Result_ForeignIssuer_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
@@ -1912,6 +1990,51 @@ namespace Zantetsu.Core.Tests
             // The completed step's commit branch must route through the
             // index-local predicate, never through the serializing IsIssuedFor.
             Assert.That(completedStepSource, Does.Contain("IsIssuedForIndexLocal"));
+        }
+
+        [Test]
+        public void Source_ValidationToken_ValidatedMintOnly()
+        {
+            string resultSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionResult.cs");
+
+            int tryValidateIndex = resultSource.IndexOf("internal bool TryValidate(out ValidationToken token)", StringComparison.Ordinal);
+            Assert.That(tryValidateIndex, Is.GreaterThan(0));
+
+            int tokenClassIndex = resultSource.IndexOf("internal sealed class ValidationToken", StringComparison.Ordinal);
+            Assert.That(tokenClassIndex, Is.GreaterThan(tryValidateIndex));
+
+            string tryValidateBody = resultSource.Substring(tryValidateIndex, tokenClassIndex - tryValidateIndex);
+            Assert.That(tryValidateBody, Does.Contain("ValidationToken.TryAcquire(this, _token, out token)"));
+            Assert.That(tryValidateBody, Does.Contain("private bool IsFullyValid()"));
+
+            int tryAcquireIndex = resultSource.IndexOf("internal static bool TryAcquire(", StringComparison.Ordinal);
+            Assert.That(tryAcquireIndex, Is.GreaterThan(tokenClassIndex));
+
+            int isIssuedForIndex = resultSource.IndexOf("internal bool IsIssuedFor(", StringComparison.Ordinal);
+            Assert.That(isIssuedForIndex, Is.GreaterThan(tryAcquireIndex));
+
+            string tryAcquireBody = resultSource.Substring(tryAcquireIndex, isIssuedForIndex - tryAcquireIndex);
+            Assert.That(tryAcquireBody, Does.Contain("result.IsFullyValid()"));
+            Assert.That(
+                tryAcquireBody.IndexOf("IsFullyValid()", StringComparison.Ordinal),
+                Is.EqualTo(tryAcquireBody.LastIndexOf("IsFullyValid()", StringComparison.Ordinal)));
+            Assert.That(tryAcquireBody, Does.Contain("new ValidationToken(result, actionPlanToken)"));
+
+            // Exactly one mint site: the private constructor is invoked solely
+            // inside the validated TryAcquire, never from TryValidate or Create.
+            int firstNew = resultSource.IndexOf("new ValidationToken(", StringComparison.Ordinal);
+            Assert.That(firstNew, Is.GreaterThan(0));
+            Assert.That(
+                firstNew,
+                Is.EqualTo(resultSource.LastIndexOf("new ValidationToken(", StringComparison.Ordinal)));
+
+            // The atomic factory must only O(1) exact-bind; it never validates.
+            int createIndex = resultSource.IndexOf("internal static PngJsonCapturePublicationArtifactRecoveryExecutionResult Create(", StringComparison.Ordinal);
+            Assert.That(createIndex, Is.GreaterThan(0));
+            string createBody = resultSource.Substring(createIndex, tryValidateIndex - createIndex);
+            Assert.That(createBody, Does.Not.Contain("TryValidate"));
+            Assert.That(createBody, Does.Not.Contain("TryAcquire"));
+            Assert.That(createBody, Does.Not.Contain("IsFullyValid"));
         }
     }
 }
