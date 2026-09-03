@@ -738,24 +738,18 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// O(1), exception-safe index-local publish input access: confirms
-            /// the shared bindings, then re-verifies the target step's
-            /// reference and Action/EntryIndex/ArtifactKind against the
-            /// issuance proof, requires
-            /// <see cref="CaptureRunPublicationArtifactRecoveryAction.PublishArtifact"/>,
-            /// and obtains the exact entry observation through the captured
-            /// snapshot token's index-local API. The snapshot is never fully
-            /// validated, no other step is visited, and no token is re-issued.
-            /// Both out parameters are assigned only on success.
+            /// O(1), exception-safe index-local step access: confirms the
+            /// shared bindings, then re-verifies the target step's reference
+            /// and all value fields against the issuance proof. It never walks
+            /// another step, scans an entry, re-issues a token, or serializes.
+            /// The out parameter is assigned only on success.
             /// </summary>
-            internal bool TryGetIssuedPublishInputs(
+            internal bool TryGetIssuedStep(
                 PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
                 int stepIndex,
-                out CaptureRunPublicationArtifactRecoveryStep step,
-                out PngJsonCapturePublicationArtifactEntryObservation observation)
+                out CaptureRunPublicationArtifactRecoveryStep step)
             {
                 step = null;
-                observation = null;
 
                 if (!IsBindingIntact(plan))
                 {
@@ -776,6 +770,41 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
+                    step = issuedStep;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    step = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// O(1), exception-safe index-local publish input access: obtains
+            /// the issued step through <see cref="TryGetIssuedStep"/>, requires
+            /// <see cref="CaptureRunPublicationArtifactRecoveryAction.PublishArtifact"/>,
+            /// and resolves the exact entry observation through the captured
+            /// snapshot token's index-local API. The snapshot is never fully
+            /// validated, no other step is visited, and no token is re-issued.
+            /// Both out parameters are assigned only on success.
+            /// </summary>
+            internal bool TryGetIssuedPublishInputs(
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
+                int stepIndex,
+                out CaptureRunPublicationArtifactRecoveryStep step,
+                out PngJsonCapturePublicationArtifactEntryObservation observation)
+            {
+                step = null;
+                observation = null;
+
+                if (!TryGetIssuedStep(plan, stepIndex, out CaptureRunPublicationArtifactRecoveryStep issuedStep))
+                {
+                    return false;
+                }
+
+                try
+                {
                     if (issuedStep.Action != CaptureRunPublicationArtifactRecoveryAction.PublishArtifact)
                     {
                         return false;
@@ -810,12 +839,13 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// O(1), exception-safe index-local commit input access: confirms
-            /// the shared bindings, then re-verifies the target step's
-            /// reference and Action/EntryIndex/ArtifactKind against the
-            /// issuance proof, requires the plan to hold exactly one step
-            /// with Action <see cref="CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex"/>
-            /// and the held <see cref="CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex"/>
+            /// O(1), exception-safe index-local commit input access: obtains
+            /// the issued step through <see cref="TryGetIssuedStep"/>, requires
+            /// Action <see cref="CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex"/>
+            /// with entry index -1 and artifact kind
+            /// <see cref="CaptureRunPublicationArtifactKind.None"/>, requires
+            /// the plan to hold exactly one step and the held
+            /// <see cref="CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex"/>
             /// disposition, and returns the exact decision. The snapshot is
             /// never fully validated, no other step is visited, no entry is
             /// scanned, and no token is re-issued. Both out parameters are
@@ -830,25 +860,13 @@ namespace Zantetsu.Observability
                 step = null;
                 decision = null;
 
-                if (!IsBindingIntact(plan))
+                if (!TryGetIssuedStep(plan, stepIndex, out CaptureRunPublicationArtifactRecoveryStep issuedStep))
                 {
                     return false;
                 }
 
                 try
                 {
-                    CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
-                    if (stepIndex < 0 || stepIndex >= steps.Length)
-                    {
-                        return false;
-                    }
-
-                    CaptureRunPublicationArtifactRecoveryStep issuedStep = steps[stepIndex];
-                    if (issuedStep == null || !_proof[stepIndex].Matches(issuedStep))
-                    {
-                        return false;
-                    }
-
                     if (issuedStep.Action != CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex
                         || issuedStep.EntryIndex != -1
                         || issuedStep.ArtifactKind != CaptureRunPublicationArtifactKind.None)
@@ -856,7 +874,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (steps.Length != 1
+                    if (plan._steps.Length != 1
                         || _disposition != CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex)
                     {
                         return false;
