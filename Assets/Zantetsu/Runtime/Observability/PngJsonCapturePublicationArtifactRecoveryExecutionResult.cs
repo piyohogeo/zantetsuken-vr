@@ -197,53 +197,52 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Exception-safe full validity recomputed from the held action plan
-        /// token: the exact coordinator/batch/token correlation, the completed
-        /// step count and order, each prepared step's exact reference, the
-        /// action-exclusive receipt shape, each receipt's issuer/operation/token
-        /// correlation, the owner liveness, and the status mapping. It never
-        /// re-issues a token, re-validates the plan, or scans an entry.
+        /// Full validation plus token issuance: issues an execution-result
+        /// validation token bound to this exact instance only after the whole
+        /// result validates, so a stale or corrupted result never produces a
+        /// token. The token carries the already-acquired action plan validation
+        /// token and never re-issues it.
         /// </summary>
-        internal bool IsValid
+        internal bool TryValidate(out ValidationToken token)
         {
-            get
+            token = null;
+
+            try
             {
-                try
+                if (_issuedBy == null || _batch == null || _completedSteps == null || _token == null)
                 {
-                    if (_issuedBy == null || _batch == null || _completedSteps == null || _token == null)
+                    return false;
+                }
+
+                if (Status == CaptureRunPublicationArtifactRecoveryExecutionStatus.None)
+                {
+                    return false;
+                }
+
+                int count = _batch.Count;
+                if (_completedSteps.Length != count)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    PngJsonCapturePublicationArtifactRecoveryCompletedStep completedStep = _completedSteps[i];
+                    PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = _batch.GetStep(i);
+
+                    if (completedStep == null
+                        || preparedStep == null
+                        || !ReferenceEquals(completedStep.PreparedStep, preparedStep)
+                        || completedStep.StepIndex != i
+                        || !ReferenceEquals(preparedStep.ActionPlan, _batch.ActionPlan)
+                        || !completedStep.IsValidIndexLocal(_token))
                     {
                         return false;
                     }
 
-                    if (Status == CaptureRunPublicationArtifactRecoveryExecutionStatus.None)
+                    switch (preparedStep.Action)
                     {
-                        return false;
-                    }
-
-                    int count = _batch.Count;
-                    if (_completedSteps.Length != count)
-                    {
-                        return false;
-                    }
-
-                    for (int i = 0; i < count; i++)
-                    {
-                        PngJsonCapturePublicationArtifactRecoveryCompletedStep completedStep = _completedSteps[i];
-                        PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = _batch.GetStep(i);
-
-                        if (completedStep == null
-                            || preparedStep == null
-                            || !ReferenceEquals(completedStep.PreparedStep, preparedStep)
-                            || completedStep.StepIndex != i
-                            || !ReferenceEquals(preparedStep.ActionPlan, _batch.ActionPlan)
-                            || !completedStep.IsValidIndexLocal(_token))
-                        {
-                            return false;
-                        }
-
-                        switch (preparedStep.Action)
-                        {
-                            case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
+                        case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
                             {
                                 PngJsonCapturePublicationArtifactPublishReceipt receipt = completedStep.PublishReceipt;
                                 if (receipt == null
@@ -256,7 +255,7 @@ namespace Zantetsu.Observability
                                 break;
                             }
 
-                            case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
+                        case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
                             {
                                 PngJsonCaptureRunCaptureIndexCommitReceipt receipt = completedStep.CommitReceipt;
                                 if (receipt == null
@@ -269,30 +268,94 @@ namespace Zantetsu.Observability
                                 break;
                             }
 
-                            case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
-                            case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
-                            case CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace:
-                            case CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing:
-                            case CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing:
-                            case CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision:
-                                if (completedStep.PublishReceipt != null || completedStep.CommitReceipt != null)
-                                {
-                                    return false;
-                                }
-
-                                break;
-
-                            default:
+                        case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
+                        case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
+                        case CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace:
+                        case CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing:
+                        case CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing:
+                        case CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision:
+                            if (completedStep.PublishReceipt != null || completedStep.CommitReceipt != null)
+                            {
                                 return false;
-                        }
-                    }
+                            }
 
-                    return true;
+                            break;
+
+                        default:
+                            return false;
+                    }
                 }
-                catch (Exception)
+
+                token = null;
+                if (!ValidationToken.TryAcquire(this, _token, out token))
                 {
                     return false;
                 }
+
+                return true;
+            }
+            catch (Exception)
+            {
+                token = null;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe recomputation delegated to
+        /// <see cref="TryValidate"/>.
+        /// </summary>
+        internal bool IsValid => TryValidate(out _);
+
+        /// <summary>
+        /// Opaque proof minted only after this exact execution result validates
+        /// once. It binds to the exact result and carries the action plan
+        /// validation token acquired during that validation, and exposes no
+        /// proof array or token getter.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult _result;
+            private readonly PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken _actionPlanToken;
+
+            private ValidationToken(
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult result,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken)
+            {
+                _result = result;
+                _actionPlanToken = actionPlanToken;
+            }
+
+            /// <summary>
+            /// Mints a token only for an exact, already-validated execution
+            /// result and the action plan token acquired during that
+            /// validation. The private constructor keeps the proof
+            /// unfabricable by callers outside this token.
+            /// </summary>
+            internal static bool TryAcquire(
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult result,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken,
+                out ValidationToken token)
+            {
+                token = null;
+
+                if (result == null || actionPlanToken == null)
+                {
+                    return false;
+                }
+
+                token = new ValidationToken(result, actionPlanToken);
+                return true;
+            }
+
+            /// <summary>
+            /// O(1), exception-safe exact binding: reports whether this token
+            /// was issued for the exact execution result. It never re-validates
+            /// the result, re-issues a token, or scans an entry.
+            /// </summary>
+            internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryExecutionResult result)
+            {
+                return result != null && ReferenceEquals(_result, result);
             }
         }
 
