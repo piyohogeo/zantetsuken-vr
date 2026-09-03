@@ -375,7 +375,9 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                return _orchestrationToken != null && _orchestrationToken.IsIssuedFor(plan._orchestrationResult);
+                return _orchestrationToken != null
+                    && ReferenceEquals(_orchestrationToken, plan._orchestrationToken)
+                    && _orchestrationToken.IsIssuedFor(plan._orchestrationResult);
             }
 
             /// <summary>
@@ -564,6 +566,7 @@ namespace Zantetsu.Observability
                 CaptureRunPublicationDocumentObservation captureIndex = null;
                 CaptureRunPublicationFramesObservationStatus stagingFramesStatus = CaptureRunPublicationFramesObservationStatus.Absent;
                 bool hasPublicationSnapshot = false;
+                bool freshRoute = false;
 
                 if (authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision)
                 {
@@ -593,6 +596,29 @@ namespace Zantetsu.Observability
                     {
                         return null;
                     }
+                }
+                else if (authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun)
+                {
+                    // Fresh: the frozen publication result proves the
+                    // publication plan was written; staged artifacts prove the
+                    // frames directory exists.
+                    PngJsonCaptureFrozenRunArtifactInspectionSeed freshSeed = authority.FreshSeed;
+                    if (freshSeed == null)
+                    {
+                        return null;
+                    }
+
+                    CaptureEvidenceFrozenRunPublicationResult frozen = freshSeed.FrozenPublicationResult;
+                    if (frozen == null || frozen.PlanWriteReceipt == null)
+                    {
+                        return null;
+                    }
+
+                    freshRoute = true;
+                }
+                else
+                {
+                    return null;
                 }
 
                 // Canonical capture-index proof.
@@ -708,6 +734,13 @@ namespace Zantetsu.Observability
                             return null;
                     }
                 }
+                else if (freshRoute)
+                {
+                    // Fresh: the frozen publication result proves the
+                    // publication plan exists and must be deleted before the
+                    // staging run root is removed.
+                    deletePublicationPlan = true;
+                }
 
                 // Per-entry validation and staging step count.
                 int stagingStepCount = 0;
@@ -742,6 +775,13 @@ namespace Zantetsu.Observability
                     {
                         return null;
                     }
+                }
+
+                if (freshRoute)
+                {
+                    // Fresh: staged artifacts prove the parent frames
+                    // directory exists; remove it only when staging steps ran.
+                    removeStagingFramesRoot = stagingStepCount > 0;
                 }
 
                 ExpectedSequence sequence;

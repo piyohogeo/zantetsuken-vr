@@ -1246,8 +1246,8 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan manyPlan =
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(many);
 
-            // Fresh: no staging steps, no document/root steps → 4 tail steps.
-            Assert.That(manyPlan.Count, Is.EqualTo(4));
+            // Fresh: no staging steps, publication plan + 4 tail steps = 5.
+            Assert.That(manyPlan.Count, Is.EqualTo(5));
         }
 
         [Test]
@@ -1336,7 +1336,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void FreshRoute_Commit_NoDocumentOrRootSteps()
+        public void PlanToken_OrchestrationTokenSwap_IsValidIndexLocalFalse()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken planToken;
+            Assert.That(plan.TryValidate(out planToken), Is.True);
+            Assert.That(plan.IsValidIndexLocal(planToken, 0), Is.True);
+
+            // Swap the plan's held orchestration token for a re-issued token
+            // bound to the same result; the plan token must fail closed.
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = plan.OrchestrationResult;
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.ValidationToken reissued;
+            Assert.That(result.TryValidate(out reissued), Is.True);
+
+            SetField(plan, "_orchestrationToken", reissued);
+
+            Assert.That(plan.IsValidIndexLocal(planToken, 0), Is.False);
+        }
+
+        [Test]
+        public void FreshRoute_Commit_DeletesPublicationPlan_NoUnprovenSteps()
         {
             long[] frameIds = { 1, 2 };
             PngJsonCapturePublicationArtifactInspectionAuthority fresh = MakeFreshAuthority(frameIds);
@@ -1358,21 +1377,60 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
 
-            // Fresh never fabricates document or root steps.
+            // Fresh never fabricates temporary-document or frames-root steps
+            // without evidence, but it must delete the proven publication plan.
             for (int i = 0; i < plan.Count; i++)
             {
                 CaptureRunPublicationCaptureCompleteCleanupAction action = plan.GetStep(i).Action;
                 Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary));
                 Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary));
                 Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot));
-                Assert.That(action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
             }
 
-            Assert.That(plan.Count, Is.EqualTo(4));
-            Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
-            Assert.That(plan.GetStep(1).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
-            Assert.That(plan.GetStep(2).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
-            Assert.That(plan.GetStep(3).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+            Assert.That(plan.Count, Is.EqualTo(5));
+            Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
+            Assert.That(plan.GetStep(1).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
+            Assert.That(plan.GetStep(2).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
+            Assert.That(plan.GetStep(3).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+            Assert.That(plan.GetStep(4).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
+        }
+
+        [Test]
+        public void FreshRoute_StagedArtifact_RemoveStagingFramesRoot()
+        {
+            long[] frameIds = { 1, 2 };
+            PngJsonCapturePublicationArtifactInspectionAuthority fresh = MakeFreshAuthority(frameIds);
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(fresh, 2000);
+            PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken token =
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken.Acquire(operation);
+            PngJsonCapturePublicationArtifactEntryObservation[] entries =
+            {
+                MakeIndexObservation(token, operation, 0, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected),
+                MakeIndexObservation(token, operation, 1, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected, EvMatchesExpected)
+            };
+            FakeArtifactInspector inspector = MakeArtifactInspector(operation, entries, EvMatchesExpected, 100);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
+
+            Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationArtifactRecoveryExecutionStatus.CaptureCompleteCleanupRequired));
+            Assert.That(result.AuthorityKind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+
+            // 2 entries x (Png + Sidecar) = 4 staging steps, then frames root,
+            // publication plan, and the 4 tail steps = 10.
+            Assert.That(plan.Count, Is.EqualTo(10));
+            Assert.That(plan.GetStep(0).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, 0, Png), Is.True);
+            Assert.That(plan.GetStep(1).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, 0, Sidecar), Is.True);
+            Assert.That(plan.GetStep(2).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, 1, Png), Is.True);
+            Assert.That(plan.GetStep(3).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, 1, Sidecar), Is.True);
+            Assert.That(plan.GetStep(4).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot));
+            Assert.That(plan.GetStep(5).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan));
+            Assert.That(plan.GetStep(6).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
+            Assert.That(plan.GetStep(7).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker));
+            Assert.That(plan.GetStep(8).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+            Assert.That(plan.GetStep(9).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady));
         }
 
         [Test]
@@ -1393,8 +1451,17 @@ namespace Zantetsu.Core.Tests
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
 
-            Assert.That(source, Does.Not.Contain("FreshSeed"));
-            Assert.That(source, Does.Not.Contain("FreshFrozenRun"));
+            int freshBranch = source.IndexOf("authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun", StringComparison.Ordinal);
+            Assert.That(freshBranch, Is.GreaterThan(0));
+
+            int recoveryBranch = source.IndexOf("authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision", StringComparison.Ordinal);
+            Assert.That(recoveryBranch, Is.GreaterThan(0));
+            Assert.That(recoveryBranch, Is.LessThan(freshBranch));
+
+            // The Recovery branch must never read the Fresh seed.
+            string recoveryBody = source.Substring(recoveryBranch, freshBranch - recoveryBranch);
+            Assert.That(recoveryBody, Does.Not.Contain("FreshSeed"));
+            Assert.That(recoveryBody, Does.Not.Contain("FreshFrozenRun"));
         }
 
         [Test]
