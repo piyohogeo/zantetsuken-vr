@@ -432,6 +432,7 @@ namespace Zantetsu.Observability
             private readonly CaptureRunPublicationArtifactRecoveryStep[] _steps;
             private readonly StepProof[] _proof;
             private readonly CaptureRunCaptureIndexCommitMode _commitMode;
+            private readonly PngJsonCapturePublicationArtifactInspectionAuthorityKind _commitAuthorityKind;
             private readonly CaptureRunPublicationDocumentObservation _commitCaptureIndex;
             private readonly CaptureRunPublicationDocumentObservation _commitCaptureIndexTemporary;
             private readonly CaptureRunPublicationDocumentObservationStatus _commitCaptureIndexStatus;
@@ -446,6 +447,7 @@ namespace Zantetsu.Observability
                 CaptureRunPublicationArtifactRecoveryStep[] steps,
                 StepProof[] proof,
                 CaptureRunCaptureIndexCommitMode commitMode,
+                PngJsonCapturePublicationArtifactInspectionAuthorityKind commitAuthorityKind,
                 CaptureRunPublicationDocumentObservation commitCaptureIndex,
                 CaptureRunPublicationDocumentObservation commitCaptureIndexTemporary,
                 CaptureRunPublicationDocumentObservationStatus commitCaptureIndexStatus,
@@ -459,6 +461,7 @@ namespace Zantetsu.Observability
                 _steps = steps;
                 _proof = proof;
                 _commitMode = commitMode;
+                _commitAuthorityKind = commitAuthorityKind;
                 _commitCaptureIndex = commitCaptureIndex;
                 _commitCaptureIndexTemporary = commitCaptureIndexTemporary;
                 _commitCaptureIndexStatus = commitCaptureIndexStatus;
@@ -491,6 +494,7 @@ namespace Zantetsu.Observability
                 ComputeCommitProof(
                     plan._decision,
                     out CaptureRunCaptureIndexCommitMode commitMode,
+                    out PngJsonCapturePublicationArtifactInspectionAuthorityKind commitAuthorityKind,
                     out CaptureRunPublicationDocumentObservation commitCaptureIndex,
                     out CaptureRunPublicationDocumentObservation commitCaptureIndexTemporary,
                     out CaptureRunPublicationDocumentObservationStatus commitCaptureIndexStatus,
@@ -505,6 +509,7 @@ namespace Zantetsu.Observability
                     steps,
                     proof,
                     commitMode,
+                    commitAuthorityKind,
                     commitCaptureIndex,
                     commitCaptureIndexTemporary,
                     commitCaptureIndexStatus,
@@ -525,12 +530,14 @@ namespace Zantetsu.Observability
             private static void ComputeCommitProof(
                 PngJsonCapturePublicationArtifactRecoveryDecision decision,
                 out CaptureRunCaptureIndexCommitMode mode,
+                out PngJsonCapturePublicationArtifactInspectionAuthorityKind authorityKind,
                 out CaptureRunPublicationDocumentObservation captureIndex,
                 out CaptureRunPublicationDocumentObservation captureIndexTemporary,
                 out CaptureRunPublicationDocumentObservationStatus captureIndexStatus,
                 out CaptureRunPublicationDocumentObservationStatus captureIndexTemporaryStatus)
             {
                 mode = CaptureRunCaptureIndexCommitMode.None;
+                authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
                 captureIndex = null;
                 captureIndexTemporary = null;
                 captureIndexStatus = CaptureRunPublicationDocumentObservationStatus.Absent;
@@ -548,26 +555,34 @@ namespace Zantetsu.Observability
                     return;
                 }
 
-                if (authority.IsFresh)
+                authorityKind = authority.Kind;
+
+                if (authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun)
                 {
                     mode = CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit;
                     return;
                 }
 
-                if (!authority.IsRecovery)
+                if (authorityKind != PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision)
                 {
+                    authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
+                    mode = CaptureRunCaptureIndexCommitMode.None;
                     return;
                 }
 
                 CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
                 if (recoveryDecision == null)
                 {
+                    authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
+                    mode = CaptureRunCaptureIndexCommitMode.None;
                     return;
                 }
 
                 CaptureRunPublicationRecoveryInspectionSnapshot snapshot = recoveryDecision.Snapshot;
                 if (snapshot == null)
                 {
+                    authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
+                    mode = CaptureRunCaptureIndexCommitMode.None;
                     return;
                 }
 
@@ -575,6 +590,8 @@ namespace Zantetsu.Observability
                 captureIndexTemporary = snapshot.CaptureIndexTemporary;
                 if (captureIndex == null || captureIndexTemporary == null)
                 {
+                    authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
+                    mode = CaptureRunCaptureIndexCommitMode.None;
                     return;
                 }
 
@@ -584,6 +601,7 @@ namespace Zantetsu.Observability
                 if (captureIndexStatus != CaptureRunPublicationDocumentObservationStatus.Absent
                     || !TryDeriveCommitModeFromStatus(captureIndexTemporaryStatus, out mode))
                 {
+                    authorityKind = PngJsonCapturePublicationArtifactInspectionAuthorityKind.None;
                     mode = CaptureRunCaptureIndexCommitMode.None;
                     return;
                 }
@@ -860,10 +878,10 @@ namespace Zantetsu.Observability
             /// O(1), exception-safe commit-mode access: confirms the shared
             /// bindings, requires the held
             /// <see cref="CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex"/>
-            /// disposition, and re-verifies in O(1) that the exact
-            /// <c>capture.index</c> and <c>capture.index.tmp</c> observation
-            /// references and status values captured at issuance are still in
-            /// place, then returns the precomputed commit mode. The canonical
+            /// disposition, and exclusively re-verifies the captured Fresh or
+            /// Recovery proof shape against the current authority kind, then
+            /// re-derives the commit mode from the captured status values in
+            /// O(1) and requires it to match the held mode. The canonical
             /// temporary match and the absent final index were already proven
             /// by the publication classification during full validation, so no
             /// plan entry is scanned and no plan is re-validated here.
@@ -884,44 +902,92 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_commitCaptureIndex != null)
+                try
                 {
-                    try
-                    {
-                        PngJsonCapturePublicationArtifactInspectionAuthority authority = _decision.Authority;
-                        if (authority == null)
-                        {
-                            return false;
-                        }
-
-                        CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
-                        if (recoveryDecision == null)
-                        {
-                            return false;
-                        }
-
-                        CaptureRunPublicationRecoveryInspectionSnapshot snapshot = recoveryDecision.Snapshot;
-                        if (snapshot == null)
-                        {
-                            return false;
-                        }
-
-                        if (!ReferenceEquals(snapshot.CaptureIndex, _commitCaptureIndex)
-                            || snapshot.CaptureIndex.Status != _commitCaptureIndexStatus
-                            || !ReferenceEquals(snapshot.CaptureIndexTemporary, _commitCaptureIndexTemporary)
-                            || snapshot.CaptureIndexTemporary.Status != _commitCaptureIndexTemporaryStatus)
-                        {
-                            return false;
-                        }
-                    }
-                    catch (Exception)
+                    PngJsonCapturePublicationArtifactInspectionAuthority authority = _decision.Authority;
+                    if (authority == null)
                     {
                         return false;
                     }
-                }
 
-                mode = _commitMode;
-                return true;
+                    PngJsonCapturePublicationArtifactInspectionAuthorityKind actualKind = authority.Kind;
+
+                    CaptureRunCaptureIndexCommitMode expectedMode;
+                    switch (_commitAuthorityKind)
+                    {
+                        case PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun:
+                            if (actualKind != PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun)
+                            {
+                                return false;
+                            }
+
+                            // A Fresh proof must hold no recovery observations.
+                            if (_commitCaptureIndex != null || _commitCaptureIndexTemporary != null)
+                            {
+                                return false;
+                            }
+
+                            expectedMode = CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit;
+                            break;
+
+                        case PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision:
+                            if (actualKind != PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision)
+                            {
+                                return false;
+                            }
+
+                            // A Recovery proof must hold both observations.
+                            if (_commitCaptureIndex == null || _commitCaptureIndexTemporary == null)
+                            {
+                                return false;
+                            }
+
+                            CaptureRunPublicationRecoveryDecision recoveryDecision = authority.RecoveryDecision;
+                            if (recoveryDecision == null)
+                            {
+                                return false;
+                            }
+
+                            CaptureRunPublicationRecoveryInspectionSnapshot snapshot = recoveryDecision.Snapshot;
+                            if (snapshot == null)
+                            {
+                                return false;
+                            }
+
+                            if (!ReferenceEquals(snapshot.CaptureIndex, _commitCaptureIndex)
+                                || snapshot.CaptureIndex.Status != _commitCaptureIndexStatus
+                                || !ReferenceEquals(snapshot.CaptureIndexTemporary, _commitCaptureIndexTemporary)
+                                || snapshot.CaptureIndexTemporary.Status != _commitCaptureIndexTemporaryStatus)
+                            {
+                                return false;
+                            }
+
+                            // Re-derive the mode from the captured statuses.
+                            if (_commitCaptureIndexStatus != CaptureRunPublicationDocumentObservationStatus.Absent
+                                || !TryDeriveCommitModeFromStatus(_commitCaptureIndexTemporaryStatus, out expectedMode))
+                            {
+                                return false;
+                            }
+
+                            break;
+
+                        default:
+                            return false;
+                    }
+
+                    if (_commitMode != expectedMode || _commitMode == CaptureRunCaptureIndexCommitMode.None)
+                    {
+                        return false;
+                    }
+
+                    mode = _commitMode;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    mode = CaptureRunCaptureIndexCommitMode.None;
+                    return false;
+                }
             }
         }
 

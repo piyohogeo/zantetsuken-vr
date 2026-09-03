@@ -1124,6 +1124,66 @@ namespace Zantetsu.Core.Tests
             Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
         }
 
+        [Test]
+        public void Token_TryGetIssuedCommitMode_RecoveryIndexNulled_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(token, "_commitCaptureIndex", null);
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_RecoveryModeSwapped_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(token, "_commitMode", CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit);
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_FreshModeSwapped_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildFreshCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(token, "_commitMode", CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit);
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_UndefinedMode_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(token, "_commitMode", (CaptureRunCaptureIndexCommitMode)99);
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
+        [Test]
+        public void Token_TryGetIssuedCommitMode_AuthorityKindSwapped_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+
+            SetField(token, "_commitAuthorityKind", PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun);
+
+            Assert.That(token.TryGetIssuedCommitMode(plan, out CaptureRunCaptureIndexCommitMode mode), Is.False);
+            Assert.That(mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.None));
+        }
+
         // ---- Recovery mode derivation ----
 
         [Test]
@@ -1297,10 +1357,14 @@ namespace Zantetsu.Core.Tests
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryActionPlan.cs");
 
-            int freshIndex = source.IndexOf("IsFresh", StringComparison.Ordinal);
+            int freshIndex = source.IndexOf(
+                "authorityKind == PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun",
+                StringComparison.Ordinal);
             Assert.That(freshIndex, Is.GreaterThan(0));
 
-            int recoveryIndex = source.IndexOf("IsRecovery", StringComparison.Ordinal);
+            int recoveryIndex = source.IndexOf(
+                "authorityKind != PngJsonCapturePublicationArtifactInspectionAuthorityKind.RecoveryDecision",
+                StringComparison.Ordinal);
             Assert.That(recoveryIndex, Is.GreaterThan(freshIndex));
 
             string freshBranch = source.Substring(freshIndex, recoveryIndex - freshIndex);
