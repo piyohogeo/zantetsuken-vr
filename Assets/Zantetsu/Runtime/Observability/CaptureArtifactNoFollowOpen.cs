@@ -88,7 +88,18 @@ namespace Zantetsu.Observability
         private const int ErrorFileNotFound = 2;
         private const int ErrorPathNotFound = 3;
 
-        internal static bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        private static bool? _isSupportedOverride;
+
+        internal static bool IsSupported => _isSupportedOverride ?? RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        /// <summary>
+        /// Test-only seam for forcing the platform capability check. Pass
+        /// <c>null</c> to restore platform detection.
+        /// </summary>
+        internal static void OverrideIsSupported(bool? value)
+        {
+            _isSupportedOverride = value;
+        }
 
         internal static CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
         {

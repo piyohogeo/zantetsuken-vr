@@ -29,6 +29,18 @@ namespace Zantetsu.Observability
             if (rootLayout == null) throw new ArgumentNullException(nameof(rootLayout));
             if (!rootLayout.IsValid) throw new ArgumentException("Root layout must be valid.", nameof(rootLayout));
             if (verificationBufferPool == null) throw new ArgumentNullException(nameof(verificationBufferPool));
+
+            // Capability insufficiency is not a content mismatch. Refuse to
+            // build the store before any Run root, Plan, or chunk exists when
+            // the platform cannot open artifact paths without following
+            // reparse points, so a normal artifact can never be misclassified
+            // as a collision and no filesystem change is made.
+            if (!CaptureArtifactNoFollowOpen.IsSupported)
+            {
+                throw new CaptureArtifactNoFollowUnavailableException(
+                    "No-follow artifact open is not supported on this platform.");
+            }
+
             _rootLayout = rootLayout;
             _testRunId = rootLayout.TestRunId;
             _stagingRunRoot = rootLayout.StagingRunRoot;
@@ -300,12 +312,11 @@ namespace Zantetsu.Observability
                     return InvalidRead(descriptor, 0);
                 case CaptureArtifactNoFollowOpenStatus.Unsupported:
                 default:
-                    return new CaptureArtifactVerificationResult(
-                        descriptor,
-                        CaptureArtifactVerificationExecutionDisposition.Completed,
-                        CaptureArtifactVerificationStatus.Invalid,
-                        CaptureArtifactVerificationFailureReason.NoFollowUnavailable,
-                        0);
+                    // Unreachable after the constructor capability check; kept
+                    // as a fail-closed fallback so an unsupported platform can
+                    // never produce a content classification.
+                    throw new CaptureArtifactNoFollowUnavailableException(
+                        "No-follow artifact open is not supported on this platform.");
             }
         }
 

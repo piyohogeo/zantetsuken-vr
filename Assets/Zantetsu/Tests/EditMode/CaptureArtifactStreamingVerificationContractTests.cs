@@ -29,8 +29,7 @@ namespace Zantetsu.Core.Tests
                 "None", "FileAbsent", "ShorterThanDeclared", "LongerThanDeclared",
                 "HashMismatch", "ReadIoFailure", "CheckedLengthOverflow",
                 "FileChangedDuringRead", "ReparsePointOrInvalidFileKind",
-                "PathOrRunCorrelationMismatch", "BufferUnavailable", "Cancelled",
-                "NoFollowUnavailable"
+                "PathOrRunCorrelationMismatch", "BufferUnavailable", "Cancelled"
             });
         }
 
@@ -85,7 +84,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind, payload.LongLength).IsValid, Is.True);
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.PathOrRunCorrelationMismatch, 0).IsValid, Is.True);
             Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.Cancelled, 0).IsValid, Is.True);
-            Assert.That(R(descriptor, Completed, CaptureArtifactVerificationStatus.Invalid, CaptureArtifactVerificationFailureReason.NoFollowUnavailable, 0).IsValid, Is.True);
             Assert.That(R(descriptor, Deferred, CaptureArtifactVerificationStatus.None, CaptureArtifactVerificationFailureReason.BufferUnavailable, 0).IsValid, Is.True);
         }
 
@@ -418,6 +416,40 @@ namespace Zantetsu.Core.Tests
                 Assert.That(result.Status, Is.EqualTo(CaptureArtifactVerificationStatus.Invalid));
                 Assert.That(result.FailureReason, Is.EqualTo(CaptureArtifactVerificationFailureReason.ReparsePointOrInvalidFileKind));
                 Assert.That(pool.OutstandingRentCount, Is.Zero);
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void Store_UnsupportedNoFollow_ThrowsBeforeAnyChange()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            try
+            {
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 3);
+
+                // Inject an unsupported no-follow capability through the seam.
+                // Capability insufficiency is not a content mismatch: the store
+                // must refuse to exist before any Run root, Plan, or chunk is
+                // created, so a normal artifact can never become a collision.
+                CaptureArtifactNoFollowOpen.OverrideIsSupported(false);
+                try
+                {
+                    Assert.Throws<CaptureArtifactNoFollowUnavailableException>(
+                        () => new CaptureArtifactFileStore(
+                            layout, new CaptureArtifactVerificationBufferPool(CaptureArtifactFileStore.VerificationBufferLength)));
+                }
+                finally
+                {
+                    CaptureArtifactNoFollowOpen.OverrideIsSupported(null);
+                }
+
+                // No filesystem change: the run roots were never created.
+                Assert.That(Directory.Exists(layout.StagingRunRoot), Is.False);
+                Assert.That(Directory.Exists(layout.FinalRunRoot), Is.False);
             }
             finally
             {
