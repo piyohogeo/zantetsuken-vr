@@ -26,15 +26,36 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// A receipt is returned only after the entire mode-specific sequence has
-    /// succeeded. For a fresh commit, a new temporary index is written and
-    /// renamed into place; for a canonical temporary, the existing temporary is
-    /// re-confirmed and reused; for an invalid temporary, the exact temporary is
-    /// removed and rewritten. Every path re-confirms the final path is absent,
-    /// writes the operation's canonical bytes in full, durably flushes, and
-    /// confirms the temporary is gone after the non-overwriting atomic rename.
-    /// A mismatched canonical temporary, a limit-exceeded temporary, a reparse
-    /// point, an identity mismatch, or an existing final path is a hard failure
-    /// and is never deleted or overwritten.
+    /// succeeded, and the three modes are strictly separated by their handling
+    /// of the temporary index.
+    /// </para>
+    /// <para>
+    /// <c>CreateTemporaryAndCommit</c> re-confirms the final path is absent,
+    /// writes the operation's canonical bytes in full to a new temporary index,
+    /// and durably flushes the temporary data.
+    /// </para>
+    /// <para>
+    /// <c>ReuseCanonicalTemporaryAndCommit</c> re-opens the existing temporary
+    /// index no-follow as a regular file, re-confirms its identity, byte length,
+    /// and canonical content match the operation, and durably flushes the
+    /// temporary data, but never rewrites or deletes the temporary.
+    /// </para>
+    /// <para>
+    /// <c>ReplaceInvalidTemporaryAndCommit</c> re-observes the existing
+    /// temporary no-follow, confirms it is the exact removable,
+    /// non-authoritative file, deletes only that exact temporary, durably
+    /// flushes its parent directory metadata, then writes the operation's
+    /// canonical bytes in full to a new temporary at the same path and durably
+    /// flushes the temporary data.
+    /// </para>
+    /// <para>
+    /// After the mode-specific work, every path re-confirms the final path is
+    /// absent, performs the non-overwriting atomic rename from the temporary to
+    /// the final path, durably flushes the final parent directory metadata, and
+    /// confirms the temporary is gone. A mismatched canonical temporary, a
+    /// limit-exceeded temporary, a reparse point, an identity mismatch, or an
+    /// existing final path is a hard failure and is never deleted or
+    /// overwritten.
     /// </para>
     /// <para>
     /// This call is synchronous and single-attempt: it performs no retry, no
