@@ -1225,14 +1225,14 @@ namespace Zantetsu.Core.Tests
             }
 
             // The receipt must never re-issue a token, never re-validate the
-            // whole plan, and never serialize canonical bytes itself; it must
-            // require the full token validity including canonical byte
-            // re-verification, so index-local-only validity is forbidden here.
+            // whole plan, and never serialize canonical bytes itself; its full
+            // validity must re-verify the canonical bytes. A separate O(1)
+            // index-local predicate exists for callers that must not serialize.
             Assert.That(receiptSource, Does.Not.Contain("TryAcquireValidationToken"));
             Assert.That(receiptSource, Does.Not.Contain("AcquireValidationToken"));
             Assert.That(receiptSource, Does.Not.Contain("SerializeCanonical"));
-            Assert.That(receiptSource, Does.Not.Contain("IsValidIndexLocal"));
             Assert.That(receiptSource, Does.Contain("IsValidWithToken"));
+            Assert.That(receiptSource, Does.Contain("IsIssuedForIndexLocal"));
         }
     }
 }

@@ -195,7 +195,7 @@ namespace Zantetsu.Observability
                     case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
                         return _publishReceipt == null
                             && _commitReceipt != null
-                            && _commitReceipt.IsIssuedFor(_commitReceipt.IssuedBy, _preparedStep.CaptureIndexCommitOperation, _token);
+                            && _commitReceipt.IsIssuedForIndexLocal(_commitReceipt.IssuedBy, _preparedStep.CaptureIndexCommitOperation, _token);
 
                     case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
                     case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:

@@ -130,5 +130,26 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(operation, _operation)
                 && ReferenceEquals(token, _token);
         }
+
+        /// <summary>
+        /// O(1), exception-safe index-local issuance identity: requires the
+        /// three exact reference identities and the operation's index-local
+        /// validity only, without re-serializing the canonical bytes. Full
+        /// byte-content verification remains the responsibility of
+        /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/>. Never throws.
+        /// </summary>
+        internal bool IsIssuedForIndexLocal(
+            IPngJsonCaptureRunCaptureIndexCommitter issuedBy,
+            PngJsonCaptureRunCaptureIndexCommitOperation operation,
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            return _issuedBy != null
+                && _operation != null
+                && _token != null
+                && ReferenceEquals(issuedBy, _issuedBy)
+                && ReferenceEquals(operation, _operation)
+                && ReferenceEquals(token, _token)
+                && _operation.IsValidIndexLocal(token);
+        }
     }
 }

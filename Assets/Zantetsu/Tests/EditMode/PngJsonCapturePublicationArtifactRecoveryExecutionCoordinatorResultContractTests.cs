@@ -1641,6 +1641,30 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompletedStep_IsValidIndexLocal_CorruptedCommitBytes_StillTrue()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(result, "_token");
+            PngJsonCapturePublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.True);
+
+            // Tamper the canonical bytes: the index-local path must not
+            // re-serialize, so it stays valid while the full result check
+            // still catches the corruption.
+            byte[] tampered = completed.CommitReceipt.Operation.GetCanonicalBytes();
+            tampered[0] = (byte)(tampered[0] ^ 0xFF);
+            SetField(completed.CommitReceipt.Operation, "_canonicalBytes", tampered);
+
+            Assert.That(completed.IsValidIndexLocal(token), Is.True);
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
         public void CompletedStep_Factory_OutOfRangeStepIndex_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
@@ -1867,6 +1891,27 @@ namespace Zantetsu.Core.Tests
             Assert.That(loopBody, Does.Not.Contain("SerializeCanonical"));
             Assert.That(loopBody, Does.Not.Contain("GetCanonicalBytes"));
             Assert.That(loopBody, Does.Contain("IsValidIndexLocal"));
+        }
+
+        [Test]
+        public void Source_CommitReceipt_IndexLocalPredicate_NoSerialize()
+        {
+            string receiptSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitReceipt.cs");
+            string completedStepSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryCompletedStep.cs");
+
+            int index = receiptSource.IndexOf("internal bool IsIssuedForIndexLocal(", StringComparison.Ordinal);
+            Assert.That(index, Is.GreaterThan(0));
+
+            // From the index-local predicate onward there must be no canonical
+            // serialization: it uses the operation's index-local check only.
+            string tail = receiptSource.Substring(index);
+            Assert.That(tail, Does.Not.Contain("IsValidWithToken"));
+            Assert.That(tail, Does.Not.Contain("SerializeCanonical"));
+            Assert.That(tail, Does.Contain("IsValidIndexLocal"));
+
+            // The completed step's commit branch must route through the
+            // index-local predicate, never through the serializing IsIssuedFor.
+            Assert.That(completedStepSource, Does.Contain("IsIssuedForIndexLocal"));
         }
     }
 }
