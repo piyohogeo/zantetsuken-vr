@@ -111,37 +111,62 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsDecisionLeaseLive()
         {
-            if (_decision == null)
+            try
+            {
+                if (_decision == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _decision.Snapshot;
+                if (snapshot == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                if (operation == null)
+                {
+                    return false;
+                }
+
+                // Read the authority through the field-only accessor before any
+                // forwarding getter, so a nulled authority converges to false
+                // instead of a NullReferenceException.
+                PngJsonCapturePublicationArtifactInspectionAuthority authority = operation.Authority;
+                if (authority == null)
+                {
+                    return false;
+                }
+
+                CaptureRunLockIdentityEvidence evidence = authority.LockIdentityEvidence;
+                return evidence != null && evidence.IsValid;
+            }
+            catch (Exception)
             {
                 return false;
             }
-
-            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _decision.Snapshot;
-            if (snapshot == null)
-            {
-                return false;
-            }
-
-            PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
-            if (operation == null)
-            {
-                return false;
-            }
-
-            CaptureRunLockIdentityEvidence evidence = operation.LockIdentityEvidence;
-            return evidence != null && evidence.IsValid;
         }
 
-        internal bool IsValid
+        /// <summary>
+        /// Exception-safe recomputation with token issuance: validates the held
+        /// decision once through <see cref="PngJsonCapturePublicationArtifactRecoveryDecision.TryValidate"/>,
+        /// re-derives the expected step sequence with the same token, and
+        /// returns the issued snapshot token only when the held steps match.
+        /// The snapshot is never fully validated twice.
+        /// </summary>
+        private bool TryValidateCore(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token)
         {
-            get
+            token = null;
+
+            try
             {
                 if (_decision == null || _steps == null)
                 {
                     return false;
                 }
 
-                if (!_decision.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken token))
+                if (!_decision.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken issued))
                 {
                     return false;
                 }
@@ -150,38 +175,68 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _decision.Snapshot;
                 int entryCount = snapshot.Count;
 
+                bool matches;
                 switch (disposition)
                 {
                     case CaptureRunPublicationArtifactRecoveryDisposition.OrphanedPreTrace:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.StopOrphanedPreTrace, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.PublishMissingArtifacts:
-                        return MatchesPublishSteps(snapshot, token, entryCount);
+                        matches = MatchesPublishSteps(snapshot, issued, entryCount);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.ArtifactSourceMissing:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.StopArtifactSourceMissing, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.PublishedArtifactMissing:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.StopPublishedArtifactMissing, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     case CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision:
-                        return _steps.Length == 1
+                        matches = _steps.Length == 1
                             && StepMatches(_steps[0], CaptureRunPublicationArtifactRecoveryAction.StopRunRootCollision, -1, CaptureRunPublicationArtifactKind.None);
+                        break;
 
                     default:
-                        return false;
+                        matches = false;
+                        break;
                 }
+
+                if (!matches)
+                {
+                    return false;
+                }
+
+                token = issued;
+                return true;
+            }
+            catch (Exception)
+            {
+                token = null;
+                return false;
+            }
+        }
+
+        internal bool IsValid
+        {
+            get
+            {
+                return TryValidateCore(out _);
             }
         }
 
@@ -366,17 +421,26 @@ namespace Zantetsu.Observability
         {
             private readonly PngJsonCapturePublicationArtifactRecoveryActionPlan _plan;
             private readonly PngJsonCapturePublicationArtifactRecoveryDecision _decision;
+            private readonly PngJsonCapturePublicationArtifactInspectionSnapshot _snapshot;
+            private readonly PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken _snapshotToken;
+            private readonly CaptureRunPublicationArtifactRecoveryDisposition _disposition;
             private readonly CaptureRunPublicationArtifactRecoveryStep[] _steps;
             private readonly StepProof[] _proof;
 
             private ValidationToken(
                 PngJsonCapturePublicationArtifactRecoveryActionPlan plan,
                 PngJsonCapturePublicationArtifactRecoveryDecision decision,
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
+                CaptureRunPublicationArtifactRecoveryDisposition disposition,
                 CaptureRunPublicationArtifactRecoveryStep[] steps,
                 StepProof[] proof)
             {
                 _plan = plan;
                 _decision = decision;
+                _snapshot = snapshot;
+                _snapshotToken = snapshotToken;
+                _disposition = disposition;
                 _steps = steps;
                 _proof = proof;
             }
@@ -388,7 +452,7 @@ namespace Zantetsu.Observability
                     throw new ArgumentNullException(nameof(plan));
                 }
 
-                if (!plan.IsValid)
+                if (!plan.TryValidateCore(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken))
                 {
                     throw new InvalidOperationException("Action plan must be fully valid before issuing a validation token.");
                 }
@@ -400,53 +464,89 @@ namespace Zantetsu.Observability
                     proof[i] = new StepProof(steps[i]);
                 }
 
-                return new ValidationToken(plan, plan._decision, steps, proof);
+                return new ValidationToken(
+                    plan,
+                    plan._decision,
+                    plan._decision.Snapshot,
+                    snapshotToken,
+                    plan._decision.Disposition,
+                    steps,
+                    proof);
             }
 
             /// <summary>
             /// O(n), exception-safe exact-binding check: confirms the exact
-            /// plan, decision, and step array references, that the owner lease
-            /// is still live, and that every step's reference and values still
-            /// match the issuance snapshot. Never throws and never exposes the
-            /// proof array or a lease.
+            /// plan, decision, snapshot, snapshot validation token, and step
+            /// array references, the held disposition value, that the owner
+            /// lease is still live, and that every step's reference and values
+            /// still match the issuance snapshot. Never throws and never
+            /// exposes a proof array or a lease.
             /// </summary>
             internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryActionPlan plan)
             {
-                if (plan == null || !ReferenceEquals(_plan, plan))
+                try
                 {
-                    return false;
-                }
-
-                if (!plan.IsDecisionLeaseLive())
-                {
-                    return false;
-                }
-
-                if (_decision == null || !ReferenceEquals(_decision, plan._decision))
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
-                if (_steps == null || _proof == null || steps == null)
-                {
-                    return false;
-                }
-
-                if (!ReferenceEquals(_steps, steps) || _steps.Length != _proof.Length)
-                {
-                    return false;
-                }
-
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    if (!_proof[i].Matches(steps[i]))
+                    if (plan == null || !ReferenceEquals(_plan, plan))
                     {
                         return false;
                     }
-                }
 
-                return true;
+                    if (!plan.IsDecisionLeaseLive())
+                    {
+                        return false;
+                    }
+
+                    if (_decision == null || _snapshot == null || _snapshotToken == null)
+                    {
+                        return false;
+                    }
+
+                    PngJsonCapturePublicationArtifactRecoveryDecision decision = plan._decision;
+                    if (!ReferenceEquals(_decision, decision))
+                    {
+                        return false;
+                    }
+
+                    if (!ReferenceEquals(_snapshot, decision.Snapshot))
+                    {
+                        return false;
+                    }
+
+                    if (decision.Disposition != _disposition)
+                    {
+                        return false;
+                    }
+
+                    if (!_snapshotToken.IsIssuedForExactBindings(_snapshot))
+                    {
+                        return false;
+                    }
+
+                    CaptureRunPublicationArtifactRecoveryStep[] steps = plan._steps;
+                    if (_steps == null || _proof == null || steps == null)
+                    {
+                        return false;
+                    }
+
+                    if (!ReferenceEquals(_steps, steps) || _steps.Length != _proof.Length)
+                    {
+                        return false;
+                    }
+
+                    for (int i = 0; i < steps.Length; i++)
+                    {
+                        if (!_proof[i].Matches(steps[i]))
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
             }
         }
 

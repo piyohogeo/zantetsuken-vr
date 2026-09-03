@@ -1048,6 +1048,64 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.IsIssuedFor(plan), Is.False);
         }
 
+        [Test]
+        public void Token_DecisionDispositionChangedAfterIssuance_Rejected()
+        {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactRecoveryDecision decision = ClassifyDecision(snapshot);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = PngJsonCapturePublicationArtifactRecoveryActionPlan.Create(decision);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            Assert.That(plan.IsValid, Is.True);
+            Assert.That(token.IsIssuedFor(plan), Is.True);
+
+            SetField(decision, "_disposition", RunRootCollision);
+
+            Assert.That(plan.IsValid, Is.False);
+            Assert.That(token.IsIssuedFor(plan), Is.False);
+        }
+
+        [Test]
+        public void Token_DecisionSnapshotSwappedAfterIssuance_Rejected()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(out CaptureRunInitializationSessionOwnershipLease owner);
+            PngJsonCapturePublicationArtifactInspectionSnapshot publishSnapshot = MakeSnapshotSingle(
+                authority, EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactInspectionSnapshot commitSnapshot = MakeSnapshotSingle(
+                authority, EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMatchesExpected, EvMatchesExpected);
+
+            PngJsonCapturePublicationArtifactRecoveryDecision decision = ClassifyDecision(publishSnapshot);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = PngJsonCapturePublicationArtifactRecoveryActionPlan.Create(decision);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            Assert.That(plan.IsValid, Is.True);
+            Assert.That(token.IsIssuedFor(plan), Is.True);
+
+            // Swap the decision's snapshot for another snapshot of the same
+            // owner that classifies to a different disposition.
+            SetField(decision, "_snapshot", commitSnapshot);
+
+            Assert.That(plan.IsValid, Is.False);
+            Assert.That(token.IsIssuedFor(plan), Is.False);
+        }
+
+        [Test]
+        public void Token_OperationAuthorityNulledAfterIssuance_Rejected()
+        {
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(out CaptureRunInitializationSessionOwnershipLease owner);
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
+                authority, EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
+            PngJsonCapturePublicationArtifactRecoveryDecision decision = ClassifyDecision(snapshot);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = PngJsonCapturePublicationArtifactRecoveryActionPlan.Create(decision);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            Assert.That(plan.IsValid, Is.True);
+            Assert.That(token.IsIssuedFor(plan), Is.True);
+
+            SetField(plan.Decision.Snapshot.Operation, "_authority", null);
+
+            Assert.That(plan.IsValid, Is.False);
+            Assert.That(token.IsIssuedFor(plan), Is.False);
+        }
+
         // ---- Builder ----
 
         [Test]
