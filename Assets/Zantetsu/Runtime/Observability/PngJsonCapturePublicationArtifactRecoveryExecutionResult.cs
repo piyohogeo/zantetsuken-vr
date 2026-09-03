@@ -75,7 +75,15 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(token));
             }
 
-            int count = batch.Count;
+            int count;
+            try
+            {
+                count = batch.Count;
+            }
+            catch (Exception)
+            {
+                throw new ArgumentException("Batch step array must remain intact.", nameof(batch));
+            }
 
             if (completedSteps.Length != count)
             {
@@ -96,6 +104,30 @@ namespace Zantetsu.Observability
                     || !completedStep.IsValidIndexLocal(token))
                 {
                     throw new ArgumentException("Completed steps must be index-ordered and correlated with the batch.", nameof(completedSteps));
+                }
+
+                // Reject a receipt issued by a foreign backend at construction:
+                // the atomic factory must not mint a result whose receipt issuer
+                // disagrees with the coordinator's backend.
+                switch (preparedStep.Action)
+                {
+                    case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
+                        if (completedStep.PublishReceipt == null
+                            || !ReferenceEquals(completedStep.PublishReceipt.IssuedBy, issuedBy.Publisher))
+                        {
+                            throw new ArgumentException("Publish receipt issuer must be the coordinator's publisher.", nameof(completedSteps));
+                        }
+
+                        break;
+
+                    case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
+                        if (completedStep.CommitReceipt == null
+                            || !ReferenceEquals(completedStep.CommitReceipt.IssuedBy, issuedBy.Committer))
+                        {
+                            throw new ArgumentException("Commit receipt issuer must be the coordinator's committer.", nameof(completedSteps));
+                        }
+
+                        break;
                 }
 
                 copy[i] = completedStep;

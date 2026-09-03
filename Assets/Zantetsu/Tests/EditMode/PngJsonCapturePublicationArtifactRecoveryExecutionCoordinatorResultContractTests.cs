@@ -1447,7 +1447,8 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
             PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
-            batch.TryValidate(out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
 
             PngJsonCapturePublicationArtifactRecoveryCompletedStep step0 = good.GetCompletedStep(0);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep step1 = good.GetCompletedStep(1);
@@ -1489,14 +1490,15 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_ForeignIssuer_IsValidFalse()
+        public void Result_ForeignIssuer_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, new FakeCommitter());
             PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
-            batch.TryValidate(out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
             PngJsonCapturePublicationArtifactRecoveryCompletedStep original = good.GetCompletedStep(0);
 
             FakePublisher foreign = new FakePublisher();
@@ -1504,22 +1506,19 @@ namespace Zantetsu.Core.Tests
                 ForgePublishReceipt(foreign, original.PublishReceipt.Operation, token);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep forged = ForgeCompletedStep(original, foreignReceipt, null);
 
-            PngJsonCapturePublicationArtifactRecoveryExecutionResult broken =
-                PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create(
-                    coordinator, batch, WithReplaced(good, 0, forged), token);
-
-            Assert.That(broken.IsValid, Is.False);
+            AssertResultRejected(coordinator, batch, WithReplaced(good, 0, forged), token);
         }
 
         [Test]
-        public void Result_ForeignCommitterIssuer_IsValidFalse()
+        public void Result_ForeignCommitterIssuer_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
             FakeCommitter committer = new FakeCommitter();
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), committer);
             PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
-            batch.TryValidate(out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
             PngJsonCapturePublicationArtifactRecoveryCompletedStep original = good.GetCompletedStep(0);
 
             FakeCommitter foreign = new FakeCommitter();
@@ -1527,11 +1526,7 @@ namespace Zantetsu.Core.Tests
                 ForgeCommitReceipt(foreign, original.CommitReceipt.Operation, token);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep forged = ForgeCompletedStep(original, null, foreignReceipt);
 
-            PngJsonCapturePublicationArtifactRecoveryExecutionResult broken =
-                PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create(
-                    coordinator, batch, WithReplaced(good, 0, forged), token);
-
-            Assert.That(broken.IsValid, Is.False);
+            AssertResultRejected(coordinator, batch, WithReplaced(good, 0, forged), token);
         }
 
         // ---- Completed step factory defense ----
@@ -1689,7 +1684,8 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
             PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep original = good.GetCompletedStep(0);
-            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
 
             PngJsonCapturePublicationArtifactRecoveryPreparedStep forgedPrepared =
                 ForgePreparedStep(plan, int.MaxValue, original.PublishReceipt.Operation, null);
@@ -1707,7 +1703,8 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
             PngJsonCapturePublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep completed = result.GetCompletedStep(0);
-            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(result, "_token");
 
             SetField(plan, "_steps", null);
 
@@ -1715,27 +1712,62 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ForgedBrokenReceipt_ResultIsValidFalse_WithoutException()
+        public void CompletedStep_IsValidIndexLocal_NullToken_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
+
+            // The Reinspect routing step holds no receipt, so only the held
+            // token identity keeps it valid.
+            PngJsonCapturePublicationArtifactRecoveryCompletedStep routing = good.GetCompletedStep(2);
+            Assert.That(routing.IsValidIndexLocal(token), Is.True);
+
+            SetField(routing, "_token", null);
+
+            Assert.That(routing.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void CompletedStep_IsValidIndexLocal_ReissuedToken_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
+
+            PngJsonCapturePublicationArtifactRecoveryCompletedStep routing = good.GetCompletedStep(2);
+            Assert.That(routing.IsValidIndexLocal(token), Is.True);
+
+            // Swap in a separately re-issued token for the same plan.
+            SetField(routing, "_token", plan.AcquireValidationToken());
+
+            Assert.That(routing.IsValidIndexLocal(token), Is.False);
+        }
+
+        [Test]
+        public void ForgedBrokenReceipt_IsValidIndexLocalFalse_AndCreateRejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
             PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
             PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep original = good.GetCompletedStep(0);
-            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(good, "_token");
 
             PngJsonCapturePublicationArtifactPublishReceipt brokenReceipt =
                 ForgePublishReceipt(null, original.PublishReceipt.Operation, token);
             PngJsonCapturePublicationArtifactRecoveryCompletedStep brokenStep = ForgeCompletedStep(original, brokenReceipt, null);
 
-            PngJsonCapturePublicationArtifactRecoveryExecutionResult brokenResult =
-                (PngJsonCapturePublicationArtifactRecoveryExecutionResult)FormatterServices.GetUninitializedObject(
-                    typeof(PngJsonCapturePublicationArtifactRecoveryExecutionResult));
-            SetField(brokenResult, "_issuedBy", coordinator);
-            SetField(brokenResult, "_batch", batch);
-            SetField(brokenResult, "_completedSteps", WithReplaced(good, 0, brokenStep));
-            SetField(brokenResult, "_token", GetField(good, "_token"));
-            Assert.That(brokenResult.IsValid, Is.False);
+            Assert.That(brokenStep.IsValidIndexLocal(token), Is.False);
+
+            AssertResultRejected(coordinator, batch, WithReplaced(good, 0, brokenStep), token);
         }
 
         [Test]

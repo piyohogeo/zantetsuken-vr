@@ -159,17 +159,23 @@ namespace Zantetsu.Observability
         internal PngJsonCaptureRunCaptureIndexCommitOperation CaptureIndexCommitOperation => _preparedStep.CaptureIndexCommitOperation;
 
         /// <summary>
-        /// O(1), exception-safe index-local validity: re-verifies only the
-        /// prepared step and its action's exclusive receipt shape and exact
-        /// operation reference. It never re-serializes a commit operation's
-        /// canonical bytes, re-validates the whole plan, or re-issues a token.
+        /// O(1), exception-safe index-local validity: re-verifies the exact
+        /// held token identity, the prepared step, and its action's exclusive
+        /// receipt shape and issuer/operation/token correlation. It never
+        /// re-serializes a commit operation's canonical bytes, re-validates the
+        /// whole plan, or re-issues a token.
         /// </summary>
         internal bool IsValidIndexLocal(
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
             try
             {
-                if (_preparedStep == null || token == null)
+                if (_preparedStep == null || token == null || _token == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(token, _token))
                 {
                     return false;
                 }
@@ -184,12 +190,12 @@ namespace Zantetsu.Observability
                     case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
                         return _publishReceipt != null
                             && _commitReceipt == null
-                            && ReferenceEquals(_publishReceipt.Operation, _preparedStep.PublishOperation);
+                            && _publishReceipt.IsIssuedFor(_publishReceipt.IssuedBy, _preparedStep.PublishOperation, _token);
 
                     case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
                         return _publishReceipt == null
                             && _commitReceipt != null
-                            && ReferenceEquals(_commitReceipt.Operation, _preparedStep.CaptureIndexCommitOperation);
+                            && _commitReceipt.IsIssuedFor(_commitReceipt.IssuedBy, _preparedStep.CaptureIndexCommitOperation, _token);
 
                     case CaptureRunPublicationArtifactRecoveryAction.ReinspectArtifacts:
                     case CaptureRunPublicationArtifactRecoveryAction.ContinueCaptureCompleteCleanup:
