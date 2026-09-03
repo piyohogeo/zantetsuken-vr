@@ -133,7 +133,10 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (!_token.IsIssuedFor(_executionResult))
+                    // Re-validate the current execution result with the already
+                    // held proof: the proof's O(1) exact binding plus the shared
+                    // full-validation predicate, without issuing a new token.
+                    if (!_executionResult.IsValidWithToken(_token))
                     {
                         return false;
                     }

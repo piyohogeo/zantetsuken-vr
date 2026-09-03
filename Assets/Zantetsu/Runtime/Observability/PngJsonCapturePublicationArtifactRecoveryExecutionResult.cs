@@ -215,6 +215,22 @@ namespace Zantetsu.Observability
         internal bool IsValid => TryValidate(out _);
 
         /// <summary>
+        /// Exception-safe full re-validation with an already-issued proof:
+        /// confirms the proof's O(1) exact binding to this instance and then
+        /// re-runs the shared full-validation predicate, without issuing a new
+        /// token. A foreign or null proof reports false without throwing.
+        /// </summary>
+        internal bool IsValidWithToken(ValidationToken token)
+        {
+            if (token == null || !token.IsIssuedFor(this))
+            {
+                return false;
+            }
+
+            return IsFullyValid();
+        }
+
+        /// <summary>
         /// Single shared full-validation predicate executed exactly once by the
         /// validated mint: nulls, status, step count and order, exact
         /// prepared-step references, the action-exclusive receipt shape, each

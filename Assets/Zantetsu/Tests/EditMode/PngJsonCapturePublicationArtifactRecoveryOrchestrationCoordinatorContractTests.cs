@@ -898,6 +898,20 @@ namespace Zantetsu.Core.Tests
             return forged;
         }
 
+        private static PngJsonCapturePublicationArtifactPublishReceipt ForgePublishReceipt(
+            IPngJsonCapturePublicationArtifactPublisher issuedBy,
+            PngJsonCapturePublicationArtifactPublishOperation operation,
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            PngJsonCapturePublicationArtifactPublishReceipt receipt =
+                (PngJsonCapturePublicationArtifactPublishReceipt)FormatterServices.GetUninitializedObject(
+                    typeof(PngJsonCapturePublicationArtifactPublishReceipt));
+            SetField(receipt, "_issuedBy", issuedBy);
+            SetField(receipt, "_operation", operation);
+            SetField(receipt, "_token", token);
+            return receipt;
+        }
+
         // ---- Constructor contracts ----
 
         [Test]
@@ -1291,6 +1305,49 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.ParamName, Is.EqualTo("executionResult"));
         }
 
+        [Test]
+        public void Result_DispositionCorruption_ExecutionAndOrchestrationInvalid()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator coordinator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = coordinator.Execute(operation);
+            Assert.That(result.IsValid, Is.True);
+
+            // Change the decision's disposition after issuance: both the
+            // execution result and the orchestration result must go false.
+            SetField(result.ExecutionResult.Decision, "_disposition", CaptureRunPublicationArtifactRecoveryDisposition.RunRootCollision);
+
+            Assert.That(result.ExecutionResult.IsValid, Is.False);
+            Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_ReceiptCorruptionWithinArray_IsValidFalse()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator coordinator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = coordinator.Execute(operation);
+            Assert.That(result.IsValid, Is.True);
+
+            PngJsonCapturePublicationArtifactRecoveryCompletedStep step0 = result.ExecutionResult.GetCompletedStep(0);
+            PngJsonCapturePublicationArtifactPublishOperation publishOperation = step0.PublishReceipt.Operation;
+
+            // Null the publish receipt inside the same completed-step array
+            // reference; the orchestration result must detect it.
+            SetField(step0, "_publishReceipt", null);
+            Assert.That(result.IsValid, Is.False);
+
+            // Foreign publisher receipt inside the same array reference.
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken actionPlanToken =
+                (PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)GetField(result.ExecutionResult, "_token");
+            PngJsonCapturePublicationArtifactPublishReceipt foreignReceipt =
+                ForgePublishReceipt(new FakePublisher(), publishOperation, actionPlanToken);
+            SetField(step0, "_publishReceipt", foreignReceipt);
+            Assert.That(result.IsValid, Is.False);
+        }
+
         // ---- Owner / forge ----
 
         [Test]
@@ -1466,6 +1523,20 @@ namespace Zantetsu.Core.Tests
             Assert.That(resultSource, Does.Contain("token.IsIssuedFor(executionResult)"));
             Assert.That(resultSource, Does.Not.Contain("executionResult.TryValidate"));
             Assert.That(resultSource, Does.Not.Contain("SerializeCanonical"));
+        }
+
+        [Test]
+        public void Source_OrchestrationResultIsValid_NoTokenReissue()
+        {
+            string resultSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.cs");
+
+            // IsValid must re-validate the current execution result with the
+            // already-held proof, never by re-issuing a token.
+            Assert.That(resultSource, Does.Contain("_executionResult.IsValidWithToken(_token)"));
+            Assert.That(resultSource, Does.Not.Contain("TryAcquire"));
+            Assert.That(resultSource, Does.Not.Contain("AcquireValidationToken"));
+            Assert.That(resultSource, Does.Not.Contain("new ValidationToken"));
+            Assert.That(resultSource, Does.Not.Contain("TryValidate(out"));
         }
     }
 }

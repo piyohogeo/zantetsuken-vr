@@ -1568,6 +1568,24 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Result_IsValidWithToken_ForeignOrNullToken_False()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), new FakeCommitter());
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult good = coordinator.Execute(batch);
+
+            Assert.That(good.IsValidWithToken(null), Is.False);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult other =
+                MakeCoordinator(new FakePublisher(), new FakeCommitter()).Execute(BuildBatch(BuildPublishPngSidecarPlan()));
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken foreignToken;
+            other.TryValidate(out foreignToken);
+
+            Assert.That(good.IsValidWithToken(foreignToken), Is.False);
+        }
+
+        [Test]
         public void Result_ForeignIssuer_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
