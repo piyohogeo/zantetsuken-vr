@@ -1530,13 +1530,13 @@ namespace Zantetsu.Core.Tests
         {
             string resultSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.cs");
 
-            // IsValid must re-validate the current execution result with the
-            // already-held proof, never by re-issuing a token.
+            // The shared predicate re-validates the current execution result
+            // with the already-held proof, never by re-issuing an execution
+            // result token or acquiring a fresh action plan token.
             Assert.That(resultSource, Does.Contain("_executionResult.IsValidWithToken(_token)"));
-            Assert.That(resultSource, Does.Not.Contain("TryAcquire"));
+            Assert.That(resultSource, Does.Not.Contain("_executionResult.TryValidate"));
+            Assert.That(resultSource, Does.Not.Contain("_executionResult.TryAcquire"));
             Assert.That(resultSource, Does.Not.Contain("AcquireValidationToken"));
-            Assert.That(resultSource, Does.Not.Contain("new ValidationToken"));
-            Assert.That(resultSource, Does.Not.Contain("TryValidate(out"));
         }
     }
 }

@@ -114,120 +114,241 @@ namespace Zantetsu.Observability
         internal string RunManifestContentSha256 => _executionResult.RunManifestContentSha256;
 
         /// <summary>
-        /// Exception-safe full correlation recomputed from the held proof: the
-        /// exact coordinator and execution coordinator, the exact execution
-        /// result, batch, action plan, decision, and snapshot, the snapshot's
-        /// exact inspector, the proof's exact binding, the authority/plan/root
-        /// layout/identity evidence reference correlation, the owner liveness,
-        /// and the status/disposition mapping. It never re-issues a token,
-        /// re-validates the plan, or scans an entry.
+        /// Full validation plus token issuance: delegates to the shared
+        /// validated mint, so the only way to obtain a proof is through the
+        /// exact full-validation predicate. A stale or corrupted result never
+        /// produces a token.
         /// </summary>
-        internal bool IsValid
+        internal bool TryValidate(out ValidationToken token)
         {
-            get
+            return ValidationToken.TryAcquire(this, out token);
+        }
+
+        /// <summary>
+        /// Exception-safe recomputation delegated to
+        /// <see cref="TryValidate"/>.
+        /// </summary>
+        internal bool IsValid => TryValidate(out _);
+
+        /// <summary>
+        /// Exception-safe full re-validation with an already-issued proof:
+        /// confirms the proof's O(1) exact binding to this instance and then
+        /// re-runs the shared full-validation predicate, without issuing a new
+        /// token. A foreign or null proof reports false without throwing.
+        /// </summary>
+        internal bool IsValidWithToken(ValidationToken token)
+        {
+            if (token == null || !token.IsIssuedFor(this))
+            {
+                return false;
+            }
+
+            return IsFullyValid();
+        }
+
+        /// <summary>
+        /// Single shared full-validation predicate: the exact coordinator and
+        /// execution coordinator, the exact execution result, batch, action
+        /// plan, decision, and snapshot, the snapshot's exact inspector, the
+        /// proof's exact binding, the authority/plan/root layout/identity
+        /// evidence reference correlation, the owner liveness, and the
+        /// status/disposition mapping. It never re-issues a token, re-validates
+        /// the plan, or scans an entry.
+        /// </summary>
+        private bool IsFullyValid()
+        {
+            try
+            {
+                if (_issuedBy == null || _executionResult == null || _token == null)
+                {
+                    return false;
+                }
+
+                // Re-validate the current execution result with the already
+                // held proof: the proof's O(1) exact binding plus the shared
+                // full-validation predicate, without issuing a new token.
+                if (!_executionResult.IsValidWithToken(_token))
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_executionResult.IssuedBy, _issuedBy.ExecutionCoordinator))
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = _executionResult.Batch;
+                if (batch == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactRecoveryActionPlan plan = batch.ActionPlan;
+                if (plan == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactRecoveryDecision decision = plan.Decision;
+                if (decision == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
+                if (snapshot == null)
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                if (operation == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(snapshot.IssuedBy, _issuedBy.Inspector))
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionAuthority authority = operation.Authority;
+                if (authority == null
+                    || !ReferenceEquals(authority, plan.Authority)
+                    || !ReferenceEquals(authority, batch.Authority)
+                    || !ReferenceEquals(authority, _executionResult.Authority))
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationPlan authoritativePlan = operation.Plan;
+                if (authoritativePlan == null
+                    || !ReferenceEquals(authoritativePlan, plan.AuthoritativePlan)
+                    || !ReferenceEquals(authoritativePlan, batch.AuthoritativePlan)
+                    || !ReferenceEquals(authoritativePlan, _executionResult.AuthoritativePlan))
+                {
+                    return false;
+                }
+
+                CaptureRunRootLayout rootLayout = operation.RootLayout;
+                if (rootLayout == null
+                    || !ReferenceEquals(rootLayout, decision.RootLayout)
+                    || !ReferenceEquals(rootLayout, plan.RootLayout)
+                    || !ReferenceEquals(rootLayout, batch.RootLayout)
+                    || !ReferenceEquals(rootLayout, _executionResult.RootLayout))
+                {
+                    return false;
+                }
+
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
+                if (lockIdentityEvidence == null
+                    || !lockIdentityEvidence.IsValid
+                    || !ReferenceEquals(lockIdentityEvidence, batch.LockIdentityEvidence)
+                    || !ReferenceEquals(lockIdentityEvidence, _executionResult.LockIdentityEvidence))
+                {
+                    return false;
+                }
+
+                if (operation.TestRunId != _executionResult.TestRunId
+                    || !string.Equals(
+                        operation.RunInitializationId,
+                        _executionResult.RunInitializationId,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                return StatusMatchesDisposition(_executionResult.Status, decision.Disposition);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Opaque proof minted only after this exact orchestration result
+        /// validates once through the shared predicate. It snapshots the exact
+        /// coordinator, execution result, execution result proof, and snapshot
+        /// references at issuance, and O(1) re-confirms each against the
+        /// current result. It exposes no proof array or internal token getter.
+        /// </summary>
+        internal sealed class ValidationToken
+        {
+            private readonly PngJsonCapturePublicationArtifactRecoveryOrchestrationResult _result;
+            private readonly PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator _issuedBy;
+            private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult _executionResult;
+            private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken _executionResultToken;
+            private readonly PngJsonCapturePublicationArtifactInspectionSnapshot _snapshot;
+
+            private ValidationToken(
+                PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result,
+                PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult executionResult,
+                PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken executionResultToken,
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot)
+            {
+                _result = result;
+                _issuedBy = issuedBy;
+                _executionResult = executionResult;
+                _executionResultToken = executionResultToken;
+                _snapshot = snapshot;
+            }
+
+            /// <summary>
+            /// Validated mint: runs the exact result's single shared full
+            /// validation predicate and issues a token only on success. The
+            /// private constructor keeps the proof unfabricable by callers
+            /// outside this token.
+            /// </summary>
+            internal static bool TryAcquire(
+                PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result,
+                out ValidationToken token)
+            {
+                token = null;
+
+                if (result == null || !result.IsFullyValid())
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot;
+                try
+                {
+                    snapshot = result.InspectionSnapshot;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+
+                if (snapshot == null)
+                {
+                    return false;
+                }
+
+                token = new ValidationToken(
+                    result, result._issuedBy, result._executionResult, result._token, snapshot);
+                return true;
+            }
+
+            /// <summary>
+            /// O(1), exception-safe exact binding: re-confirms the exact result,
+            /// coordinator, execution result, execution result proof, and
+            /// snapshot references captured at issuance against the current
+            /// result. It never re-validates the result, re-issues a token, or
+            /// scans an entry.
+            /// </summary>
+            internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result)
             {
                 try
                 {
-                    if (_issuedBy == null || _executionResult == null || _token == null)
-                    {
-                        return false;
-                    }
-
-                    // Re-validate the current execution result with the already
-                    // held proof: the proof's O(1) exact binding plus the shared
-                    // full-validation predicate, without issuing a new token.
-                    if (!_executionResult.IsValidWithToken(_token))
-                    {
-                        return false;
-                    }
-
-                    if (!ReferenceEquals(_executionResult.IssuedBy, _issuedBy.ExecutionCoordinator))
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = _executionResult.Batch;
-                    if (batch == null)
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactRecoveryActionPlan plan = batch.ActionPlan;
-                    if (plan == null)
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactRecoveryDecision decision = plan.Decision;
-                    if (decision == null)
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = decision.Snapshot;
-                    if (snapshot == null)
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
-                    if (operation == null)
-                    {
-                        return false;
-                    }
-
-                    if (!ReferenceEquals(snapshot.IssuedBy, _issuedBy.Inspector))
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationArtifactInspectionAuthority authority = operation.Authority;
-                    if (authority == null
-                        || !ReferenceEquals(authority, plan.Authority)
-                        || !ReferenceEquals(authority, batch.Authority)
-                        || !ReferenceEquals(authority, _executionResult.Authority))
-                    {
-                        return false;
-                    }
-
-                    PngJsonCapturePublicationPlan authoritativePlan = operation.Plan;
-                    if (authoritativePlan == null
-                        || !ReferenceEquals(authoritativePlan, plan.AuthoritativePlan)
-                        || !ReferenceEquals(authoritativePlan, batch.AuthoritativePlan)
-                        || !ReferenceEquals(authoritativePlan, _executionResult.AuthoritativePlan))
-                    {
-                        return false;
-                    }
-
-                    CaptureRunRootLayout rootLayout = operation.RootLayout;
-                    if (rootLayout == null
-                        || !ReferenceEquals(rootLayout, decision.RootLayout)
-                        || !ReferenceEquals(rootLayout, plan.RootLayout)
-                        || !ReferenceEquals(rootLayout, batch.RootLayout)
-                        || !ReferenceEquals(rootLayout, _executionResult.RootLayout))
-                    {
-                        return false;
-                    }
-
-                    CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
-                    if (lockIdentityEvidence == null
-                        || !lockIdentityEvidence.IsValid
-                        || !ReferenceEquals(lockIdentityEvidence, batch.LockIdentityEvidence)
-                        || !ReferenceEquals(lockIdentityEvidence, _executionResult.LockIdentityEvidence))
-                    {
-                        return false;
-                    }
-
-                    if (operation.TestRunId != _executionResult.TestRunId
-                        || !string.Equals(
-                            operation.RunInitializationId,
-                            _executionResult.RunInitializationId,
-                            StringComparison.Ordinal))
-                    {
-                        return false;
-                    }
-
-                    return StatusMatchesDisposition(_executionResult.Status, decision.Disposition);
+                    return result != null
+                        && ReferenceEquals(_result, result)
+                        && ReferenceEquals(_issuedBy, result._issuedBy)
+                        && ReferenceEquals(_executionResult, result._executionResult)
+                        && ReferenceEquals(_executionResultToken, result._token)
+                        && ReferenceEquals(_snapshot, result.InspectionSnapshot);
                 }
                 catch (Exception)
                 {
