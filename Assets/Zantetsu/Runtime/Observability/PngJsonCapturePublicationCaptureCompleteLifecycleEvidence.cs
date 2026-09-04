@@ -25,11 +25,15 @@ namespace Zantetsu.Observability
     /// <para>
     /// Each factory first null-checks every input with the matching
     /// <see cref="ArgumentNullException"/>, then requires a fully valid
-    /// notification result (whose full validation already proves the cleanup
-    /// step list, notification receipt, plan and path-set correlation, and the
-    /// accepted status and disposition), then requires the exact Fresh or
-    /// Recovery provenance instance and only O(1) correlation on that same
-    /// instance, and finally issues evidence only after every check succeeds.
+    /// notification result exactly once. That single full validation already
+    /// proves the entire provenance graph in its current state — the cleanup
+    /// step list, notification receipt, plan and path-set correlation, the
+    /// Fresh seed or Recovery decision authority, and the accepted status and
+    /// disposition. The factory then runs only O(1) correlation on that same
+    /// instance: the exact authority kind, the exact provenance reference, the
+    /// root layout, lock identity evidence, and run identity correlation, and
+    /// the exact live ownership lease. Evidence is issued only after every
+    /// check succeeds.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full correlation from the held
@@ -206,11 +210,11 @@ namespace Zantetsu.Observability
         internal string CaptureIndexPath => _notificationResult.CaptureIndexPath;
 
         /// <summary>
-        /// Exception-safe recomputation of the full correlation from the
-        /// currently held graph, without throwing. The notification result is
-        /// fully re-validated first, then the path-specific shared correlation
-        /// predicate is re-run. Any corrupted or replaced value converges to
-        /// <c>false</c>.
+        /// Exception-safe recomputation from the currently held graph, without
+        /// throwing. The notification result is fully re-validated first —
+        /// which re-verifies the entire provenance graph in its current state —
+        /// and then the path-specific O(1) shared correlation predicate is
+        /// re-run. Any corrupted or replaced value converges to <c>false</c>.
         /// </summary>
         internal bool IsValid
         {
@@ -239,10 +243,12 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Shared Fresh correlation predicate used by both the factory and
-        /// <see cref="IsValid"/>. It requires the Fresh authority kind, the
-        /// exact freeze receipt, a live fresh seed and freeze receipt, the exact
-        /// root layout, lock identity evidence, and run identity correlation,
-        /// and the exact live ownership lease. Never throws.
+        /// <see cref="IsValid"/>. It requires only O(1) correlation after the
+        /// notification result's full validation: the Fresh authority kind, the
+        /// exact freeze receipt reference, the root layout, lock identity
+        /// evidence, and run identity correlation, and the exact live ownership
+        /// lease. It never re-validates the fresh seed or freeze receipt.
+        /// Never throws.
         /// </summary>
         private static bool IsFreshCorrelated(
             PngJsonCapturePublicationCaptureCompleteNotificationResult notificationResult,
@@ -264,17 +270,12 @@ namespace Zantetsu.Observability
                 }
 
                 PngJsonCaptureFrozenRunArtifactInspectionSeed freshSeed = authority.FreshSeed;
-                if (freshSeed == null || !freshSeed.IsValid)
+                if (freshSeed == null)
                 {
                     return false;
                 }
 
                 if (!ReferenceEquals(freshSeed.FreezeReceipt, freezeReceipt))
-                {
-                    return false;
-                }
-
-                if (!freezeReceipt.IsValid)
                 {
                     return false;
                 }
@@ -338,11 +339,13 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Shared Recovery correlation predicate used by both the factory and
-        /// <see cref="IsValid"/>. It requires the Recovery authority kind, the
-        /// exact provenance open outcome, a live publication-recovery-required
-        /// open outcome with no session, the exact root layout, lock identity
-        /// evidence, and run identity correlation, and the exact live ownership
-        /// lease. Never throws.
+        /// <see cref="IsValid"/>. It requires only O(1) correlation after the
+        /// notification result's full validation: the Recovery authority kind,
+        /// the exact provenance open outcome reference, the cheap
+        /// publication-recovery-required shape (status and no session), the
+        /// root layout, lock identity evidence, and run identity correlation,
+        /// and the exact live ownership lease. It never re-validates the open
+        /// outcome. Never throws.
         /// </summary>
         private static bool IsRecoveryCorrelated(
             PngJsonCapturePublicationCaptureCompleteNotificationResult notificationResult,
@@ -364,11 +367,6 @@ namespace Zantetsu.Observability
                 }
 
                 if (!ReferenceEquals(GetProvenanceOpenOutcome(authority), openOutcome))
-                {
-                    return false;
-                }
-
-                if (!openOutcome.IsValid)
                 {
                     return false;
                 }

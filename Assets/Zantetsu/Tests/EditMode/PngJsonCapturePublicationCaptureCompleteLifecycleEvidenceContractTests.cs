@@ -1199,7 +1199,10 @@ namespace Zantetsu.Core.Tests
                 out _, out CaptureEvidenceRunFreezeReceipt freezeReceipt, out _);
             Assert.That(fresh.IsValid, Is.True);
 
-            SetField(freezeReceipt, "_evidence", null);
+            // Nulling the freeze receipt's lock identity evidence corrupts the
+            // freeze receipt and, through the lock identity forwarding chain,
+            // the notification result's own validity.
+            SetField(freezeReceipt, "_lockIdentityEvidence", null);
             Assert.That(freezeReceipt.IsValid, Is.False);
             Assert.That(fresh.IsValid, Is.False);
         }
