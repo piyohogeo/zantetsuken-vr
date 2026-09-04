@@ -1165,5 +1165,26 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("Task"));
             Assert.That(source, Does.Not.Contain(".Dispose()"));
         }
+
+        [Test]
+        public void Source_Interface_InitMarkerRequiresRootBindingReVerification()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/IPngJsonCapturePublicationCaptureCompleteCleanupBackend.cs");
+
+            int initIndex = source.IndexOf("DeleteStagingInitializationMarker", StringComparison.Ordinal);
+            Assert.That(initIndex, Is.GreaterThan(0));
+            int runRootIndex = source.IndexOf("RemoveStagingRunRoot", StringComparison.Ordinal);
+            Assert.That(runRootIndex, Is.GreaterThan(initIndex));
+            string initContract = source.Substring(initIndex, runRootIndex - initIndex);
+
+            // The init marker must be deleted only after re-verifying its
+            // binding to the exact root layout, matching the common cleanup
+            // contract and rejecting identity substitution.
+            Assert.That(initContract, Does.Contain("run.init"));
+            Assert.That(initContract, Does.Contain("test run ID"));
+            Assert.That(initContract, Does.Contain("run initialization ID"));
+            Assert.That(initContract, Does.Contain("root role/root hash"));
+            Assert.That(initContract, Does.Contain("exact root layout"));
+        }
     }
 }

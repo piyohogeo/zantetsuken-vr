@@ -48,8 +48,10 @@ namespace Zantetsu.Observability
     /// deletes exactly the staging <c>run.ready</c> marker after re-verifying
     /// its test run ID, run initialization ID, and peer binding. For
     /// <c>DeleteStagingInitializationMarker</c> it first confirms the ready
-    /// marker is already absent, then deletes exactly the staging
-    /// <c>run.init</c> marker. For <c>RemoveStagingRunRoot</c> it confirms the
+    /// marker is already absent, then re-verifies the <c>run.init</c> marker's
+    /// test run ID, run initialization ID, and root role/root hash binding to
+    /// the exact root layout, and deletes exactly that marker. For
+    /// <c>RemoveStagingRunRoot</c> it confirms the
     /// staging initialization marker, ready marker, publication plan, and
     /// frames root are all absent, verifies the exact staging run root is
     /// empty, removes it non-recursively, and durably flushes the trusted base
