@@ -1525,7 +1525,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Source_TokenMint_SingleSnapshotValidation_NoOperationReissue()
+        public void Source_TokenMint_SingleSharedScan_NoDuplicateValidation()
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
 
@@ -1535,20 +1535,22 @@ namespace Zantetsu.Core.Tests
             Assert.That(proofIndex, Is.GreaterThan(mintIndex));
             string mintBody = source.Substring(mintIndex, proofIndex - mintIndex);
 
-            // The token mint performs exactly one full validation call, and it
-            // is the snapshot's (which itself issues the operation token once).
-            Assert.That(mintBody, Does.Contain("snapshot.TryValidate("));
-            Assert.That(
-                mintBody.IndexOf("TryValidate(", StringComparison.Ordinal),
-                Is.EqualTo(mintBody.LastIndexOf("TryValidate(", StringComparison.Ordinal)));
+            // The mint re-confirms the orchestration graph with the held proof
+            // and delegates the entry scan to the snapshot's single-scan mint;
+            // it must never run a full plan validation followed by a separate
+            // snapshot validation.
+            Assert.That(mintBody, Does.Contain("IsValidWithToken("));
+            Assert.That(mintBody, Does.Contain("TryAcquireAndCapture("));
 
-            // No bare operation validation, and no per-entry or per-path-set
-            // token re-issuance inside the mint loop.
+            Assert.That(mintBody, Does.Not.Contain("plan.IsValid"));
+            Assert.That(mintBody, Does.Not.Contain("snapshot.TryValidate"));
             Assert.That(mintBody, Does.Not.Contain("operation.TryValidate"));
             Assert.That(mintBody, Does.Not.Contain("Operation.TryValidate"));
+
+            // No plan entry scan and no snapshot entry re-scan inside the mint.
             Assert.That(mintBody, Does.Not.Contain("GetEntry("));
             Assert.That(mintBody, Does.Not.Contain("GetArtifactPaths("));
-            Assert.That(mintBody, Does.Not.Contain("IsValidIndexLocal("));
+            Assert.That(mintBody, Does.Not.Contain("for ("));
         }
 
         [Test]

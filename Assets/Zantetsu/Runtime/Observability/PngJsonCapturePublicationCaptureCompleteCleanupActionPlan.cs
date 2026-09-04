@@ -537,12 +537,12 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Single atomic validated mint: performs the full plan validation
-            /// exactly once, then mints the snapshot validation token exactly
-            /// once (which itself issues the operation token exactly once), and
-            /// captures a defensive proof snapshot of each current step's
-            /// reference and value triple. No new orchestration token is
-            /// issued and the operation is never re-validated here.
+            /// Single atomic validated mint: re-confirms the orchestration
+            /// graph with the already-held proof, then runs the single shared
+            /// scan that validates the snapshot and, in the same entry pass,
+            /// validates this plan's step sequence and captures the defensive
+            /// step proofs. No new orchestration proof is issued and no entry
+            /// is walked twice.
             /// </summary>
             internal static bool TryAcquire(
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
@@ -550,38 +550,215 @@ namespace Zantetsu.Observability
             {
                 token = null;
 
-                if (plan == null || !plan.IsValid || plan._orchestrationToken == null)
+                if (plan == null || plan._orchestrationResult == null
+                    || plan._orchestrationToken == null || plan._steps == null)
                 {
                     return false;
                 }
 
-                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot =
-                    plan._orchestrationResult.InspectionSnapshot;
-                if (snapshot == null
-                    || !snapshot.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken))
+                if (!plan._orchestrationResult.IsValidWithToken(plan._orchestrationToken))
                 {
                     return false;
                 }
 
-                IssuedStepProof[] issuedSteps = new IssuedStepProof[plan._steps.Length];
-                for (int i = 0; i < issuedSteps.Length; i++)
+                if (!TryValidateAndCaptureProofs(
+                        plan,
+                        out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
+                        out IssuedStepProof[] issuedSteps))
                 {
-                    CaptureRunPublicationCaptureCompleteCleanupStep step = plan._steps[i];
-                    PngJsonCapturePublicationArtifactEntryObservation observation = null;
-                    PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths = null;
-
-                    if (step != null && step.Action == CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
-                    {
-                        if (!plan.TryCaptureArtifactProof(i, out observation, out artifactPaths))
-                        {
-                            return false;
-                        }
-                    }
-
-                    issuedSteps[i] = new IssuedStepProof(step, observation, artifactPaths);
+                    return false;
                 }
 
                 token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps, snapshotToken);
+                return true;
+            }
+
+            /// <summary>
+            /// Single shared scan: computes the expected step sequence,
+            /// validates the snapshot through its single-scan mint, and in that
+            /// same entry pass validates this plan's staging step sequence and
+            /// captures the defensive step proofs. Fixed pre- and post-steps
+            /// are captured outside that pass without re-walking any entry.
+            /// </summary>
+            private static bool TryValidateAndCaptureProofs(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
+                out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
+                out IssuedStepProof[] issuedSteps)
+            {
+                snapshotToken = null;
+                issuedSteps = null;
+
+                try
+                {
+                    ExpectedSequence? expected = ComputeExpected(plan._orchestrationResult);
+                    if (expected == null)
+                    {
+                        return false;
+                    }
+
+                    ExpectedSequence exp = expected.Value;
+                    if (plan._steps.Length != exp.TotalStepCount)
+                    {
+                        return false;
+                    }
+
+                    IssuedStepProof[] proofs = new IssuedStepProof[plan._steps.Length];
+                    int position = 0;
+
+                    if (exp.DeletePublicationPlanTemporary)
+                    {
+                        if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
+                        {
+                            return false;
+                        }
+
+                        position++;
+                    }
+
+                    if (exp.DeleteCaptureIndexTemporary)
+                    {
+                        if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
+                        {
+                            return false;
+                        }
+
+                        position++;
+                    }
+
+                    PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = exp.Snapshot;
+                    if (snapshot == null
+                        || !PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.TryAcquireAndCapture(
+                            snapshot,
+                            (int i, PngJsonCapturePublicationArtifactEntryObservation entry) =>
+                            {
+                                if (entry.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
+                                {
+                                    if (!CaptureArtifactStepAt(plan, proofs, position, i, CaptureRunPublicationArtifactKind.Png, entry))
+                                    {
+                                        return false;
+                                    }
+
+                                    position++;
+                                }
+
+                                if (entry.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
+                                {
+                                    if (!CaptureArtifactStepAt(plan, proofs, position, i, CaptureRunPublicationArtifactKind.Sidecar, entry))
+                                    {
+                                        return false;
+                                    }
+
+                                    position++;
+                                }
+
+                                return true;
+                            },
+                            out snapshotToken))
+                    {
+                        return false;
+                    }
+
+                    if (exp.RemoveStagingFramesRoot)
+                    {
+                        if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
+                        {
+                            return false;
+                        }
+
+                        position++;
+                    }
+
+                    if (exp.DeletePublicationPlan)
+                    {
+                        if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
+                        {
+                            return false;
+                        }
+
+                        position++;
+                    }
+
+                    if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker)
+                        || !CaptureStepAt(plan, proofs, position + 1, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker)
+                        || !CaptureStepAt(plan, proofs, position + 2, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot)
+                        || !CaptureStepAt(plan, proofs, position + 3, CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady))
+                    {
+                        return false;
+                    }
+
+                    position += 4;
+
+                    if (position != plan._steps.Length)
+                    {
+                        return false;
+                    }
+
+                    issuedSteps = proofs;
+                    return true;
+                }
+                catch (Exception)
+                {
+                    snapshotToken = null;
+                    issuedSteps = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// O(1) capture of one held fixed step at the given position:
+            /// confirms the exact step reference and its action value, then
+            /// stores the defensive proof with no observation or path set.
+            /// Never throws.
+            /// </summary>
+            private static bool CaptureStepAt(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
+                IssuedStepProof[] issuedSteps,
+                int position,
+                CaptureRunPublicationCaptureCompleteCleanupAction action)
+            {
+                if (position < 0 || position >= plan._steps.Length)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupStep step = plan._steps[position];
+                if (step == null || !step.Matches(action, -1, CaptureRunPublicationArtifactKind.None))
+                {
+                    return false;
+                }
+
+                issuedSteps[position] = new IssuedStepProof(step, null, null);
+                return true;
+            }
+
+            /// <summary>
+            /// O(1) capture of one held staging-artifact step at the given
+            /// position: confirms the exact step reference and its
+            /// action/entry-index/artifact-kind values, then stores the
+            /// defensive proof with the already-validated entry and path set.
+            /// Never throws.
+            /// </summary>
+            private static bool CaptureArtifactStepAt(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
+                IssuedStepProof[] issuedSteps,
+                int position,
+                int entryIndex,
+                CaptureRunPublicationArtifactKind artifactKind,
+                PngJsonCapturePublicationArtifactEntryObservation entry)
+            {
+                if (position < 0 || position >= plan._steps.Length)
+                {
+                    return false;
+                }
+
+                CaptureRunPublicationCaptureCompleteCleanupStep step = plan._steps[position];
+                if (step == null
+                    || !step.Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, entryIndex, artifactKind))
+                {
+                    return false;
+                }
+
+                issuedSteps[position] = new IssuedStepProof(step, entry, entry.ArtifactPaths);
                 return true;
             }
 
@@ -627,67 +804,6 @@ namespace Zantetsu.Observability
 
             CaptureRunPublicationCaptureCompleteCleanupStep held = _steps[position];
             return held != null && held.Matches(action, entryIndex, artifactKind);
-        }
-
-        /// <summary>
-        /// Captures the exact snapshot entry and artifact path set for one
-        /// staging-artifact step, invoked once during the single full plan
-        /// validation that mints the token. Non-artifact steps return true
-        /// with null outputs. Never throws.
-        /// </summary>
-        private bool TryCaptureArtifactProof(
-            int stepIndex,
-            out PngJsonCapturePublicationArtifactEntryObservation observation,
-            out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
-        {
-            observation = null;
-            artifactPaths = null;
-
-            try
-            {
-                if (stepIndex < 0 || stepIndex >= _steps.Length)
-                {
-                    return false;
-                }
-
-                CaptureRunPublicationCaptureCompleteCleanupStep step = _steps[stepIndex];
-                if (step == null || step.Action != CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact)
-                {
-                    return true;
-                }
-
-                int entryIndex = step.EntryIndex;
-                if (entryIndex < 0)
-                {
-                    return false;
-                }
-
-                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _orchestrationResult.InspectionSnapshot;
-                if (snapshot == null || entryIndex >= snapshot.Count)
-                {
-                    return false;
-                }
-
-                observation = snapshot.GetEntry(entryIndex);
-                if (observation == null)
-                {
-                    return false;
-                }
-
-                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
-                if (operation == null || !operation.TryGetArtifactPaths(entryIndex, out artifactPaths) || artifactPaths == null)
-                {
-                    return false;
-                }
-
-                return true;
-            }
-            catch (Exception)
-            {
-                observation = null;
-                artifactPaths = null;
-                return false;
-            }
         }
 
         /// <summary>

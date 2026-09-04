@@ -571,11 +571,30 @@ namespace Zantetsu.Observability
 
             /// <summary>
             /// Performs the full snapshot validation once and mints a token
-            /// only on success. The private constructor keeps the token
-            /// unfabricable by callers.
+            /// only on success, without running any caller predicate. The
+            /// private constructor keeps the token unfabricable by callers.
             /// </summary>
             internal static bool TryAcquire(
                 PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
+                out ValidationToken token)
+            {
+                return TryAcquireAndCapture(snapshot, null, out token);
+            }
+
+            /// <summary>
+            /// Single-scan validated mint that also runs an O(1) caller
+            /// predicate per entry: validates the operation and trace evidence
+            /// exactly once, then walks each entry exactly once — validating
+            /// it, invoking the predicate, and capturing its proof in the same
+            /// pass. Mints the token only if every entry validates and every
+            /// predicate invocation succeeds. A null predicate is allowed for
+            /// the plain mint. This lets a caller that derives a per-entry
+            /// sequence from the snapshot validate and capture it in this exact
+            /// scan instead of re-walking the entries after a full validation.
+            /// </summary>
+            internal static bool TryAcquireAndCapture(
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot,
+                Func<int, PngJsonCapturePublicationArtifactEntryObservation, bool> perEntryPredicate,
                 out ValidationToken token)
             {
                 token = null;
@@ -608,6 +627,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                EntryProof[] proof = new EntryProof[entries.Length];
                 for (int i = 0; i < entries.Length; i++)
                 {
                     PngJsonCapturePublicationArtifactEntryObservation entry = entries[i];
@@ -619,12 +639,13 @@ namespace Zantetsu.Observability
                     {
                         return false;
                     }
-                }
 
-                EntryProof[] proof = new EntryProof[entries.Length];
-                for (int i = 0; i < entries.Length; i++)
-                {
-                    proof[i] = new EntryProof(entries[i]);
+                    if (perEntryPredicate != null && !perEntryPredicate(i, entry))
+                    {
+                        return false;
+                    }
+
+                    proof[i] = new EntryProof(entry);
                 }
 
                 token = new ValidationToken(
