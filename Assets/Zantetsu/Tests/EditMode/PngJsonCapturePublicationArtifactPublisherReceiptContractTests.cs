@@ -207,22 +207,64 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakePublisher : IPngJsonCapturePublicationArtifactPublisher
         {
-            public PngJsonCapturePublicationArtifactPublishReceipt Publish(
+            public IPngJsonCapturePublicationArtifactPublishAttempt TryBegin(
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                return new FakeAttempt();
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt PublishReserved(
+                IPngJsonCapturePublicationArtifactPublishAttempt attempt,
                 PngJsonCapturePublicationArtifactPublishOperation operation,
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
             {
                 return PngJsonCapturePublicationArtifactPublishReceipt.Create(this, operation, token);
             }
+
+            public void End(IPngJsonCapturePublicationArtifactPublishAttempt attempt)
+            {
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt Publish(
+                PngJsonCapturePublicationArtifactPublishOperation operation,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                return PublishReserved(new FakeAttempt(), operation, token);
+            }
         }
 
         private sealed class ThrowingPublisher : IPngJsonCapturePublicationArtifactPublisher
         {
+            public IPngJsonCapturePublicationArtifactPublishAttempt TryBegin(
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                return new FakeAttempt();
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt PublishReserved(
+                IPngJsonCapturePublicationArtifactPublishAttempt attempt,
+                PngJsonCapturePublicationArtifactPublishOperation operation,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                throw new InvalidOperationException("Backend failure.");
+            }
+
+            public void End(IPngJsonCapturePublicationArtifactPublishAttempt attempt)
+            {
+            }
+
             public PngJsonCapturePublicationArtifactPublishReceipt Publish(
                 PngJsonCapturePublicationArtifactPublishOperation operation,
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
             {
                 throw new InvalidOperationException("Backend failure.");
             }
+        }
+
+        private sealed class FakeAttempt : IPngJsonCapturePublicationArtifactPublishAttempt
+        {
         }
 
         // ---- Lease ----
@@ -782,20 +824,32 @@ namespace Zantetsu.Core.Tests
         // ---- Interface ----
 
         [Test]
-        public void Interface_SingleMethodOnly()
+        public void Interface_ThreeAttemptScopedMethods()
         {
             MethodInfo[] methods = typeof(IPngJsonCapturePublicationArtifactPublisher).GetMethods();
 
-            Assert.That(methods.Length, Is.EqualTo(1));
-            Assert.That(methods[0].Name, Is.EqualTo("Publish"));
-            Assert.That(methods[0].ReturnType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactPublishReceipt)));
+            Assert.That(methods.Length, Is.EqualTo(3));
 
-            ParameterInfo[] parameters = methods[0].GetParameters();
-            Assert.That(parameters.Length, Is.EqualTo(2));
-            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactPublishOperation)));
-            Assert.That(parameters[0].Name, Is.EqualTo("operation"));
-            Assert.That(parameters[1].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)));
-            Assert.That(parameters[1].Name, Is.EqualTo("token"));
+            MethodInfo tryBegin = Array.Find(methods, m => m.Name == "TryBegin");
+            Assert.That(tryBegin.ReturnType, Is.EqualTo(typeof(IPngJsonCapturePublicationArtifactPublishAttempt)));
+            ParameterInfo[] tryBeginParams = tryBegin.GetParameters();
+            Assert.That(tryBeginParams.Length, Is.EqualTo(2));
+            Assert.That(tryBeginParams[0].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactRecoveryExecutionBatch)));
+            Assert.That(tryBeginParams[1].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)));
+
+            MethodInfo publishReserved = Array.Find(methods, m => m.Name == "PublishReserved");
+            Assert.That(publishReserved.ReturnType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactPublishReceipt)));
+            ParameterInfo[] publishParams = publishReserved.GetParameters();
+            Assert.That(publishParams.Length, Is.EqualTo(3));
+            Assert.That(publishParams[0].ParameterType, Is.EqualTo(typeof(IPngJsonCapturePublicationArtifactPublishAttempt)));
+            Assert.That(publishParams[1].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactPublishOperation)));
+            Assert.That(publishParams[2].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken)));
+
+            MethodInfo end = Array.Find(methods, m => m.Name == "End");
+            Assert.That(end.ReturnType, Is.EqualTo(typeof(void)));
+            ParameterInfo[] endParams = end.GetParameters();
+            Assert.That(endParams.Length, Is.EqualTo(1));
+            Assert.That(endParams[0].ParameterType, Is.EqualTo(typeof(IPngJsonCapturePublicationArtifactPublishAttempt)));
         }
 
         [Test]

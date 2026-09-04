@@ -262,7 +262,15 @@ namespace Zantetsu.Core.Tests
 
             public Exception ExceptionToThrow { get; set; }
 
-            public PngJsonCapturePublicationArtifactPublishReceipt Publish(
+            public IPngJsonCapturePublicationArtifactPublishAttempt TryBegin(
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                return new FakeAttempt();
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt PublishReserved(
+                IPngJsonCapturePublicationArtifactPublishAttempt attempt,
                 PngJsonCapturePublicationArtifactPublishOperation operation,
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
             {
@@ -274,6 +282,14 @@ namespace Zantetsu.Core.Tests
                 }
 
                 return PngJsonCapturePublicationArtifactPublishReceipt.Create(this, operation, token);
+            }
+
+            public void End(IPngJsonCapturePublicationArtifactPublishAttempt attempt)
+            {
+            }
+
+            private sealed class FakeAttempt : IPngJsonCapturePublicationArtifactPublishAttempt
+            {
             }
         }
 

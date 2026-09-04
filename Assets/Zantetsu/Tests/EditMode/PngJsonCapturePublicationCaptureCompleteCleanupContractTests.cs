@@ -208,11 +208,27 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakePublisher : IPngJsonCapturePublicationArtifactPublisher
         {
-            public PngJsonCapturePublicationArtifactPublishReceipt Publish(
+            public IPngJsonCapturePublicationArtifactPublishAttempt TryBegin(
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                return new FakeAttempt();
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt PublishReserved(
+                IPngJsonCapturePublicationArtifactPublishAttempt attempt,
                 PngJsonCapturePublicationArtifactPublishOperation operation,
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
             {
                 return PngJsonCapturePublicationArtifactPublishReceipt.Create(this, operation, token);
+            }
+
+            public void End(IPngJsonCapturePublicationArtifactPublishAttempt attempt)
+            {
+            }
+
+            private sealed class FakeAttempt : IPngJsonCapturePublicationArtifactPublishAttempt
+            {
             }
         }
 

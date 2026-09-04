@@ -221,15 +221,40 @@ namespace Zantetsu.Core.Tests
 
             public int Calls;
 
+            public int TryBeginCalls;
+
+            public int EndCalls;
+
             public Exception ExceptionToThrow { get; set; }
+
+            public Exception EndExceptionToThrow { get; set; }
+
+            public Func<PngJsonCapturePublicationArtifactRecoveryExecutionBatch, PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken, IPngJsonCapturePublicationArtifactPublishAttempt> BeginOverride { get; set; }
 
             public Func<PngJsonCapturePublicationArtifactPublishOperation, PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken, PngJsonCapturePublicationArtifactPublishReceipt> ReceiptOverride { get; set; }
 
-            public PngJsonCapturePublicationArtifactPublishReceipt Publish(
+            public List<IPngJsonCapturePublicationArtifactPublishAttempt> Attempts { get; } = new List<IPngJsonCapturePublicationArtifactPublishAttempt>();
+
+            public IPngJsonCapturePublicationArtifactPublishAttempt TryBegin(
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch,
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+            {
+                TryBeginCalls++;
+                if (BeginOverride != null)
+                {
+                    return BeginOverride(batch, token);
+                }
+
+                return new FakeAttempt();
+            }
+
+            public PngJsonCapturePublicationArtifactPublishReceipt PublishReserved(
+                IPngJsonCapturePublicationArtifactPublishAttempt attempt,
                 PngJsonCapturePublicationArtifactPublishOperation operation,
                 PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
             {
                 Calls++;
+                Attempts.Add(attempt);
                 _log?.Add("publish:" + operation.EntryIndex + ":" + operation.ArtifactKind);
                 if (ExceptionToThrow != null)
                 {
@@ -242,6 +267,19 @@ namespace Zantetsu.Core.Tests
                 }
 
                 return PngJsonCapturePublicationArtifactPublishReceipt.Create(this, operation, token);
+            }
+
+            public void End(IPngJsonCapturePublicationArtifactPublishAttempt attempt)
+            {
+                EndCalls++;
+                if (EndExceptionToThrow != null)
+                {
+                    throw EndExceptionToThrow;
+                }
+            }
+
+            private sealed class FakeAttempt : IPngJsonCapturePublicationArtifactPublishAttempt
+            {
             }
         }
 
@@ -1974,10 +2012,15 @@ namespace Zantetsu.Core.Tests
         {
             string coordinatorSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator.cs");
 
-            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < count; i++)", StringComparison.Ordinal);
-            Assert.That(loopIndex, Is.GreaterThan(0));
+            // The main step loop is the second occurrence; the first is the
+            // publish-step pre-scan.
+            int firstLoop = coordinatorSource.IndexOf("for (int i = 0; i < count; i++)", StringComparison.Ordinal);
+            Assert.That(firstLoop, Is.GreaterThan(0));
 
-            int resultIndex = coordinatorSource.IndexOf("return PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create", StringComparison.Ordinal);
+            int loopIndex = coordinatorSource.IndexOf("for (int i = 0; i < count; i++)", firstLoop + 1, StringComparison.Ordinal);
+            Assert.That(loopIndex, Is.GreaterThan(firstLoop));
+
+            int resultIndex = coordinatorSource.IndexOf("result = PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create", StringComparison.Ordinal);
             Assert.That(resultIndex, Is.GreaterThan(loopIndex));
 
             string loopBody = coordinatorSource.Substring(loopIndex, resultIndex - loopIndex);
@@ -2053,6 +2096,174 @@ namespace Zantetsu.Core.Tests
             Assert.That(createBody, Does.Not.Contain("TryValidate"));
             Assert.That(createBody, Does.Not.Contain("TryAcquire"));
             Assert.That(createBody, Does.Not.Contain("IsFullyValid"));
+        }
+
+        // ---- Publish attempt reservation ----
+
+        [Test]
+        public void Reservation_CommitOnlyBatch_NoAttempt()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            FakePublisher publisher = new FakePublisher();
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(publisher.TryBeginCalls, Is.EqualTo(0));
+            Assert.That(publisher.EndCalls, Is.EqualTo(0));
+            Assert.That(publisher.Calls, Is.EqualTo(0));
+            Assert.That(committer.Calls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Reservation_StopBatch_NoAttempt()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildOrphanedPreTracePlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            FakePublisher publisher = new FakePublisher();
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(publisher.TryBeginCalls, Is.EqualTo(0));
+            Assert.That(publisher.EndCalls, Is.EqualTo(0));
+            Assert.That(publisher.Calls, Is.EqualTo(0));
+            Assert.That(committer.Calls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Reservation_PublishBatch_TryBeginOnceOutsideLoop_EndOnce_SameAttempt()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            FakePublisher publisher = new FakePublisher();
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult result = coordinator.Execute(batch);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(publisher.TryBeginCalls, Is.EqualTo(1));
+            Assert.That(publisher.EndCalls, Is.EqualTo(1));
+            Assert.That(publisher.Calls, Is.EqualTo(2));
+            Assert.That(publisher.Attempts.Count, Is.EqualTo(2));
+            Assert.That(ReferenceEquals(publisher.Attempts[0], publisher.Attempts[1]), Is.True);
+        }
+
+        [Test]
+        public void Reservation_TryBeginNull_Deferred_NoPublishNoCommitNoResult()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            FakePublisher publisher = new FakePublisher();
+            publisher.BeginOverride = (_, _) => null;
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            Assert.Throws<CaptureArtifactVerificationDeferredException>(() => coordinator.Execute(batch));
+
+            Assert.That(publisher.TryBeginCalls, Is.EqualTo(1));
+            Assert.That(publisher.Calls, Is.EqualTo(0));
+            Assert.That(publisher.EndCalls, Is.EqualTo(0));
+            Assert.That(committer.Calls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Reservation_PublishException_EndStillRunsOnce()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            FakePublisher publisher = new FakePublisher();
+            publisher.ExceptionToThrow = new InvalidOperationException("boom");
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+
+            Assert.That(thrown.Message, Is.EqualTo("boom"));
+            Assert.That(publisher.Calls, Is.EqualTo(1));
+            Assert.That(publisher.EndCalls, Is.EqualTo(1));
+            Assert.That(committer.Calls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Reservation_PublishAndEndExceptions_AggregateOrder()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            InvalidOperationException publishEx = new InvalidOperationException("publish failed");
+            InvalidOperationException endEx = new InvalidOperationException("end failed");
+            FakePublisher publisher = new FakePublisher { ExceptionToThrow = publishEx, EndExceptionToThrow = endEx };
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            AggregateException thrown = Assert.Throws<AggregateException>(() => coordinator.Execute(batch));
+
+            Assert.That(thrown.InnerExceptions.Count, Is.EqualTo(2));
+            Assert.That(thrown.InnerExceptions[0], Is.SameAs(publishEx));
+            Assert.That(thrown.InnerExceptions[1], Is.SameAs(endEx));
+        }
+
+        [Test]
+        public void Reservation_SuccessThenEndException_NoResult()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
+
+            InvalidOperationException endEx = new InvalidOperationException("end failed");
+            FakePublisher publisher = new FakePublisher { EndExceptionToThrow = endEx };
+            FakeCommitter committer = new FakeCommitter();
+            PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, committer);
+
+            InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
+
+            Assert.That(thrown, Is.SameAs(endEx));
+            Assert.That(publisher.Calls, Is.EqualTo(2));
+            Assert.That(publisher.EndCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Source_Coordinator_TryBeginOnceOutsideLoop_NoRetryNoTask()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionCoordinator.cs");
+
+            int firstTryBegin = source.IndexOf("TryBegin(", StringComparison.Ordinal);
+            int lastTryBegin = source.LastIndexOf("TryBegin(", StringComparison.Ordinal);
+            Assert.That(firstTryBegin, Is.GreaterThan(0));
+            Assert.That(firstTryBegin, Is.EqualTo(lastTryBegin));
+
+            int firstEnd = source.IndexOf("_publisher.End(attempt)", StringComparison.Ordinal);
+            int lastEnd = source.LastIndexOf("_publisher.End(attempt)", StringComparison.Ordinal);
+            Assert.That(firstEnd, Is.GreaterThan(0));
+            Assert.That(firstEnd, Is.EqualTo(lastEnd));
+
+            Assert.That(source, Does.Not.Contain("Task"));
+            Assert.That(source, Does.Not.Contain("Thread"));
+            Assert.That(source, Does.Not.Contain("CancellationToken"));
+        }
+
+        [Test]
+        public void AttemptInterface_OpaqueMarkerOnly()
+        {
+            Type type = typeof(IPngJsonCapturePublicationArtifactPublishAttempt);
+
+            Assert.That(type.IsInterface, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(type.GetInterfaces(), Is.Empty);
+            Assert.That(
+                type.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                Is.Empty);
         }
     }
 }

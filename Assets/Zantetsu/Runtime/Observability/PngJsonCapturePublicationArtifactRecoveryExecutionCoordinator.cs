@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.ExceptionServices;
 
 namespace Zantetsu.Observability
 {
@@ -66,9 +67,14 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Executes the batch once, in ascending step order, and returns an
-        /// execution result only after every step succeeded. The action plan
-        /// validation token is acquired exactly once, outside the step loop,
-        /// and reused for every index-local re-check and receipt verification.
+        /// execution result only after every step succeeded and the publish
+        /// reservation was released. The action plan validation token is
+        /// acquired exactly once, outside the step loop, and reused for every
+        /// index-local re-check and receipt verification. When the batch
+        /// contains at least one publish step, a single publish reservation is
+        /// opened once before the loop, passed to every publish step, and
+        /// released exactly once from a <c>finally</c> on both success and
+        /// backend exception.
         /// </summary>
         internal PngJsonCapturePublicationArtifactRecoveryExecutionResult Execute(
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch)
@@ -84,64 +90,123 @@ namespace Zantetsu.Observability
             }
 
             int count = batch.Count;
-            PngJsonCapturePublicationArtifactRecoveryCompletedStep[] completedSteps =
-                new PngJsonCapturePublicationArtifactRecoveryCompletedStep[count];
 
+            bool hasPublishStep = false;
             for (int i = 0; i < count; i++)
             {
-                PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = batch.GetStep(i);
-
-                // Re-confirm the step index-locally with the same token before
-                // any backend contact, so a corrupted batch fails before side
-                // effects on this step.
-                if (preparedStep == null
-                    || preparedStep.StepIndex != i
-                    || !ReferenceEquals(preparedStep.ActionPlan, batch.ActionPlan)
-                    || !preparedStep.IsValidIndexLocal(token))
+                PngJsonCapturePublicationArtifactRecoveryPreparedStep step = batch.GetStep(i);
+                if (step != null && step.Action == CaptureRunPublicationArtifactRecoveryAction.PublishArtifact)
                 {
-                    throw new InvalidOperationException("Prepared step correlation must remain intact.");
+                    hasPublishStep = true;
+                    break;
                 }
-
-                PngJsonCapturePublicationArtifactPublishReceipt publishReceipt = null;
-                PngJsonCaptureRunCaptureIndexCommitReceipt commitReceipt = null;
-
-                switch (preparedStep.Action)
-                {
-                    case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
-                    {
-                        PngJsonCapturePublicationArtifactPublishOperation operation = preparedStep.PublishOperation;
-                        publishReceipt = _publisher.Publish(operation, token);
-
-                        if (publishReceipt == null
-                            || !publishReceipt.IsIssuedFor(_publisher, operation, token))
-                        {
-                            throw new InvalidOperationException("Publish receipt must be issued by this coordinator's publisher for the exact operation and token.");
-                        }
-
-                        break;
-                    }
-
-                    case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
-                    {
-                        PngJsonCaptureRunCaptureIndexCommitOperation operation = preparedStep.CaptureIndexCommitOperation;
-                        commitReceipt = _committer.Commit(operation, token);
-
-                        if (commitReceipt == null
-                            || !commitReceipt.IsIssuedFor(_committer, operation, token))
-                        {
-                            throw new InvalidOperationException("Commit receipt must be issued by this coordinator's committer for the exact operation and token.");
-                        }
-
-                        break;
-                    }
-                }
-
-                completedSteps[i] = PngJsonCapturePublicationArtifactRecoveryCompletedStep.CreateIndexLocal(
-                    preparedStep, token, _publisher, _committer, publishReceipt, commitReceipt);
             }
 
-            return PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create(
-                this, batch, completedSteps, token);
+            IPngJsonCapturePublicationArtifactPublishAttempt attempt = null;
+            if (hasPublishStep)
+            {
+                attempt = _publisher.TryBegin(batch, token);
+                if (attempt == null)
+                {
+                    throw new CaptureArtifactVerificationDeferredException(
+                        "Publish reservation is unavailable for this batch.");
+                }
+            }
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult result = null;
+            Exception primary = null;
+
+            try
+            {
+                PngJsonCapturePublicationArtifactRecoveryCompletedStep[] completedSteps =
+                    new PngJsonCapturePublicationArtifactRecoveryCompletedStep[count];
+
+                for (int i = 0; i < count; i++)
+                {
+                    PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = batch.GetStep(i);
+
+                    // Re-confirm the step index-locally with the same token before
+                    // any backend contact, so a corrupted batch fails before side
+                    // effects on this step.
+                    if (preparedStep == null
+                        || preparedStep.StepIndex != i
+                        || !ReferenceEquals(preparedStep.ActionPlan, batch.ActionPlan)
+                        || !preparedStep.IsValidIndexLocal(token))
+                    {
+                        throw new InvalidOperationException("Prepared step correlation must remain intact.");
+                    }
+
+                    PngJsonCapturePublicationArtifactPublishReceipt publishReceipt = null;
+                    PngJsonCaptureRunCaptureIndexCommitReceipt commitReceipt = null;
+
+                    switch (preparedStep.Action)
+                    {
+                        case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
+                            {
+                                PngJsonCapturePublicationArtifactPublishOperation operation = preparedStep.PublishOperation;
+                                publishReceipt = _publisher.PublishReserved(attempt, operation, token);
+
+                                if (publishReceipt == null
+                                    || !publishReceipt.IsIssuedFor(_publisher, operation, token))
+                                {
+                                    throw new InvalidOperationException("Publish receipt must be issued by this coordinator's publisher for the exact operation and token.");
+                                }
+
+                                break;
+                            }
+
+                        case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
+                            {
+                                PngJsonCaptureRunCaptureIndexCommitOperation operation = preparedStep.CaptureIndexCommitOperation;
+                                commitReceipt = _committer.Commit(operation, token);
+
+                                if (commitReceipt == null
+                                    || !commitReceipt.IsIssuedFor(_committer, operation, token))
+                                {
+                                    throw new InvalidOperationException("Commit receipt must be issued by this coordinator's committer for the exact operation and token.");
+                                }
+
+                                break;
+                            }
+                    }
+
+                    completedSteps[i] = PngJsonCapturePublicationArtifactRecoveryCompletedStep.CreateIndexLocal(
+                        preparedStep, token, _publisher, _committer, publishReceipt, commitReceipt);
+                }
+
+                result = PngJsonCapturePublicationArtifactRecoveryExecutionResult.Create(
+                    this, batch, completedSteps, token);
+            }
+            catch (Exception ex)
+            {
+                primary = ex;
+            }
+            finally
+            {
+                if (attempt != null)
+                {
+                    try
+                    {
+                        _publisher.End(attempt);
+                    }
+                    catch (Exception endEx)
+                    {
+                        if (primary != null)
+                        {
+                            throw new AggregateException(primary, endEx);
+                        }
+
+                        throw;
+                    }
+                }
+            }
+
+            if (primary != null)
+            {
+                ExceptionDispatchInfo.Capture(primary).Throw();
+            }
+
+            return result;
         }
     }
 }
