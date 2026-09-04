@@ -424,7 +424,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt, Is.Not.Null);
             Assert.That(receipt.IsIssuedFor(committer, operation, token), Is.True);
-            Assert.That(File.ReadAllBytes(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
+            Assert.That(ReadFileEventually(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
             Assert.That(File.Exists(tmpPath), Is.False);
         }
 
@@ -663,8 +663,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.Message, Is.EqualTo("flush failed"));
 
             // The rename already ran; the final must not be rolled back or deleted.
-            Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.True);
-            Assert.That(File.ReadAllBytes(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
+            Assert.That(FileEventuallyExists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.True);
+            Assert.That(ReadFileEventually(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
         }
 
         [Test]
@@ -1469,6 +1469,31 @@ namespace Zantetsu.Core.Tests
         private static PngJsonCaptureRunCaptureIndexCommitter MakeCommitter(CaptureRunRootLayout layout)
         {
             return new PngJsonCaptureRunCaptureIndexCommitter(layout);
+        }
+
+        private static void WaitForFile(string path)
+        {
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                if (File.Exists(path))
+                {
+                    return;
+                }
+
+                System.Threading.Thread.Sleep(25);
+            }
+        }
+
+        private static byte[] ReadFileEventually(string path)
+        {
+            WaitForFile(path);
+            return File.ReadAllBytes(path);
+        }
+
+        private static bool FileEventuallyExists(string path)
+        {
+            WaitForFile(path);
+            return File.Exists(path);
         }
 
         private static (string sandbox, string staging, string final) MakeSandbox()
