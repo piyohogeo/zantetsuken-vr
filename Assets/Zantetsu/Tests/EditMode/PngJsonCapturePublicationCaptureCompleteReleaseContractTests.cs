@@ -1146,6 +1146,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Receipt_NotificationResultInternalsNulled_FailClosedWithoutThrow()
+        {
+            PngJsonCapturePublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence(
+                out _, out _);
+            PngJsonCapturePublicationCaptureCompleteReleaseOperation operation = MakeReleaseOperation(evidence);
+            PngJsonCapturePublicationCaptureCompleteReleaser releaser = MakeReleaser();
+            PngJsonCapturePublicationCaptureCompleteReleaseReceipt receipt = releaser.Release(operation);
+            Assert.That(receipt.IsValid, Is.True);
+
+            // After release, the notification result's internal operation is
+            // nulled. The forwarding getters must not throw, and the binding
+            // and receipt must converge to false.
+            SetField(operation.NotificationResult, "_operation", null);
+
+            Assert.That(operation.IsIssuanceBindingIntact, Is.False);
+            Assert.That(operation.CanRelease, Is.False);
+            Assert.That(operation.IsValid, Is.False);
+            Assert.That(receipt.IsValid, Is.False);
+            Assert.That(receipt.IsIssuedFor(releaser, operation), Is.False);
+        }
+
+        [Test]
         public void Operation_FieldSwap_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteLifecycleEvidence evidence = MakeRecoveryEvidence(

@@ -111,15 +111,22 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_lifecycleEvidence == null || _notificationResult == null
-                    || _ownershipLease == null || _lockIdentityEvidence == null)
+                try
+                {
+                    if (_lifecycleEvidence == null || _notificationResult == null
+                        || _ownershipLease == null || _lockIdentityEvidence == null)
+                    {
+                        return false;
+                    }
+
+                    return ReferenceEquals(_lifecycleEvidence.NotificationResult, _notificationResult)
+                        && ReferenceEquals(_lifecycleEvidence.OwnershipLease, _ownershipLease)
+                        && ReferenceEquals(_lifecycleEvidence.LockIdentityEvidence, _lockIdentityEvidence);
+                }
+                catch (Exception)
                 {
                     return false;
                 }
-
-                return ReferenceEquals(_lifecycleEvidence.NotificationResult, _notificationResult)
-                    && ReferenceEquals(_lifecycleEvidence.OwnershipLease, _ownershipLease)
-                    && ReferenceEquals(_lifecycleEvidence.LockIdentityEvidence, _lockIdentityEvidence);
             }
         }
 
