@@ -42,11 +42,13 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The coordinator never retries, never rolls back, never re-derives the
-    /// action plan or batch, never scans an entry a second time, never
-    /// notifies, and never acquires, transfers, or releases a session
-    /// ownership lease. Exceptions thrown by the plan builder, batch builder,
-    /// execution coordinator, or backend propagate unchanged, with no
-    /// compensating action.
+    /// action plan or batch, never notifies, and never acquires, transfers, or
+    /// releases a session ownership lease. The execution result's single full
+    /// validation re-verifies the current state of its completed steps and
+    /// action plan with the already-held proof, without re-issuing a token.
+    /// Exceptions thrown by the plan builder, batch builder, execution
+    /// coordinator, or backend propagate unchanged, with no compensating
+    /// action.
     /// </para>
     /// </remarks>
     internal sealed class PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationCoordinator

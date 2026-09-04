@@ -148,8 +148,9 @@ namespace Zantetsu.Observability
         /// plan, and recovery result reference chain, the proof's exact binding,
         /// the capture-complete-ready status, the allowed disposition, and the
         /// authority/plan/root layout/identity evidence/run identity forwarding
-        /// correlation. It never re-issues a token, re-validates the plan, or
-        /// scans an entry.
+        /// correlation. It re-verifies the current state of the execution
+        /// result's completed steps and action plan with the already-held proof
+        /// and never re-issues a token.
         /// </summary>
         private bool IsFullyValid()
         {
