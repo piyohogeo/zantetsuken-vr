@@ -1136,6 +1136,46 @@ namespace Zantetsu.Core.Tests
             Assert.That(preparedStep.IsValid, Is.False);
         }
 
+        [Test]
+        public void Batch_IsValidWithToken_ForeignTokenAndCorruptedStepArrays_RejectedNoException()
+        {
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken validToken = plan.AcquireValidationToken();
+
+            PngJsonCapturePublicationArtifactRecoveryActionPlan foreignPlan = BuildPublishPngSidecarPlan();
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken foreignToken = foreignPlan.AcquireValidationToken();
+
+            PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch = PngJsonCapturePublicationArtifactRecoveryExecutionBatch.Create(plan);
+            Assert.That(batch.IsValidWithToken(validToken), Is.True);
+
+            // Foreign token against a structurally valid batch: rejected by the
+            // existing per-step token correlation loop.
+            Assert.That(batch.IsValidWithToken(foreignToken), Is.False);
+
+            // Null plan step array: the plan count read throws; it must converge
+            // to false without leaking an exception.
+            PngJsonCapturePublicationArtifactRecoveryActionPlan nullStepsPlan = BuildPublishPngSidecarPlan();
+            SetField(nullStepsPlan, "_steps", null);
+            Assert.That(ForgeBatch(nullStepsPlan, new PngJsonCapturePublicationArtifactRecoveryPreparedStep[3]).IsValidWithToken(foreignToken), Is.False);
+
+            // Zero plan step array with a zero prepared-step array: the
+            // impossible zero-step batch must be rejected instead of passing an
+            // empty loop.
+            PngJsonCapturePublicationArtifactRecoveryActionPlan zeroStepsPlan = BuildPublishPngSidecarPlan();
+            SetField(zeroStepsPlan, "_steps", new CaptureRunPublicationArtifactRecoveryStep[0]);
+            Assert.That(ForgeBatch(zeroStepsPlan, new PngJsonCapturePublicationArtifactRecoveryPreparedStep[0]).IsValidWithToken(foreignToken), Is.False);
+            Assert.That(ForgeBatch(zeroStepsPlan, new PngJsonCapturePublicationArtifactRecoveryPreparedStep[0]).IsValidWithToken(validToken), Is.False);
+
+            // Shortened plan step array: length mismatch must be rejected.
+            PngJsonCapturePublicationArtifactRecoveryActionPlan shortenedPlan = BuildPublishPngSidecarPlan();
+            SetField(shortenedPlan, "_steps", new CaptureRunPublicationArtifactRecoveryStep[2]);
+            PngJsonCapturePublicationArtifactRecoveryPreparedStep[] fullPrepared = new PngJsonCapturePublicationArtifactRecoveryPreparedStep[3];
+            fullPrepared[0] = batch.GetStep(0);
+            fullPrepared[1] = batch.GetStep(1);
+            fullPrepared[2] = batch.GetStep(2);
+            Assert.That(ForgeBatch(shortenedPlan, fullPrepared).IsValidWithToken(validToken), Is.False);
+        }
+
         // ---- Owner release ----
 
         [Test]

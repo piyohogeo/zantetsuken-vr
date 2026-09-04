@@ -55,6 +55,16 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Batch must be valid for the supplied token.", nameof(batch));
             }
 
+            // The batch must be bound to the exact run roots this store is
+            // rooted at, so a batch minted for another run can never have its
+            // relative paths resolved under this store's roots. Checked before
+            // the reservation, so a mismatched layout borrows no buffer and
+            // changes no filesystem.
+            if (!ReferenceEquals(_store.RootLayout, batch.RootLayout))
+            {
+                throw new ArgumentException("Batch root layout must match the store's root layout.", nameof(batch));
+            }
+
             CaptureArtifactPublishReservation reservation = _store.TryReservePublish();
             if (reservation == null)
             {

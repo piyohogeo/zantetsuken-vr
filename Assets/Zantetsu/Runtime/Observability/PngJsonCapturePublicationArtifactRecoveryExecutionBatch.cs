@@ -151,24 +151,36 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (_preparedSteps.Length != _actionPlan.Count)
+            try
             {
-                return false;
-            }
-
-            for (int i = 0; i < _preparedSteps.Length; i++)
-            {
-                PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = _preparedSteps[i];
-                if (preparedStep == null
-                    || preparedStep.StepIndex != i
-                    || !ReferenceEquals(preparedStep.ActionPlan, _actionPlan)
-                    || !preparedStep.IsValidWithToken(token))
+                // A valid action plan always materializes at least one step,
+                // so a zero-step plan is structural corruption. Read the plan
+                // count before the loop so a null or shortened step array
+                // converges to false here instead of leaking an exception.
+                int count = _actionPlan.Count;
+                if (count == 0 || _preparedSteps.Length != count)
                 {
                     return false;
                 }
-            }
 
-            return true;
+                for (int i = 0; i < _preparedSteps.Length; i++)
+                {
+                    PngJsonCapturePublicationArtifactRecoveryPreparedStep preparedStep = _preparedSteps[i];
+                    if (preparedStep == null
+                        || preparedStep.StepIndex != i
+                        || !ReferenceEquals(preparedStep.ActionPlan, _actionPlan)
+                        || !preparedStep.IsValidWithToken(token))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
     }
 }
