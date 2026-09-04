@@ -100,10 +100,19 @@ namespace Zantetsu.Observability
                     nameof(operation));
             }
 
+            // Preflight both capabilities before the first filesystem contact
+            // so a platform that cannot flush directory metadata never reaches
+            // temporary creation or rename.
             if (!_fileSystem.IsSupported)
             {
                 throw new CaptureArtifactNoFollowUnavailableException(
-                    "Capture index commit requires no-follow open and directory flush support on this platform.");
+                    "Capture index commit requires no-follow open support on this platform.");
+            }
+
+            if (!_fileSystem.IsDirectoryFlushSupported)
+            {
+                throw new CaptureArtifactNoFollowUnavailableException(
+                    "Capture index commit requires directory metadata flush support on this platform.");
             }
 
             byte[] canonicalBytes = operation.GetCanonicalBytes();
@@ -112,145 +121,170 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Operation canonical bytes must be non-empty.");
             }
 
-            switch (operation.Mode)
+            using (CaptureIndexCommitDirectory directory = _fileSystem.OpenDirectory(finalRunRoot))
             {
-                case CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit:
-                    CreateTemporary(canonicalBytes, finalRunRoot, temporaryPath);
-                    break;
+                CaptureIndexCommitFile file;
+                switch (operation.Mode)
+                {
+                    case CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit:
+                        file = CreateTemporary(directory, canonicalBytes);
+                        break;
 
-                case CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit:
-                    ReuseCanonicalTemporary(canonicalBytes, finalRunRoot, temporaryPath);
-                    break;
+                    case CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit:
+                        file = ReuseCanonicalTemporary(directory, canonicalBytes);
+                        break;
 
-                case CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit:
-                    ReplaceInvalidTemporary(operation, canonicalBytes, finalRunRoot, temporaryPath);
-                    break;
+                    case CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit:
+                        file = ReplaceInvalidTemporary(directory, operation, canonicalBytes);
+                        break;
 
-                default:
-                    throw new ArgumentException("Commit mode must be defined.", nameof(operation));
+                    default:
+                        throw new ArgumentException("Commit mode must be defined.", nameof(operation));
+                }
+
+                try
+                {
+                    CommitTemporaryToFinal(directory, file, canonicalBytes);
+                }
+                finally
+                {
+                    file.Dispose();
+                }
             }
-
-            CommitTemporaryToFinal(canonicalBytes, finalRunRoot, temporaryPath, finalPath);
 
             return PngJsonCaptureRunCaptureIndexCommitReceipt.Create(this, operation, token);
         }
 
-        private void CreateTemporary(byte[] canonicalBytes, string finalRunRoot, string temporaryPath)
+        private CaptureIndexCommitFile CreateTemporary(CaptureIndexCommitDirectory directory, byte[] canonicalBytes)
         {
-            RequireAbsent(finalRunRoot, CaptureIndexName);
-            RequireAbsent(finalRunRoot, CaptureIndexTemporaryName);
+            RequireAbsent(directory, CaptureIndexName);
+            RequireAbsent(directory, CaptureIndexTemporaryName);
 
-            using (FileStream stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
-            {
-                stream.Write(canonicalBytes, 0, canonicalBytes.Length);
-                stream.Flush(true);
-                stream.Position = 0;
-                RequireContentMatches(stream, canonicalBytes);
-            }
-        }
-
-        private void ReuseCanonicalTemporary(byte[] canonicalBytes, string finalRunRoot, string temporaryPath)
-        {
-            RequireAbsent(finalRunRoot, CaptureIndexName);
-
-            CaptureArtifactNoFollowOpenResult opened = OpenRegularFile(finalRunRoot, CaptureIndexTemporaryName);
+            CaptureIndexCommitFile file = _fileSystem.CreateNew(directory, CaptureIndexTemporaryName);
             try
             {
-                RequireContentMatches(opened.Stream, canonicalBytes);
+                WriteAndVerify(file, canonicalBytes);
+                return file;
             }
-            finally
+            catch
             {
-                opened.Close();
-            }
-
-            // Durably flush the existing temporary data without rewriting or
-            // deleting it.
-            using (FileStream stream = new FileStream(temporaryPath, FileMode.Open, FileAccess.Write, FileShare.Read))
-            {
-                stream.Flush(true);
+                file.Dispose();
+                throw;
             }
         }
 
-        private void ReplaceInvalidTemporary(
-            PngJsonCaptureRunCaptureIndexCommitOperation operation,
-            byte[] canonicalBytes,
-            string finalRunRoot,
-            string temporaryPath)
+        private CaptureIndexCommitFile ReuseCanonicalTemporary(CaptureIndexCommitDirectory directory, byte[] canonicalBytes)
         {
-            RequireAbsent(finalRunRoot, CaptureIndexName);
+            RequireAbsent(directory, CaptureIndexName);
+
+            CaptureIndexCommitFile file = OpenRegularFile(directory, CaptureIndexTemporaryName);
+            try
+            {
+                RequireContentMatches(file.Stream, canonicalBytes);
+                _fileSystem.FlushFileData(file);
+                return file;
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
+            }
+        }
+
+        private CaptureIndexCommitFile ReplaceInvalidTemporary(
+            CaptureIndexCommitDirectory directory,
+            PngJsonCaptureRunCaptureIndexCommitOperation operation,
+            byte[] canonicalBytes)
+        {
+            RequireAbsent(directory, CaptureIndexName);
 
             (int maximumPlanBytes, int maximumEntryCount, int maximumPathBytes) = GetInspectionLimits(operation);
 
-            CaptureArtifactNoFollowOpenResult opened = OpenRegularFile(finalRunRoot, CaptureIndexTemporaryName);
-            byte[] observed;
-            try
-            {
-                observed = ReadBounded(opened.Stream, maximumPlanBytes);
-            }
-            finally
-            {
-                opened.Close();
-            }
+            CaptureIndexCommitFile existing = OpenRegularFile(directory, CaptureIndexTemporaryName);
 
-            // Confirm the temporary is still invalid under the exact recovery
-            // inspection limits. A canonical temporary, whether it matches the
-            // authoritative plan or another plan, is a hard failure and is never
-            // deleted or replaced.
             bool canonical;
             try
             {
-                PngJsonCapturePublicationPlanCodec.DeserializeCanonical(
-                    observed, maximumPlanBytes, maximumEntryCount, maximumPathBytes);
-                canonical = true;
+                byte[] observed = ReadBounded(existing.Stream, maximumPlanBytes);
+                canonical = TryDecodeCanonical(observed, maximumPlanBytes, maximumEntryCount, maximumPathBytes);
             }
-            catch (InvalidDataException)
+            catch
             {
-                canonical = false;
+                existing.Dispose();
+                throw;
             }
 
             if (canonical)
             {
+                existing.Dispose();
                 throw new InvalidDataException("capture.index.tmp is canonical; refusing to replace it.");
             }
 
-            // Delete only the confirmed fixed temporary, then durably flush the
-            // final run root directory metadata.
-            File.Delete(temporaryPath);
-            _fileSystem.FlushDirectory(finalRunRoot);
-
-            using (FileStream stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            // Delete only the exact verified temporary through its handle, then
+            // durably flush the final run root directory metadata.
+            try
             {
-                stream.Write(canonicalBytes, 0, canonicalBytes.Length);
-                stream.Flush(true);
-                stream.Position = 0;
-                RequireContentMatches(stream, canonicalBytes);
+                _fileSystem.Delete(existing);
+            }
+            finally
+            {
+                existing.Dispose();
+            }
+
+            _fileSystem.FlushDirectory(directory);
+
+            CaptureIndexCommitFile file = _fileSystem.CreateNew(directory, CaptureIndexTemporaryName);
+            try
+            {
+                WriteAndVerify(file, canonicalBytes);
+                return file;
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
             }
         }
 
         private void CommitTemporaryToFinal(
-            byte[] canonicalBytes,
-            string finalRunRoot,
-            string temporaryPath,
-            string finalPath)
+            CaptureIndexCommitDirectory directory,
+            CaptureIndexCommitFile file,
+            byte[] canonicalBytes)
         {
             // Re-confirm the final is still absent immediately before the
-            // non-overwriting atomic rename.
-            RequireAbsent(finalRunRoot, CaptureIndexName);
+            // handle-bound non-overwriting rename.
+            RequireAbsent(directory, CaptureIndexName);
 
-            File.Move(temporaryPath, finalPath);
+            _fileSystem.Rename(file, directory, CaptureIndexName);
 
-            _fileSystem.FlushDirectory(finalRunRoot);
+            _fileSystem.FlushDirectory(directory);
 
-            RequireAbsent(finalRunRoot, CaptureIndexTemporaryName);
+            RequireAbsent(directory, CaptureIndexTemporaryName);
 
-            CaptureArtifactNoFollowOpenResult opened = OpenRegularFile(finalRunRoot, CaptureIndexName);
+            // Verify the renamed final through the same file identity handle.
+            file.Stream.Position = 0;
+            RequireContentMatches(file.Stream, canonicalBytes);
+        }
+
+        private void WriteAndVerify(CaptureIndexCommitFile file, byte[] canonicalBytes)
+        {
+            file.Stream.Write(canonicalBytes, 0, canonicalBytes.Length);
+            _fileSystem.FlushFileData(file);
+            file.Stream.Position = 0;
+            RequireContentMatches(file.Stream, canonicalBytes);
+        }
+
+        private static bool TryDecodeCanonical(byte[] observed, int maximumPlanBytes, int maximumEntryCount, int maximumPathBytes)
+        {
             try
             {
-                RequireContentMatches(opened.Stream, canonicalBytes);
+                PngJsonCapturePublicationPlanCodec.DeserializeCanonical(
+                    observed, maximumPlanBytes, maximumEntryCount, maximumPathBytes);
+                return true;
             }
-            finally
+            catch (InvalidDataException)
             {
-                opened.Close();
+                return false;
             }
         }
 
@@ -268,26 +302,26 @@ namespace Zantetsu.Observability
             return (inspection.MaximumPlanBytes, inspection.MaximumEntryCount, inspection.MaximumPathBytes);
         }
 
-        private void RequireAbsent(string root, string relativeName)
+        private void RequireAbsent(CaptureIndexCommitDirectory directory, string name)
         {
-            CaptureArtifactNoFollowOpenResult result = _fileSystem.TryOpen(root, relativeName);
-            switch (result.Status)
+            CaptureIndexFileOpen opened = _fileSystem.TryOpen(directory, name);
+            switch (opened.Status)
             {
-                case CaptureArtifactNoFollowOpenStatus.Absent:
+                case CaptureIndexFileOpenStatus.Absent:
                     return;
 
-                case CaptureArtifactNoFollowOpenStatus.Opened:
-                    result.Close();
-                    throw new IOException(relativeName + " already exists.");
+                case CaptureIndexFileOpenStatus.Opened:
+                    opened.File.Dispose();
+                    throw new IOException(name + " already exists.");
 
-                case CaptureArtifactNoFollowOpenStatus.InvalidFileKind:
-                    throw new IOException(relativeName + " is a reparse point or directory.");
+                case CaptureIndexFileOpenStatus.InvalidFileKind:
+                    throw new IOException(name + " is a reparse point or directory.");
 
-                case CaptureArtifactNoFollowOpenStatus.EscapesRoot:
-                    throw new IOException(relativeName + " escapes the run root.");
+                case CaptureIndexFileOpenStatus.EscapesRoot:
+                    throw new IOException(name + " escapes the run root.");
 
-                case CaptureArtifactNoFollowOpenStatus.IoFailure:
-                    throw new IOException("Failed to observe " + relativeName + ".");
+                case CaptureIndexFileOpenStatus.IoFailure:
+                    throw new IOException("Failed to observe " + name + ".");
 
                 default:
                     throw new CaptureArtifactNoFollowUnavailableException(
@@ -295,25 +329,25 @@ namespace Zantetsu.Observability
             }
         }
 
-        private CaptureArtifactNoFollowOpenResult OpenRegularFile(string root, string relativeName)
+        private CaptureIndexCommitFile OpenRegularFile(CaptureIndexCommitDirectory directory, string name)
         {
-            CaptureArtifactNoFollowOpenResult result = _fileSystem.TryOpen(root, relativeName);
-            switch (result.Status)
+            CaptureIndexFileOpen opened = _fileSystem.TryOpen(directory, name);
+            switch (opened.Status)
             {
-                case CaptureArtifactNoFollowOpenStatus.Opened:
-                    return result;
+                case CaptureIndexFileOpenStatus.Opened:
+                    return opened.File;
 
-                case CaptureArtifactNoFollowOpenStatus.Absent:
-                    throw new IOException(relativeName + " is absent.");
+                case CaptureIndexFileOpenStatus.Absent:
+                    throw new IOException(name + " is absent.");
 
-                case CaptureArtifactNoFollowOpenStatus.InvalidFileKind:
-                    throw new IOException(relativeName + " is a reparse point or directory.");
+                case CaptureIndexFileOpenStatus.InvalidFileKind:
+                    throw new IOException(name + " is a reparse point or directory.");
 
-                case CaptureArtifactNoFollowOpenStatus.EscapesRoot:
-                    throw new IOException(relativeName + " escapes the run root.");
+                case CaptureIndexFileOpenStatus.EscapesRoot:
+                    throw new IOException(name + " escapes the run root.");
 
-                case CaptureArtifactNoFollowOpenStatus.IoFailure:
-                    throw new IOException("Failed to open " + relativeName + ".");
+                case CaptureIndexFileOpenStatus.IoFailure:
+                    throw new IOException("Failed to open " + name + ".");
 
                 default:
                     throw new CaptureArtifactNoFollowUnavailableException(

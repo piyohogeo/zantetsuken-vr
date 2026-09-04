@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Serialization;
+using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
@@ -121,8 +122,8 @@ namespace Zantetsu.Core.Tests
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitter.cs");
 
-            int reuse = source.IndexOf("private void ReuseCanonicalTemporary", StringComparison.Ordinal);
-            int replace = source.IndexOf("private void ReplaceInvalidTemporary", StringComparison.Ordinal);
+            int reuse = source.IndexOf("private CaptureIndexCommitFile ReuseCanonicalTemporary", StringComparison.Ordinal);
+            int replace = source.IndexOf("private CaptureIndexCommitFile ReplaceInvalidTemporary", StringComparison.Ordinal);
             int commit = source.IndexOf("private void CommitTemporaryToFinal", StringComparison.Ordinal);
             Assert.That(reuse, Is.GreaterThan(0));
             Assert.That(replace, Is.GreaterThan(reuse));
@@ -130,13 +131,28 @@ namespace Zantetsu.Core.Tests
 
             string reuseBody = source.Substring(reuse, replace - reuse);
             Assert.That(reuseBody, Does.Not.Contain("CreateNew"));
-            Assert.That(reuseBody, Does.Not.Contain("File.Delete"));
+            Assert.That(reuseBody, Does.Not.Contain("Delete"));
 
             string replaceBody = source.Substring(replace, commit - replace);
-            Assert.That(replaceBody, Does.Contain("File.Delete"));
+            Assert.That(replaceBody, Does.Contain("Delete"));
 
             string commitBody = source.Substring(commit);
-            Assert.That(commitBody, Does.Contain("RequireAbsent(finalRunRoot, CaptureIndexName)"));
+            Assert.That(commitBody, Does.Contain("RequireAbsent(directory, CaptureIndexName)"));
+        }
+
+        [Test]
+        public void Committer_Source_NoPathBasedWriteDeleteRename()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitter.cs");
+
+            Assert.That(source, Does.Not.Contain("File.Move"));
+            Assert.That(source, Does.Not.Contain("File.Delete"));
+            Assert.That(source, Does.Not.Contain("new FileStream"));
+            Assert.That(source, Does.Not.Contain("FileMode"));
+            Assert.That(source, Does.Not.Contain("File.WriteAllBytes"));
+            Assert.That(source, Does.Contain("_fileSystem.Rename"));
+            Assert.That(source, Does.Contain("_fileSystem.Delete"));
+            Assert.That(source, Does.Contain("_fileSystem.CreateNew"));
         }
 
         // ---- Null / token / layout rejection ----
@@ -571,11 +587,93 @@ namespace Zantetsu.Core.Tests
             Assert.That(File.ReadAllBytes(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
         }
 
+        [Test]
+        public void Commit_Reuse_SwappedTmp_RenamesVerifiedIdentity()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            PngJsonCaptureRunCaptureIndexCommitOperation operation = BuildCommitOperation(
+                CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit, layout, out _, out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+            byte[] canonical = operation.GetCanonicalBytes();
+
+            TrackingFileSystem fileSystem = new TrackingFileSystem { TmpExists = true };
+            fileSystem.TmpFile = new CaptureIndexCommitFile(null, new MemoryStream(canonical));
+            PngJsonCaptureRunCaptureIndexCommitter committer = new PngJsonCaptureRunCaptureIndexCommitter(layout, fileSystem);
+
+            PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(operation, token);
+            Assert.That(receipt, Is.Not.Null);
+
+            // The rename must target the exact verified file identity, never a
+            // file re-opened by path after a swap.
+            Assert.That(fileSystem.RenamedFiles, Has.Count.EqualTo(1));
+            Assert.That(fileSystem.RenamedFiles[0], Is.SameAs(fileSystem.TmpFile));
+            Assert.That(fileSystem.DeletedFiles, Is.Empty);
+            Assert.That(fileSystem.CreatedNames, Is.Empty);
+        }
+
+        [Test]
+        public void Commit_Replace_SwappedTmp_DeletesVerifiedIdentity()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            PngJsonCaptureRunCaptureIndexCommitOperation operation = BuildCommitOperation(
+                CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit, layout, out _, out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+
+            TrackingFileSystem fileSystem = new TrackingFileSystem { TmpExists = true };
+            fileSystem.TmpFile = new CaptureIndexCommitFile(null, new MemoryStream(new byte[] { 123, 125 }));
+            PngJsonCaptureRunCaptureIndexCommitter committer = new PngJsonCaptureRunCaptureIndexCommitter(layout, fileSystem);
+
+            PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(operation, token);
+            Assert.That(receipt, Is.Not.Null);
+
+            // Only the exact verified temporary is deleted; a replacement file
+            // swapped into the path is never deleted.
+            Assert.That(fileSystem.DeletedFiles, Has.Count.EqualTo(1));
+            Assert.That(fileSystem.DeletedFiles[0], Is.SameAs(fileSystem.TmpFile));
+            Assert.That(fileSystem.CreatedNames, Has.Count.EqualTo(1));
+            Assert.That(fileSystem.RenamedFiles, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void Commit_DirectorySwap_EscapesRoot_NoWriteDeleteRename()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            PngJsonCaptureRunCaptureIndexCommitOperation operation = BuildCommitOperation(
+                CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit, layout, out _, out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+
+            TrackingFileSystem fileSystem = new TrackingFileSystem { EscapesRoot = true };
+            PngJsonCaptureRunCaptureIndexCommitter committer = new PngJsonCaptureRunCaptureIndexCommitter(layout, fileSystem);
+
+            Assert.Throws<IOException>(() => committer.Commit(operation, token));
+
+            // A parent directory swap must stop the commit before any write,
+            // delete, or rename.
+            Assert.That(fileSystem.CreatedNames, Is.Empty);
+            Assert.That(fileSystem.RenamedFiles, Is.Empty);
+            Assert.That(fileSystem.DeletedFiles, Is.Empty);
+        }
+
+        [Test]
+        public void Commit_DirectoryFlushUnsupported_RejectedBeforeTmpCreation()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            PngJsonCaptureRunCaptureIndexCommitOperation operation = BuildCommitOperation(
+                CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit, layout, out _, out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+
+            TrackingFileSystem fileSystem = new TrackingFileSystem { DirectoryFlushSupported = false };
+            PngJsonCaptureRunCaptureIndexCommitter committer = new PngJsonCaptureRunCaptureIndexCommitter(layout, fileSystem);
+
+            Assert.Throws<CaptureArtifactNoFollowUnavailableException>(() => committer.Commit(operation, token));
+
+            // The preflight must reject before the temporary is created.
+            Assert.That(fileSystem.CreatedNames, Is.Empty);
+            Assert.That(fileSystem.RenamedFiles, Is.Empty);
+            Assert.That(fileSystem.DeletedFiles, Is.Empty);
+        }
+
         // ---- Fakes ----
 
         private sealed class FinalAppearingFileSystem : ICaptureIndexCommitFileSystem
         {
-            private readonly ICaptureIndexCommitFileSystem _inner = CaptureIndexCommitFileSystem.Create();
+            private readonly CaptureIndexCommitFileSystem _inner = CaptureIndexCommitFileSystem.Create();
             private readonly string _finalPath;
             private int _captureIndexProbes;
 
@@ -586,9 +684,16 @@ namespace Zantetsu.Core.Tests
 
             public bool IsSupported => true;
 
-            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            public bool IsDirectoryFlushSupported => true;
+
+            public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
             {
-                if (relativePath == "capture.index")
+                return _inner.OpenDirectory(absolutePath);
+            }
+
+            public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
+            {
+                if (name == "capture.index")
                 {
                     _captureIndexProbes++;
                     if (_captureIndexProbes == 2)
@@ -597,12 +702,32 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
-                return _inner.TryOpen(root, relativePath);
+                return _inner.TryOpen(directory, name);
             }
 
-            public void FlushDirectory(string directoryPath)
+            public CaptureIndexCommitFile CreateNew(CaptureIndexCommitDirectory directory, string name)
             {
-                _inner.FlushDirectory(directoryPath);
+                return _inner.CreateNew(directory, name);
+            }
+
+            public void FlushFileData(CaptureIndexCommitFile file)
+            {
+                _inner.FlushFileData(file);
+            }
+
+            public void Rename(CaptureIndexCommitFile file, CaptureIndexCommitDirectory directory, string newName)
+            {
+                _inner.Rename(file, directory, newName);
+            }
+
+            public void Delete(CaptureIndexCommitFile file)
+            {
+                _inner.Delete(file);
+            }
+
+            public void FlushDirectory(CaptureIndexCommitDirectory directory)
+            {
+                _inner.FlushDirectory(directory);
             }
         }
 
@@ -610,12 +735,39 @@ namespace Zantetsu.Core.Tests
         {
             public bool IsSupported => true;
 
-            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            public bool IsDirectoryFlushSupported => true;
+
+            public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
             {
                 throw new InvalidOperationException("backend failure");
             }
 
-            public void FlushDirectory(string directoryPath)
+            public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
+            {
+                throw new InvalidOperationException("backend failure");
+            }
+
+            public CaptureIndexCommitFile CreateNew(CaptureIndexCommitDirectory directory, string name)
+            {
+                throw new InvalidOperationException("backend failure");
+            }
+
+            public void FlushFileData(CaptureIndexCommitFile file)
+            {
+                throw new InvalidOperationException("backend failure");
+            }
+
+            public void Rename(CaptureIndexCommitFile file, CaptureIndexCommitDirectory directory, string newName)
+            {
+                throw new InvalidOperationException("backend failure");
+            }
+
+            public void Delete(CaptureIndexCommitFile file)
+            {
+                throw new InvalidOperationException("backend failure");
+            }
+
+            public void FlushDirectory(CaptureIndexCommitDirectory directory)
             {
                 throw new InvalidOperationException("backend failure");
             }
@@ -623,18 +775,133 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FlushFailingFileSystem : ICaptureIndexCommitFileSystem
         {
-            private readonly ICaptureIndexCommitFileSystem _inner = CaptureIndexCommitFileSystem.Create();
+            private readonly CaptureIndexCommitFileSystem _inner = CaptureIndexCommitFileSystem.Create();
 
             public bool IsSupported => true;
 
-            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            public bool IsDirectoryFlushSupported => true;
+
+            public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
             {
-                return _inner.TryOpen(root, relativePath);
+                return _inner.OpenDirectory(absolutePath);
             }
 
-            public void FlushDirectory(string directoryPath)
+            public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
+            {
+                return _inner.TryOpen(directory, name);
+            }
+
+            public CaptureIndexCommitFile CreateNew(CaptureIndexCommitDirectory directory, string name)
+            {
+                return _inner.CreateNew(directory, name);
+            }
+
+            public void FlushFileData(CaptureIndexCommitFile file)
+            {
+                _inner.FlushFileData(file);
+            }
+
+            public void Rename(CaptureIndexCommitFile file, CaptureIndexCommitDirectory directory, string newName)
+            {
+                _inner.Rename(file, directory, newName);
+            }
+
+            public void Delete(CaptureIndexCommitFile file)
+            {
+                _inner.Delete(file);
+            }
+
+            public void FlushDirectory(CaptureIndexCommitDirectory directory)
             {
                 throw new InvalidOperationException("flush failed");
+            }
+        }
+
+        private sealed class TrackingFileSystem : ICaptureIndexCommitFileSystem
+        {
+            public bool Supported = true;
+
+            public bool DirectoryFlushSupported = true;
+
+            public bool TmpExists;
+
+            public CaptureIndexCommitFile TmpFile;
+
+            public CaptureIndexFileOpenStatus TmpOpenStatus = CaptureIndexFileOpenStatus.Opened;
+
+            public bool EscapesRoot;
+
+            public readonly List<CaptureIndexCommitFile> OpenedFiles = new List<CaptureIndexCommitFile>();
+
+            public readonly List<CaptureIndexCommitFile> RenamedFiles = new List<CaptureIndexCommitFile>();
+
+            public readonly List<CaptureIndexCommitFile> DeletedFiles = new List<CaptureIndexCommitFile>();
+
+            public readonly List<string> CreatedNames = new List<string>();
+
+            public int FlushFileCalls;
+
+            public bool IsSupported => Supported;
+
+            public bool IsDirectoryFlushSupported => DirectoryFlushSupported;
+
+            public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
+            {
+                return new CaptureIndexCommitDirectory(
+                    new SafeFileHandle(IntPtr.Zero, true),
+                    absolutePath,
+                    "\\\\?\\" + absolutePath);
+            }
+
+            public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
+            {
+                if (EscapesRoot)
+                {
+                    return CaptureIndexFileOpen.Of(CaptureIndexFileOpenStatus.EscapesRoot);
+                }
+
+                if (name != "capture.index.tmp")
+                {
+                    return CaptureIndexFileOpen.Of(CaptureIndexFileOpenStatus.Absent);
+                }
+
+                if (!TmpExists || TmpOpenStatus != CaptureIndexFileOpenStatus.Opened)
+                {
+                    return CaptureIndexFileOpen.Of(TmpOpenStatus == CaptureIndexFileOpenStatus.Opened
+                        ? CaptureIndexFileOpenStatus.Absent
+                        : TmpOpenStatus);
+                }
+
+                OpenedFiles.Add(TmpFile);
+                return CaptureIndexFileOpen.Opened(TmpFile);
+            }
+
+            public CaptureIndexCommitFile CreateNew(CaptureIndexCommitDirectory directory, string name)
+            {
+                CreatedNames.Add(name);
+                TmpExists = true;
+                return new CaptureIndexCommitFile(null, new MemoryStream());
+            }
+
+            public void FlushFileData(CaptureIndexCommitFile file)
+            {
+                FlushFileCalls++;
+            }
+
+            public void Rename(CaptureIndexCommitFile file, CaptureIndexCommitDirectory directory, string newName)
+            {
+                RenamedFiles.Add(file);
+                TmpExists = false;
+            }
+
+            public void Delete(CaptureIndexCommitFile file)
+            {
+                DeletedFiles.Add(file);
+                TmpExists = false;
+            }
+
+            public void FlushDirectory(CaptureIndexCommitDirectory directory)
+            {
             }
         }
 
