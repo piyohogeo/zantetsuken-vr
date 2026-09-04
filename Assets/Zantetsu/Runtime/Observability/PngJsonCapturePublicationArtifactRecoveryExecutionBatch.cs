@@ -109,8 +109,8 @@ namespace Zantetsu.Observability
         /// validation token acquired during that validation, so a caller can
         /// perform the single full validation and reuse the token for
         /// index-local checks without re-validating the plan a second time.
-        /// A commit step's canonical bytes are re-verified through
-        /// <see cref="PngJsonCapturePublicationArtifactRecoveryPreparedStep.IsValidWithToken"/>.
+        /// The token is acquired exactly once here, then the shared
+        /// token-gated validation body in <see cref="IsValidWithToken"/> runs.
         /// </summary>
         internal bool TryValidate(out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
         {
@@ -126,9 +126,33 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (_preparedSteps.Length != _actionPlan.Count)
+            if (!IsValidWithToken(token))
             {
                 token = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Token-gated full validity: re-verifies the exact batch structure and
+        /// every prepared step against the supplied token without re-issuing a
+        /// token or re-validating the whole plan. A commit step's canonical
+        /// bytes are re-verified through
+        /// <see cref="PngJsonCapturePublicationArtifactRecoveryPreparedStep.IsValidWithToken"/>.
+        /// Never throws.
+        /// </summary>
+        internal bool IsValidWithToken(
+            PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token)
+        {
+            if (token == null || _actionPlan == null || _preparedSteps == null)
+            {
+                return false;
+            }
+
+            if (_preparedSteps.Length != _actionPlan.Count)
+            {
                 return false;
             }
 
@@ -140,7 +164,6 @@ namespace Zantetsu.Observability
                     || !ReferenceEquals(preparedStep.ActionPlan, _actionPlan)
                     || !preparedStep.IsValidWithToken(token))
                 {
-                    token = null;
                     return false;
                 }
             }
