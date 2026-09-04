@@ -157,10 +157,16 @@ namespace Zantetsu.Observability
 
             string fullPath = Path.Combine(directory.OriginalPath, name);
 
+            // Share mode FILE_SHARE_READ only: the verification handle denies
+            // every other handle's write and delete, so the verified content
+            // cannot be mutated or the file removed between verification and
+            // the handle-bound rename/delete. The handle itself still carries
+            // GENERIC_WRITE and DELETE, so FlushFileBuffers, SetFileInformationByHandle
+            // rename, and delete all work through this same handle.
             SafeFileHandle handle = CreateFileW(
                 fullPath,
                 GenericRead | GenericWrite | DeleteAccess,
-                FileShareRead | FileShareWrite | FileShareDelete,
+                FileShareRead,
                 IntPtr.Zero,
                 OpenExisting,
                 FileFlagOpenReparsePoint | FileFlagBackupSemantics,
@@ -302,7 +308,7 @@ namespace Zantetsu.Observability
                     out ioStatusBlock,
                     ref allocationSize,
                     FileAttributeNormal,
-                    FileShareRead | FileShareWrite | FileShareDelete,
+                    FileShareRead,
                     FileCreateDisposition,
                     FileNonDirectoryFile | FileSynchronousIoNonAlert,
                     IntPtr.Zero,

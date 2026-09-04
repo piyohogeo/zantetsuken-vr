@@ -330,9 +330,8 @@ namespace Zantetsu.Observability
 
             using (CaptureIndexCommitDirectory final = _fileSystem.OpenDirectory(_rootLayout.FinalRunRoot))
             {
-                CaptureIndexCommitFile stagingInitFile = OpenRegularFile(staging, RunInitializationMarkerName);
-                CaptureIndexCommitFile finalInitFile = OpenRegularFile(final, RunInitializationMarkerName);
-                try
+                using (CaptureIndexCommitFile stagingInitFile = OpenRegularFile(staging, RunInitializationMarkerName))
+                using (CaptureIndexCommitFile finalInitFile = OpenRegularFile(final, RunInitializationMarkerName))
                 {
                     CaptureRunInitializationMarker stagingInit = CaptureRunInitializationMarkerCodec.DeserializeCanonical(
                         stagingInitFile.Stream, CaptureRunInitializationMarkerCodec.MaximumCanonicalByteCount);
@@ -357,11 +356,6 @@ namespace Zantetsu.Observability
                     {
                         throw new InvalidDataException("Ready marker FinalInitSha256 does not match the final init marker.");
                     }
-                }
-                finally
-                {
-                    stagingInitFile.Dispose();
-                    finalInitFile.Dispose();
                 }
             }
         }
@@ -395,23 +389,26 @@ namespace Zantetsu.Observability
         private void RemoveStagingRunRoot(
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation)
         {
-            using (CaptureIndexCommitDirectory staging = _fileSystem.OpenDirectory(_rootLayout.StagingRunRoot))
-            {
-                RequireAbsent(staging, RunInitializationMarkerName);
-                RequireAbsent(staging, RunReadyMarkerName);
-                RequireAbsent(staging, PublicationPlanName);
-                RequireAbsent(staging, FramesDirectoryName);
-
-                if (!_fileSystem.IsDirectoryEmpty(staging))
-                {
-                    throw new IOException("Staging run root is not empty.");
-                }
-
-                _fileSystem.DeleteDirectory(staging);
-            }
-
+            // Open (and probe flush capability on) the trusted staging base
+            // directory BEFORE the staging run root is deleted, so a flush
+            // capability failure rejects before any side effect.
             using (CaptureIndexCommitDirectory baseDirectory = _fileSystem.OpenDirectory(_rootLayout.StagingTrustedBaseRoot))
             {
+                using (CaptureIndexCommitDirectory staging = _fileSystem.OpenDirectory(_rootLayout.StagingRunRoot))
+                {
+                    RequireAbsent(staging, RunInitializationMarkerName);
+                    RequireAbsent(staging, RunReadyMarkerName);
+                    RequireAbsent(staging, PublicationPlanName);
+                    RequireAbsent(staging, FramesDirectoryName);
+
+                    if (!_fileSystem.IsDirectoryEmpty(staging))
+                    {
+                        throw new IOException("Staging run root is not empty.");
+                    }
+
+                    _fileSystem.DeleteDirectory(staging);
+                }
+
                 _fileSystem.FlushDirectory(baseDirectory);
             }
         }

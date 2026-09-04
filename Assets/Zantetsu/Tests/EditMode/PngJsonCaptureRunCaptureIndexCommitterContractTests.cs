@@ -196,6 +196,45 @@ namespace Zantetsu.Core.Tests
             Assert.That(returnDirectory, Is.GreaterThan(flush));
         }
 
+        [Test]
+        public void FileSystem_TryOpen_VerificationHandle_DeniesOtherWriteDelete()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            _sandboxes.Add(sandbox);
+
+            CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 1);
+            Directory.CreateDirectory(layout.FinalRunRoot);
+
+            string tmpPath = Path.Combine(layout.FinalRunRoot, "capture.index.tmp");
+            File.WriteAllBytes(tmpPath, new byte[] { 1, 2, 3, 4 });
+
+            CaptureIndexCommitFileSystem fileSystem = CaptureIndexCommitFileSystem.Create();
+            using (CaptureIndexCommitDirectory directory = fileSystem.OpenDirectory(layout.FinalRunRoot))
+            {
+                CaptureIndexFileOpen opened = fileSystem.TryOpen(directory, "capture.index.tmp");
+                Assert.That(opened.Status, Is.EqualTo(CaptureIndexFileOpenStatus.Opened));
+                CaptureIndexCommitFile file = opened.File;
+                try
+                {
+                    // While the verification handle is held, other handles must
+                    // not be able to open the file for write or delete.
+                    Assert.Throws<IOException>(() => File.OpenWrite(tmpPath));
+                    Assert.Throws<IOException>(() => File.Delete(tmpPath));
+
+                    // The same handle can still flush, rename, and delete.
+                    fileSystem.FlushFileData(file);
+                    fileSystem.Rename(file, directory, "capture.index");
+                    fileSystem.Delete(file);
+                }
+                finally
+                {
+                    file.Dispose();
+                }
+            }
+
+            Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.False);
+        }
+
         // ---- Null / token / layout rejection ----
 
         [Test]

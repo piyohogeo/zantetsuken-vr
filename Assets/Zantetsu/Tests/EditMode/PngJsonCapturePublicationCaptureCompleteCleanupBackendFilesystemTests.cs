@@ -305,6 +305,8 @@ namespace Zantetsu.Core.Tests
 
             public readonly List<CaptureIndexCommitDirectory> DeletedDirectories = new List<CaptureIndexCommitDirectory>();
 
+            public readonly Queue<CaptureIndexFileOpen> OpenResults = new Queue<CaptureIndexFileOpen>();
+
             public int FlushDirectoryCalls;
 
             public bool IsSupported => Supported;
@@ -329,6 +331,11 @@ namespace Zantetsu.Core.Tests
                 if (EscapesRoot)
                 {
                     return CaptureIndexFileOpen.Of(CaptureIndexFileOpenStatus.EscapesRoot);
+                }
+
+                if (OpenResults.Count > 0)
+                {
+                    return OpenResults.Dequeue();
                 }
 
                 if (OpenStatus == CaptureIndexFileOpenStatus.Opened && OpenFile != null)
@@ -1371,6 +1378,59 @@ namespace Zantetsu.Core.Tests
             backend.Execute(operation, token);
 
             Assert.That(stream.Disposed, Is.True);
+        }
+
+        [Test]
+        public void Execute_RemoveStagingRunRoot_BaseProbeFailure_NoDelete()
+        {
+            CaptureRunRootLayout layout = MakeLayout("C:\\staging", "D:\\final", 1);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan = BuildPlan(layout, commitRoute: true);
+            Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
+                BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+
+            // The trusted base directory open (and its flush probe) fails before
+            // the staging run root is deleted.
+            FakeCleanupFileSystem fileSystem = new FakeCleanupFileSystem { ThrowOnOpenDirectory = true };
+            PngJsonCapturePublicationCaptureCompleteCleanupBackend backend =
+                new PngJsonCapturePublicationCaptureCompleteCleanupBackend(layout, fileSystem);
+
+            Assert.Throws<IOException>(() => backend.Execute(operation, token));
+            Assert.That(fileSystem.DeletedDirectories, Is.Empty);
+        }
+
+        [Test]
+        public void Execute_ReadyMarker_FinalInitOpenFailure_DisposesStagingInit()
+        {
+            CaptureRunRootLayout layout = MakeLayout("C:\\staging", "D:\\final", 1);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan = BuildPlan(layout, commitRoute: true);
+            Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
+                BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker));
+
+            CaptureRunMarkerBinding binding = MakeMarkerBinding(layout);
+            byte[] readyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
+            byte[] stagingInitBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
+
+            TrackingMemoryStream readyStream = new TrackingMemoryStream(readyBytes);
+            TrackingMemoryStream stagingInitStream = new TrackingMemoryStream(stagingInitBytes);
+
+            FakeCleanupFileSystem fileSystem = new FakeCleanupFileSystem();
+            fileSystem.OpenResults.Enqueue(CaptureIndexFileOpen.Opened(new CaptureIndexCommitFile(null, readyStream)));
+            fileSystem.OpenResults.Enqueue(CaptureIndexFileOpen.Opened(new CaptureIndexCommitFile(null, stagingInitStream)));
+            fileSystem.OpenResults.Enqueue(CaptureIndexFileOpen.Of(CaptureIndexFileOpenStatus.IoFailure));
+
+            PngJsonCapturePublicationCaptureCompleteCleanupBackend backend =
+                new PngJsonCapturePublicationCaptureCompleteCleanupBackend(layout, fileSystem);
+
+            Assert.Throws<IOException>(() => backend.Execute(operation, token));
+
+            // The staging init stream/handle opened before the final init open
+            // failure must still be disposed.
+            Assert.That(stagingInitStream.Disposed, Is.True);
+            Assert.That(readyStream.Disposed, Is.True);
         }
     }
 }
