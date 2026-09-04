@@ -99,6 +99,21 @@ namespace Zantetsu.Observability
 
         internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
 
+        internal CaptureRunPublicationCaptureCompleteLifecycleOwnerKind Kind =>
+            _lifecycleEvidence != null
+                ? _lifecycleEvidence.Kind
+                : CaptureRunPublicationCaptureCompleteLifecycleOwnerKind.None;
+
+        internal CaptureRunRootLayout RootLayout => _notificationResult.RootLayout;
+
+        internal long TestRunId => _notificationResult.TestRunId;
+
+        internal string RunInitializationId => _notificationResult.RunInitializationId;
+
+        internal string RunManifestContentSha256 => _notificationResult.RunManifestContentSha256;
+
+        internal string CaptureIndexPath => _notificationResult.CaptureIndexPath;
+
         /// <summary>
         /// Exception-safe exact-binding check shared by <see cref="IsValid"/>,
         /// <see cref="CanRelease"/>, and the release receipt: the held
