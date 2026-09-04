@@ -215,6 +215,23 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Exception-safe token-gated full re-validation: requires the supplied
+        /// token to still bind to this exact plan and its current step
+        /// snapshot, then re-validates the full plan structure with the held
+        /// orchestration proof. It never re-issues a validation token and never
+        /// throws.
+        /// </summary>
+        internal bool IsValidWithToken(ValidationToken token)
+        {
+            if (!IsTokenBound(token))
+            {
+                return false;
+            }
+
+            return IsValid;
+        }
+
+        /// <summary>
         /// Single combined validation path: performs the full plan validation
         /// once, then mints a token bound to this plan, to the held
         /// orchestration proof, and to a defensive snapshot of the issued step

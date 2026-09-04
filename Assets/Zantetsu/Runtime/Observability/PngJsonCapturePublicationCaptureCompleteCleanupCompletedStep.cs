@@ -46,10 +46,13 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Single token-gated atomic factory. For a side-effecting action the
-        /// backend must be present, the receipt must be present and issued by
-        /// that exact backend for the prepared step's exact operation and token,
-        /// and the prepared step must remain index-locally valid for the token.
+        /// Single token-gated atomic factory. It first requires the prepared
+        /// step to remain index-locally valid for the token — before the step's
+        /// action is read — so a structurally corrupted prepared step is
+        /// rejected with an <see cref="ArgumentException"/> instead of leaking a
+        /// getter exception. For a side-effecting action the backend must be
+        /// present and the receipt must be present and issued by that exact
+        /// backend for the prepared step's exact operation and token.
         /// <c>CaptureCompleteReady</c> requires no receipt. No plan
         /// re-validation, token re-issuance, entry scan, or filesystem access
         /// happens.
@@ -68,6 +71,13 @@ namespace Zantetsu.Observability
             if (token == null)
             {
                 throw new ArgumentNullException(nameof(token));
+            }
+
+            if (!preparedStep.IsValidIndexLocal(token))
+            {
+                throw new ArgumentException(
+                    "Prepared step must be index-locally valid for the token.",
+                    nameof(preparedStep));
             }
 
             switch (preparedStep.Action)
@@ -90,13 +100,6 @@ namespace Zantetsu.Observability
                         throw new ArgumentNullException(nameof(cleanupReceipt));
                     }
 
-                    if (!preparedStep.IsValidIndexLocal(token))
-                    {
-                        throw new ArgumentException(
-                            "Prepared step must be index-locally valid for the token.",
-                            nameof(preparedStep));
-                    }
-
                     if (!cleanupReceipt.IsIssuedFor(backend, preparedStep.CleanupOperation, token))
                     {
                         throw new ArgumentException(
@@ -112,13 +115,6 @@ namespace Zantetsu.Observability
                         throw new ArgumentException(
                             "CaptureCompleteReady must hold no cleanup receipt.",
                             nameof(cleanupReceipt));
-                    }
-
-                    if (!preparedStep.IsValidIndexLocal(token))
-                    {
-                        throw new ArgumentException(
-                            "Prepared step must be index-locally valid for the token.",
-                            nameof(preparedStep));
                     }
 
                     break;
@@ -155,7 +151,7 @@ namespace Zantetsu.Observability
                 }
 
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan = _preparedStep.ActionPlan;
-                if (actionPlan == null || !_token.IsIssuedFor(actionPlan) || !actionPlan.IsValid)
+                if (actionPlan == null || !actionPlan.IsValidWithToken(_token))
                 {
                     return false;
                 }
@@ -168,10 +164,11 @@ namespace Zantetsu.Observability
         /// O(1), exception-safe index-local check: the caller's token must be
         /// reference-identical to the held token first, the prepared step must
         /// remain index-locally valid, and the receipt must match the action —
-        /// exactly one receipt bound to the prepared step's exact operation for
-        /// a side-effecting action, and none for
-        /// <c>CaptureCompleteReady</c>. It never re-validates the whole plan,
-        /// re-issues a token, scans an entry, or touches a filesystem.
+        /// exactly one receipt re-verified by its own issuer for the prepared
+        /// step's exact operation and held token for a side-effecting action,
+        /// and none for <c>CaptureCompleteReady</c>. It never re-validates the
+        /// whole plan, re-issues a token, scans an entry, or touches a
+        /// filesystem.
         /// </summary>
         internal bool IsValidIndexLocal(PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
@@ -198,7 +195,10 @@ namespace Zantetsu.Observability
                     case CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker:
                     case CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot:
                         return _cleanupReceipt != null
-                            && ReferenceEquals(_cleanupReceipt.Operation, _preparedStep.CleanupOperation);
+                            && _cleanupReceipt.IsIssuedFor(
+                                _cleanupReceipt.IssuedBy,
+                                _preparedStep.CleanupOperation,
+                                _token);
 
                     case CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady:
                         return _cleanupReceipt == null;

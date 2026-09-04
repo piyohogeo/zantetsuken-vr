@@ -1367,6 +1367,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompletedStep_Create_CorruptedPreparedStep_RejectedWithArgumentException()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
+            Assert.That(batch.TryValidate(out token), Is.True);
+
+            FakeCleanup backend = new FakeCleanup();
+            PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep prepared = batch.GetStep(0);
+            PngJsonCapturePublicationCaptureCompleteCleanupReceipt receipt = backend.Execute(prepared.CleanupOperation, token);
+
+            // Corrupt the prepared step's action plan: reading its Action getter
+            // would leak a NullReferenceException, but the factory must reject
+            // with ArgumentException before reading the action.
+            SetField(prepared, "_actionPlan", null);
+
+            Assert.Throws<ArgumentException>(() =>
+                PngJsonCapturePublicationCaptureCompleteCleanupCompletedStep.CreateIndexLocal(backend, prepared, receipt, token));
+        }
+
+        [Test]
         public void Result_CompletedStepsArrayCorruption_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildTemporaryDocumentsPlan();
@@ -1406,6 +1427,65 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(result.IsValid, Is.False);
             Assert.That(token.IsIssuedFor(result), Is.False);
+            Assert.That(result.IsValidWithToken(token), Is.False);
+        }
+
+        [Test]
+        public void ReceiptTokenNull_InvalidatesCompletedStepResultAndToken()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            RecordingBackend backend = new RecordingBackend();
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new PngJsonCapturePublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupCompletedStep completed = result.GetCompletedStep(0);
+            PngJsonCapturePublicationCaptureCompleteCleanupReceipt receipt = completed.CleanupReceipt;
+            Assert.That(receipt, Is.Not.Null);
+
+            Assert.That(result.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult.ValidationToken token), Is.True);
+            Assert.That(completed.IsValid, Is.True);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.IsValidWithToken(token), Is.True);
+
+            // Null the receipt's held token: the completed step, the result, and
+            // the already-issued result token must all fail closed.
+            SetField(receipt, "_token", null);
+
+            Assert.That(completed.IsValid, Is.False);
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.IsValidWithToken(token), Is.False);
+        }
+
+        [Test]
+        public void ReceiptReissuedTokenSwap_InvalidatesCompletedStepResultAndToken()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+            RecordingBackend backend = new RecordingBackend();
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
+                new PngJsonCapturePublicationCaptureCompleteCleanupExecutionCoordinator(backend);
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult result = coordinator.Execute(batch);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupCompletedStep completed = result.GetCompletedStep(0);
+            PngJsonCapturePublicationCaptureCompleteCleanupReceipt receipt = completed.CleanupReceipt;
+            Assert.That(receipt, Is.Not.Null);
+
+            Assert.That(result.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult.ValidationToken token), Is.True);
+            Assert.That(completed.IsValid, Is.True);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.IsValidWithToken(token), Is.True);
+
+            // Swap the receipt's held token for a separately re-issued token for
+            // the same plan: the completed step, the result, and the
+            // already-issued result token must all fail closed.
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken reissued;
+            Assert.That(plan.TryValidate(out reissued), Is.True);
+            SetField(receipt, "_token", reissued);
+
+            Assert.That(completed.IsValid, Is.False);
+            Assert.That(result.IsValid, Is.False);
             Assert.That(result.IsValidWithToken(token), Is.False);
         }
 
@@ -1477,6 +1557,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("batch.TryValidate"));
             Assert.That(source, Does.Not.Contain("_actionPlan.TryValidate"));
             Assert.That(source, Does.Not.Contain("ActionPlan.TryValidate"));
+            Assert.That(source, Does.Contain("actionPlan.IsValidWithToken(token)"));
+            Assert.That(source, Does.Not.Contain("actionPlan.IsValid)"));
         }
 
         [Test]
@@ -1493,6 +1575,31 @@ namespace Zantetsu.Core.Tests
             Assert.That(createBody, Does.Contain("preparedStep.IsValidIndexLocal(token)"));
             Assert.That(createBody, Does.Contain("cleanupReceipt.IsIssuedFor("));
             Assert.That(createBody, Does.Not.Contain("TryValidate"));
+        }
+
+        [Test]
+        public void Source_CompletedStep_IsValidUsesTokenGatedPlanValidation()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupCompletedStep.cs");
+
+            Assert.That(source, Does.Contain("actionPlan.IsValidWithToken(_token)"));
+            Assert.That(source, Does.Not.Contain("actionPlan.IsValid)"));
+        }
+
+        [Test]
+        public void Source_ActionPlan_IsValidWithToken_NoTokenReissuance()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
+
+            int index = source.IndexOf("internal bool IsValidWithToken(ValidationToken token)", StringComparison.Ordinal);
+            Assert.That(index, Is.GreaterThan(0));
+            int next = source.IndexOf("internal bool TryValidate(", index, StringComparison.Ordinal);
+            Assert.That(next, Is.GreaterThan(index));
+            string body = source.Substring(index, next - index);
+
+            Assert.That(body, Does.Contain("IsTokenBound(token)"));
+            Assert.That(body, Does.Not.Contain("TryAcquire"));
+            Assert.That(body, Does.Not.Contain("TryValidateAndCaptureProofs"));
         }
 
         [Test]

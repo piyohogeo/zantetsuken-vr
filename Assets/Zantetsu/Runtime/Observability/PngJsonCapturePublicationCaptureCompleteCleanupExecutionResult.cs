@@ -320,7 +320,7 @@ namespace Zantetsu.Observability
                 }
 
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan = batch.ActionPlan;
-                if (actionPlan == null || !token.IsIssuedFor(actionPlan) || !actionPlan.IsValid)
+                if (actionPlan == null || !actionPlan.IsValidWithToken(token))
                 {
                     return false;
                 }
