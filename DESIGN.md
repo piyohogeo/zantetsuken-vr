@@ -1391,7 +1391,7 @@ Blender評価Meshのface loopは、`inverse(M_root) * M_object`の線形成分�
 
 ZCGの全幾何判定は、格納対象の正規化済みbinary32 positionをbinary64へ正確に拡張した値だけを正本とする共通`ZcgNumericKernelV1`を使う。Blender側の元double座標、Normal、既存Plane、Unity側float計算を判定へ混ぜない。演算はIEEE 754 binary64 round-to-nearest-ties-to-even、FMA／fast-math無効、積と差を式の記載順、dotと総和を左畳みで行う。`dot(a,b) = ((a.x*b.x + a.y*b.y) + a.z*b.z)`、`crossRH(a,b) = (a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x)`、`length(c) = sqrt(((c.x*c.x + c.y*c.y) + c.z*c.z))`へ固定し、sqrtはIEEE 754 correctly-rounded binary64を使用する。
 
-検証対象domainのbinary32 positionから各軸min／maxをpositionのcanonical順に比較して求め、軸差を`dx,dy,dz`とする。`D = sqrt(((dx*dx + dy*dy) + dz*dz))`、`epsDistance = max(Profile.AbsoluteEpsilonMeters, D * Profile.RelativeEpsilon)`、`epsArea = epsDistance * epsDistance`、`epsVolume = epsArea * epsDistance`とする。Dが非正／非有限ならRejectする。距離／半空間誤差はepsilon以下を包含側とする一方、非退化面積と正体積はそれぞれ`> epsArea`、`> epsVolume`を必須とし、等号は退化側としてRejectする。
+検証対象domainのbinary32 positionから各軸min／maxをpositionのcanonical順に比較して求め、軸差を`dx,dy,dz`とする。`D = sqrt(((dx*dx + dy*dy) + dz*dz))`、`epsDistance = max(Profile.AbsoluteEpsilonMeters, D * Profile.RelativeEpsilon)`、`epsArea = epsDistance * epsDistance`、`epsVolume = epsArea * epsDistance`とする。Dが非正／非有限ならRejectする。距離／半空間誤差はepsilon以下を包含側とする一方、非退化面積と正体積はそれぞれ`> epsArea`、`> epsVolume`を必須とし、等号は退化側としてRejectする。 ただし、後述の`SharedSimplexIntersectionV1`のnarrow phaseだけは距離／半空間のepsilon包含規則の例外とする。先行する退化Gate、BVH候補生成、非共有pairの距離判定はこの例外に含めない。
 
 `TriangleMesh` payloadは`uint32 PositionCount`、`uint32 TriangleCount`、続いてPositionCount件の`float32 x,y,z`、TriangleCount件の`uint32 i0,i1,i2`とする。元Geometryを位置だけのtriangle soupへ展開し、完全に同じ正規化positionを1件へweldして、positionを数値`x,y,z`のlexicographic昇順へ並べ直す。各Triangleは新indexへremapし、windingを反転せず3 indexをcyclic rotationして辞書順最小表現にし、Triangle列全体を`i0,i1,i2`の辞書順へsortする。範囲外index、同一頂点を含むTriangle、同一index tripleの重複をRejectする。Licensed TriangleMeshとSynthetic Watertight TriangleMeshはこのKindを使う。
 
@@ -1425,25 +1425,27 @@ point-triangle、segment-triangle、segment-segmentはversion固定のEricson型
 
 候補counter、node数、byte数はchecked unsigned 64-bitで配列確保前とappend前に検査する。一意候補がSynthetic Profileの`MaxCandidatePairCount=2000000`へ達した後、次の異なるpairを検出した時点で追加割当や狭域判定を行わず、Synthetic Validation Resultの`SelfIntersectionCandidatePairCount`を`MaxCandidatePairCount + 1`、結果を`CandidatePairLimit`不合格として終了する。候補counter、`2 * TriangleCount - 1`のnode数、pair／node byte長のいずれかがchecked overflowする場合も、割当前に同じsentinelと不合格へ収束させる。Triangle AABBのepsilon拡張だけが非有限化した場合は`NonFinite`不合格とする。これらをLicensed ProfileUnsupported／Resource retryへ変換せず、Synthetic Harness固有の固定容量失敗として扱う。
 
-sort／deduplicate後の候補だけをcanonical pair `(a,b)`昇順に処理し、AABB broad phaseを通らなかったpairへ`ClosedTriangleDistanceV1`やResidual最適化を実行しない。position indexを共有していても候補pair自体を除外せず、まず共有を無視した閉Triangle同士の接触／近接を求める。
+sort／deduplicate後の候補だけをcanonical pair `(a,b)`昇順に処理し、AABB broad phaseを通らなかったpairへnarrow phaseを実行しない。共有position index数が0なら`ClosedTriangleDistanceV1`、1または2なら下記`SharedSimplexIntersectionV1`で分類する。共有indexだけを理由に候補pairを除外しない。
 
-共有indexが1または2のpairには、同じ共有Validator artifactに含まれる`SharedSimplexResidualV1`を追加適用する。共有1 indexならそのpositionを閉point、共有2 indexなら2 positionをcanonical index昇順で結ぶ閉segmentとして共有simplex `S`を定義し、`N(S) = { x | squaredDistance(x,S) <= epsDistanceSquared }`を閉じた許可近傍とする。ここで接触集合を`CA = { x in closed A | squaredDistance(x, closed B) <= epsDistanceSquared }`、`CB = { x in closed B | squaredDistance(x, closed A) <= epsDistanceSquared }`と定義する。`CA union CB`の全点が`N(S)`に含まれることを証明できた場合だけ正規の共有simplex接触として許可し、1点でもstrictに外にあるwitnessを得た場合、または包含を証明できない場合は保守的に自己交差として数える。binary64で計算済みの`epsDistanceSquared`の直後の有限表現可能値を`epsOutsideSquared = nextUp(epsDistanceSquared)`とし、`nextUp`はIEEE 754 binary64の正方向に隣接する値を返すbit-level操作へ固定する。有限非負値について`distanceSquared > epsDistanceSquared`と`distanceSquared >= epsOutsideSquared`を同値として扱い、epsilon等号を残余側へ含めない。
+共有indexが1または2のpairには、同じ共有Validator artifactに含まれる`SharedSimplexIntersectionV1`を適用する。共有1 indexならそのpositionを閉point、共有2 indexなら2 positionをcanonical index昇順で結ぶ閉segmentとして共有simplex `S`を定義する。閉Triangleの実交差集合`A intersection B`が`S`内だけなら許可し、`S`外にも接触・交差があれば自己交差1件とする。共有simplex外のcoplanar overlapとproper crossingを含む一方、正常な隣接面間のepsilon近接だけでは自己交差としない。許可領域をepsilon近傍へ拡張せず、epsilon近接集合の包含証明や残余距離の制約最適化は行わない。
 
-`SharedSimplexResidualV1`は上記集合包含を別実装へ委ねず、`ClosedTriangleDistanceV1`が生成する全point-triangle、全segment-triangle、全segment-segment witnessに加え、coplanar時はdominant-axisへ射影した2D Sutherland-Hodgman閉Triangle clippingで得る全intersection polygon頂点、非coplanar時は各方向3 edgeのsegment-triangle交点をcanonical候補順に検査する。各接触witnessの`pA`と`pB`について共有pointまたはclosed segmentへの二乗距離を同じKernelで計算し、どちらかが`>= epsOutsideSquared`なら残余交差とする。さらにepsilon近接領域については、各Triangleのbarycentric domainを共有simplexから遠ざかる方向へ制約した二次距離最小化を、共有artifact内の固定`ResidualClosestPointV1`で実行する。共有vertexではその共有vertexのbarycentric weightが`< 1`となる3 edge／face region、共有edgeでは非共有vertex weightが`> 0`となるedge／face regionを固定region順に列挙し、`squaredDistanceToS >= epsOutsideSquared`の閉制約を満たす各regionの最小Triangle間二乗距離を求める。いずれかが`<= epsDistanceSquared`なら残余交差、全regionがstrictに超過した場合だけ包含証明成功とする。`squaredDistanceToS == epsDistanceSquared`は許可近傍内、`== epsOutsideSquared`は残余候補内とする。数値的にregionを分類不能、非有限値、`nextUp`を生成不能な値は残余交差側へ倒す。この実装sourceとgolden結果もScript Bundle hashへ含め、Blender／Unityで別の近似判定を持たない。
+`SharedSimplexIntersectionV1`は既存のbinary32復号値／binary64 Numeric Kernelを用い、coplanar時はdominant-axisへ射影した2D閉Triangle clipping、非coplanar時は各方向3 edgeのsegment-triangle交差から実交差の共有simplex外への広がりを検査する。共有部で距離0になる最小距離witnessだけで判定しない。coplanar判定、clippingのinside判定、segment-triangle判定および共有simplex内外の判定は、固定binary64演算の符号・等号・閉区間比較だけで行い、narrow phaseに`epsDistance`その他のepsilon包含を適用しない。ここでいう実交差はこの固定predicateが返す交差を意味し、実数幾何の完全証明を要求しない。先行Gateを通過した有限・非退化入力は、中間演算も有限なら必ず許可／自己交差の二値へ分類し、分類不能という第三状態を持たない。非有限演算は既存`FailureReason=NonFinite`へ送る。別ライブラリやepsilon近接判定へのFallbackを追加しない。実装sourceとGoldenはSynthetic Script Bundle hashへ含め、更新前Validatorの結果を更新後の検証証拠として流用しない。Profile／Validation Resultのschema、Licensed処理は変更しない。
 
 pair分類は次の完全決定表に固定する。
 
-| 共有position index数 | 距離条件 | 判定 |
+| 共有position index数 | 条件 | 判定 |
 | --- | --- | --- |
 | 3 | 任意 | 重複Triangleとして先行GateでReject。自己交差数へ到達しない |
-| 2 | 全接触／epsilon近接集合が共有edgeの`N(S)`内と証明済み | 正規の共有edge接触として許可。directed向き不整合は先行Orientation GateでReject |
-| 2 | `N(S)`外のwitnessあり、または包含証明不能 | 共有edge以外にもcoplanar overlap、proper crossing、非共有近接があるため自己交差1件 |
-| 1 | 全接触／epsilon近接集合が共有vertexの`N(S)`内と証明済み | 正規の共有vertex接触として許可 |
-| 1 | `N(S)`外のwitnessあり、または包含証明不能 | 共有vertex以外にもcoplanar overlap、proper crossing、非共有近接があるため自己交差1件 |
+| 2 | 実交差が共有edge上だけ | 正規の共有edge接触として許可。directed向き不整合は先行Orientation GateでReject |
+| 2 | 共有edge外にも実交差あり | coplanar overlap等として自己交差1件。epsilon近接だけでは数えない |
+| 1 | 実交差が共有vertex上だけ | 正規の共有vertex接触として許可 |
+| 1 | 共有vertex外にも実交差あり | proper crossing等として自己交差1件。epsilon近接だけでは数えない |
 | 0 | `minimumSquaredDistance <= epsDistanceSquared` | coplanar overlap、proper crossing、非共有vertex／edge／face接触、epsilon以内のnear missを区別せず自己交差1件として数える |
 | 0 | `minimumSquaredDistance > epsDistanceSquared` | 非交差。自己交差数へ加えない |
 
-したがって「Triangle interiorだけ」という別predicateは持たず、Topologyで共有されたedge／vertexのepsilon近傍だけを明示的に許可する。共有index数だけを根拠にpair全体を除外してはならない。共有indexなしのpair、または共有simplex許可領域外の残余接触ではTriangle間距離がepsilonちょうどなら自己交差、binary64でその直外なら非交差とする。共有simplexからの距離がepsilonちょうどの正常接触は閉じた`N(S)`内として許可する。候補pairをcanonical順に処理した件数がSynthetic Profileの`MaxSelfIntersectionCount=0`以下であることを要求する。
+共有indexなしのpairではTriangle間距離がepsilonちょうどなら自己交差、binary64でその直外なら非交差という既存規則を維持する。共有indexが1または2のpairにはこの近接閾値を適用せず、共有simplex外の実交差だけを数える。候補pairをcanonical順に分類して得た自己交差件数がSynthetic Profileの`MaxSelfIntersectionCount=0`以下であることを要求する。BVH、候補pair順、`MaxCandidatePairCount`とValidation Result schemaは維持する。
+
+T-081の小さいSynthetic回帰Fixtureで、正常な閉Tetrahedronと軸平行boxの自己交差0、共有edge外のcoplanar overlap拒否、共有vertex外のproper crossing拒否、非共有pairのepsilon near-miss拒否（既存の等号／1 ULP境界を含む）を確認する。Licensed経路から本Validatorを呼ばないことも確認する。これらはpredicate／Golden試験とし、Dataset case構成や全三角化の網羅matrixを追加しない。
 
 Synthetic ZCG後GateでBoundary、Non-Manifold、向き、自己交差、成分volume、Bounds、Triangle退化のいずれかが失敗したFixtureは`SyntheticFixtureValidationResult.Passed=false`とし、Synthetic Dataset Indexへ含めない。Validation ResultのTriangle数、連結成分、Bounds、Volume、Boundary／Non-Manifold／SelfIntersection Candidate Pair／SelfIntersection統計は合格・不合格ともZCG decode後の値を正本とし、canonical化前の値を残さない。Candidate Pair上限超過だけは完全列挙せず、規定のsentinel `MaxCandidatePairCount + 1`を保存する。この結果をLicensed Report／Receiptへ書き戻さない。
 
@@ -2258,7 +2260,7 @@ Phase 5.5の建物Recipeでは、外周Structural Slab、入口回避Compound Bo
 | SolidSignedVolumeV1 | Synthetic Watertight ZCGの連結成分について、成分Bounds中心、canonical Triangle／成分順、triangleごとの除算、binary64左畳みを固定して正体積を判定するテスト専用volume契約。Licensed／製品Solidを意味しない |
 | SolidGeometryValidatorV1 | Synthetic Watertight ZCGだけを読み、閉Topology、`SolidSignedVolumeV1`、`ClosedTriangleDistanceV1`を同一artifactで検証するversion固定Validator。Synthetic Script Bundleで内容を固定し、Licensed Harnessと製品Preprocessorから呼び出さない |
 | SolidCandidateBvhV1 | Synthetic Watertight Triangleのepsilon拡張AABBから固定axis／median規則で構築し、自己交差の一意候補pairだけを生成するテスト専用の決定論的BVH。候補はcanonical順へsortし、Synthetic Profile上限で停止する。Licensed／製品Meshへは実行しない |
-| ClosedTriangleDistanceV1 | 全Triangle pairを、固定順のpoint-to-closed-triangle／segment-to-closed-triangle／closed-segment距離候補と`epsDistance`で保守的に分類するSolid自己交差predicate。共有indexがあるpairも除外せず、`SharedSimplexResidualV1`で共有simplex近傍外の残余交差を検査する |
+| ClosedTriangleDistanceV1 | Synthetic Solid自己交差Validatorの非共有Triangle pair用距離predicate。固定順のpoint-to-closed-triangle／segment-to-closed-triangle／closed-segment距離候補と`epsDistance`で分類する。共有indexが1または2のpairは`SharedSimplexIntersectionV1`で共有simplex外の実交差を検査し、epsilon近接だけでは拒否しない |
 | Early Fixture Reduction Variant | 許可カテゴリ／Recipeから1回Ratioで生成する要求Tri Target別の派生Geometry。Actualが規模正本。NoOpは直接入力、Aliasは同じSource／Kind／hashの最初の先行Artifactを参照する。Characterには生成しない |
 | Early Fixture Voxel Variant | Phase 0.2 VehicleのVoxelSolidify1cm基底と限定Post-Decimate。meter基準0.01 m、Separate per Source Objectを固定し、相対Voxel64／128／256を使わない。Licensed Solid検証を要求しない |
 | EarlyFixtureSelectionReport | schema v2。完了frontier内の全PlannedVariantEntry、Attempts、ProcessStatus、成功時のtagged出力とGenerated／NoOp／Alias、失敗Reason、Entry単位provenanceを記録する非公開Report。時間／memory観測値はDataset hash外 |
