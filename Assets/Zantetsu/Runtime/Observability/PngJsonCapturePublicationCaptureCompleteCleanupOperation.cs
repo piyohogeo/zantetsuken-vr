@@ -9,11 +9,12 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The operation holds exactly four values: the action plan, the
-    /// publication path set, the marker path set, and the step index. It never
-    /// duplicates a path, ID, hash, byte count, step, or artifact path set
-    /// into a field; those are re-derived from the held references on demand.
-    /// The target path is derived only from the authoritative
+    /// The operation holds exactly five values: the action plan, the
+    /// publication path set, the marker path set, the step index, and, for a
+    /// staging-artifact step, the exact validated artifact path set. It never
+    /// duplicates a path, ID, hash, byte count, or step into a field; those
+    /// are re-derived from the held references on demand. The target path is
+    /// derived only from the authoritative
     /// <see cref="CaptureRunPublicationPathSet"/>,
     /// <see cref="CaptureRunMarkerPathSet"/>, and
     /// <see cref="CaptureRunRootLayout"/>, never regenerated or normalized.
@@ -32,17 +33,20 @@ namespace Zantetsu.Observability
         private readonly CaptureRunPublicationPathSet _publicationPaths;
         private readonly CaptureRunMarkerPathSet _markerPaths;
         private readonly int _stepIndex;
+        private readonly PngJsonCapturePublicationArtifactInspectionPathSet _artifactPaths;
 
         private PngJsonCapturePublicationCaptureCompleteCleanupOperation(
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan,
             CaptureRunPublicationPathSet publicationPaths,
             CaptureRunMarkerPathSet markerPaths,
-            int stepIndex)
+            int stepIndex,
+            PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
         {
             _actionPlan = actionPlan;
             _publicationPaths = publicationPaths;
             _markerPaths = markerPaths;
             _stepIndex = stepIndex;
+            _artifactPaths = artifactPaths;
         }
 
         /// <summary>
@@ -112,12 +116,16 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(token));
             }
 
-            if (!TryCorrelateTrusted(token, actionPlan, publicationPaths, markerPaths, stepIndex, out CorrelationFailure failure))
+            if (!TryCorrelateTrusted(
+                    token, actionPlan, publicationPaths, markerPaths, stepIndex,
+                    out CorrelationFailure failure,
+                    out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths))
             {
                 ThrowFor(failure, stepIndex);
             }
 
-            return new PngJsonCapturePublicationCaptureCompleteCleanupOperation(actionPlan, publicationPaths, markerPaths, stepIndex);
+            return new PngJsonCapturePublicationCaptureCompleteCleanupOperation(
+                actionPlan, publicationPaths, markerPaths, stepIndex, artifactPaths);
         }
 
         internal PngJsonCapturePublicationCaptureCompleteCleanupActionPlan ActionPlan => _actionPlan;
@@ -173,14 +181,7 @@ namespace Zantetsu.Observability
                     return null;
                 }
 
-                PngJsonCapturePublicationArtifactInspectionOperation inspection = InspectionOperation(_actionPlan);
-                if (inspection == null
-                    || !inspection.TryGetArtifactPaths(step.EntryIndex, out PngJsonCapturePublicationArtifactInspectionPathSet paths))
-                {
-                    return null;
-                }
-
-                return paths;
+                return _artifactPaths;
             }
         }
 
@@ -251,7 +252,20 @@ namespace Zantetsu.Observability
         {
             get
             {
-                return TryCorrelate(_actionPlan, _publicationPaths, _markerPaths, _stepIndex, out _);
+                if (_actionPlan == null || _publicationPaths == null || _markerPaths == null)
+                {
+                    return false;
+                }
+
+                if (!_actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token))
+                {
+                    return false;
+                }
+
+                return TryCorrelateTrusted(
+                        token, _actionPlan, _publicationPaths, _markerPaths, _stepIndex,
+                        out _, out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
+                    && ReferenceEquals(artifactPaths, _artifactPaths);
             }
         }
 
@@ -268,7 +282,10 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsValidIndexLocal(PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token)
         {
-            return TryCorrelateTrusted(token, _actionPlan, _publicationPaths, _markerPaths, _stepIndex, out _);
+            return TryCorrelateTrusted(
+                    token, _actionPlan, _publicationPaths, _markerPaths, _stepIndex,
+                    out _, out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
+                && ReferenceEquals(artifactPaths, _artifactPaths);
         }
 
         private static PngJsonCapturePublicationArtifactInspectionOperation InspectionOperation(
@@ -347,36 +364,6 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Full correlation predicate used by <see cref="IsValid"/>. It performs
-        /// one full action plan validation plus one token issuance, then
-        /// delegates to the shared index-local predicate with the same token.
-        /// The predicate never throws.
-        /// </summary>
-        private static bool TryCorrelate(
-            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan,
-            CaptureRunPublicationPathSet publicationPaths,
-            CaptureRunMarkerPathSet markerPaths,
-            int stepIndex,
-            out CorrelationFailure failure)
-        {
-            failure = CorrelationFailure.None;
-
-            if (actionPlan == null || publicationPaths == null || markerPaths == null)
-            {
-                failure = CorrelationFailure.InvalidActionPlan;
-                return false;
-            }
-
-            if (!actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token))
-            {
-                failure = CorrelationFailure.InvalidActionPlan;
-                return false;
-            }
-
-            return TryCorrelateTrusted(token, actionPlan, publicationPaths, markerPaths, stepIndex, out failure);
-        }
-
-        /// <summary>
         /// Token-gated, index-local correlation predicate used by the trusted
         /// constructor. It performs no full plan walk; the caller proves the
         /// plan was validated by supplying the plan's validation token.
@@ -387,9 +374,11 @@ namespace Zantetsu.Observability
             CaptureRunPublicationPathSet publicationPaths,
             CaptureRunMarkerPathSet markerPaths,
             int stepIndex,
-            out CorrelationFailure failure)
+            out CorrelationFailure failure,
+            out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
         {
             failure = CorrelationFailure.None;
+            artifactPaths = null;
 
             if (actionPlan == null || publicationPaths == null || markerPaths == null || token == null)
             {
@@ -426,7 +415,7 @@ namespace Zantetsu.Observability
                     stepIndex,
                     out CaptureRunPublicationCaptureCompleteCleanupStep step,
                     out PngJsonCapturePublicationArtifactEntryObservation observation,
-                    out PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths))
+                    out artifactPaths))
             {
                 failure = CorrelationFailure.InspectionInvalid;
                 return false;

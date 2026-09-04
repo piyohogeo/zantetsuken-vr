@@ -316,15 +316,21 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationCaptureCompleteCleanupActionPlan _plan;
             private readonly PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.ValidationToken _orchestrationToken;
             private readonly IssuedStepProof[] _issuedSteps;
+            private readonly PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken _snapshotToken;
+            private readonly PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken _operationToken;
 
             private ValidationToken(
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
                 PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.ValidationToken orchestrationToken,
-                IssuedStepProof[] issuedSteps)
+                IssuedStepProof[] issuedSteps,
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
+                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken operationToken)
             {
                 _plan = plan;
                 _orchestrationToken = orchestrationToken;
                 _issuedSteps = issuedSteps;
+                _snapshotToken = snapshotToken;
+                _operationToken = operationToken;
             }
 
             /// <summary>
@@ -433,6 +439,14 @@ namespace Zantetsu.Observability
                             artifactPaths = null;
                             return false;
                         }
+
+                        if (!TryReconfirmArtifactInputs(plan, step.EntryIndex, observation, artifactPaths))
+                        {
+                            step = null;
+                            observation = null;
+                            artifactPaths = null;
+                            return false;
+                        }
                     }
 
                     return true;
@@ -442,6 +456,67 @@ namespace Zantetsu.Observability
                     step = null;
                     observation = null;
                     artifactPaths = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// O(1), exception-safe re-binding of one issued artifact step to
+            /// the current inspection graph: the current snapshot entry must be
+            /// the exact issued observation, the current inspection path set
+            /// must be the exact issued path set, and both must remain
+            /// index-locally valid against the snapshot and operation tokens
+            /// minted at issuance. Any entry-array element swap, path-set array
+            /// element swap, or path field mutation fails closed. Never throws.
+            /// </summary>
+            private bool TryReconfirmArtifactInputs(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
+                int entryIndex,
+                PngJsonCapturePublicationArtifactEntryObservation observation,
+                PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
+            {
+                if (_snapshotToken == null || _operationToken == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    PngJsonCapturePublicationArtifactInspectionSnapshot snapshot =
+                        plan._orchestrationResult == null ? null : plan._orchestrationResult.InspectionSnapshot;
+                    if (snapshot == null || !_snapshotToken.IsIssuedFor(snapshot))
+                    {
+                        return false;
+                    }
+
+                    PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                    if (operation == null || !_operationToken.IsIssuedFor(operation))
+                    {
+                        return false;
+                    }
+
+                    if (!snapshot.TryGetEntry(entryIndex, out PngJsonCapturePublicationArtifactEntryObservation currentEntry)
+                        || !ReferenceEquals(observation, currentEntry))
+                    {
+                        return false;
+                    }
+
+                    if (!operation.TryGetArtifactPaths(entryIndex, out PngJsonCapturePublicationArtifactInspectionPathSet currentPaths)
+                        || !ReferenceEquals(artifactPaths, currentPaths))
+                    {
+                        return false;
+                    }
+
+                    if (!ReferenceEquals(observation.ArtifactPaths, artifactPaths))
+                    {
+                        return false;
+                    }
+
+                    return _snapshotToken.IsIndexLocalCorrelated(snapshot, entryIndex)
+                        && _operationToken.IsIndexLocalCorrelated(operation, entryIndex);
+                }
+                catch (Exception)
+                {
                     return false;
                 }
             }
@@ -482,6 +557,21 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot =
+                    plan._orchestrationResult.InspectionSnapshot;
+                if (snapshot == null
+                    || !snapshot.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken))
+                {
+                    return false;
+                }
+
+                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
+                if (operation == null
+                    || !operation.TryValidate(out PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken operationToken))
+                {
+                    return false;
+                }
+
                 IssuedStepProof[] issuedSteps = new IssuedStepProof[plan._steps.Length];
                 for (int i = 0; i < issuedSteps.Length; i++)
                 {
@@ -500,7 +590,7 @@ namespace Zantetsu.Observability
                     issuedSteps[i] = new IssuedStepProof(step, observation, artifactPaths);
                 }
 
-                token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps);
+                token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps, snapshotToken, operationToken);
                 return true;
             }
 

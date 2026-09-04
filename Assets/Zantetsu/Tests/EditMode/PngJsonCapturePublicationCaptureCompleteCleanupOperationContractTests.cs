@@ -797,7 +797,7 @@ namespace Zantetsu.Core.Tests
         // ---- Tests ----
 
         [Test]
-        public void Operation_Shape_FourReadonlyFields_NoPublicCtor()
+        public void Operation_Shape_FiveReadonlyFields_NoPublicCtor()
         {
             Type type = typeof(PngJsonCapturePublicationCaptureCompleteCleanupOperation);
 
@@ -807,7 +807,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(4));
+            Assert.That(fields.Length, Is.EqualTo(5));
             Assert.That(fields.All(f => f.IsInitOnly), Is.True);
         }
 
@@ -1104,6 +1104,89 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationCaptureCompleteCleanupOperation.Create(plan, publicationPaths, markerPaths, 0);
 
             Assert.That(op.IsValidIndexLocal(null), Is.False);
+        }
+
+        [Test]
+        public void EntryArrayElementSwapAfterToken_Rejected()
+        {
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 2);
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
+            Assert.That(plan.TryValidate(out token), Is.True);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation op =
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.Create(plan, publicationPaths, markerPaths, 0);
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            // Swap snapshot entry 0 with entry 1 after the token was minted.
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = result.InspectionSnapshot;
+            PngJsonCapturePublicationArtifactEntryObservation[] entries =
+                (PngJsonCapturePublicationArtifactEntryObservation[])GetField(snapshot, "_entries");
+            entries[0] = entries[1];
+
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(() =>
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.CreateIndexLocal(
+                    token, plan, publicationPaths, markerPaths, 0));
+        }
+
+        [Test]
+        public void ArtifactPathSetArrayElementSwapAfterToken_Rejected()
+        {
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 2);
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
+            Assert.That(plan.TryValidate(out token), Is.True);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation op =
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.Create(plan, publicationPaths, markerPaths, 0);
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            // Swap the inspection operation's path set 0 with path set 1 after
+            // the token was minted.
+            PngJsonCapturePublicationArtifactInspectionOperation operation = result.InspectionSnapshot.Operation;
+            PngJsonCapturePublicationArtifactInspectionPathSet[] artifactPaths =
+                (PngJsonCapturePublicationArtifactInspectionPathSet[])GetField(operation, "_artifactPaths");
+            artifactPaths[0] = artifactPaths[1];
+
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(() =>
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.CreateIndexLocal(
+                    token, plan, publicationPaths, markerPaths, 0));
+        }
+
+        [Test]
+        public void ArtifactPathSetStagingPathTamper_Rejected()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            CaptureRunPublicationPathSet publicationPaths = plan.OrchestrationResult.InspectionSnapshot.Operation.PublicationPaths;
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
+            Assert.That(plan.TryValidate(out token), Is.True);
+
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation op =
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.Create(plan, publicationPaths, markerPaths, 0);
+            Assert.That(op.IsValidIndexLocal(token), Is.True);
+
+            // Tamper the captured path set's own staging PNG path to a
+            // different non-empty value after the token was minted.
+            PngJsonCapturePublicationArtifactInspectionPathSet pathSet =
+                plan.OrchestrationResult.InspectionSnapshot.Operation.GetArtifactPaths(0);
+            SetField(pathSet, "_stagingPngPath", IsWindows ? "C:\\forged\\evil.png.stage" : "/forged/evil.png.stage");
+
+            Assert.That(op.IsValidIndexLocal(token), Is.False);
+            Assert.Throws<ArgumentException>(() =>
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation.CreateIndexLocal(
+                    token, plan, publicationPaths, markerPaths, 0));
         }
 
         [Test]
