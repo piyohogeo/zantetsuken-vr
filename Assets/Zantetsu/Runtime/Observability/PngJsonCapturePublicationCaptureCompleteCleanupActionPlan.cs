@@ -78,8 +78,8 @@ namespace Zantetsu.Observability
                     nameof(orchestrationResult));
             }
 
-            ExpectedSequence? expected = ComputeExpected(orchestrationResult);
-            if (expected == null)
+            FixedFacts? facts = ComputeFixedFacts(orchestrationResult);
+            if (facts == null)
             {
                 throw new ArgumentException(
                     "Orchestration result must be a valid capture-complete cleanup result.",
@@ -87,7 +87,7 @@ namespace Zantetsu.Observability
             }
 
             return new PngJsonCapturePublicationCaptureCompleteCleanupActionPlan(
-                orchestrationResult, token, BuildSteps(expected.Value));
+                orchestrationResult, token, BuildSteps(facts.Value));
         }
 
         internal PngJsonCapturePublicationArtifactRecoveryOrchestrationResult OrchestrationResult => _orchestrationResult;
@@ -142,37 +142,37 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                ExpectedSequence? expected = ComputeExpected(_orchestrationResult);
-                if (expected == null)
+                FixedFacts? facts = ComputeFixedFacts(_orchestrationResult);
+                if (facts == null)
                 {
                     return false;
                 }
 
-                ExpectedSequence exp = expected.Value;
-                if (_steps.Length != exp.TotalStepCount)
+                FixedFacts f = facts.Value;
+                if (_steps.Length < f.FixedStepCount)
                 {
                     return false;
                 }
 
                 int position = 0;
 
-                if (exp.DeletePublicationPlanTemporary
+                if (f.DeletePublicationPlanTemporary
                     && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
                 {
                     return false;
                 }
 
-                if (exp.DeleteCaptureIndexTemporary
+                if (f.DeleteCaptureIndexTemporary
                     && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
                 {
                     return false;
                 }
 
-                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = exp.Snapshot;
-                for (int i = 0; i < exp.EntryCount; i++)
+                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = f.Snapshot;
+                for (int i = 0; i < f.EntryCount; i++)
                 {
                     PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
-                    if (observation == null)
+                    if (!IsValidStagingEntry(observation))
                     {
                         return false;
                     }
@@ -190,13 +190,13 @@ namespace Zantetsu.Observability
                     }
                 }
 
-                if (exp.RemoveStagingFramesRoot
+                if (f.RemoveStagingFramesRoot
                     && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
                 {
                     return false;
                 }
 
-                if (exp.DeletePublicationPlan
+                if (f.DeletePublicationPlan
                     && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
                 {
                     return false;
@@ -590,14 +590,14 @@ namespace Zantetsu.Observability
 
                 try
                 {
-                    ExpectedSequence? expected = ComputeExpected(plan._orchestrationResult);
-                    if (expected == null)
+                    FixedFacts? facts = ComputeFixedFacts(plan._orchestrationResult);
+                    if (facts == null)
                     {
                         return false;
                     }
 
-                    ExpectedSequence exp = expected.Value;
-                    if (plan._steps.Length != exp.TotalStepCount)
+                    FixedFacts f = facts.Value;
+                    if (plan._steps.Length < f.FixedStepCount)
                     {
                         return false;
                     }
@@ -605,7 +605,7 @@ namespace Zantetsu.Observability
                     IssuedStepProof[] proofs = new IssuedStepProof[plan._steps.Length];
                     int position = 0;
 
-                    if (exp.DeletePublicationPlanTemporary)
+                    if (f.DeletePublicationPlanTemporary)
                     {
                         if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
                         {
@@ -615,7 +615,7 @@ namespace Zantetsu.Observability
                         position++;
                     }
 
-                    if (exp.DeleteCaptureIndexTemporary)
+                    if (f.DeleteCaptureIndexTemporary)
                     {
                         if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
                         {
@@ -625,12 +625,17 @@ namespace Zantetsu.Observability
                         position++;
                     }
 
-                    PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = exp.Snapshot;
+                    PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = f.Snapshot;
                     if (snapshot == null
                         || !PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken.TryAcquireAndCapture(
                             snapshot,
                             (int i, PngJsonCapturePublicationArtifactEntryObservation entry) =>
                             {
+                                if (!IsValidStagingEntry(entry))
+                                {
+                                    return false;
+                                }
+
                                 if (entry.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
                                 {
                                     if (!CaptureArtifactStepAt(plan, proofs, position, i, CaptureRunPublicationArtifactKind.Png, entry))
@@ -658,7 +663,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (exp.RemoveStagingFramesRoot)
+                    if (f.RemoveStagingFramesRoot)
                     {
                         if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
                         {
@@ -668,7 +673,7 @@ namespace Zantetsu.Observability
                         position++;
                     }
 
-                    if (exp.DeletePublicationPlan)
+                    if (f.DeletePublicationPlan)
                     {
                         if (!CaptureStepAt(plan, proofs, position, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
                         {
@@ -807,29 +812,44 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Expected step sequence derived from a fully validated orchestration
-        /// result: the conditional cleanup flags, the entry count, the total
-        /// staging step count, and the inspection snapshot used to enumerate
-        /// staging steps. It allocates nothing and is shared by the factory
-        /// (which allocates and fills the array exactly once) and
-        /// <see cref="IsValid"/> (which compares the held steps against this
-        /// virtual sequence).
+        /// O(1) staging-entry predicate shared by the plan validation, the
+        /// step-array builder, and the token mint's per-entry callback: a
+        /// staging entry must have matching final PNG and sidecar evidence and
+        /// an absent or matching staging evidence for both artifacts. Never
+        /// throws.
         /// </summary>
-        private struct ExpectedSequence
+        private static bool IsValidStagingEntry(PngJsonCapturePublicationArtifactEntryObservation observation)
+        {
+            return observation != null
+                && observation.FinalPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                && observation.FinalSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                && (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.Absent
+                    || observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
+                && (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.Absent
+                    || observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected);
+        }
+
+        /// <summary>
+        /// Entry-independent fixed facts derived from a fully validated
+        /// orchestration result: the conditional cleanup flags, the entry
+        /// count, and the inspection snapshot. It carries no per-entry state
+        /// and no staging step count, so deriving it never enumerates an
+        /// entry. The fixed step count is the number of non-staging steps.
+        /// </summary>
+        private struct FixedFacts
         {
             internal bool DeletePublicationPlanTemporary;
             internal bool DeleteCaptureIndexTemporary;
             internal bool RemoveStagingFramesRoot;
             internal bool DeletePublicationPlan;
             internal int EntryCount;
-            internal int StagingStepCount;
             internal PngJsonCapturePublicationArtifactInspectionSnapshot Snapshot;
 
-            internal int TotalStepCount
+            internal int FixedStepCount
             {
                 get
                 {
-                    int count = StagingStepCount + 4;
+                    int count = 4;
                     if (DeletePublicationPlanTemporary)
                     {
                         count++;
@@ -856,13 +876,14 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Derives the expected step count and conditional cleanup flags from
-        /// an already-validated orchestration result, or returns null on any
-        /// violation. It allocates no array and no step objects. Recovery
-        /// document and root states are read only from the Recovery decision;
-        /// Fresh authorities emit no unproven document or root steps.
+        /// Derives the entry-independent cleanup flags, entry count, and
+        /// inspection snapshot from an already-validated orchestration result,
+        /// or returns null on any violation. It never enumerates an entry,
+        /// reads no per-entry status, and allocates nothing. Recovery document
+        /// and root states are read only from the Recovery decision; Fresh
+        /// authorities emit no unproven document or root steps.
         /// </summary>
-        private static ExpectedSequence? ComputeExpected(
+        private static FixedFacts? ComputeFixedFacts(
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result)
         {
             try
@@ -1103,41 +1124,6 @@ namespace Zantetsu.Observability
                     deletePublicationPlan = true;
                 }
 
-                // Per-entry validation and staging step count.
-                int stagingStepCount = 0;
-                for (int i = 0; i < entryCount; i++)
-                {
-                    PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
-                    if (observation == null)
-                    {
-                        return null;
-                    }
-
-                    if (observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
-                        || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected)
-                    {
-                        return null;
-                    }
-
-                    if (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
-                    {
-                        stagingStepCount++;
-                    }
-                    else if (observation.StagingPngStatus != CaptureRunPublicationEvidenceStatus.Absent)
-                    {
-                        return null;
-                    }
-
-                    if (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
-                    {
-                        stagingStepCount++;
-                    }
-                    else if (observation.StagingSidecarStatus != CaptureRunPublicationEvidenceStatus.Absent)
-                    {
-                        return null;
-                    }
-                }
-
                 if (freshRoute)
                 {
                     // Fresh: any plan entry proves artifacts were staged into
@@ -1147,15 +1133,14 @@ namespace Zantetsu.Observability
                     removeStagingFramesRoot = entryCount > 0;
                 }
 
-                ExpectedSequence sequence;
-                sequence.DeletePublicationPlanTemporary = deletePublicationPlanTemporary;
-                sequence.DeleteCaptureIndexTemporary = deleteCaptureIndexTemporary;
-                sequence.RemoveStagingFramesRoot = removeStagingFramesRoot;
-                sequence.DeletePublicationPlan = deletePublicationPlan;
-                sequence.EntryCount = entryCount;
-                sequence.StagingStepCount = stagingStepCount;
-                sequence.Snapshot = snapshot;
-                return sequence;
+                FixedFacts facts;
+                facts.DeletePublicationPlanTemporary = deletePublicationPlanTemporary;
+                facts.DeleteCaptureIndexTemporary = deleteCaptureIndexTemporary;
+                facts.RemoveStagingFramesRoot = removeStagingFramesRoot;
+                facts.DeletePublicationPlan = deletePublicationPlan;
+                facts.EntryCount = entryCount;
+                facts.Snapshot = snapshot;
+                return facts;
             }
             catch (Exception)
             {
@@ -1165,30 +1150,55 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Allocates the step array exactly once at its exact length and fills
-        /// it directly in fixed order from the derived sequence. This is the
-        /// single step-array allocation site in the plan.
+        /// it directly in fixed order. The staging step count is computed in a
+        /// single pass over the entries, which also re-validates every staging
+        /// entry before any step object is allocated. This is the single
+        /// step-array allocation site in the plan.
         /// </summary>
-        private static CaptureRunPublicationCaptureCompleteCleanupStep[] BuildSteps(ExpectedSequence expected)
+        private static CaptureRunPublicationCaptureCompleteCleanupStep[] BuildSteps(FixedFacts facts)
         {
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = facts.Snapshot;
+
+            int stagingStepCount = 0;
+            for (int i = 0; i < facts.EntryCount; i++)
+            {
+                PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
+                if (!IsValidStagingEntry(observation))
+                {
+                    throw new ArgumentException(
+                        "Inspection snapshot entries must be valid staging entries.",
+                        "orchestrationResult");
+                }
+
+                if (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
+                {
+                    stagingStepCount++;
+                }
+
+                if (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected)
+                {
+                    stagingStepCount++;
+                }
+            }
+
             CaptureRunPublicationCaptureCompleteCleanupStep[] steps =
-                new CaptureRunPublicationCaptureCompleteCleanupStep[expected.TotalStepCount];
+                new CaptureRunPublicationCaptureCompleteCleanupStep[facts.FixedStepCount + stagingStepCount];
 
             int position = 0;
-            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = expected.Snapshot;
 
-            if (expected.DeletePublicationPlanTemporary)
+            if (facts.DeletePublicationPlanTemporary)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            if (expected.DeleteCaptureIndexTemporary)
+            if (facts.DeleteCaptureIndexTemporary)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            for (int i = 0; i < expected.EntryCount; i++)
+            for (int i = 0; i < facts.EntryCount; i++)
             {
                 PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
 
@@ -1205,13 +1215,13 @@ namespace Zantetsu.Observability
                 }
             }
 
-            if (expected.RemoveStagingFramesRoot)
+            if (facts.RemoveStagingFramesRoot)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot, -1, CaptureRunPublicationArtifactKind.None);
             }
 
-            if (expected.DeletePublicationPlan)
+            if (facts.DeletePublicationPlan)
             {
                 steps[position++] = new CaptureRunPublicationCaptureCompleteCleanupStep(
                     CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan, -1, CaptureRunPublicationArtifactKind.None);

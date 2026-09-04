@@ -1529,28 +1529,59 @@ namespace Zantetsu.Core.Tests
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
 
+            // The fixed-facts precompute never enumerates an entry or reads a
+            // per-entry status.
+            int factsIndex = source.IndexOf("private static FixedFacts? ComputeFixedFacts(", StringComparison.Ordinal);
+            Assert.That(factsIndex, Is.GreaterThan(0));
+            int buildIndex = source.IndexOf("private static CaptureRunPublicationCaptureCompleteCleanupStep[] BuildSteps(", StringComparison.Ordinal);
+            Assert.That(buildIndex, Is.GreaterThan(factsIndex));
+            string factsBody = source.Substring(factsIndex, buildIndex - factsIndex);
+            Assert.That(factsBody, Does.Not.Contain("GetEntry("));
+            Assert.That(factsBody, Does.Not.Contain("for ("));
+            Assert.That(factsBody, Does.Not.Contain("StagingPngStatus"));
+            Assert.That(factsBody, Does.Not.Contain("FinalPngStatus"));
+
+            // The mint body never enumerates an entry or reads a status before
+            // the single scan.
             int mintIndex = source.IndexOf("internal static bool TryAcquire(", StringComparison.Ordinal);
             Assert.That(mintIndex, Is.GreaterThan(0));
             int proofIndex = source.IndexOf("private readonly struct IssuedStepProof", StringComparison.Ordinal);
             Assert.That(proofIndex, Is.GreaterThan(mintIndex));
             string mintBody = source.Substring(mintIndex, proofIndex - mintIndex);
 
-            // The mint re-confirms the orchestration graph with the held proof
-            // and delegates the entry scan to the snapshot's single-scan mint;
-            // it must never run a full plan validation followed by a separate
-            // snapshot validation.
             Assert.That(mintBody, Does.Contain("IsValidWithToken("));
-            Assert.That(mintBody, Does.Contain("TryAcquireAndCapture("));
-
             Assert.That(mintBody, Does.Not.Contain("plan.IsValid"));
             Assert.That(mintBody, Does.Not.Contain("snapshot.TryValidate"));
             Assert.That(mintBody, Does.Not.Contain("operation.TryValidate"));
-            Assert.That(mintBody, Does.Not.Contain("Operation.TryValidate"));
-
-            // No plan entry scan and no snapshot entry re-scan inside the mint.
             Assert.That(mintBody, Does.Not.Contain("GetEntry("));
             Assert.That(mintBody, Does.Not.Contain("GetArtifactPaths("));
             Assert.That(mintBody, Does.Not.Contain("for ("));
+
+            int scanIndex = mintBody.IndexOf("TryAcquireAndCapture(", StringComparison.Ordinal);
+            Assert.That(scanIndex, Is.GreaterThan(0));
+            string beforeScan = mintBody.Substring(0, scanIndex);
+            Assert.That(beforeScan, Does.Not.Contain(".StagingPngStatus"));
+            Assert.That(beforeScan, Does.Not.Contain(".StagingSidecarStatus"));
+            Assert.That(beforeScan, Does.Not.Contain(".FinalPngStatus"));
+            Assert.That(beforeScan, Does.Not.Contain(".FinalSidecarStatus"));
+
+            // Entry status reads happen only in the single-scan callback (or
+            // in the helper it invokes).
+            string afterScan = mintBody.Substring(scanIndex);
+            Assert.That(afterScan, Does.Contain("IsValidStagingEntry("));
+            Assert.That(afterScan, Does.Contain(".StagingPngStatus"));
+
+            // The shared entry-status predicate is the only place that reads
+            // final and staging statuses.
+            int helperIndex = source.IndexOf("private static bool IsValidStagingEntry(", StringComparison.Ordinal);
+            Assert.That(helperIndex, Is.GreaterThan(0));
+            int structIndex = source.IndexOf("private struct FixedFacts", StringComparison.Ordinal);
+            Assert.That(structIndex, Is.GreaterThan(helperIndex));
+            string helperBody = source.Substring(helperIndex, structIndex - helperIndex);
+            Assert.That(helperBody, Does.Contain(".FinalPngStatus"));
+            Assert.That(helperBody, Does.Contain(".StagingPngStatus"));
+            Assert.That(helperBody, Does.Not.Contain("GetEntry("));
+            Assert.That(helperBody, Does.Not.Contain("for ("));
         }
 
         [Test]
