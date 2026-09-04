@@ -317,20 +317,17 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.ValidationToken _orchestrationToken;
             private readonly IssuedStepProof[] _issuedSteps;
             private readonly PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken _snapshotToken;
-            private readonly PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken _operationToken;
 
             private ValidationToken(
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
                 PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.ValidationToken orchestrationToken,
                 IssuedStepProof[] issuedSteps,
-                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken,
-                PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken operationToken)
+                PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken)
             {
                 _plan = plan;
                 _orchestrationToken = orchestrationToken;
                 _issuedSteps = issuedSteps;
                 _snapshotToken = snapshotToken;
-                _operationToken = operationToken;
             }
 
             /// <summary>
@@ -465,9 +462,10 @@ namespace Zantetsu.Observability
             /// the current inspection graph: the current snapshot entry must be
             /// the exact issued observation, the current inspection path set
             /// must be the exact issued path set, and both must remain
-            /// index-locally valid against the snapshot and operation tokens
-            /// minted at issuance. Any entry-array element swap, path-set array
-            /// element swap, or path field mutation fails closed. Never throws.
+            /// index-locally valid against the snapshot token minted at
+            /// issuance (which carries the single operation token). Any
+            /// entry-array element swap, path-set array element swap, or path
+            /// field mutation fails closed. Never throws.
             /// </summary>
             private bool TryReconfirmArtifactInputs(
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
@@ -475,7 +473,7 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationArtifactEntryObservation observation,
                 PngJsonCapturePublicationArtifactInspectionPathSet artifactPaths)
             {
-                if (_snapshotToken == null || _operationToken == null)
+                if (_snapshotToken == null)
                 {
                     return false;
                 }
@@ -490,7 +488,7 @@ namespace Zantetsu.Observability
                     }
 
                     PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
-                    if (operation == null || !_operationToken.IsIssuedFor(operation))
+                    if (operation == null)
                     {
                         return false;
                     }
@@ -512,8 +510,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    return _snapshotToken.IsIndexLocalCorrelated(snapshot, entryIndex)
-                        && _operationToken.IsIndexLocalCorrelated(operation, entryIndex);
+                    return _snapshotToken.IsIndexLocalCorrelated(snapshot, entryIndex);
                 }
                 catch (Exception)
                 {
@@ -541,10 +538,11 @@ namespace Zantetsu.Observability
 
             /// <summary>
             /// Single atomic validated mint: performs the full plan validation
-            /// exactly once, then captures a defensive proof snapshot of each
-            /// current step's reference and value triple and mints the token
-            /// bound to the plan and its already-issued orchestration proof.
-            /// No new orchestration token is issued.
+            /// exactly once, then mints the snapshot validation token exactly
+            /// once (which itself issues the operation token exactly once), and
+            /// captures a defensive proof snapshot of each current step's
+            /// reference and value triple. No new orchestration token is
+            /// issued and the operation is never re-validated here.
             /// </summary>
             internal static bool TryAcquire(
                 PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan,
@@ -561,13 +559,6 @@ namespace Zantetsu.Observability
                     plan._orchestrationResult.InspectionSnapshot;
                 if (snapshot == null
                     || !snapshot.TryValidate(out PngJsonCapturePublicationArtifactInspectionSnapshot.ValidationToken snapshotToken))
-                {
-                    return false;
-                }
-
-                PngJsonCapturePublicationArtifactInspectionOperation operation = snapshot.Operation;
-                if (operation == null
-                    || !operation.TryValidate(out PngJsonCapturePublicationArtifactInspectionOperation.ValidationToken operationToken))
                 {
                     return false;
                 }
@@ -590,7 +581,7 @@ namespace Zantetsu.Observability
                     issuedSteps[i] = new IssuedStepProof(step, observation, artifactPaths);
                 }
 
-                token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps, snapshotToken, operationToken);
+                token = new ValidationToken(plan, plan._orchestrationToken, issuedSteps, snapshotToken);
                 return true;
             }
 

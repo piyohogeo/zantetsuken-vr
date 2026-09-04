@@ -1525,6 +1525,33 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Source_TokenMint_SingleSnapshotValidation_NoOperationReissue()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
+
+            int mintIndex = source.IndexOf("internal static bool TryAcquire(", StringComparison.Ordinal);
+            Assert.That(mintIndex, Is.GreaterThan(0));
+            int proofIndex = source.IndexOf("private readonly struct IssuedStepProof", StringComparison.Ordinal);
+            Assert.That(proofIndex, Is.GreaterThan(mintIndex));
+            string mintBody = source.Substring(mintIndex, proofIndex - mintIndex);
+
+            // The token mint performs exactly one full validation call, and it
+            // is the snapshot's (which itself issues the operation token once).
+            Assert.That(mintBody, Does.Contain("snapshot.TryValidate("));
+            Assert.That(
+                mintBody.IndexOf("TryValidate(", StringComparison.Ordinal),
+                Is.EqualTo(mintBody.LastIndexOf("TryValidate(", StringComparison.Ordinal)));
+
+            // No bare operation validation, and no per-entry or per-path-set
+            // token re-issuance inside the mint loop.
+            Assert.That(mintBody, Does.Not.Contain("operation.TryValidate"));
+            Assert.That(mintBody, Does.Not.Contain("Operation.TryValidate"));
+            Assert.That(mintBody, Does.Not.Contain("GetEntry("));
+            Assert.That(mintBody, Does.Not.Contain("GetArtifactPaths("));
+            Assert.That(mintBody, Does.Not.Contain("IsValidIndexLocal("));
+        }
+
+        [Test]
         public void Source_IndexLocal_NoEntryScanNoSerialize()
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
