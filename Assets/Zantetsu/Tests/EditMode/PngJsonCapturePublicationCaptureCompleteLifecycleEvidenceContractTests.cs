@@ -1196,15 +1196,25 @@ namespace Zantetsu.Core.Tests
         public void IsValid_FreezeReceiptCorrupted_False()
         {
             PngJsonCapturePublicationCaptureCompleteLifecycleEvidence fresh = MakeFreshEvidence(
-                out _, out CaptureEvidenceRunFreezeReceipt freezeReceipt, out _);
+                out CaptureRunInitializationSessionOwnershipLease owner,
+                out CaptureEvidenceRunFreezeReceipt freezeReceipt,
+                out _);
+            PngJsonCapturePublicationCaptureCompleteNotificationResult notificationResult = fresh.NotificationResult;
             Assert.That(fresh.IsValid, Is.True);
 
-            // Nulling the freeze receipt's lock identity evidence corrupts the
-            // freeze receipt and, through the lock identity forwarding chain,
-            // the notification result's own validity.
-            SetField(freezeReceipt, "_lockIdentityEvidence", null);
+            // Nulling the freeze receipt's evidence coordinator corrupts the
+            // receipt itself. The notification result does not re-check this
+            // reference, so the evidence must re-check the exact receipt it
+            // directly holds and exposes.
+            SetField(freezeReceipt, "_evidence", null);
             Assert.That(freezeReceipt.IsValid, Is.False);
             Assert.That(fresh.IsValid, Is.False);
+
+            // The factory rejects the corrupted receipt as well.
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => PngJsonCapturePublicationCaptureCompleteLifecycleEvidence.FromFresh(
+                    notificationResult, freezeReceipt, owner));
+            Assert.That(ex.ParamName, Is.EqualTo("freezeReceipt"));
         }
 
         [Test]

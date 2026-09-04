@@ -25,15 +25,17 @@ namespace Zantetsu.Observability
     /// <para>
     /// Each factory first null-checks every input with the matching
     /// <see cref="ArgumentNullException"/>, then requires a fully valid
-    /// notification result exactly once. That single full validation already
-    /// proves the entire provenance graph in its current state — the cleanup
-    /// step list, notification receipt, plan and path-set correlation, the
-    /// Fresh seed or Recovery decision authority, and the accepted status and
-    /// disposition. The factory then runs only O(1) correlation on that same
-    /// instance: the exact authority kind, the exact provenance reference, the
-    /// root layout, lock identity evidence, and run identity correlation, and
-    /// the exact live ownership lease. Evidence is issued only after every
-    /// check succeeds.
+    /// notification result exactly once. The notification result validates the
+    /// upstream evidence the notification and cleanup boundaries need — the
+    /// cleanup step list, notification receipt, plan and path-set correlation,
+    /// and the accepted status and disposition. On top of that, the Fresh
+    /// factory re-checks the exact freeze receipt it directly holds and
+    /// exposes (an O(1) fixed-reference and state check with no entry scan),
+    /// and then both factories run only O(1) correlation on the same
+    /// notification result instance: the exact authority kind, the exact
+    /// provenance reference, the root layout, lock identity evidence, and run
+    /// identity correlation, and the exact live ownership lease. Evidence is
+    /// issued only after every check succeeds.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the full correlation from the held
@@ -211,10 +213,11 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Exception-safe recomputation from the currently held graph, without
-        /// throwing. The notification result is fully re-validated first —
-        /// which re-verifies the entire provenance graph in its current state —
-        /// and then the path-specific O(1) shared correlation predicate is
-        /// re-run. Any corrupted or replaced value converges to <c>false</c>.
+        /// throwing. The notification result is fully re-validated first, and
+        /// then the path-specific shared correlation predicate is re-run —
+        /// including, on the Fresh path, the O(1) re-check of the exact freeze
+        /// receipt this evidence directly holds and exposes. Any corrupted or
+        /// replaced value converges to <c>false</c>.
         /// </summary>
         internal bool IsValid
         {
@@ -243,12 +246,13 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Shared Fresh correlation predicate used by both the factory and
-        /// <see cref="IsValid"/>. It requires only O(1) correlation after the
-        /// notification result's full validation: the Fresh authority kind, the
-        /// exact freeze receipt reference, the root layout, lock identity
-        /// evidence, and run identity correlation, and the exact live ownership
-        /// lease. It never re-validates the fresh seed or freeze receipt.
-        /// Never throws.
+        /// <see cref="IsValid"/>. After the notification result's full
+        /// validation it requires the Fresh authority kind and the exact freeze
+        /// receipt reference, re-checks that exact freeze receipt's own
+        /// validity (a fixed-reference and state check with no entry scan, so
+        /// the predicate stays O(1)), and then correlates the root layout, lock
+        /// identity evidence, run identity, and the exact live ownership lease.
+        /// It never re-validates the fresh seed. Never throws.
         /// </summary>
         private static bool IsFreshCorrelated(
             PngJsonCapturePublicationCaptureCompleteNotificationResult notificationResult,
@@ -276,6 +280,16 @@ namespace Zantetsu.Observability
                 }
 
                 if (!ReferenceEquals(freshSeed.FreezeReceipt, freezeReceipt))
+                {
+                    return false;
+                }
+
+                // This evidence directly holds and exposes the freeze receipt
+                // through Drafts and Artifacts, so the receipt's own validity
+                // must hold even though the notification result does not
+                // re-check it. This is an O(1) fixed-reference and state check
+                // with no entry scan.
+                if (!freezeReceipt.IsValid)
                 {
                     return false;
                 }
