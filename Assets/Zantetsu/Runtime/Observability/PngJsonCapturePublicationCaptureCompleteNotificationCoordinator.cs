@@ -64,7 +64,7 @@ namespace Zantetsu.Observability
             private readonly PngJsonCapturePublicationCaptureCompleteNotificationOperation _operation;
             private readonly PngJsonCapturePublicationCaptureCompleteNotificationReceipt _receipt;
 
-            internal IssuanceProof(
+            private IssuanceProof(
                 PngJsonCapturePublicationCaptureCompleteNotificationCoordinator coordinator,
                 object gate,
                 PngJsonCapturePublicationCaptureCompleteNotificationOperation operation,
@@ -74,6 +74,21 @@ namespace Zantetsu.Observability
                 _gate = gate;
                 _operation = operation;
                 _receipt = receipt;
+            }
+
+            /// <summary>
+            /// Single minting path: only the containing coordinator invokes
+            /// this with its private issuance authority, so a valid proof
+            /// cannot be created without that authority. The constructor is
+            /// private.
+            /// </summary>
+            internal static IssuanceProof Mint(
+                PngJsonCapturePublicationCaptureCompleteNotificationCoordinator coordinator,
+                object gate,
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation operation,
+                PngJsonCapturePublicationCaptureCompleteNotificationReceipt receipt)
+            {
+                return new IssuanceProof(coordinator, gate, operation, receipt);
             }
 
             internal bool IsMintedFor(
@@ -122,7 +137,7 @@ namespace Zantetsu.Observability
 
             VerifyReceipt(receipt, operation);
 
-            IssuanceProof proof = new IssuanceProof(this, _issuanceGate, operation, receipt);
+            IssuanceProof proof = IssuanceProof.Mint(this, _issuanceGate, operation, receipt);
 
             return PngJsonCapturePublicationCaptureCompleteNotificationResult.Create(this, proof, operation, receipt);
         }

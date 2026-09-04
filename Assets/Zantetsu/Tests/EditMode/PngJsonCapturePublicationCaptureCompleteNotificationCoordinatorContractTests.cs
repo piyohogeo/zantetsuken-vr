@@ -976,7 +976,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void IssuanceProof_Shape_NoPublicConstructor_FourFields()
+        public void IssuanceProof_Shape_PrivateConstructor_FourFields()
         {
             Type type = typeof(PngJsonCapturePublicationCaptureCompleteNotificationCoordinator.IssuanceProof);
 
@@ -986,7 +986,7 @@ namespace Zantetsu.Core.Tests
 
             ConstructorInfo[] constructors = type.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(constructors.Length, Is.EqualTo(1));
-            Assert.That(constructors[0].IsPublic, Is.False);
+            Assert.That(constructors[0].IsPrivate, Is.True);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(fields.Length, Is.EqualTo(4));
@@ -1225,6 +1225,45 @@ namespace Zantetsu.Core.Tests
             SetField(result, "_operation", otherOperation);
 
             Assert.That(result.IsValid, Is.False);
+        }
+
+        [Test]
+        public void Result_Create_DirectReceipt_Rejected()
+        {
+            PngJsonCapturePublicationCaptureCompleteNotificationCoordinator coordinator = MakeCoordinator();
+            PngJsonCapturePublicationCaptureCompleteNotificationResult result = coordinator.Execute(BuildCleanupResult());
+            PngJsonCapturePublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof =
+                (PngJsonCapturePublicationCaptureCompleteNotificationCoordinator.IssuanceProof)GetField(result, "_proof");
+
+            // A directly-minted receipt (bypassing the coordinator) cannot
+            // produce a valid result: the proof binds only to the
+            // coordinator-issued receipt.
+            PngJsonCapturePublicationCaptureCompleteNotificationReceipt directReceipt =
+                PngJsonCapturePublicationCaptureCompleteNotificationReceipt.Create(coordinator.Notifier, result.Operation);
+
+            Assert.Throws<ArgumentException>(() =>
+                PngJsonCapturePublicationCaptureCompleteNotificationResult.Create(coordinator, proof, result.Operation, directReceipt));
+        }
+
+        [Test]
+        public void Source_Result_Create_NoRevalidation()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteNotificationResult.cs");
+
+            int createIndex = source.IndexOf(
+                "internal static PngJsonCapturePublicationCaptureCompleteNotificationResult Create(",
+                StringComparison.Ordinal);
+            Assert.That(createIndex, Is.GreaterThan(0));
+            int returnIndex = source.IndexOf(
+                "return new PngJsonCapturePublicationCaptureCompleteNotificationResult(",
+                StringComparison.Ordinal);
+            Assert.That(returnIndex, Is.GreaterThan(createIndex));
+            string createBody = source.Substring(createIndex, returnIndex - createIndex);
+
+            Assert.That(createBody, Does.Contain("IsBoundO1("));
+            Assert.That(createBody, Does.Not.Contain("IsIssuedFor"));
+            Assert.That(createBody, Does.Not.Contain("IsValid"));
+            Assert.That(createBody, Does.Not.Contain("IsFullyValid"));
         }
 
         [Test]

@@ -54,10 +54,11 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Atomic issuance gate used only by the coordinator after it already
-        /// verified the receipt: null-checks every input, then confirms the
-        /// proof's exact binding and the receipt correlation with O(1) checks.
-        /// It never re-runs the operation's full validation a second time on
-        /// the success path.
+        /// fully verified the receipt: null-checks every input and then runs
+        /// the O(1) exact-binding predicate only — proof binding, coordinator
+        /// notifier, receipt issuer, and receipt operation reference identity.
+        /// It never re-runs <c>receipt.IsIssuedFor</c> or the operation's full
+        /// validation on the success path.
         /// </summary>
         internal static PngJsonCapturePublicationCaptureCompleteNotificationResult Create(
             PngJsonCapturePublicationCaptureCompleteNotificationCoordinator issuedBy,
@@ -85,7 +86,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(receipt));
             }
 
-            if (!IsCorrelated(issuedBy, proof, operation, receipt))
+            if (!IsBoundO1(issuedBy, proof, operation, receipt))
             {
                 throw new ArgumentException(
                     "Notification receipt must be correlated with the issuing coordinator and operation.",
@@ -125,18 +126,29 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Exception-safe recomputation of the full correlation from the
-        /// currently held graph, without throwing. Any corrupted or replaced
-        /// value converges to <c>false</c>.
+        /// currently held graph, without throwing. It first runs the O(1)
+        /// exact-binding predicate and then calls <c>receipt.IsIssuedFor</c>
+        /// exactly once, which performs the operation's full current-state
+        /// validation. Any corrupted or replaced value converges to
+        /// <c>false</c>.
         /// </summary>
         internal bool IsValid
         {
             get
             {
-                return IsCorrelated(_issuedBy, _proof, _operation, _receipt);
+                return IsFullyValid(_issuedBy, _proof, _operation, _receipt);
             }
         }
 
-        private static bool IsCorrelated(
+        /// <summary>
+        /// O(1), exception-safe exact-binding predicate used by the issuance
+        /// factory: non-null checks, proof binding, coordinator notifier, and
+        /// the receipt issuer and operation reference identity only. It never
+        /// calls <c>receipt.IsIssuedFor</c> or <c>operation.IsValid</c>, so the
+        /// coordinator's immediate full receipt verification is not repeated on
+        /// the success path.
+        /// </summary>
+        private static bool IsBoundO1(
             PngJsonCapturePublicationCaptureCompleteNotificationCoordinator issuedBy,
             PngJsonCapturePublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof,
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation,
@@ -164,17 +176,34 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!ReferenceEquals(receipt.IssuedBy, notifier)
-                    || !ReferenceEquals(receipt.Operation, operation))
+                return ReferenceEquals(receipt.IssuedBy, notifier)
+                    && ReferenceEquals(receipt.Operation, operation);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe full validation predicate: runs the O(1) exact-binding
+        /// predicate and then calls <c>receipt.IsIssuedFor</c> exactly once for
+        /// the operation's full current-state validation.
+        /// </summary>
+        private static bool IsFullyValid(
+            PngJsonCapturePublicationCaptureCompleteNotificationCoordinator issuedBy,
+            PngJsonCapturePublicationCaptureCompleteNotificationCoordinator.IssuanceProof proof,
+            PngJsonCapturePublicationCaptureCompleteNotificationOperation operation,
+            PngJsonCapturePublicationCaptureCompleteNotificationReceipt receipt)
+        {
+            try
+            {
+                if (!IsBoundO1(issuedBy, proof, operation, receipt))
                 {
                     return false;
                 }
 
-                // The single post-notification full validation path: this
-                // re-checks the receipt issuer, the operation identity, and the
-                // operation's full validity in one call, so the operation is
-                // never fully validated a second time elsewhere.
-                return receipt.IsIssuedFor(notifier, operation);
+                return receipt.IsIssuedFor(issuedBy.Notifier, operation);
             }
             catch (Exception)
             {
