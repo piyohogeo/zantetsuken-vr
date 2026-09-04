@@ -132,94 +132,17 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_orchestrationResult == null || _orchestrationToken == null || _steps == null)
-                {
-                    return false;
-                }
-
-                if (!_orchestrationResult.IsValidWithToken(_orchestrationToken))
-                {
-                    return false;
-                }
-
-                FixedFacts? facts = ComputeFixedFacts(_orchestrationResult);
-                if (facts == null)
-                {
-                    return false;
-                }
-
-                FixedFacts f = facts.Value;
-                if (_steps.Length < f.FixedStepCount)
-                {
-                    return false;
-                }
-
-                int position = 0;
-
-                if (f.DeletePublicationPlanTemporary
-                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
-                {
-                    return false;
-                }
-
-                if (f.DeleteCaptureIndexTemporary
-                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
-                {
-                    return false;
-                }
-
-                PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = f.Snapshot;
-                for (int i = 0; i < f.EntryCount; i++)
-                {
-                    PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
-                    if (!IsValidStagingEntry(observation))
-                    {
-                        return false;
-                    }
-
-                    if (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
-                        && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Png))
-                    {
-                        return false;
-                    }
-
-                    if (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
-                        && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Sidecar))
-                    {
-                        return false;
-                    }
-                }
-
-                if (f.RemoveStagingFramesRoot
-                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
-                {
-                    return false;
-                }
-
-                if (f.DeletePublicationPlan
-                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
-                {
-                    return false;
-                }
-
-                if (!MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker)
-                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker)
-                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot)
-                    || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady))
-                {
-                    return false;
-                }
-
-                return position == _steps.Length;
+                return VerifyStructure();
             }
         }
 
         /// <summary>
         /// Exception-safe token-gated full re-validation: requires the supplied
         /// token to still bind to this exact plan and its current step
-        /// snapshot, then re-validates the full plan structure with the held
-        /// orchestration proof. It never re-issues a validation token and never
-        /// throws.
+        /// snapshot, re-confirms every current step against the token's issued
+        /// step proofs (rejecting same-length step-array substitution), and then
+        /// re-validates the full plan structure with the held orchestration
+        /// proof. It never re-issues a validation token and never throws.
         /// </summary>
         internal bool IsValidWithToken(ValidationToken token)
         {
@@ -228,7 +151,106 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            return IsValid;
+            for (int i = 0; i < _steps.Length; i++)
+            {
+                if (!IsStepIdentityAt(token, i))
+                {
+                    return false;
+                }
+            }
+
+            return VerifyStructure();
+        }
+
+        /// <summary>
+        /// Shared structural predicate used by the standalone getter and the
+        /// token-gated path: re-validates the current orchestration result with
+        /// the held orchestration proof, then re-derives the expected step
+        /// sequence and compares each held step against its expected value. It
+        /// never issues a validation token, never allocates an array, and never
+        /// throws.
+        /// </summary>
+        private bool VerifyStructure()
+        {
+            if (_orchestrationResult == null || _orchestrationToken == null || _steps == null)
+            {
+                return false;
+            }
+
+            if (!_orchestrationResult.IsValidWithToken(_orchestrationToken))
+            {
+                return false;
+            }
+
+            FixedFacts? facts = ComputeFixedFacts(_orchestrationResult);
+            if (facts == null)
+            {
+                return false;
+            }
+
+            FixedFacts f = facts.Value;
+            if (_steps.Length < f.FixedStepCount)
+            {
+                return false;
+            }
+
+            int position = 0;
+
+            if (f.DeletePublicationPlanTemporary
+                && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary))
+            {
+                return false;
+            }
+
+            if (f.DeleteCaptureIndexTemporary
+                && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary))
+            {
+                return false;
+            }
+
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = f.Snapshot;
+            for (int i = 0; i < f.EntryCount; i++)
+            {
+                PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(i);
+                if (!IsValidStagingEntry(observation))
+                {
+                    return false;
+                }
+
+                if (observation.StagingPngStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Png))
+                {
+                    return false;
+                }
+
+                if (observation.StagingSidecarStatus == CaptureRunPublicationEvidenceStatus.MatchesExpected
+                    && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, i, CaptureRunPublicationArtifactKind.Sidecar))
+                {
+                    return false;
+                }
+            }
+
+            if (f.RemoveStagingFramesRoot
+                && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingFramesRoot))
+            {
+                return false;
+            }
+
+            if (f.DeletePublicationPlan
+                && !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlan))
+            {
+                return false;
+            }
+
+            if (!MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker)
+                || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker)
+                || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot)
+                || !MatchAt(position++, CaptureRunPublicationCaptureCompleteCleanupAction.CaptureCompleteReady))
+            {
+                return false;
+            }
+
+            return position == _steps.Length;
         }
 
         /// <summary>

@@ -1490,6 +1490,34 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void ActionPlan_IsValidWithToken_StepArraySubstitution_Rejected()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
+            Assert.That(plan.TryValidate(out token), Is.True);
+            Assert.That(plan.IsValidWithToken(token), Is.True);
+
+            // Replace the step array with a same-length array of same-valued but
+            // distinct step instances. The plan's own structural re-validation
+            // still succeeds, but the old token's issued step proofs must reject
+            // the substitution.
+            CaptureRunPublicationCaptureCompleteCleanupStep[] current =
+                (CaptureRunPublicationCaptureCompleteCleanupStep[])GetField(plan, "_steps");
+            CaptureRunPublicationCaptureCompleteCleanupStep[] cloned =
+                new CaptureRunPublicationCaptureCompleteCleanupStep[current.Length];
+            for (int i = 0; i < current.Length; i++)
+            {
+                cloned[i] = new CaptureRunPublicationCaptureCompleteCleanupStep(
+                    current[i].Action, current[i].EntryIndex, current[i].ArtifactKind);
+            }
+
+            SetField(plan, "_steps", cloned);
+
+            Assert.That(plan.IsValid, Is.True);
+            Assert.That(plan.IsValidWithToken(token), Is.False);
+        }
+
+        [Test]
         public void LargeBatch_Execute_AscendingOrder_OncePerStep()
         {
             long[] frameIds = new long[1000];
@@ -1591,15 +1619,20 @@ namespace Zantetsu.Core.Tests
         {
             string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.cs");
 
-            int index = source.IndexOf("internal bool IsValidWithToken(ValidationToken token)", StringComparison.Ordinal);
-            Assert.That(index, Is.GreaterThan(0));
-            int next = source.IndexOf("internal bool TryValidate(", index, StringComparison.Ordinal);
-            Assert.That(next, Is.GreaterThan(index));
-            string body = source.Substring(index, next - index);
+            int sig = source.IndexOf("internal bool IsValidWithToken(ValidationToken token)", StringComparison.Ordinal);
+            Assert.That(sig, Is.GreaterThan(0));
+            int brace = source.IndexOf('{', sig);
+            Assert.That(brace, Is.GreaterThan(sig));
+            int next = source.IndexOf("private bool VerifyStructure(", sig, StringComparison.Ordinal);
+            Assert.That(next, Is.GreaterThan(brace));
+            string body = source.Substring(brace, next - brace);
 
             Assert.That(body, Does.Contain("IsTokenBound(token)"));
+            Assert.That(body, Does.Contain("IsStepIdentityAt(token, i)"));
+            Assert.That(body, Does.Contain("VerifyStructure()"));
+            Assert.That(body, Does.Not.Contain("return IsValid;"));
+            Assert.That(body, Does.Not.Contain("TryValidate("));
             Assert.That(body, Does.Not.Contain("TryAcquire"));
-            Assert.That(body, Does.Not.Contain("TryValidateAndCaptureProofs"));
         }
 
         [Test]
