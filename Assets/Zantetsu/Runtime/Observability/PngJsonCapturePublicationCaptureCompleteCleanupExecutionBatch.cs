@@ -59,13 +59,20 @@ namespace Zantetsu.Observability
                     nameof(actionPlan));
             }
 
+            // Obtain the immutable publication path set and build the marker
+            // path set exactly once, outside the materialization loop, and
+            // share both across every prepared step's operation.
+            CaptureRunPublicationPathSet publicationPaths =
+                PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep.DerivePublicationPaths(actionPlan);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(actionPlan.RootLayout);
+
             int count = actionPlan.Count;
             PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep[] steps =
                 new PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep[count];
             for (int i = 0; i < count; i++)
             {
-                steps[i] = PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep.CreateIndexLocal(
-                    actionPlan, token, i);
+                steps[i] = PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep.CreateIndexLocalWithSharedPaths(
+                    actionPlan, token, i, publicationPaths, markerPaths);
             }
 
             return new PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch(actionPlan, steps);

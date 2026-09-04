@@ -44,13 +44,9 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Token-gated atomic factory: the single construction path. It first
-        /// fetches the exact issued step through the token's O(1) index-local
-        /// accessor, then branches on the action. Side-effecting actions
-        /// materialize one cleanup operation through the operation factory's
-        /// trusted path with the same plan, token, and step index;
-        /// <c>CaptureCompleteReady</c> is a routing step and carries no
-        /// operation. <c>None</c> and undefined actions are rejected.
+        /// Token-gated atomic factory for a standalone step: derives the
+        /// publication path set and marker path set once and delegates to the
+        /// shared-path overload.
         /// </summary>
         internal static PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep CreateIndexLocal(
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan,
@@ -65,6 +61,50 @@ namespace Zantetsu.Observability
             if (token == null)
             {
                 throw new ArgumentNullException(nameof(token));
+            }
+
+            return CreateIndexLocalWithSharedPaths(
+                actionPlan,
+                token,
+                stepIndex,
+                DerivePublicationPaths(actionPlan),
+                new CaptureRunMarkerPathSet(actionPlan.RootLayout));
+        }
+
+        /// <summary>
+        /// Batch construction path: identical to the standalone factory except
+        /// it reuses the caller-supplied publication path set and marker path
+        /// set, so a batch materializes every step without re-deriving or
+        /// re-allocating the same immutable path sets. The token must still
+        /// bind to the exact step, side-effecting actions still materialize
+        /// one cleanup operation, and <c>CaptureCompleteReady</c> still
+        /// carries none.
+        /// </summary>
+        internal static PngJsonCapturePublicationCaptureCompleteCleanupPreparedStep CreateIndexLocalWithSharedPaths(
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan,
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token,
+            int stepIndex,
+            CaptureRunPublicationPathSet publicationPaths,
+            CaptureRunMarkerPathSet markerPaths)
+        {
+            if (actionPlan == null)
+            {
+                throw new ArgumentNullException(nameof(actionPlan));
+            }
+
+            if (token == null)
+            {
+                throw new ArgumentNullException(nameof(token));
+            }
+
+            if (publicationPaths == null)
+            {
+                throw new ArgumentNullException(nameof(publicationPaths));
+            }
+
+            if (markerPaths == null)
+            {
+                throw new ArgumentNullException(nameof(markerPaths));
             }
 
             if (!token.TryGetIssuedCleanupInputs(
@@ -99,8 +139,8 @@ namespace Zantetsu.Observability
                     operation = PngJsonCapturePublicationCaptureCompleteCleanupOperationFactory.CreateIndexLocal(
                         token,
                         actionPlan,
-                        DerivePublicationPaths(actionPlan),
-                        new CaptureRunMarkerPathSet(actionPlan.RootLayout),
+                        publicationPaths,
+                        markerPaths,
                         stepIndex);
                     break;
 
@@ -217,7 +257,7 @@ namespace Zantetsu.Observability
             }
         }
 
-        private static CaptureRunPublicationPathSet DerivePublicationPaths(
+        internal static CaptureRunPublicationPathSet DerivePublicationPaths(
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan)
         {
             try

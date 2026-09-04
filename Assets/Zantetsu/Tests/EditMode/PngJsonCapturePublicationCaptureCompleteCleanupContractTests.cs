@@ -1293,6 +1293,68 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Batch_SharedPublicationAndMarkerPathsAcrossSteps()
+        {
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildTemporaryDocumentsPlan();
+            PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
+
+            CaptureRunPublicationPathSet publicationPaths = null;
+            CaptureRunMarkerPathSet markerPaths = null;
+            int sideEffecting = 0;
+
+            for (int i = 0; i < batch.Count; i++)
+            {
+                PngJsonCapturePublicationCaptureCompleteCleanupOperation operation = batch.GetStep(i).CleanupOperation;
+                if (operation == null)
+                {
+                    continue;
+                }
+
+                sideEffecting++;
+                if (publicationPaths == null)
+                {
+                    publicationPaths = operation.PublicationPaths;
+                    markerPaths = operation.MarkerPaths;
+                }
+                else
+                {
+                    Assert.That(ReferenceEquals(operation.PublicationPaths, publicationPaths), Is.True);
+                    Assert.That(ReferenceEquals(operation.MarkerPaths, markerPaths), Is.True);
+                }
+            }
+
+            // DeleteStagingArtifact appears twice (Png and Sidecar), so the
+            // eight side-effecting actions produce nine side-effecting steps
+            // plus one CaptureCompleteReady routing step.
+            Assert.That(sideEffecting, Is.EqualTo(9));
+        }
+
+        [Test]
+        public void Source_Batch_MarkerPathSetCreatedOnceOutsideLoop()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch.cs");
+
+            int createIndex = source.IndexOf("internal static PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch Create(", StringComparison.Ordinal);
+            Assert.That(createIndex, Is.GreaterThan(0));
+            int returnIndex = source.IndexOf("return new PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch(", StringComparison.Ordinal);
+            Assert.That(returnIndex, Is.GreaterThan(createIndex));
+            string createBody = source.Substring(createIndex, returnIndex - createIndex);
+
+            // The marker path set is constructed exactly once, before the loop.
+            int markerIndex = createBody.IndexOf("new CaptureRunMarkerPathSet(", StringComparison.Ordinal);
+            Assert.That(markerIndex, Is.GreaterThan(0));
+            int loopIndex = createBody.IndexOf("for (", StringComparison.Ordinal);
+            Assert.That(loopIndex, Is.GreaterThan(markerIndex));
+
+            Assert.That(
+                createBody.IndexOf("new CaptureRunMarkerPathSet(", StringComparison.Ordinal),
+                Is.EqualTo(createBody.LastIndexOf("new CaptureRunMarkerPathSet(", StringComparison.Ordinal)));
+
+            // The loop materializes only through the shared-path overload.
+            Assert.That(createBody, Does.Contain("CreateIndexLocalWithSharedPaths("));
+        }
+
+        [Test]
         public void Batch_ThousandEntries_LinearMaterialization_TokenOnce()
         {
             long[] frameIds = new long[1000];
