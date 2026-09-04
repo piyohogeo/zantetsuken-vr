@@ -155,6 +155,47 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Contain("_fileSystem.CreateNew"));
         }
 
+        [Test]
+        public void FileSystem_CreateNew_IsDirectoryHandleRelative()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/CaptureIndexCommitFileSystem.cs");
+
+            int create = source.IndexOf("public CaptureIndexCommitFile CreateNew", StringComparison.Ordinal);
+            int flushFile = source.IndexOf("public void FlushFileData", StringComparison.Ordinal);
+            Assert.That(create, Is.GreaterThan(0));
+            Assert.That(flushFile, Is.GreaterThan(create));
+
+            string createBody = source.Substring(create, flushFile - create);
+            // The create must be bound to the verified directory handle, never a
+            // path reconstructed from the directory's original path, so a parent
+            // directory swapped after RequireAbsent cannot land a file outside
+            // the run root.
+            Assert.That(createBody, Does.Not.Contain("Path.Combine"));
+            Assert.That(createBody, Does.Not.Contain("OriginalPath"));
+            Assert.That(createBody, Does.Contain("CreateNewRelativeToDirectory"));
+            Assert.That(source, Does.Contain("RootDirectory = directory.Handle.DangerousGetHandle()"));
+        }
+
+        [Test]
+        public void FileSystem_OpenDirectory_ProbesDirectoryFlushBeforeReturn()
+        {
+            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/CaptureIndexCommitFileSystem.cs");
+
+            int open = source.IndexOf("public CaptureIndexCommitDirectory OpenDirectory", StringComparison.Ordinal);
+            int tryOpen = source.IndexOf("public CaptureIndexFileOpen TryOpen", StringComparison.Ordinal);
+            Assert.That(open, Is.GreaterThan(0));
+            Assert.That(tryOpen, Is.GreaterThan(open));
+
+            string openBody = source.Substring(open, tryOpen - open);
+            int flush = openBody.IndexOf("FlushFileBuffers", StringComparison.Ordinal);
+            int returnDirectory = openBody.IndexOf("return new CaptureIndexCommitDirectory", StringComparison.Ordinal);
+            // The flush probe must run on the actual directory handle before the
+            // directory is returned, so an unsupported filesystem is rejected
+            // before temporary creation or rename.
+            Assert.That(flush, Is.GreaterThan(0));
+            Assert.That(returnDirectory, Is.GreaterThan(flush));
+        }
+
         // ---- Null / token / layout rejection ----
 
         [Test]

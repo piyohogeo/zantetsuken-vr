@@ -33,18 +33,24 @@ namespace Zantetsu.Observability
         private const uint GenericRead = 0x80000000u;
         private const uint GenericWrite = 0x40000000u;
         private const uint DeleteAccess = 0x00010000u;
+        private const uint FileGenericRead = 0x00120089u;
+        private const uint FileGenericWrite = 0x00120116u;
         private const uint FileShareRead = 0x00000001u;
         private const uint FileShareWrite = 0x00000002u;
         private const uint FileShareDelete = 0x00000004u;
-        private const uint CreateNewDisposition = 1u;
         private const uint OpenExisting = 3u;
+        private const uint FileCreateDisposition = 2u;
         private const uint FileFlagOpenReparsePoint = 0x00200000u;
         private const uint FileFlagBackupSemantics = 0x02000000u;
         private const uint FileAttributeNormal = 0x00000080u;
         private const uint FileAttributeDirectory = 0x00000010u;
         private const uint FileAttributeReparsePoint = 0x00000400u;
+        private const uint FileNonDirectoryFile = 0x00000040u;
+        private const uint FileSynchronousIoNonAlert = 0x00000020u;
+        private const uint ObjCaseInsensitive = 0x00000040u;
         private const int FileRenameInfoClass = 3;
         private const int FileDispositionInfoClass = 4;
+        private const int StatusSuccess = 0;
         private const int ErrorFileNotFound = 2;
         private const int ErrorPathNotFound = 3;
 
@@ -109,6 +115,18 @@ namespace Zantetsu.Observability
                     || !string.Equals(canonicalPath, expected, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new IOException("The final run root directory identity does not match the expected path.");
+                }
+
+                // Probe directory metadata flush capability on this exact
+                // handle before any side effect. This confirms the filesystem
+                // actually supports flushing directory metadata (not just the
+                // OS), so an unsupported filesystem is rejected before
+                // temporary creation or rename. Transient I/O failures later
+                // are out of scope for this probe.
+                if (!FlushFileBuffers(handle))
+                {
+                    throw new CaptureArtifactNoFollowUnavailableException(
+                        "Directory metadata flush is not available for the final run root.");
                 }
 
                 return new CaptureIndexCommitDirectory(handle, normalized, canonicalPath);
@@ -210,35 +228,105 @@ namespace Zantetsu.Observability
                     "No-follow file creation is not supported on this platform.");
             }
 
-            string fullPath = Path.Combine(directory.OriginalPath, name);
-
-            SafeFileHandle handle = CreateFileW(
-                fullPath,
-                GenericRead | GenericWrite | DeleteAccess,
-                FileShareRead | FileShareWrite | FileShareDelete,
-                IntPtr.Zero,
-                CreateNewDisposition,
-                FileAttributeNormal,
-                IntPtr.Zero);
-
-            if (handle.IsInvalid)
+            SafeFileHandle handle = CreateNewRelativeToDirectory(directory, name);
+            try
             {
-                throw new IOException("Failed to create " + name + ".");
-            }
+                // Defense-in-depth: the handle-relative create is bound to the
+                // verified directory identity and cannot land outside the run
+                // root. If the directory was renamed mid-commit and the resolved
+                // path no longer matches, fail closed and remove the file.
+                string canonicalPath = GetCanonicalPath(handle);
+                if (canonicalPath == null || !IsWithinDirectory(canonicalPath, directory.CanonicalPath))
+                {
+                    try
+                    {
+                        DeleteByHandle(handle);
+                    }
+                    catch
+                    {
+                        // Deletion failure must not leak the handle; the
+                        // IOException below is the reported failure.
+                    }
 
-            // Confirm the created file lives inside the verified directory
-            // identity, so a parent directory swapped before the create cannot
-            // leave a file outside the run root.
-            string canonicalPath = GetCanonicalPath(handle);
-            if (canonicalPath == null || !IsWithinDirectory(canonicalPath, directory.CanonicalPath))
+                    throw new IOException(name + " was created outside the final run root.");
+                }
+
+                FileStream stream = new FileStream(handle, FileAccess.ReadWrite, 4096, isAsync: false);
+                CaptureIndexCommitFile file = new CaptureIndexCommitFile(handle, stream);
+                handle = null;
+                return file;
+            }
+            finally
             {
-                DeleteByHandle(handle);
-                handle.Dispose();
-                throw new IOException(name + " was created outside the final run root.");
+                if (handle != null)
+                {
+                    handle.Dispose();
+                }
             }
+        }
 
-            FileStream stream = new FileStream(handle, FileAccess.ReadWrite, 4096, isAsync: false);
-            return new CaptureIndexCommitFile(handle, stream);
+        private static SafeFileHandle CreateNewRelativeToDirectory(CaptureIndexCommitDirectory directory, string name)
+        {
+            IntPtr nameBuffer = IntPtr.Zero;
+            IntPtr nameStringPtr = IntPtr.Zero;
+            try
+            {
+                nameBuffer = Marshal.StringToHGlobalUni(name);
+
+                UnicodeString nameString = new UnicodeString
+                {
+                    Length = (ushort)(name.Length * sizeof(char)),
+                    MaximumLength = (ushort)((name.Length + 1) * sizeof(char)),
+                    Buffer = nameBuffer
+                };
+
+                nameStringPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeString)));
+                Marshal.StructureToPtr(nameString, nameStringPtr, false);
+
+                ObjectAttributes attributes = new ObjectAttributes
+                {
+                    Length = (uint)Marshal.SizeOf(typeof(ObjectAttributes)),
+                    RootDirectory = directory.Handle.DangerousGetHandle(),
+                    ObjectName = nameStringPtr,
+                    Attributes = ObjCaseInsensitive,
+                    SecurityDescriptor = IntPtr.Zero,
+                    SecurityQualityOfService = IntPtr.Zero
+                };
+
+                long allocationSize = 0;
+                IoStatusBlock ioStatusBlock;
+                int status = NtCreateFile(
+                    out IntPtr rawHandle,
+                    FileGenericRead | FileGenericWrite | DeleteAccess,
+                    ref attributes,
+                    out ioStatusBlock,
+                    ref allocationSize,
+                    FileAttributeNormal,
+                    FileShareRead | FileShareWrite | FileShareDelete,
+                    FileCreateDisposition,
+                    FileNonDirectoryFile | FileSynchronousIoNonAlert,
+                    IntPtr.Zero,
+                    0);
+
+                if (status != StatusSuccess || rawHandle == IntPtr.Zero)
+                {
+                    throw new IOException("Failed to create " + name + " (NTSTATUS 0x" + status.ToString("X8") + ").");
+                }
+
+                return new SafeFileHandle(rawHandle, true);
+            }
+            finally
+            {
+                if (nameStringPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(nameStringPtr);
+                }
+
+                if (nameBuffer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(nameBuffer);
+                }
+            }
         }
 
         public void FlushFileData(CaptureIndexCommitFile file)
@@ -427,6 +515,32 @@ namespace Zantetsu.Observability
             public uint FileIndexLow;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct UnicodeString
+        {
+            public ushort Length;
+            public ushort MaximumLength;
+            public IntPtr Buffer;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ObjectAttributes
+        {
+            public uint Length;
+            public IntPtr RootDirectory;
+            public IntPtr ObjectName;
+            public uint Attributes;
+            public IntPtr SecurityDescriptor;
+            public IntPtr SecurityQualityOfService;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoStatusBlock
+        {
+            public int Status;
+            public IntPtr Information;
+        }
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern SafeFileHandle CreateFileW(
             string lpFileName,
@@ -465,5 +579,19 @@ namespace Zantetsu.Observability
             int fileInformationClass,
             ref FileDispositionInfo lpFileInformation,
             uint dwBufferSize);
+
+        [DllImport("ntdll.dll", ExactSpelling = true)]
+        private static extern int NtCreateFile(
+            out IntPtr fileHandle,
+            uint desiredAccess,
+            ref ObjectAttributes objectAttributes,
+            out IoStatusBlock ioStatusBlock,
+            ref long allocationSize,
+            uint fileAttributes,
+            uint shareAccess,
+            uint createDisposition,
+            uint createOptions,
+            IntPtr eaBuffer,
+            uint eaLength);
     }
 }
