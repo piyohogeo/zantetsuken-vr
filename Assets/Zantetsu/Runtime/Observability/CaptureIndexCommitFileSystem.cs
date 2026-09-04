@@ -28,7 +28,7 @@ namespace Zantetsu.Observability
     /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
     /// </para>
     /// </remarks>
-    internal sealed class CaptureIndexCommitFileSystem : ICaptureIndexCommitFileSystem
+    internal sealed class CaptureIndexCommitFileSystem : ICaptureIndexCommitFileSystem, ICaptureCompleteCleanupFileSystem
     {
         private const uint GenericRead = 0x80000000u;
         private const uint GenericWrite = 0x40000000u;
@@ -80,7 +80,7 @@ namespace Zantetsu.Observability
 
             SafeFileHandle handle = CreateFileW(
                 normalized,
-                GenericRead | GenericWrite,
+                GenericRead | GenericWrite | DeleteAccess,
                 FileShareRead | FileShareWrite | FileShareDelete,
                 IntPtr.Zero,
                 OpenExisting,
@@ -362,24 +362,18 @@ namespace Zantetsu.Observability
 
             // The source is the verified file identity (the handle), so a
             // swapped temporary path cannot make us rename a different file.
-            // The destination is derived from that same file's own canonical
-            // location, re-resolved through the file handle at rename time, so
-            // a swapped parent directory cannot redirect the destination
-            // outside the verified run root either.
+            // The destination is derived from the verified directory's resolved
+            // canonical path (fixed at OpenDirectory time), not from a
+            // re-resolved file path, so a transient canonical-path resolution
+            // failure on a freshly created file cannot break the rename.
             string fileCanonicalPath = GetCanonicalPath(file.Handle);
-            if (fileCanonicalPath == null)
-            {
-                throw new IOException("Failed to resolve the temporary file path for rename.");
-            }
-
-            string fileDirectory = Path.GetDirectoryName(fileCanonicalPath);
-            if (string.IsNullOrEmpty(fileDirectory)
+            if (fileCanonicalPath == null
                 || !IsWithinDirectory(fileCanonicalPath, directory.CanonicalPath))
             {
                 throw new IOException("The temporary file is not inside the verified run root.");
             }
 
-            string fullDestination = fileDirectory + "\\" + newName;
+            string fullDestination = directory.CanonicalPath + "\\" + newName;
 
             // FILE_RENAME_INFO: union (4 bytes) + padding to HANDLE alignment,
             // HANDLE RootDirectory, DWORD FileNameLength, then WCHAR
@@ -450,6 +444,71 @@ namespace Zantetsu.Observability
             }
         }
 
+        public void DeleteDirectory(CaptureIndexCommitDirectory directory)
+        {
+            if (directory == null)
+            {
+                throw new ArgumentNullException(nameof(directory));
+            }
+
+            if (!IsDirectoryFlushSupported)
+            {
+                throw new CaptureArtifactNoFollowUnavailableException(
+                    "Directory deletion is not supported on this platform.");
+            }
+
+            // Non-recursive, handle-bound delete: an empty directory is the
+            // only thing that can be removed, and the verified directory
+            // handle pins the exact identity being removed.
+            FileDispositionInfo dispositionInfo = new FileDispositionInfo { DeleteFile = true };
+            if (!SetFileInformationByHandle(
+                directory.Handle,
+                FileDispositionInfoClass,
+                ref dispositionInfo,
+                (uint)Marshal.SizeOf(typeof(FileDispositionInfo))))
+            {
+                int error = Marshal.GetLastWin32Error();
+                throw new IOException("Directory deletion failed (win32 error " + error + ").");
+            }
+        }
+
+        public bool IsDirectoryEmpty(CaptureIndexCommitDirectory directory)
+        {
+            if (directory == null)
+            {
+                throw new ArgumentNullException(nameof(directory));
+            }
+
+            // Enumerate through the resolved canonical path (never the
+            // user-supplied path), so a swapped parent junction cannot redirect
+            // the enumeration. Deletion itself stays handle-bound.
+            IntPtr find = FindFirstFileW(directory.CanonicalPath + "\\*", out Win32FindData data);
+            if (find == InvalidHandleValue)
+            {
+                int error = Marshal.GetLastWin32Error();
+                throw new IOException("Failed to enumerate the directory (win32 error " + error + ").");
+            }
+
+            try
+            {
+                do
+                {
+                    string name = data.FileName;
+                    if (name != "." && name != "..")
+                    {
+                        return false;
+                    }
+                }
+                while (FindNextFileW(find, out data));
+
+                return true;
+            }
+            finally
+            {
+                FindClose(find);
+            }
+        }
+
         private static void DeleteByHandle(SafeFileHandle handle)
         {
             FileDispositionInfo dispositionInfo = new FileDispositionInfo { DeleteFile = true };
@@ -492,6 +551,38 @@ namespace Zantetsu.Observability
 
             return builder.ToString();
         }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct Win32FindData
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint Reserved0;
+            public uint Reserved1;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string FileName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
+            public string AlternateFileName;
+        }
+
+        private static readonly IntPtr InvalidHandleValue = new IntPtr(-1);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr FindFirstFileW(
+            string lpFileName,
+            out Win32FindData lpFindFileData);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool FindNextFileW(
+            IntPtr hFindFile,
+            out Win32FindData lpFindFileData);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FindClose(IntPtr hFindFile);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct FileDispositionInfo
