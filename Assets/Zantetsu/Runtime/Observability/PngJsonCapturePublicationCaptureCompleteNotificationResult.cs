@@ -17,16 +17,18 @@ namespace Zantetsu.Observability
     /// field; every accessor forwards a value from the held operation graph.
     /// </para>
     /// <para>
-    /// The atomic factory and <see cref="IsValid"/> share one exception-safe
-    /// correlation predicate. It re-checks that the coordinator, proof,
-    /// operation, and receipt are non-null, that the proof was minted by the
-    /// exact coordinator for the exact operation and receipt, that the receipt
-    /// was issued by the coordinator's notifier, and that the receipt still
-    /// proves that exact operation through the single <c>IsIssuedFor</c> path —
-    /// which itself performs the operation's full current-state validation.
-    /// The result therefore re-derives no plan, path set, manifest, status, or
-    /// disposition of its own; that single post-notification validation is not
-    /// duplicated.
+    /// The atomic factory performs only the O(1) exception-safe exact-binding
+    /// predicate: it re-checks that the coordinator, proof, operation, and
+    /// receipt are non-null, that the proof was minted by the exact coordinator
+    /// for the exact operation and receipt, that the receipt was issued by the
+    /// coordinator's notifier, and that the receipt references the exact
+    /// operation. It never re-runs <c>receipt.IsIssuedFor</c> on the success
+    /// path. <see cref="IsValid"/> re-runs that same binding as its first stage
+    /// and then adds the full current-state verification through the single
+    /// <c>IsIssuedFor</c> path — which itself performs the operation's full
+    /// current-state validation. The result therefore re-derives no plan, path
+    /// set, manifest, status, or disposition of its own; that single
+    /// post-notification validation is not duplicated.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
