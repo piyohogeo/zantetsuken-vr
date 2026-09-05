@@ -85,21 +85,32 @@ namespace Zantetsu.Observability
             long write = Volatile.Read(ref _writePosition);
             long read = Volatile.Read(ref _readPosition);
 
-            if (write - read >= Capacity)
+            if (!CanEnqueueWith(write, read))
             {
-                return false;
-            }
-
-            if (write >= MaxPosition)
-            {
-                // Advancing the write position would wrap; fail closed without
-                // touching the payload or either position.
                 return false;
             }
 
             _items[BackingIndex(write)] = item;
             Volatile.Write(ref _writePosition, write + 1);
             return true;
+        }
+
+        /// <summary>
+        /// Producer-side O(1) capacity query. True when the next producer-side
+        /// <see cref="TryEnqueue"/> is guaranteed to succeed under the strict
+        /// single-producer contract, because the consumer only ever frees
+        /// capacity. It has no side effect, performs no wait and no allocation,
+        /// and shares the exact full/position-limit predicate with
+        /// <see cref="TryEnqueue"/>.
+        /// </summary>
+        internal bool CanEnqueue
+        {
+            get
+            {
+                long write = Volatile.Read(ref _writePosition);
+                long read = Volatile.Read(ref _readPosition);
+                return CanEnqueueWith(write, read);
+            }
         }
 
         internal bool TryDequeue(out T item)
@@ -119,6 +130,11 @@ namespace Zantetsu.Observability
 
             Volatile.Write(ref _readPosition, read + 1);
             return true;
+        }
+
+        private bool CanEnqueueWith(long write, long read)
+        {
+            return write - read < Capacity && write < MaxPosition;
         }
 
         private int BackingIndex(long position)
