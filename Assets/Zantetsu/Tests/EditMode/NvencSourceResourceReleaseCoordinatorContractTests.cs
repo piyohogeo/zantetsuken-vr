@@ -206,6 +206,56 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Release_DuplicateHandoffBeforeApply_EnqueuesOnlyOnce()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+
+                // Before the main thread applies, a second handoff of the same
+                // record is rejected: no duplicate enqueue.
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.False);
+
+                // Only one handoff is pending; applying it frees surface and sync.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(record.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
+
+                // No further pending handoff remains.
+                Assert.That(h.Boundary.HasPending, Is.False);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+            }
+        }
+
+        [Test]
+        public void Release_DuplicateHandoffDoesNotBlockOtherWorks()
+        {
+            using (Harness h = Harness.Create(2))
+            {
+                NvencSubmissionRecord first = h.CreateRecord(7);
+                NvencSubmissionRecord second = h.CreateRecord(8);
+                h.Source.MarkCompleted(first.WorkToken);
+                h.Source.MarkCompleted(second.WorkToken);
+
+                // A duplicate attempt on the first record fails cleanly.
+                Assert.That(h.Coordinator.TryReleaseSourceResources(first), Is.True);
+                Assert.That(h.Coordinator.TryReleaseSourceResources(first), Is.False);
+
+                // The second record still hands off and applies normally.
+                Assert.That(h.Coordinator.TryReleaseSourceResources(second), Is.True);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+
+                Assert.That(first.Surface.IsCreated, Is.False);
+                Assert.That(second.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
+                Assert.That(h.Boundary.HasPending, Is.False);
+            }
+        }
+
+        [Test]
         public void Release_Draining_AllowsRelease()
         {
             using (Harness h = Harness.Create(1))

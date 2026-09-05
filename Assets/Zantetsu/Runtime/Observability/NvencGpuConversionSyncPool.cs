@@ -38,6 +38,7 @@ namespace Zantetsu.Observability
         private readonly long[] _generations;
         private readonly bool[] _rented;
         private readonly bool[] _retired;
+        private readonly bool[] _pending;
 
         private int _rentedCount;
 
@@ -60,6 +61,7 @@ namespace Zantetsu.Observability
 
             _rented = new bool[NvencBringUpProfileV1.GpuConversionSyncCapacity];
             _retired = new bool[NvencBringUpProfileV1.GpuConversionSyncCapacity];
+            _pending = new bool[NvencBringUpProfileV1.GpuConversionSyncCapacity];
             _rentedCount = 0;
         }
 
@@ -108,7 +110,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (lease.Generation != _generations[index] || !_rented[index])
+            if (lease.Generation != _generations[index] || !_rented[index] || _pending[index])
             {
                 return false;
             }
@@ -120,6 +122,109 @@ namespace Zantetsu.Observability
             {
                 // Advancing would wrap. Retire the credit so it is never rented
                 // again; the current reservation is still released.
+                _retired[index] = true;
+            }
+            else
+            {
+                _generations[index]++;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Transitions one active credit to the pending-release state exactly
+        /// once, under the resource-resolution gate. Returns false when the
+        /// lease is stale, not rented, already pending, or the process is
+        /// poisoned; in that case nothing changes. The credit stays occupied
+        /// and active until the pending release is returned or reverted.
+        /// </summary>
+        internal bool TryMarkPendingRelease(in NvencGpuConversionSyncLease lease)
+        {
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            if (!lease.IsValid || lease.OwnerToken != _ownerToken)
+            {
+                return false;
+            }
+
+            int index = lease.SlotIndex;
+            if (index < 0 || index >= _rented.Length)
+            {
+                return false;
+            }
+
+            if (lease.Generation != _generations[index] || !_rented[index] || _pending[index])
+            {
+                return false;
+            }
+
+            _pending[index] = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Reverts a pending-release transition back to the plain active state.
+        /// Only used when the corresponding handoff enqueue failed, so the
+        /// credit can be handed off again later.
+        /// </summary>
+        internal void RevertPendingRelease(in NvencGpuConversionSyncLease lease)
+        {
+            if (!lease.IsValid || lease.OwnerToken != _ownerToken)
+            {
+                return;
+            }
+
+            int index = lease.SlotIndex;
+            if (index < 0 || index >= _rented.Length)
+            {
+                return;
+            }
+
+            if (_pending[index] && _rented[index] && lease.Generation == _generations[index])
+            {
+                _pending[index] = false;
+            }
+        }
+
+        /// <summary>
+        /// Returns exactly one pending-release credit and frees its slot. Only
+        /// the exact pending lease is accepted; a stale, non-pending, or
+        /// foreign lease is rejected without side effect. After poison every
+        /// pending credit stays occupied until the process exits.
+        /// </summary>
+        internal bool TryReturnPendingRelease(in NvencGpuConversionSyncLease lease)
+        {
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            if (!lease.IsValid || lease.OwnerToken != _ownerToken)
+            {
+                return false;
+            }
+
+            int index = lease.SlotIndex;
+            if (index < 0 || index >= _rented.Length)
+            {
+                return false;
+            }
+
+            if (lease.Generation != _generations[index] || !_rented[index] || !_pending[index])
+            {
+                return false;
+            }
+
+            _pending[index] = false;
+            _rented[index] = false;
+            _rentedCount--;
+
+            if (_generations[index] == long.MaxValue)
+            {
                 _retired[index] = true;
             }
             else

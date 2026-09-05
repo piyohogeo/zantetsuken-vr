@@ -142,10 +142,26 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // 6. Hand off the evidenced release request. Nothing is released
+                // 6. Transition the active sync credit to pending exactly once.
+                // An already-pending credit is rejected here, so the same record
+                // cannot be handed off twice.
+                if (!_syncSlots.TryMarkPendingRelease(record.SyncSlot))
+                {
+                    return false;
+                }
+
+                // 7. Hand off the evidenced release request. Nothing is released
                 // here; the Main Thread applies it under the same gate.
-                return _surfaceReturnBoundary.TryEnqueue(
-                    new NvencSourceSurfaceReleaseHandoff(record, evidence));
+                if (!_surfaceReturnBoundary.TryEnqueue(
+                    new NvencSourceSurfaceReleaseHandoff(record, evidence)))
+                {
+                    // The boundary is full: revert the pending transition so the
+                    // credit can be handed off again later.
+                    _syncSlots.RevertPendingRelease(record.SyncSlot);
+                    return false;
+                }
+
+                return true;
             }
             finally
             {
@@ -186,10 +202,10 @@ namespace Zantetsu.Observability
 
                 handoff.Record.Surface.ReleaseFromBackend(_backendOwner, handoff.Record.WorkToken);
 
-                if (!_syncSlots.TryReturn(handoff.Record.SyncSlot))
+                if (!_syncSlots.TryReturnPendingRelease(handoff.Record.SyncSlot))
                 {
                     throw new InvalidOperationException(
-                        "Sync credit return failed inside the resource-resolution gate; internal invariant violated.");
+                        "Pending sync credit return failed inside the resource-resolution gate; internal invariant violated.");
                 }
 
                 _surfaceReturnBoundary.CompletePending();
