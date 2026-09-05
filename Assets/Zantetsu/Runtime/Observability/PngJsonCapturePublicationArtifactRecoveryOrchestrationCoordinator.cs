@@ -98,7 +98,20 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Inspection operation must be valid.", nameof(operation));
             }
 
-            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = _inspector.Inspect(operation);
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot;
+            try
+            {
+                snapshot = _inspector.Inspect(operation);
+            }
+            catch (CaptureArtifactVerificationDeferredException)
+            {
+                // A single attempt whose verification buffer could not be
+                // rented converges to the Deferred terminal: no snapshot,
+                // decision, plan, batch, publish, commit, cleanup, or
+                // notification runs.
+                return PngJsonCapturePublicationArtifactRecoveryOrchestrationResult.CreateDeferred(this, operation);
+            }
+
             VerifySnapshot(snapshot, operation);
 
             PngJsonCapturePublicationArtifactRecoveryDecision decision =

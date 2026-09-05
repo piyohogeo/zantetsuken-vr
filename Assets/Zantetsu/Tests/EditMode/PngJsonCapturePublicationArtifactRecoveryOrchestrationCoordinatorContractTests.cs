@@ -1439,7 +1439,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(3));
+            Assert.That(fields.Length, Is.EqualTo(4));
             Assert.That(fields.All(f => f.IsInitOnly), Is.True);
         }
 

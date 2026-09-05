@@ -818,12 +818,13 @@ namespace Zantetsu.Core.Tests
                 "OrphanedPreTrace",
                 "ArtifactSourceMissing",
                 "PublishedArtifactMissing",
-                "RunRootCollision"
+                "RunRootCollision",
+                "Deferred"
             }));
 
             Array values = Enum.GetValues(type);
-            Assert.That(values.Length, Is.EqualTo(7));
-            for (int i = 0; i < 7; i++)
+            Assert.That(values.Length, Is.EqualTo(8));
+            for (int i = 0; i < 8; i++)
             {
                 Assert.That((int)values.GetValue(i), Is.EqualTo(i));
             }

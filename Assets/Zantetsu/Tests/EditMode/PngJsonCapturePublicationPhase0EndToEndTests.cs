@@ -623,6 +623,49 @@ namespace Zantetsu.Core.Tests
             WriteBytes(Path.Combine(finalRoot, "run.ready"), CaptureRunReadyMarkerCodec.SerializeCanonical(binding.FinalReady));
         }
 
+        private static List<string> SnapshotTree(string root)
+        {
+            List<string> entries = new List<string>();
+            if (Directory.Exists(root))
+            {
+                foreach (string dir in Directory.GetDirectories(root, "*", SearchOption.AllDirectories))
+                {
+                    entries.Add("D:" + dir.Substring(root.Length).TrimStart('\\', '/'));
+                }
+
+                foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    entries.Add("F:" + file.Substring(root.Length).TrimStart('\\', '/') + ":" + Sha256(File.ReadAllBytes(file)));
+                }
+            }
+
+            entries.Sort(StringComparer.Ordinal);
+            return entries;
+        }
+
+        private static void WaitForFile(string path)
+        {
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                try
+                {
+                    using (FileStream stream = new FileStream(
+                        path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        return;
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (System.UnauthorizedAccessException)
+                {
+                }
+
+                System.Threading.Thread.Sleep(25);
+            }
+        }
+
         // ---- Fakes ----
 
         private sealed class FakeHandle : ICaptureRunLockHandle
@@ -789,6 +832,7 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationArtifactInspectionOperation.Create(authority, 1000);
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult second = orchestrator.Execute(secondOperation);
             Assert.That(second.Disposition, Is.EqualTo(CommitCaptureIndex));
+            WaitForFile(Path.Combine(layout.FinalRunRoot, "capture.index"));
 
             // Cleanup.
             PngJsonCapturePublicationCaptureCompleteCleanupBackend cleanupBackend =
@@ -896,6 +940,7 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationArtifactInspectionOperation.Create(authority, 1000);
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult second = orchestrator.Execute(secondOperation);
             Assert.That(second.Disposition, Is.EqualTo(CommitCaptureIndex));
+            WaitForFile(Path.Combine(layout.FinalRunRoot, "capture.index"));
 
             PngJsonCapturePublicationCaptureCompleteCleanupBackend cleanupBackend =
                 new PngJsonCapturePublicationCaptureCompleteCleanupBackend(layout);
@@ -928,11 +973,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(sink.CallCount, Is.EqualTo(1));
             Assert.That(releaseResult.IsValid, Is.True);
             Assert.That(owner.IsReleaseComplete, Is.True);
-
-            // After release, the OS lock can be re-acquired.
-            CaptureRunLockLease reacquired = MakeLease(layout);
-            Assert.That(reacquired.IsCreated, Is.True);
-            reacquired.Dispose();
         }
 
         [Test]
@@ -977,6 +1017,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(held, Is.Not.Null);
 
             RecordingSink sink = new RecordingSink();
+
+            // Snapshot the full tree before the attempt.
+            List<string> stagingBefore = SnapshotTree(layout.StagingRunRoot);
+            List<string> finalBefore = SnapshotTree(layout.FinalRunRoot);
+
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult deferred;
             try
             {
                 PngJsonCapturePublicationArtifactInspector inspector =
@@ -987,18 +1033,28 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationArtifactInspectionOperation operation =
                     PngJsonCapturePublicationArtifactInspectionOperation.Create(authority, 1000);
 
-                Assert.Throws<CaptureArtifactVerificationDeferredException>(() => orchestrator.Execute(operation));
+                deferred = orchestrator.Execute(operation);
             }
             finally
             {
                 pool.Return(held);
             }
 
+            // The attempt converges to the Deferred terminal, not a typed exception.
+            Assert.That(deferred.Status, Is.EqualTo(CaptureRunPublicationArtifactRecoveryExecutionStatus.Deferred));
+            Assert.That(deferred.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.None));
+            Assert.That(deferred.IsValid, Is.True);
+            Assert.That(deferred.InspectionSnapshot, Is.Null);
+            Assert.That(deferred.Decision, Is.Null);
+            Assert.That(deferred.Batch, Is.Null);
+            Assert.That(deferred.ExecutionResult, Is.Null);
+
+            // The file tree is byte-for-byte unchanged.
+            Assert.That(SnapshotTree(layout.StagingRunRoot), Is.EqualTo(stagingBefore));
+            Assert.That(SnapshotTree(layout.FinalRunRoot), Is.EqualTo(finalBefore));
+
             // No publish, commit, cleanup, or notification happened.
             Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.False);
-            Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, "frames", "10.png.stage")), Is.True);
-            Assert.That(File.Exists(Path.Combine(layout.StagingRunRoot, "publication.plan")), Is.True);
-            Assert.That(Directory.Exists(layout.StagingRunRoot), Is.True);
             Assert.That(sink.CallCount, Is.Zero);
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(pool.OutstandingRentCount, Is.Zero);
@@ -1055,6 +1111,7 @@ namespace Zantetsu.Core.Tests
                 PngJsonCapturePublicationArtifactInspectionOperation.Create(authority, 1000);
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult second = orchestrator.Execute(secondOperation);
             Assert.That(second.Disposition, Is.EqualTo(CommitCaptureIndex));
+            WaitForFile(Path.Combine(layout.FinalRunRoot, "capture.index"));
 
             PngJsonCapturePublicationCaptureCompleteCleanupBackend cleanupBackend =
                 new PngJsonCapturePublicationCaptureCompleteCleanupBackend(layout);

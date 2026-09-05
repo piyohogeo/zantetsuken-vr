@@ -32,15 +32,18 @@ namespace Zantetsu.Observability
         private readonly PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator _issuedBy;
         private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult _executionResult;
         private readonly PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken _token;
+        private readonly PngJsonCapturePublicationArtifactInspectionOperation _deferredOperation;
 
         private PngJsonCapturePublicationArtifactRecoveryOrchestrationResult(
             PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
             PngJsonCapturePublicationArtifactRecoveryExecutionResult executionResult,
-            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken token)
+            PngJsonCapturePublicationArtifactRecoveryExecutionResult.ValidationToken token,
+            PngJsonCapturePublicationArtifactInspectionOperation deferredOperation)
         {
             _issuedBy = issuedBy;
             _executionResult = executionResult;
             _token = token;
+            _deferredOperation = deferredOperation;
         }
 
         /// <summary>
@@ -77,41 +80,85 @@ namespace Zantetsu.Observability
                     nameof(executionResult));
             }
 
-            return new PngJsonCapturePublicationArtifactRecoveryOrchestrationResult(issuedBy, executionResult, token);
+            return new PngJsonCapturePublicationArtifactRecoveryOrchestrationResult(issuedBy, executionResult, token, null);
+        }
+
+        /// <summary>
+        /// Deferred terminal issued when the inspector could not rent its
+        /// verification buffer for this single attempt: no snapshot, decision,
+        /// plan, or batch was produced, so no publish, commit, cleanup, or
+        /// notification can run. The exact inspection operation is retained for
+        /// correlation; a caller may retry the same operation later.
+        /// </summary>
+        internal static PngJsonCapturePublicationArtifactRecoveryOrchestrationResult CreateDeferred(
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator issuedBy,
+            PngJsonCapturePublicationArtifactInspectionOperation operation)
+        {
+            if (issuedBy == null)
+            {
+                throw new ArgumentNullException(nameof(issuedBy));
+            }
+
+            if (operation == null)
+            {
+                throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (!operation.IsValid)
+            {
+                throw new ArgumentException("Inspection operation must be valid.", nameof(operation));
+            }
+
+            return new PngJsonCapturePublicationArtifactRecoveryOrchestrationResult(issuedBy, null, null, operation);
         }
 
         internal PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator IssuedBy => _issuedBy;
 
         internal PngJsonCapturePublicationArtifactRecoveryExecutionResult ExecutionResult => _executionResult;
 
+        internal PngJsonCapturePublicationArtifactInspectionOperation DeferredOperation => _deferredOperation;
+
         internal PngJsonCapturePublicationArtifactInspectionSnapshot InspectionSnapshot =>
-            _executionResult.Batch.ActionPlan.Decision.Snapshot;
+            _executionResult != null ? _executionResult.Batch.ActionPlan.Decision.Snapshot : null;
 
-        internal PngJsonCapturePublicationArtifactRecoveryDecision Decision => _executionResult.Decision;
+        internal PngJsonCapturePublicationArtifactRecoveryDecision Decision =>
+            _executionResult != null ? _executionResult.Decision : null;
 
-        internal PngJsonCapturePublicationArtifactRecoveryActionPlan ActionPlan => _executionResult.ActionPlan;
+        internal PngJsonCapturePublicationArtifactRecoveryActionPlan ActionPlan =>
+            _executionResult != null ? _executionResult.ActionPlan : null;
 
-        internal PngJsonCapturePublicationArtifactRecoveryExecutionBatch Batch => _executionResult.Batch;
+        internal PngJsonCapturePublicationArtifactRecoveryExecutionBatch Batch =>
+            _executionResult != null ? _executionResult.Batch : null;
 
-        internal PngJsonCapturePublicationArtifactInspectionAuthority Authority => _executionResult.Authority;
+        internal PngJsonCapturePublicationArtifactInspectionAuthority Authority =>
+            _executionResult != null ? _executionResult.Authority : _deferredOperation.Authority;
 
-        internal PngJsonCapturePublicationArtifactInspectionAuthorityKind AuthorityKind => _executionResult.AuthorityKind;
+        internal PngJsonCapturePublicationArtifactInspectionAuthorityKind AuthorityKind =>
+            _executionResult != null ? _executionResult.AuthorityKind : _deferredOperation.Authority.Kind;
 
-        internal PngJsonCapturePublicationPlan AuthoritativePlan => _executionResult.AuthoritativePlan;
+        internal PngJsonCapturePublicationPlan AuthoritativePlan =>
+            _executionResult != null ? _executionResult.AuthoritativePlan : _deferredOperation.Plan;
 
-        internal CaptureRunPublicationArtifactRecoveryExecutionStatus Status => _executionResult.Status;
+        internal CaptureRunPublicationArtifactRecoveryExecutionStatus Status =>
+            _executionResult != null ? _executionResult.Status : CaptureRunPublicationArtifactRecoveryExecutionStatus.Deferred;
 
-        internal CaptureRunPublicationArtifactRecoveryDisposition Disposition => _executionResult.Disposition;
+        internal CaptureRunPublicationArtifactRecoveryDisposition Disposition =>
+            _executionResult != null ? _executionResult.Disposition : CaptureRunPublicationArtifactRecoveryDisposition.None;
 
-        internal CaptureRunRootLayout RootLayout => _executionResult.RootLayout;
+        internal CaptureRunRootLayout RootLayout =>
+            _executionResult != null ? _executionResult.RootLayout : _deferredOperation.RootLayout;
 
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _executionResult.LockIdentityEvidence;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence =>
+            _executionResult != null ? _executionResult.LockIdentityEvidence : _deferredOperation.LockIdentityEvidence;
 
-        internal long TestRunId => _executionResult.TestRunId;
+        internal long TestRunId =>
+            _executionResult != null ? _executionResult.TestRunId : _deferredOperation.TestRunId;
 
-        internal string RunInitializationId => _executionResult.RunInitializationId;
+        internal string RunInitializationId =>
+            _executionResult != null ? _executionResult.RunInitializationId : _deferredOperation.RunInitializationId;
 
-        internal string RunManifestContentSha256 => _executionResult.RunManifestContentSha256;
+        internal string RunManifestContentSha256 =>
+            _executionResult != null ? _executionResult.RunManifestContentSha256 : _deferredOperation.RunManifestContentSha256;
 
         /// <summary>
         /// Full validation plus token issuance: delegates to the shared
@@ -125,10 +172,26 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Exception-safe recomputation delegated to
-        /// <see cref="TryValidate"/>.
+        /// Exception-safe recomputation. A Deferred terminal re-checks only the
+        /// issuing coordinator, the exact live inspection operation, and the
+        /// absence of an execution result and token; a completed result
+        /// delegates to <see cref="TryValidate"/>.
         /// </summary>
-        internal bool IsValid => TryValidate(out _);
+        internal bool IsValid
+        {
+            get
+            {
+                if (_executionResult == null)
+                {
+                    return _issuedBy != null
+                        && _token == null
+                        && _deferredOperation != null
+                        && _deferredOperation.IsValid;
+                }
+
+                return TryValidate(out _);
+            }
+        }
 
         /// <summary>
         /// Exception-safe full re-validation with an already-issued proof:

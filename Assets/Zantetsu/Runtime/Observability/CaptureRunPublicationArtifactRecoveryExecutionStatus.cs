@@ -13,6 +13,7 @@ namespace Zantetsu.Observability
         OrphanedPreTrace = 3,
         ArtifactSourceMissing = 4,
         PublishedArtifactMissing = 5,
-        RunRootCollision = 6
+        RunRootCollision = 6,
+        Deferred = 7
     }
 }
