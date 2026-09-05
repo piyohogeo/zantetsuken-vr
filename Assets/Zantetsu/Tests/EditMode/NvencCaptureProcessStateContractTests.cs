@@ -131,24 +131,25 @@ namespace Zantetsu.Core.Tests
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
 
-            // Hold the guard as if an admission were mid-enqueue.
+            // Hold the gate as if an admission were mid-enqueue.
             Assert.That(state.TryBeginAdmission(), Is.True);
 
             int drainCompleted = 0;
-            using (Barrier barrier = new Barrier(2))
+            using (ManualResetEventSlim transitionStarted = new ManualResetEventSlim(false))
             {
                 Thread drainThread = new Thread(() =>
                 {
-                    barrier.SignalAndWait(WatchdogTimeoutMs);
+                    transitionStarted.Set();
                     state.TryBeginDrain();
                     Volatile.Write(ref drainCompleted, 1);
                 });
                 drainThread.IsBackground = true;
                 drainThread.Start();
 
-                barrier.SignalAndWait(WatchdogTimeoutMs);
+                Assert.That(transitionStarted.Wait(WatchdogTimeoutMs), Is.True, "Transition thread did not start within the watchdog timeout.");
 
-                // The drain cannot overtake the held guard.
+                // The transition has reached the gate but the guard is still
+                // held, so it cannot complete.
                 Assert.That(Volatile.Read(ref drainCompleted), Is.EqualTo(0));
 
                 state.EndAdmission();
@@ -178,10 +179,9 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(
                     method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
-                    method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
-                    method.Name == "EnterGuard" || method.Name == "ExitGuard",
+                    method.Name == "TryBeginAdmission" || method.Name == "EndAdmission",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition, admission, or guard method.");
+                    type.Name + "." + method.Name + " must be a transition or admission method.");
             }
         }
 
@@ -289,20 +289,22 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void HoldsOnlyAtomicInts_NoTokenReceiptGenerationHistory()
+        public void HoldsOnlyStateAndGate_NoTokenReceiptGenerationHistory()
         {
             Type type = typeof(NvencCaptureProcessState);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(fields.Length, Is.EqualTo(2));
+
+            Type[] expected = { typeof(int), typeof(object) };
             foreach (FieldInfo field in fields)
             {
-                Assert.That(field.FieldType, Is.EqualTo(typeof(int)), field.Name + " must be an int.");
+                Assert.That(expected, Does.Contain(field.FieldType), field.Name + " must be an int or object.");
             }
         }
 
         [Test]
-        public void ProductionSources_NoLockNoWaitNoThreadNoTaskNoIoNoUnityNoNative()
+        public void ProductionSources_NoSpinNoSleepNoThreadNoTaskNoIoNoUnityNoNative()
         {
             string root = Path.Combine(Application.dataPath, "..");
             string directory = Path.Combine(root, "Assets/Zantetsu/Runtime/Observability");
@@ -311,11 +313,12 @@ namespace Zantetsu.Core.Tests
                 File.ReadAllText(Path.Combine(directory, "NvencCaptureProcessStatus.cs"));
 
             Assert.That(text, Does.Not.Contain("lock ("));
-            Assert.That(text, Does.Not.Contain("Monitor"));
+            Assert.That(text, Does.Not.Contain("while ("));
+            Assert.That(text, Does.Not.Contain("SpinWait"));
+            Assert.That(text, Does.Not.Contain("Thread.Sleep"));
             Assert.That(text, Does.Not.Contain("ManualResetEvent"));
             Assert.That(text, Does.Not.Contain("AutoResetEvent"));
             Assert.That(text, Does.Not.Contain("WaitHandle"));
-            Assert.That(text, Does.Not.Contain("SpinWait"));
             Assert.That(text, Does.Not.Contain("new Thread"));
             Assert.That(text, Does.Not.Contain("ThreadPool"));
             Assert.That(text, Does.Not.Contain("Task"));

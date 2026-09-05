@@ -14,22 +14,24 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// The state is read and advanced with Interlocked/Volatile only, and a
-    /// short admission guard serializes each submission admission with the
-    /// Drain and Poison transitions so an in-flight enqueue is never overtaken
-    /// by a later transition. Reads perform no allocation, transitions are
-    /// idempotent and exception-safe, and this type is not an
-    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject. The
-    /// Composition Root, not this type, creates exactly one instance per
-    /// process; no singleton or static Current is forced here.
+    /// short private admission gate orders each submission admission against
+    /// the Drain and Poison transitions. Admission never waits for the gate; it
+    /// acquires non-waiting and fails if the gate is held. The lifecycle
+    /// transitions wait only for the preceding admission's short critical
+    /// section. Reads perform no allocation, transitions are idempotent and
+    /// exception-safe, and this type is not an <see cref="IDisposable"/>,
+    /// MonoBehaviour, or ScriptableObject. The Composition Root, not this type,
+    /// creates exactly one instance per process; no singleton or static Current
+    /// is forced here.
     /// </remarks>
     internal sealed class NvencCaptureProcessState
     {
         private int _state = (int)NvencCaptureProcessStatus.Running;
 
-        // 0 = free, 1 = held by an in-flight admission or transition. The
-        // guarded regions are short and non-allocating, so holding this is
-        // brief.
-        private int _admissionGate;
+        // Short private gate serializing a submission admission with the Drain
+        // and Poison transitions. Admission uses non-waiting TryEnter; the
+        // lifecycle transitions use a short blocking Enter.
+        private readonly object _admissionGate = new object();
 
         internal NvencCaptureProcessState()
         {
@@ -46,23 +48,29 @@ namespace Zantetsu.Observability
             State == NvencCaptureProcessStatus.PoisonedUntilProcessRestart;
 
         /// <summary>
-        /// Acquires the short admission guard and succeeds only while the state
-        /// is Running. On success the guard remains held until
+        /// Acquires the short admission gate without waiting and succeeds only
+        /// while the state is Running. On success the gate remains held until
         /// <see cref="EndAdmission"/> is called; the caller must complete its
-        /// surface transfer and Submission Queue enqueue within the guard and
-        /// then release it. On failure the guard is not held and the caller
-        /// must not enqueue. The guard is shared with
-        /// <see cref="TryBeginDrain"/> and <see cref="TryPoison"/>, so an
-        /// admission that holds it is ordered before any later transition, and
-        /// a transition that held it earlier has already advanced the state.
+        /// surface transfer and Submission Queue enqueue within the gate and
+        /// then release it. On failure the gate is not held and the caller must
+        /// not enqueue. The gate is shared with <see cref="TryBeginDrain"/> and
+        /// <see cref="TryPoison"/>, which wait for it, so an admission that
+        /// holds it is ordered before any later transition, and a transition
+        /// that holds it has already advanced the state.
         /// </summary>
         internal bool TryBeginAdmission()
         {
-            EnterGuard();
+            bool lockTaken = false;
+            Monitor.TryEnter(_admissionGate, ref lockTaken);
+
+            if (!lockTaken)
+            {
+                return false;
+            }
 
             if (Volatile.Read(ref _state) != (int)NvencCaptureProcessStatus.Running)
             {
-                ExitGuard();
+                Monitor.Exit(_admissionGate);
                 return false;
             }
 
@@ -70,17 +78,17 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Releases the admission guard acquired by a successful
+        /// Releases the admission gate acquired by a successful
         /// <see cref="TryBeginAdmission"/>.
         /// </summary>
         internal void EndAdmission()
         {
-            ExitGuard();
+            Monitor.Exit(_admissionGate);
         }
 
         internal bool TryBeginDrain()
         {
-            EnterGuard();
+            Monitor.Enter(_admissionGate);
             try
             {
                 return Interlocked.CompareExchange(
@@ -90,13 +98,13 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                ExitGuard();
+                Monitor.Exit(_admissionGate);
             }
         }
 
         internal bool TryPoison()
         {
-            EnterGuard();
+            Monitor.Enter(_admissionGate);
             try
             {
                 if (Interlocked.CompareExchange(
@@ -114,23 +122,8 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                ExitGuard();
+                Monitor.Exit(_admissionGate);
             }
-        }
-
-        private void EnterGuard()
-        {
-            while (Interlocked.CompareExchange(ref _admissionGate, 1, 0) != 0)
-            {
-                // The guarded regions are short and non-allocating; the only
-                // waiter is a Drain or Poison transition or the admission
-                // itself, so this wait is brief.
-            }
-        }
-
-        private void ExitGuard()
-        {
-            Volatile.Write(ref _admissionGate, 0);
         }
     }
 }
