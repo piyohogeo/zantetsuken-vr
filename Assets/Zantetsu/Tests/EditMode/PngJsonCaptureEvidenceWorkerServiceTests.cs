@@ -256,18 +256,7 @@ namespace Zantetsu.Core.Tests
 
         private static bool WaitForJoin(PngJsonCaptureEvidenceWorkerService service, int timeoutMs = 5000)
         {
-            int deadline = Environment.TickCount + timeoutMs;
-            while (!service.TryJoin())
-            {
-                if (Environment.TickCount - deadline >= 0)
-                {
-                    return false;
-                }
-
-                Thread.Sleep(1);
-            }
-
-            return true;
+            return service.WaitForJoin(timeoutMs);
         }
 
         private static bool WaitForCollect(
@@ -275,22 +264,13 @@ namespace Zantetsu.Core.Tests
             out PngJsonCaptureEvidenceWorkCompletion completion,
             int timeoutMs = 5000)
         {
-            int deadline = Environment.TickCount + timeoutMs;
-            while (true)
+            if (!service.WaitForCompletion(timeoutMs))
             {
-                if (service.TryCollect(out completion))
-                {
-                    return true;
-                }
-
-                if (Environment.TickCount - deadline >= 0)
-                {
-                    completion = default;
-                    return false;
-                }
-
-                Thread.Sleep(1);
+                completion = default;
+                return false;
             }
+
+            return service.TryCollect(out completion);
         }
 
         private static void ApplyAndAcknowledge(

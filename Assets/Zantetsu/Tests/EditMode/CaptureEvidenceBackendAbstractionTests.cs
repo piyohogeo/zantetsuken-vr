@@ -4,7 +4,6 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -231,6 +230,116 @@ namespace Zantetsu.Core.Tests
                 Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
                 Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
                 Assert.That(WaitForJoin(backend), Is.True);
+            }
+        }
+
+        [Test]
+        public void PngJsonBackend_SlotNotReusedUntilAllCompletionsCollected()
+        {
+            using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(buffers))
+            using (FakeArtifactStore store = new FakeArtifactStore())
+            using (CaptureFrameRenderTargetPool pool = MakePool())
+            using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
+            {
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease leaseA), Is.True);
+                CaptureSurfaceLease surfaceA = new CaptureSurfaceLease(pool, leaseA);
+                Assert.That(backend.TrySubmit(MakeEnvelope(7), surfaceA, out _), Is.EqualTo(CaptureSubmitStatus.Accepted));
+
+                AsyncGPUReadback.WaitAllRequests();
+                Assert.That(WaitForFrameCompletion(backend, out CaptureFrameCompletion frameA), Is.True);
+                Assert.That(frameA.CaptureFrameId, Is.EqualTo(7));
+                Assert.That(frameA.ProducedArtifactCount, Is.EqualTo(2));
+
+                // Frame A is collected but its two artifacts are not. The
+                // backend slot must stay non-reusable.
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease leaseB), Is.True);
+                CaptureSurfaceLease surfaceB = new CaptureSurfaceLease(pool, leaseB);
+                Assert.That(backend.TrySubmit(MakeEnvelope(8), surfaceB, out CaptureFrameWorkToken tokenB),
+                    Is.EqualTo(CaptureSubmitStatus.Backpressured));
+                Assert.That(tokenB.IsValid, Is.False);
+                Assert.That(surfaceB.IsCallerOwned, Is.True);
+
+                // Collecting both artifacts frees the slot for reuse.
+                Assert.That(WaitForArtifactCompletion(backend, out CaptureArtifactCompletion imageA), Is.True);
+                Assert.That(imageA.Descriptor.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameImage));
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+
+                Assert.That(backend.TrySubmit(MakeEnvelope(8), surfaceB, out _), Is.EqualTo(CaptureSubmitStatus.Accepted));
+
+                AsyncGPUReadback.WaitAllRequests();
+                Assert.That(WaitForFrameCompletion(backend, out CaptureFrameCompletion frameB), Is.True);
+                Assert.That(frameB.CaptureFrameId, Is.EqualTo(8));
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+
+                backend.BeginDrain();
+                Assert.That(WaitForJoin(backend), Is.True);
+            }
+        }
+
+        [Test]
+        public void SurfaceLease_ReleaseFailureBeforeSideEffect_IsRetryable()
+        {
+            using (CaptureFrameRenderTargetPool pool = MakePool())
+            {
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease lease), Is.True);
+                CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, lease);
+                Guid owner = Guid.NewGuid();
+                CaptureFrameWorkToken token = new CaptureFrameWorkToken(owner, 0, 1, 3, 7);
+                surface.TransferToBackend(owner, token);
+
+                // A wrong token fails before any pool side effect.
+                CaptureFrameWorkToken wrong = new CaptureFrameWorkToken(owner, 0, 1, 3, 8);
+                Assert.Throws<InvalidOperationException>(() => surface.ReleaseFromBackend(owner, wrong));
+                Assert.That(surface.IsBackendOwned, Is.True);
+                Assert.That(pool.RentedCount, Is.EqualTo(1));
+
+                // The lease stays retryable with the correct token.
+                surface.ReleaseFromBackend(owner, token);
+                Assert.That(surface.IsCreated, Is.False);
+                Assert.That(pool.RentedCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void PngJsonBackend_SurfaceReleaseFailure_RecoversRawPayloadAndCompletions()
+        {
+            using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(buffers))
+            using (FakeArtifactStore store = new FakeArtifactStore())
+            using (CaptureFrameRenderTargetPool pool = MakePool())
+            using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
+            {
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease lease), Is.True);
+                CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, lease);
+                Assert.That(backend.TrySubmit(MakeEnvelope(7), surface, out _), Is.EqualTo(CaptureSubmitStatus.Accepted));
+
+                // Corrupt the render target pool so the surface release fails
+                // before the pool side effect (the slot stays rented).
+                FieldInfo disposedField = typeof(CaptureFrameRenderTargetPool)
+                    .GetField("_disposed", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(disposedField, Is.Not.Null);
+                disposedField.SetValue(pool, true);
+
+                AsyncGPUReadback.WaitAllRequests();
+                Assert.That(WaitForFrameCompletion(backend, out CaptureFrameCompletion frame), Is.True);
+                Assert.That(frame.Status, Is.EqualTo(CaptureFrameCompletionStatus.Succeeded));
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+
+                // The raw dispatcher slot is released even though the surface
+                // release failed.
+                Assert.That(buffers.RentedCount, Is.Zero);
+                Assert.That(dispatcher.ActiveCount, Is.Zero);
+
+                backend.BeginDrain();
+                Assert.That(WaitForJoin(backend), Is.True);
+
+                // Restore the pool and return the still-rented render target so
+                // the pool can be disposed cleanly.
+                disposedField.SetValue(pool, false);
+                pool.Return(lease);
             }
         }
 
@@ -564,61 +673,29 @@ namespace Zantetsu.Core.Tests
 
         private static bool WaitForFrameCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureFrameCompletion completion)
         {
-            int deadline = Environment.TickCount + 10000;
-            while (true)
+            if (!backend.WaitForCompletion(5000))
             {
-                if (backend.TryCollectFrameCompletion(out completion))
-                {
-                    return true;
-                }
-
-                if (Environment.TickCount - deadline >= 0)
-                {
-                    completion = default;
-                    return false;
-                }
-
-                Thread.Sleep(1);
+                completion = default;
+                return false;
             }
+
+            return backend.TryCollectFrameCompletion(out completion);
         }
 
         private static bool WaitForArtifactCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureArtifactCompletion completion)
         {
-            int deadline = Environment.TickCount + 10000;
-            while (true)
+            if (!backend.WaitForCompletion(5000))
             {
-                if (backend.TryCollectArtifactCompletion(out completion))
-                {
-                    return true;
-                }
-
-                if (Environment.TickCount - deadline >= 0)
-                {
-                    completion = null;
-                    return false;
-                }
-
-                Thread.Sleep(1);
+                completion = null;
+                return false;
             }
+
+            return backend.TryCollectArtifactCompletion(out completion);
         }
 
         private static bool WaitForJoin(PngJsonCaptureEvidenceBackend backend)
         {
-            int deadline = Environment.TickCount + 10000;
-            while (true)
-            {
-                if (backend.TryJoin())
-                {
-                    return true;
-                }
-
-                if (Environment.TickCount - deadline >= 0)
-                {
-                    return false;
-                }
-
-                Thread.Sleep(1);
-            }
+            return backend.WaitForJoin(5000);
         }
 
         private static CaptureFrameEnvelope MakeEnvelope(long frameId)
