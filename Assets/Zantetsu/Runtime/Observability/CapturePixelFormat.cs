@@ -10,9 +10,6 @@ namespace Zantetsu.Observability
         None = 0,
 
         /// <summary>8 bits per channel, 32-bit RGBA.</summary>
-        Rgba32 = 1,
-
-        /// <summary>8 bits per channel, 32-bit BGRA.</summary>
-        Bgra32 = 2
+        Rgba32 = 1
     }
 }

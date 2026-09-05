@@ -142,7 +142,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(Evaluate(profile, capability, MakeInput(imageRectX: 1)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(imageRectY: 1)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(eye: CaptureEye.Right)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, capability, MakeInput(pixelFormat: CapturePixelFormat.Bgra32)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            // An undefined CapturePixelFormat value (not a production format)
+            // must be rejected without adding a new production format.
+            Assert.That(Evaluate(profile, capability, MakeInput(pixelFormat: (CapturePixelFormat)int.MaxValue)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(graphicsFormat: GraphicsFormat.R8G8B8A8_UNorm)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(colorSpace: CaptureColorSpace.Linear)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(sampleCount: 4)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
