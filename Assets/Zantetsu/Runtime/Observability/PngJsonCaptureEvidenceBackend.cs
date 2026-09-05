@@ -49,14 +49,24 @@ namespace Zantetsu.Observability
             int capacity,
             UnityRenderTextureReadbackDispatcher dispatcher,
             ICaptureArtifactStore artifactStore)
+            : this(capacity, dispatcher, artifactStore, PngJsonCaptureFrameEncoder.Create())
+        {
+        }
+
+        internal PngJsonCaptureEvidenceBackend(
+            int capacity,
+            UnityRenderTextureReadbackDispatcher dispatcher,
+            ICaptureArtifactStore artifactStore,
+            IPngJsonCaptureFrameEncoder encoder)
         {
             if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             if (artifactStore == null) throw new ArgumentNullException(nameof(artifactStore));
+            if (encoder == null) throw new ArgumentNullException(nameof(encoder));
             if (dispatcher.Capacity < capacity) throw new ArgumentException("Dispatcher capacity must cover backend capacity.", nameof(dispatcher));
 
             _ownerToken = Guid.NewGuid();
-            _worker = new PngJsonCaptureEvidenceWorkerService(capacity, PngJsonCaptureFrameEncoder.Create(), artifactStore);
+            _worker = new PngJsonCaptureEvidenceWorkerService(capacity, encoder, artifactStore);
             _worker.CompletionEnqueued += () => CompletionEnqueued?.Invoke();
             _worker.WorkerStopped += () => WorkerStopped?.Invoke();
             _states = new SlotState[capacity];
