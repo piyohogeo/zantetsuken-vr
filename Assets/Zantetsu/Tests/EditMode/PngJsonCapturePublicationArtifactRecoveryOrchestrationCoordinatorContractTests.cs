@@ -1301,6 +1301,30 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Result_CompletedWithInjectedDeferredOperation_IsValidFalse()
+        {
+            FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator coordinator =
+                MakeOrchestrator(inspector, MakeExecutionCoordinator());
+            PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = coordinator.Execute(operation);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.TryValidate(out var token), Is.True);
+            Assert.That(result.IsValidWithToken(token), Is.True);
+
+            // The completed variant owns the exclusive completed shape
+            // (executionResult + token + null Deferred slot). Injecting any
+            // operation into the Deferred slot must break IsValid, deny a new
+            // proof, and invalidate the already-issued proof, all without
+            // throwing.
+            SetField(result, "_deferredOperation", operation);
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.IsValidWithToken(token), Is.False);
+            Assert.That(result.TryValidate(out var second), Is.False);
+            Assert.That(second, Is.Null);
+        }
+
+        [Test]
         public void Result_Create_Rejected_AfterExecutionResultCorruption()
         {
             FakeArtifactInspector inspector = BuildPublishPngSidecarScenario(out PngJsonCapturePublicationArtifactInspectionOperation operation);

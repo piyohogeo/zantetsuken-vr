@@ -164,7 +164,9 @@ namespace Zantetsu.Observability
         /// Full validation plus token issuance: delegates to the shared
         /// validated mint, so the only way to obtain a proof is through the
         /// exact full-validation predicate. A stale or corrupted result never
-        /// produces a token.
+        /// produces a token, and a <see cref="CaptureRunPublicationArtifactRecoveryExecutionStatus.Deferred"/>
+        /// terminal always reports <c>false</c> with a null token because it
+        /// holds no execution result and therefore can never mint a proof.
         /// </summary>
         internal bool TryValidate(out ValidationToken token)
         {
@@ -210,19 +212,21 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Single shared full-validation predicate: the exact coordinator and
-        /// execution coordinator, the exact execution result, batch, action
-        /// plan, decision, and snapshot, the snapshot's exact inspector, the
-        /// proof's exact binding, the authority/plan/root layout/identity
-        /// evidence reference correlation, the owner liveness, and the
-        /// status/disposition mapping. It never re-issues a token, re-validates
-        /// the plan, or scans an entry.
+        /// Single shared full-validation predicate for the completed variant:
+        /// the exact coordinator and execution coordinator, the exact execution
+        /// result, batch, action plan, decision, and snapshot, the snapshot's
+        /// exact inspector, the proof's exact binding, the
+        /// authority/plan/root layout/identity evidence reference correlation,
+        /// the owner liveness, and the status/disposition mapping. It also
+        /// enforces the exclusive completed shape by requiring the Deferred
+        /// slot to be null, and never re-issues a token, re-validates the plan,
+        /// or scans an entry.
         /// </summary>
         private bool IsFullyValid()
         {
             try
             {
-                if (_issuedBy == null || _executionResult == null || _token == null)
+                if (_issuedBy == null || _executionResult == null || _token == null || _deferredOperation != null)
                 {
                     return false;
                 }
