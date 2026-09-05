@@ -14,15 +14,15 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// The state is read and advanced with Interlocked/Volatile only, and a
-    /// short private admission gate orders each submission admission against
-    /// the Drain and Poison transitions. Admission never waits for the gate; it
-    /// acquires non-waiting and fails if the gate is held. The lifecycle
-    /// transitions wait only for the preceding admission's short critical
-    /// section. Reads perform no allocation, transitions are idempotent and
-    /// exception-safe, and this type is not an <see cref="IDisposable"/>,
-    /// MonoBehaviour, or ScriptableObject. The Composition Root, not this type,
-    /// creates exactly one instance per process; no singleton or static Current
-    /// is forced here.
+    /// short private gate orders each submission admission and each source
+    /// resource resolution against the Drain and Poison transitions. Admission
+    /// and resource resolution never wait for the gate; they acquire
+    /// non-waiting and fail if the gate is held. The lifecycle transitions wait
+    /// only for the preceding short critical section. Reads perform no
+    /// allocation, transitions are idempotent and exception-safe, and this type
+    /// is not an <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
+    /// The Composition Root, not this type, creates exactly one instance per
+    /// process; no singleton or static Current is forced here.
     /// </remarks>
     internal sealed class NvencCaptureProcessState
     {
@@ -82,6 +82,46 @@ namespace Zantetsu.Observability
         /// <see cref="TryBeginAdmission"/>.
         /// </summary>
         internal void EndAdmission()
+        {
+            Monitor.Exit(_admissionGate);
+        }
+
+        /// <summary>
+        /// Acquires the short resource-resolution gate without waiting and
+        /// succeeds while the state is Running or Draining. It fails while the
+        /// state is PoisonedUntilProcessRestart or when the gate is already
+        /// held by another thread; in either case the gate is not held on
+        /// return and the caller must change nothing and may retry later. On
+        /// success the gate remains held until
+        /// <see cref="EndResourceResolution"/> is called. The gate is the same
+        /// one shared with <see cref="TryBeginAdmission"/>,
+        /// <see cref="TryBeginDrain"/>, and <see cref="TryPoison"/>, so the
+        /// resource release is serialized with those operations.
+        /// </summary>
+        internal bool TryBeginResourceResolution()
+        {
+            bool lockTaken = false;
+            Monitor.TryEnter(_admissionGate, ref lockTaken);
+
+            if (!lockTaken)
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
+            {
+                Monitor.Exit(_admissionGate);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases the resource-resolution gate acquired by a successful
+        /// <see cref="TryBeginResourceResolution"/>.
+        /// </summary>
+        internal void EndResourceResolution()
         {
             Monitor.Exit(_admissionGate);
         }

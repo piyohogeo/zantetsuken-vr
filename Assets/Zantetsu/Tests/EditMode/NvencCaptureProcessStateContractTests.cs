@@ -165,6 +165,39 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void ResourceResolution_RunningSucceeds_AndMustEnd()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+
+            Assert.That(state.TryBeginResourceResolution(), Is.True);
+            Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+
+            state.EndResourceResolution();
+        }
+
+        [Test]
+        public void ResourceResolution_DrainingSucceeds()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginDrain(), Is.True);
+
+            Assert.That(state.TryBeginResourceResolution(), Is.True);
+            Assert.That(state.IsDraining, Is.True);
+
+            state.EndResourceResolution();
+        }
+
+        [Test]
+        public void ResourceResolution_PoisonedFails()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryPoison(), Is.True);
+
+            Assert.That(state.TryBeginResourceResolution(), Is.False);
+            Assert.That(state.IsPoisoned, Is.True);
+        }
+
+        [Test]
         public void NoTransitionBackToRunning()
         {
             Type type = typeof(NvencCaptureProcessState);
@@ -179,9 +212,10 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(
                     method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
-                    method.Name == "TryBeginAdmission" || method.Name == "EndAdmission",
+                    method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
+                    method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition or admission method.");
+                    type.Name + "." + method.Name + " must be a transition, admission, or resource-resolution method.");
             }
         }
 
