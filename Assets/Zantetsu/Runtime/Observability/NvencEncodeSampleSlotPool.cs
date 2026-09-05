@@ -50,7 +50,14 @@ namespace Zantetsu.Observability
 
             _ownerToken = Guid.NewGuid();
             _processState = processState;
+
+            // Generations are one-based to match the work slot lease convention.
             _generations = new long[NvencBringUpProfileV1.EncodeSampleSlotCount];
+            for (int i = 0; i < _generations.Length; i++)
+            {
+                _generations[i] = 1;
+            }
+
             _rented = new bool[NvencBringUpProfileV1.EncodeSampleSlotCount];
             _retired = new bool[NvencBringUpProfileV1.EncodeSampleSlotCount];
             _rentedCount = 0;

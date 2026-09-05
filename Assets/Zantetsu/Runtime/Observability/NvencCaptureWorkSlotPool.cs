@@ -48,7 +48,15 @@ namespace Zantetsu.Observability
 
             _ownerToken = Guid.NewGuid();
             _processState = processState;
+
+            // Generations are one-based so a lease can correlate with a
+            // CaptureFrameWorkToken whose generation is always positive.
             _generations = new long[NvencBringUpProfileV1.WorkSlotCount];
+            for (int i = 0; i < _generations.Length; i++)
+            {
+                _generations[i] = 1;
+            }
+
             _rented = new bool[NvencBringUpProfileV1.WorkSlotCount];
             _retired = new bool[NvencBringUpProfileV1.WorkSlotCount];
             _rentedCount = 0;

@@ -15,9 +15,10 @@ namespace Zantetsu.Observability
     /// Only the two factories <see cref="CreateSubmitted"/> and
     /// <see cref="CreateFailedBeforeSubmit"/> issue records, and there is no
     /// constructor that accepts an arbitrary kind and reason. A record is valid
-    /// only when its work token and both slot leases are valid and the kind and
-    /// reason agree: Submitted pairs with <c>None</c>, and FailedBeforeSubmit
-    /// pairs with a defined non-None reason.
+    /// only when its work token and both slot leases are valid, the work token
+    /// correlates to the work slot lease (same slot index and generation), and
+    /// the kind and reason agree: Submitted pairs with <c>None</c>, and
+    /// FailedBeforeSubmit pairs with a defined non-None reason.
     /// </para>
     /// <para>
     /// <see cref="IsValidFor"/> additionally requires that each slot lease is
@@ -62,7 +63,8 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (!_workToken.IsValid || !_workSlot.IsValid || !_sampleSlot.IsValid)
+                if (!_workToken.IsValid || !_workSlot.IsValid || !_sampleSlot.IsValid ||
+                    !CorrelatesToWorkSlot(_workToken, _workSlot))
                 {
                     return false;
                 }
@@ -150,6 +152,17 @@ namespace Zantetsu.Observability
             {
                 throw new ArgumentException("Sample slot lease must be valid.", nameof(sampleSlot));
             }
+
+            if (!CorrelatesToWorkSlot(workToken, workSlot))
+            {
+                throw new ArgumentException("Work token must correlate to the work slot lease.", nameof(workToken));
+            }
+        }
+
+        private static bool CorrelatesToWorkSlot(CaptureFrameWorkToken workToken, NvencCaptureWorkSlotLease workSlot)
+        {
+            return workToken.SlotIndex == workSlot.SlotIndex &&
+                workToken.Generation == workSlot.Generation;
         }
 
         private static bool IsDefinedNonNoneReason(NvencFailedBeforeSubmitReason reason)

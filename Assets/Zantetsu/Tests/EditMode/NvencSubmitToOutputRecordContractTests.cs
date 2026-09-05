@@ -31,7 +31,7 @@ namespace Zantetsu.Core.Tests
                 out NvencEncodeSampleSlotPool samplePool,
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
-            CaptureFrameWorkToken token = MakeToken(3, 7);
+            CaptureFrameWorkToken token = MakeToken(workLease, 7);
 
             NvencSubmitToOutputRecord record =
                 NvencSubmitToOutputRecord.CreateSubmitted(token, workLease, sampleLease);
@@ -56,7 +56,7 @@ namespace Zantetsu.Core.Tests
                 out NvencEncodeSampleSlotPool samplePool,
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
-            CaptureFrameWorkToken token = MakeToken(0, 1);
+            CaptureFrameWorkToken token = MakeToken(workLease, 1);
 
             NvencFailedBeforeSubmitReason[] reasons =
             {
@@ -102,7 +102,7 @@ namespace Zantetsu.Core.Tests
                 out NvencEncodeSampleSlotPool samplePool,
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
-            CaptureFrameWorkToken token = MakeToken(0, 1);
+            CaptureFrameWorkToken token = MakeToken(workLease, 1);
 
             Assert.Throws<ArgumentException>(() =>
                 NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
@@ -121,7 +121,7 @@ namespace Zantetsu.Core.Tests
                 out NvencEncodeSampleSlotPool samplePool,
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
-            CaptureFrameWorkToken token = MakeToken(0, 1);
+            CaptureFrameWorkToken token = MakeToken(workLease, 1);
 
             Assert.Throws<ArgumentException>(() =>
                 NvencSubmitToOutputRecord.CreateSubmitted(default, workLease, sampleLease));
@@ -142,6 +142,44 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Factories_RejectMismatchedTokenAndWorkLease()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLeaseA), Is.True);
+            Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLeaseB), Is.True);
+            Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
+
+            // Token for a different slot presented with workLeaseA.
+            CaptureFrameWorkToken differentSlot = new CaptureFrameWorkToken(
+                Guid.NewGuid(), workLeaseB.SlotIndex, workLeaseA.Generation, 1, 1);
+            Assert.Throws<ArgumentException>(() =>
+                NvencSubmitToOutputRecord.CreateSubmitted(differentSlot, workLeaseA, sampleLease));
+            Assert.Throws<ArgumentException>(() =>
+                NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
+                    differentSlot, workLeaseA, sampleLease, NvencFailedBeforeSubmitReason.GpuConversionFailed));
+
+            // Token for the same slot but a different generation.
+            CaptureFrameWorkToken differentGeneration = new CaptureFrameWorkToken(
+                Guid.NewGuid(), workLeaseA.SlotIndex, workLeaseA.Generation + 1, 1, 1);
+            Assert.Throws<ArgumentException>(() =>
+                NvencSubmitToOutputRecord.CreateSubmitted(differentGeneration, workLeaseA, sampleLease));
+            Assert.Throws<ArgumentException>(() =>
+                NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
+                    differentGeneration, workLeaseA, sampleLease, NvencFailedBeforeSubmitReason.GpuConversionFailed));
+
+            // A corrupted record whose token no longer matches its work lease is invalid.
+            CaptureFrameWorkToken validToken = new CaptureFrameWorkToken(
+                Guid.NewGuid(), workLeaseA.SlotIndex, workLeaseA.Generation, 1, 1);
+            NvencSubmitToOutputRecord record =
+                NvencSubmitToOutputRecord.CreateSubmitted(validToken, workLeaseA, sampleLease);
+            Assert.That(record.IsValid, Is.True);
+            Assert.That(WithField(record, "_workToken", differentSlot).IsValid, Is.False);
+            Assert.That(WithField(record, "_workToken", differentGeneration).IsValid, Is.False);
+        }
+
+        [Test]
         public void IsValidFor_ExactPools_True()
         {
             RentLeases(
@@ -150,7 +188,7 @@ namespace Zantetsu.Core.Tests
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
             NvencSubmitToOutputRecord record =
-                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(0, 1), workLease, sampleLease);
+                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(workLease, 1), workLease, sampleLease);
 
             Assert.That(record.IsValidFor(workPool, samplePool), Is.True);
         }
@@ -167,7 +205,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(workA.TryRent(out NvencCaptureWorkSlotLease workLease), Is.True);
             Assert.That(sampleA.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
             NvencSubmitToOutputRecord record =
-                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(0, 1), workLease, sampleLease);
+                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(workLease, 1), workLease, sampleLease);
 
             Assert.That(record.IsValidFor(workA, sampleA), Is.True);
             Assert.That(record.IsValidFor(workB, sampleA), Is.False);
@@ -184,7 +222,7 @@ namespace Zantetsu.Core.Tests
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
             NvencSubmitToOutputRecord record =
-                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(0, 1), workLease, sampleLease);
+                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(workLease, 1), workLease, sampleLease);
 
             Assert.That(workPool.TryReturn(workLease), Is.True);
             Assert.That(record.IsValidFor(workPool, samplePool), Is.False);
@@ -199,7 +237,7 @@ namespace Zantetsu.Core.Tests
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
             NvencSubmitToOutputRecord record =
-                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(0, 1), workLease, sampleLease);
+                NvencSubmitToOutputRecord.CreateSubmitted(MakeToken(workLease, 1), workLease, sampleLease);
 
             Assert.That(workPool.TryReturn(workLease), Is.True);
             Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease rerented), Is.True);
@@ -216,7 +254,7 @@ namespace Zantetsu.Core.Tests
                 out NvencEncodeSampleSlotPool samplePool,
                 out NvencCaptureWorkSlotLease workLease,
                 out NvencEncodeSampleSlotLease sampleLease);
-            CaptureFrameWorkToken token = MakeToken(0, 1);
+            CaptureFrameWorkToken token = MakeToken(workLease, 1);
 
             NvencSubmitToOutputRecord submitted =
                 NvencSubmitToOutputRecord.CreateSubmitted(token, workLease, sampleLease);
@@ -246,7 +284,7 @@ namespace Zantetsu.Core.Tests
             {
                 Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLease), Is.True);
                 Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
-                CaptureFrameWorkToken token = MakeToken(i, i + 1);
+                CaptureFrameWorkToken token = MakeToken(workLease, i + 1);
 
                 if (i % 2 == 0)
                 {
@@ -355,9 +393,9 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static CaptureFrameWorkToken MakeToken(int slotIndex, long captureFrameId)
+        private static CaptureFrameWorkToken MakeToken(NvencCaptureWorkSlotLease workLease, long captureFrameId)
         {
-            return new CaptureFrameWorkToken(Guid.NewGuid(), slotIndex, 1, 1, captureFrameId);
+            return new CaptureFrameWorkToken(Guid.NewGuid(), workLease.SlotIndex, workLease.Generation, 1, captureFrameId);
         }
 
         private static void RentLeases(
