@@ -139,45 +139,61 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // 5. Request the evidenced source release handoff. On false the
-            // current is held and later records are never overtaken.
-            if (!_releaseCoordinator.TryReleaseSourceResources(_current))
+            // Acquire the short submit-step gate so the source handoff, the
+            // submit call, the output record build, and the output enqueue form
+            // one critical section serialized with the poison transition. A busy
+            // gate leaves the current held with no side effect.
+            if (!_processState.TryBeginSubmitStep())
             {
                 return false;
             }
 
-            // 6. Attempt the submit exactly once.
-            bool submitted;
             try
             {
-                submitted = _submitter.TrySubmit(operation);
+                // 5. Request the evidenced source release handoff. On false the
+                // current is held and later records are never overtaken.
+                if (!_releaseCoordinator.TryReleaseSourceResources(_current))
+                {
+                    return false;
+                }
+
+                // 6. Attempt the submit exactly once.
+                bool submitted;
+                try
+                {
+                    submitted = _submitter.TrySubmit(operation);
+                }
+                catch (Exception ex)
+                {
+                    // Poison before propagating the same exception; no output
+                    // record is fabricated and nothing is speculatively released.
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                // 7-8. Build the exclusive output record.
+                NvencSubmitToOutputRecord output = submitted
+                    ? NvencSubmitToOutputRecord.CreateSubmitted(operation.WorkToken, operation.WorkSlot, operation.SampleSlot)
+                    : NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
+                        operation.WorkToken, operation.WorkSlot, operation.SampleSlot,
+                        NvencFailedBeforeSubmitReason.NvencSubmitFailed);
+
+                // 9. Enqueue exactly once; the capacity was verified above.
+                if (!_submitToOutputQueue.TryEnqueue(output))
+                {
+                    _processState.TryPoison();
+                    return false;
+                }
+
+                // 10. Clear the current only after the successful enqueue.
+                _hasCurrent = false;
+                _current = default;
+                return true;
             }
-            catch (Exception ex)
+            finally
             {
-                // Poison before propagating the same exception; no output record
-                // is fabricated and nothing is speculatively released.
-                _processState.TryPoison();
-                throw;
+                _processState.EndSubmitStep();
             }
-
-            // 7-8. Build the exclusive output record.
-            NvencSubmitToOutputRecord output = submitted
-                ? NvencSubmitToOutputRecord.CreateSubmitted(operation.WorkToken, operation.WorkSlot, operation.SampleSlot)
-                : NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
-                    operation.WorkToken, operation.WorkSlot, operation.SampleSlot,
-                    NvencFailedBeforeSubmitReason.NvencSubmitFailed);
-
-            // 9. Enqueue exactly once; the capacity was verified above.
-            if (!_submitToOutputQueue.TryEnqueue(output))
-            {
-                _processState.TryPoison();
-                return false;
-            }
-
-            // 10. Clear the current only after the successful enqueue.
-            _hasCurrent = false;
-            _current = default;
-            return true;
         }
     }
 }

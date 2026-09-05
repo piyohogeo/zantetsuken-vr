@@ -126,6 +126,45 @@ namespace Zantetsu.Observability
             Monitor.Exit(_admissionGate);
         }
 
+        /// <summary>
+        /// Acquires the short submit-step gate without waiting and succeeds
+        /// while the state is Running or Draining. It fails while the state is
+        /// PoisonedUntilProcessRestart or when the gate is already held by
+        /// another thread; in either case the gate is not held on return and
+        /// the caller must change nothing and may retry later. On success the
+        /// gate remains held until <see cref="EndSubmitStep"/> is called, so
+        /// the source handoff, the submit call, the output record build, and
+        /// the output enqueue are serialized with the poison transition, whose
+        /// blocking acquisition waits for this short critical section.
+        /// </summary>
+        internal bool TryBeginSubmitStep()
+        {
+            bool lockTaken = false;
+            Monitor.TryEnter(_admissionGate, ref lockTaken);
+
+            if (!lockTaken)
+            {
+                return false;
+            }
+
+            if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
+            {
+                Monitor.Exit(_admissionGate);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases the submit-step gate acquired by a successful
+        /// <see cref="TryBeginSubmitStep"/>.
+        /// </summary>
+        internal void EndSubmitStep()
+        {
+            Monitor.Exit(_admissionGate);
+        }
+
         internal bool TryBeginDrain()
         {
             Monitor.Enter(_admissionGate);

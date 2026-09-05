@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
@@ -15,6 +16,8 @@ namespace Zantetsu.Core.Tests
     /// </summary>
     public class NvencOrderedSubmitProcessorContractTests
     {
+        private const int WatchdogTimeoutMs = 5000;
+
         [Test]
         public void Process_FifoOrder_IsPreserved()
         {
@@ -273,6 +276,79 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Process_SubmitStepLinearizesBeforePoison()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                h.Enqueue(record);
+                h.Submitter.BlockInSubmit();
+
+                bool processed = false;
+                Thread processorThread = new Thread(() =>
+                {
+                    processed = h.Processor.TryProcessNext();
+                });
+                processorThread.IsBackground = true;
+                processorThread.Start();
+
+                // Wait until the submitter is inside TrySubmit, holding the gate.
+                Assert.That(h.Submitter.Entered.Wait(WatchdogTimeoutMs), Is.True, "Submitter did not enter in time.");
+
+                using (ManualResetEventSlim poisonStarted = new ManualResetEventSlim(false))
+                {
+                    Thread poisonThread = new Thread(() =>
+                    {
+                        poisonStarted.Set();
+                        h.State.TryPoison();
+                    });
+                    poisonThread.IsBackground = true;
+                    poisonThread.Start();
+
+                    Assert.That(poisonStarted.Wait(WatchdogTimeoutMs), Is.True, "Poison thread did not start in time.");
+
+                    // The submit step holds the gate, so poison cannot complete
+                    // until submit and output enqueue finish.
+                    Assert.That(h.State.IsPoisoned, Is.False);
+
+                    h.Submitter.ReleaseSubmit.Set();
+
+                    Assert.That(processorThread.Join(WatchdogTimeoutMs), Is.True, "Processor did not finish in time.");
+                    Assert.That(poisonThread.Join(WatchdogTimeoutMs), Is.True, "Poison did not finish in time.");
+                }
+
+                Assert.That(processed, Is.True);
+                Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.True);
+                Assert.That(output.Kind, Is.EqualTo(NvencSubmitToOutputRecordKind.Submitted));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void Process_PoisonedBeforeAnyWork_TouchesNothing()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                h.Enqueue(record);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.Processor.TryProcessNext(), Is.False);
+
+                Assert.That(h.Source.ObserveCount, Is.EqualTo(0));
+                Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
+                Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.False);
+                Assert.That(record.Surface.IsBackendOwned, Is.True);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
+                Assert.That(h.WorkPool.IsActive(record.WorkSlot), Is.True);
+                Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
+            }
+        }
+
+        [Test]
         public void Process_EightInOrder_OneRecordEach()
         {
             using (Harness h = Harness.Create(8))
@@ -414,10 +490,17 @@ namespace Zantetsu.Core.Tests
         {
             private bool _result = true;
             private Exception _exception;
+            private bool _block;
+            private readonly ManualResetEventSlim _entered = new ManualResetEventSlim(false);
+            private readonly ManualResetEventSlim _release = new ManualResetEventSlim(false);
 
             internal int SubmitCount { get; private set; }
 
             internal NvencEncodePictureSubmitOperation LastOperation { get; private set; }
+
+            internal ManualResetEventSlim Entered => _entered;
+
+            internal ManualResetEventSlim ReleaseSubmit => _release;
 
             internal void SetResult(bool result)
             {
@@ -429,6 +512,11 @@ namespace Zantetsu.Core.Tests
                 _exception = exception;
             }
 
+            internal void BlockInSubmit()
+            {
+                _block = true;
+            }
+
             public bool TrySubmit(in NvencEncodePictureSubmitOperation operation)
             {
                 SubmitCount++;
@@ -436,6 +524,12 @@ namespace Zantetsu.Core.Tests
                 if (_exception != null)
                 {
                     throw _exception;
+                }
+
+                if (_block)
+                {
+                    _entered.Set();
+                    _release.Wait(WatchdogTimeoutMs);
                 }
 
                 return _result;

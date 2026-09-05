@@ -198,6 +198,39 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void SubmitStep_RunningSucceeds_AndMustEnd()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+
+            Assert.That(state.TryBeginSubmitStep(), Is.True);
+            Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+
+            state.EndSubmitStep();
+        }
+
+        [Test]
+        public void SubmitStep_DrainingSucceeds()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginDrain(), Is.True);
+
+            Assert.That(state.TryBeginSubmitStep(), Is.True);
+            Assert.That(state.IsDraining, Is.True);
+
+            state.EndSubmitStep();
+        }
+
+        [Test]
+        public void SubmitStep_PoisonedFails()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryPoison(), Is.True);
+
+            Assert.That(state.TryBeginSubmitStep(), Is.False);
+            Assert.That(state.IsPoisoned, Is.True);
+        }
+
+        [Test]
         public void NoTransitionBackToRunning()
         {
             Type type = typeof(NvencCaptureProcessState);
@@ -213,9 +246,10 @@ namespace Zantetsu.Core.Tests
                 Assert.That(
                     method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
                     method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
-                    method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution",
+                    method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution" ||
+                    method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition, admission, or resource-resolution method.");
+                    type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, or submit-step method.");
             }
         }
 
