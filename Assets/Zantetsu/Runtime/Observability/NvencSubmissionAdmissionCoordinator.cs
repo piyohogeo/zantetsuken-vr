@@ -15,9 +15,9 @@ namespace Zantetsu.Observability
     /// the queue must have capacity, one Work Slot and one Sample Slot must be
     /// rentable, the process state is re-checked, the work token is issued from
     /// the backend owner and the work slot generation, the surface is
-    /// transferred, the record is built, and it is enqueued exactly once. The
-    /// final atomic admission re-check is the Accepted linearization point; once
-    /// it succeeds, the transfer and enqueue cannot fail. Capacity
+    /// transferred, the record is built, and it is enqueued exactly once inside
+    /// the short admission guard, so the successful enqueue is the Accepted
+    /// linearization point ordered before any later drain or poison. Capacity
     /// exhaustion of any kind is <c>Backpressured</c> and leaves the surface
     /// caller-owned with reservations released in reverse order. A stopped or
     /// poisoned process returns <c>NotAccepting</c> without transferring the
@@ -140,24 +140,32 @@ namespace Zantetsu.Observability
                     : CaptureSubmitStatus.NotAccepting;
             }
 
-            if (!_processState.TryAdmit())
+            if (!_processState.TryBeginAdmission())
             {
                 _sampleSlots.TryReturn(sampleSlot);
                 _workSlots.TryReturn(workSlot);
                 return CaptureSubmitStatus.NotAccepting;
             }
 
-            CaptureFrameWorkToken token = new CaptureFrameWorkToken(
-                _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
-
-            surface.TransferToBackend(_backendOwner, token);
-
-            NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                _backendOwner, token, workSlot, sampleSlot, surface, _workSlots, _sampleSlots);
-
-            if (!_submissionQueue.TryEnqueue(record))
+            CaptureFrameWorkToken token;
+            try
             {
-                throw new InvalidOperationException("Submission queue rejected an accepted record; internal invariant violated.");
+                token = new CaptureFrameWorkToken(
+                    _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
+
+                surface.TransferToBackend(_backendOwner, token);
+
+                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                    _backendOwner, token, workSlot, sampleSlot, surface, _workSlots, _sampleSlots);
+
+                if (!_submissionQueue.TryEnqueue(record))
+                {
+                    throw new InvalidOperationException("Submission queue rejected an accepted record; internal invariant violated.");
+                }
+            }
+            finally
+            {
+                _processState.EndAdmission();
             }
 
             workToken = token;

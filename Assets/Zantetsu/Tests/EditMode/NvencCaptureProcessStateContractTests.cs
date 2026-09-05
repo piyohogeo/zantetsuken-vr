@@ -95,33 +95,72 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void TryAdmit_RunningSucceeds_WithoutChangingState()
+        public void TryBeginAdmission_RunningSucceeds_AndMustEnd()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
 
-            Assert.That(state.TryAdmit(), Is.True);
+            Assert.That(state.TryBeginAdmission(), Is.True);
             Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
             Assert.That(state.IsAccepting, Is.True);
+
+            state.EndAdmission();
         }
 
         [Test]
-        public void TryAdmit_FailsAfterDrain()
+        public void TryBeginAdmission_FailsAfterDrain()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             Assert.That(state.TryBeginDrain(), Is.True);
 
-            Assert.That(state.TryAdmit(), Is.False);
+            Assert.That(state.TryBeginAdmission(), Is.False);
             Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Draining));
         }
 
         [Test]
-        public void TryAdmit_FailsAfterPoison()
+        public void TryBeginAdmission_FailsAfterPoison()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             Assert.That(state.TryPoison(), Is.True);
 
-            Assert.That(state.TryAdmit(), Is.False);
+            Assert.That(state.TryBeginAdmission(), Is.False);
             Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.PoisonedUntilProcessRestart));
+        }
+
+        [Test]
+        public void AdmissionGuard_SerializesWithTransition()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+
+            // Hold the guard as if an admission were mid-enqueue.
+            Assert.That(state.TryBeginAdmission(), Is.True);
+
+            int drainCompleted = 0;
+            using (Barrier barrier = new Barrier(2))
+            {
+                Thread drainThread = new Thread(() =>
+                {
+                    barrier.SignalAndWait(WatchdogTimeoutMs);
+                    state.TryBeginDrain();
+                    Volatile.Write(ref drainCompleted, 1);
+                });
+                drainThread.IsBackground = true;
+                drainThread.Start();
+
+                barrier.SignalAndWait(WatchdogTimeoutMs);
+
+                // The drain cannot overtake the held guard.
+                Assert.That(Volatile.Read(ref drainCompleted), Is.EqualTo(0));
+
+                state.EndAdmission();
+
+                Assert.That(drainThread.Join(WatchdogTimeoutMs), Is.True, "Drain did not finish within the watchdog timeout.");
+            }
+
+            Assert.That(Volatile.Read(ref drainCompleted), Is.EqualTo(1));
+            Assert.That(state.IsDraining, Is.True);
+
+            // After the transition, admission fails.
+            Assert.That(state.TryBeginAdmission(), Is.False);
         }
 
         [Test]
@@ -138,9 +177,11 @@ namespace Zantetsu.Core.Tests
                 }
 
                 Assert.That(
-                    method.Name == "TryBeginDrain" || method.Name == "TryPoison" || method.Name == "TryAdmit",
+                    method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
+                    method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
+                    method.Name == "EnterGuard" || method.Name == "ExitGuard",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition or admission method.");
+                    type.Name + "." + method.Name + " must be a transition, admission, or guard method.");
             }
         }
 
@@ -248,13 +289,16 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void HoldsOnlyAtomicInt_NoTokenReceiptGenerationHistory()
+        public void HoldsOnlyAtomicInts_NoTokenReceiptGenerationHistory()
         {
             Type type = typeof(NvencCaptureProcessState);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(1));
-            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(int)));
+            Assert.That(fields.Length, Is.EqualTo(2));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.FieldType, Is.EqualTo(typeof(int)), field.Name + " must be an int.");
+            }
         }
 
         [Test]

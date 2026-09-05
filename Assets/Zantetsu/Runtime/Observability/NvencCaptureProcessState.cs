@@ -13,17 +13,23 @@ namespace Zantetsu.Observability
     /// and never moves back, and poison always wins over a concurrent drain.
     /// </summary>
     /// <remarks>
-    /// The state is read and advanced with Interlocked/Volatile only; no
-    /// blocking lock, wait handle, event, busy spin, callback, or task is
-    /// used. Reads perform no allocation, transitions are idempotent and
-    /// exception-safe, and this type is not an <see cref="IDisposable"/>,
-    /// MonoBehaviour, or ScriptableObject. The Composition Root, not this
-    /// type, creates exactly one instance per process; no singleton or static
-    /// Current is forced here.
+    /// The state is read and advanced with Interlocked/Volatile only, and a
+    /// short admission guard serializes each submission admission with the
+    /// Drain and Poison transitions so an in-flight enqueue is never overtaken
+    /// by a later transition. Reads perform no allocation, transitions are
+    /// idempotent and exception-safe, and this type is not an
+    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject. The
+    /// Composition Root, not this type, creates exactly one instance per
+    /// process; no singleton or static Current is forced here.
     /// </remarks>
     internal sealed class NvencCaptureProcessState
     {
         private int _state = (int)NvencCaptureProcessStatus.Running;
+
+        // 0 = free, 1 = held by an in-flight admission or transition. The
+        // guarded regions are short and non-allocating, so holding this is
+        // brief.
+        private int _admissionGate;
 
         internal NvencCaptureProcessState()
         {
@@ -39,46 +45,92 @@ namespace Zantetsu.Observability
         internal bool IsPoisoned =>
             State == NvencCaptureProcessStatus.PoisonedUntilProcessRestart;
 
+        /// <summary>
+        /// Acquires the short admission guard and succeeds only while the state
+        /// is Running. On success the guard remains held until
+        /// <see cref="EndAdmission"/> is called; the caller must complete its
+        /// surface transfer and Submission Queue enqueue within the guard and
+        /// then release it. On failure the guard is not held and the caller
+        /// must not enqueue. The guard is shared with
+        /// <see cref="TryBeginDrain"/> and <see cref="TryPoison"/>, so an
+        /// admission that holds it is ordered before any later transition, and
+        /// a transition that held it earlier has already advanced the state.
+        /// </summary>
+        internal bool TryBeginAdmission()
+        {
+            EnterGuard();
+
+            if (Volatile.Read(ref _state) != (int)NvencCaptureProcessStatus.Running)
+            {
+                ExitGuard();
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases the admission guard acquired by a successful
+        /// <see cref="TryBeginAdmission"/>.
+        /// </summary>
+        internal void EndAdmission()
+        {
+            ExitGuard();
+        }
+
         internal bool TryBeginDrain()
         {
-            return Interlocked.CompareExchange(
-                ref _state,
-                (int)NvencCaptureProcessStatus.Draining,
-                (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running;
+            EnterGuard();
+            try
+            {
+                return Interlocked.CompareExchange(
+                    ref _state,
+                    (int)NvencCaptureProcessStatus.Draining,
+                    (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running;
+            }
+            finally
+            {
+                ExitGuard();
+            }
         }
 
         internal bool TryPoison()
         {
-            if (Interlocked.CompareExchange(
-                ref _state,
-                (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart,
-                (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running)
+            EnterGuard();
+            try
             {
-                return true;
-            }
+                if (Interlocked.CompareExchange(
+                    ref _state,
+                    (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart,
+                    (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running)
+                {
+                    return true;
+                }
 
-            return Interlocked.CompareExchange(
-                ref _state,
-                (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart,
-                (int)NvencCaptureProcessStatus.Draining) == (int)NvencCaptureProcessStatus.Draining;
+                return Interlocked.CompareExchange(
+                    ref _state,
+                    (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart,
+                    (int)NvencCaptureProcessStatus.Draining) == (int)NvencCaptureProcessStatus.Draining;
+            }
+            finally
+            {
+                ExitGuard();
+            }
         }
 
-        /// <summary>
-        /// Atomic admission linearization point. It is a full-fence
-        /// read-modify-write on the control state, totally ordered with
-        /// <see cref="TryBeginDrain"/> and <see cref="TryPoison"/>: it
-        /// succeeds only while the state is Running, so an admission that
-        /// succeeds here is guaranteed to precede any later drain or poison
-        /// transition, and an admission attempted after such a transition
-        /// observes the new state and fails. It performs no state transition
-        /// and no allocation.
-        /// </summary>
-        internal bool TryAdmit()
+        private void EnterGuard()
         {
-            return Interlocked.CompareExchange(
-                ref _state,
-                (int)NvencCaptureProcessStatus.Running,
-                (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running;
+            while (Interlocked.CompareExchange(ref _admissionGate, 1, 0) != 0)
+            {
+                // The guarded regions are short and non-allocating; the only
+                // waiter is a Drain or Poison transition or the admission
+                // itself, so this wait is brief.
+            }
+        }
+
+        private void ExitGuard()
+        {
+            Volatile.Write(ref _admissionGate, 0);
         }
     }
 }
