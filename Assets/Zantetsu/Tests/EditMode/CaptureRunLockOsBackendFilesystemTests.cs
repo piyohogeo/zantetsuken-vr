@@ -122,6 +122,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Acquire_RelativePath_RejectedBeforeAnyFilesystemChange()
+        {
+            RequireWindows();
+
+            string relativeLockPath = Path.Combine(
+                "zantetsuken-relative-" + Guid.NewGuid().ToString("N"),
+                ".locks", "run-1.lock");
+
+            CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
+            ICaptureRunLockHandle captured = null;
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => backend.TryAcquire(relativeLockPath, out captured));
+
+            Assert.That(ex.ParamName, Is.EqualTo("absoluteLockPath"));
+            Assert.That(captured, Is.Null);
+            Assert.That(File.Exists(relativeLockPath), Is.False);
+            Assert.That(Directory.Exists(Path.GetDirectoryName(relativeLockPath)), Is.False);
+        }
+
+        [Test]
         public void Acquire_SameLockHeldByAnotherBackend_ReturnsFalseNull()
         {
             RequireWindows();

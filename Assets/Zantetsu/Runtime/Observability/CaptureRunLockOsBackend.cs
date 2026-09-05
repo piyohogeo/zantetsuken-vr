@@ -77,6 +77,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(absoluteLockPath));
             }
 
+            if (!IsFullyQualifiedLocalAbsolutePath(absoluteLockPath))
+            {
+                throw new ArgumentException(
+                    "Lock path must be a fully qualified local absolute path.",
+                    nameof(absoluteLockPath));
+            }
+
             string fullPath = Path.GetFullPath(absoluteLockPath);
 
             string locksDirectoryPath = Path.GetDirectoryName(fullPath);
@@ -144,6 +151,35 @@ namespace Zantetsu.Observability
                 baseHandle.Dispose();
                 throw;
             }
+        }
+
+        private static bool IsFullyQualifiedLocalAbsolutePath(string path)
+        {
+            if (Path.DirectorySeparatorChar == '\\')
+            {
+                // Windows: drive letter + colon + separator. Rejects relative,
+                // drive-relative, UNC, device, and extended paths.
+                if (path.Length < 3)
+                {
+                    return false;
+                }
+
+                char drive = path[0];
+                if (!((drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z')))
+                {
+                    return false;
+                }
+
+                if (path[1] != ':')
+                {
+                    return false;
+                }
+
+                char separator = path[2];
+                return separator == Path.DirectorySeparatorChar || separator == Path.AltDirectorySeparatorChar;
+            }
+
+            return path.Length > 0 && path[0] == Path.DirectorySeparatorChar;
         }
 
         private static SafeFileHandle OpenBaseDirectory(string baseDirectoryPath)
