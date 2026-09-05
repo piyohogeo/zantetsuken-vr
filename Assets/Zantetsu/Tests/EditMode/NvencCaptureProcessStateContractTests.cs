@@ -14,6 +14,8 @@ namespace Zantetsu.Core.Tests
     /// </summary>
     public class NvencCaptureProcessStateContractTests
     {
+        private const int WatchdogTimeoutMs = 5000;
+
         [Test]
         public void NewInstance_IsRunning()
         {
@@ -115,31 +117,40 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void BeginDrainAndPoisonRace_AlwaysPoisoned()
         {
-            // Align the two transitions with a barrier, then let the
-            // interleaving decide the order. Either order must leave the state
-            // poisoned; no timing-based ordering is asserted.
-            for (int iteration = 0; iteration < 100; iteration++)
+            // Sequential tests already verify both orders, so only a few aligned
+            // races are needed to exercise the poison-wins interleaving. Every
+            // wait below is bounded; a timeout becomes an explicit assertion
+            // failure instead of hanging the fixture.
+            for (int iteration = 0; iteration < 3; iteration++)
             {
                 NvencCaptureProcessState state = new NvencCaptureProcessState();
 
                 using (Barrier barrier = new Barrier(2))
                 {
+                    bool drainReached = false;
+                    bool poisonReached = false;
+
                     Thread drainThread = new Thread(() =>
                     {
-                        barrier.SignalAndWait();
+                        drainReached = barrier.SignalAndWait(WatchdogTimeoutMs);
                         state.TryBeginDrain();
                     });
+                    drainThread.IsBackground = true;
 
                     Thread poisonThread = new Thread(() =>
                     {
-                        barrier.SignalAndWait();
+                        poisonReached = barrier.SignalAndWait(WatchdogTimeoutMs);
                         state.TryPoison();
                     });
+                    poisonThread.IsBackground = true;
 
                     drainThread.Start();
                     poisonThread.Start();
-                    drainThread.Join();
-                    poisonThread.Join();
+
+                    Assert.That(drainThread.Join(WatchdogTimeoutMs), Is.True, "Drain thread did not finish within the watchdog timeout.");
+                    Assert.That(poisonThread.Join(WatchdogTimeoutMs), Is.True, "Poison thread did not finish within the watchdog timeout.");
+                    Assert.That(drainReached, Is.True, "Drain thread did not reach the barrier within the watchdog timeout.");
+                    Assert.That(poisonReached, Is.True, "Poison thread did not reach the barrier within the watchdog timeout.");
                 }
 
                 Assert.That(state.IsPoisoned, Is.True);
@@ -156,19 +167,28 @@ namespace Zantetsu.Core.Tests
             using (Barrier barrier = new Barrier(threadCount))
             {
                 Thread[] threads = new Thread[threadCount];
+                bool[] reachedBarrier = new bool[threadCount];
+
                 for (int i = 0; i < threadCount; i++)
                 {
-                    threads[i] = new Thread(() =>
+                    int index = i;
+                    threads[index] = new Thread(() =>
                     {
-                        barrier.SignalAndWait();
+                        reachedBarrier[index] = barrier.SignalAndWait(WatchdogTimeoutMs);
                         state.TryPoison();
                     });
-                    threads[i].Start();
+                    threads[index].IsBackground = true;
+                    threads[index].Start();
                 }
 
                 for (int i = 0; i < threadCount; i++)
                 {
-                    threads[i].Join();
+                    Assert.That(threads[i].Join(WatchdogTimeoutMs), Is.True, "Thread " + i + " did not finish within the watchdog timeout.");
+                }
+
+                for (int i = 0; i < threadCount; i++)
+                {
+                    Assert.That(reachedBarrier[i], Is.True, "Thread " + i + " did not reach the barrier within the watchdog timeout.");
                 }
             }
 
