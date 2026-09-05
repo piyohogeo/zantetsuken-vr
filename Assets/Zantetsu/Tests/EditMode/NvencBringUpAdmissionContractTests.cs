@@ -22,23 +22,23 @@ namespace Zantetsu.Core.Tests
 
         private static NvencBringUpCapabilityV1 MakeCapability(
             bool isWindows10OrNewer = true,
-            bool hasNvidiaAdapter = true,
-            bool supportsD3D11 = true,
-            bool supportsWddm = true,
-            bool supportsAsyncEncode = true,
-            bool supportsCompletionEvent = true,
-            bool isTcc = false,
-            bool canUseOutputInVidmemZero = true)
+            bool isActiveAdapterNvidia = true,
+            bool isCurrentGraphicsApiD3D11 = true,
+            bool activeAdapterSupportsWddm = true,
+            bool activeAdapterSupportsAsyncEncode = true,
+            bool activeAdapterSupportsCompletionEvent = true,
+            bool isActiveAdapterTcc = false,
+            bool activeAdapterCanUseOutputInVidmemZero = true)
         {
             return new NvencBringUpCapabilityV1(
                 isWindows10OrNewer,
-                hasNvidiaAdapter,
-                supportsD3D11,
-                supportsWddm,
-                supportsAsyncEncode,
-                supportsCompletionEvent,
-                isTcc,
-                canUseOutputInVidmemZero);
+                isActiveAdapterNvidia,
+                isCurrentGraphicsApiD3D11,
+                activeAdapterSupportsWddm,
+                activeAdapterSupportsAsyncEncode,
+                activeAdapterSupportsCompletionEvent,
+                isActiveAdapterTcc,
+                activeAdapterCanUseOutputInVidmemZero);
         }
 
         private static NvencBringUpInputLayoutV1 MakeInput(
@@ -121,13 +121,13 @@ namespace Zantetsu.Core.Tests
             NvencBringUpInputLayoutV1 input = MakeInput(7);
 
             Assert.That(Evaluate(profile, MakeCapability(isWindows10OrNewer: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(hasNvidiaAdapter: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(supportsD3D11: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(supportsWddm: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(supportsAsyncEncode: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(supportsCompletionEvent: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(isTcc: true), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(canUseOutputInVidmemZero: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(isActiveAdapterNvidia: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(isCurrentGraphicsApiD3D11: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsWddm: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsAsyncEncode: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsCompletionEvent: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(isActiveAdapterTcc: true), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterCanUseOutputInVidmemZero: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
         }
 
         [Test]
@@ -142,6 +142,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(Evaluate(profile, capability, MakeInput(imageRectX: 1)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(imageRectY: 1)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(eye: CaptureEye.Right)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, capability, MakeInput(pixelFormat: CapturePixelFormat.Bgra32)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(graphicsFormat: GraphicsFormat.R8G8B8A8_UNorm)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(colorSpace: CaptureColorSpace.Linear)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, capability, MakeInput(sampleCount: 4)), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
@@ -173,7 +174,7 @@ namespace Zantetsu.Core.Tests
             NvencBringUpProfileV1 profileB = MakeProfile(8);
 
             NvencBringUpCapabilityV1 supportedCapability = MakeCapability();
-            NvencBringUpCapabilityV1 unsupportedCapability = MakeCapability(supportsD3D11: false);
+            NvencBringUpCapabilityV1 unsupportedCapability = MakeCapability(isCurrentGraphicsApiD3D11: false);
 
             NvencBringUpInputLayoutV1 inputA = MakeInput(7);
             NvencBringUpInputLayoutV1 inputB = MakeInput(8);

@@ -36,13 +36,13 @@ namespace Zantetsu.Observability
             }
 
             if (!capability.IsWindows10OrNewer) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.HasNvidiaAdapter) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.SupportsD3D11) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.SupportsWddm) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.SupportsAsyncEncode) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.SupportsCompletionEvent) return NvencBringUpAdmissionDecision.Unsupported;
-            if (capability.IsTcc) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.CanUseOutputInVidmemZero) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.IsActiveAdapterNvidia) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.IsCurrentGraphicsApiD3D11) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsWddm) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsAsyncEncode) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsCompletionEvent) return NvencBringUpAdmissionDecision.Unsupported;
+            if (capability.IsActiveAdapterTcc) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterCanUseOutputInVidmemZero) return NvencBringUpAdmissionDecision.Unsupported;
 
             if (input.ProfileId != profile.ProfileId) return NvencBringUpAdmissionDecision.Unsupported;
             if (input.Width != NvencBringUpProfileV1.Width) return NvencBringUpAdmissionDecision.Unsupported;
