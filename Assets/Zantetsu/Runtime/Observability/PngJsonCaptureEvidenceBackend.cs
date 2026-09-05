@@ -33,6 +33,18 @@ namespace Zantetsu.Observability
         private bool _accepting;
         private bool _disposed;
 
+        /// <summary>
+        /// Test-only non-blocking notification: raised after the worker enqueues
+        /// a completion. Null in production.
+        /// </summary>
+        internal event Action CompletionEnqueued;
+
+        /// <summary>
+        /// Test-only non-blocking notification: raised after the worker stops.
+        /// Null in production.
+        /// </summary>
+        internal event Action WorkerStopped;
+
         internal PngJsonCaptureEvidenceBackend(
             int capacity,
             UnityRenderTextureReadbackDispatcher dispatcher,
@@ -45,6 +57,8 @@ namespace Zantetsu.Observability
 
             _ownerToken = Guid.NewGuid();
             _worker = new PngJsonCaptureEvidenceWorkerService(capacity, PngJsonCaptureFrameEncoder.Create(), artifactStore);
+            _worker.CompletionEnqueued += () => CompletionEnqueued?.Invoke();
+            _worker.WorkerStopped += () => WorkerStopped?.Invoke();
             _states = new SlotState[capacity];
             _generations = new long[capacity];
             _tokens = new CaptureFrameWorkToken[capacity];
@@ -161,36 +175,6 @@ namespace Zantetsu.Observability
             return _worker.TryJoin();
         }
 
-        internal bool WaitForCompletion(int timeoutMilliseconds)
-        {
-            ThrowIfDisposed();
-            Pump();
-            if (_frameCount > 0 || _artifactCount > 0)
-            {
-                return true;
-            }
-
-            if (!_worker.WaitForCompletion(timeoutMilliseconds))
-            {
-                return false;
-            }
-
-            Pump();
-            return _frameCount > 0 || _artifactCount > 0;
-        }
-
-        internal bool WaitForJoin(int timeoutMilliseconds)
-        {
-            ThrowIfDisposed();
-            if (_accepting || _dispatcher.ActiveCount != 0 || HasInFlight())
-            {
-                return false;
-            }
-
-            _worker.BeginDrain();
-            return _worker.WaitForJoin(timeoutMilliseconds);
-        }
-
         public void Dispose()
         {
             if (_disposed) return;
@@ -208,6 +192,7 @@ namespace Zantetsu.Observability
         {
             PumpCompletedReadbacks();
             PumpWorkerCompletions();
+            RetryDeferredSurfaceReleases();
         }
 
         private void PumpCompletedReadbacks()
@@ -330,10 +315,10 @@ namespace Zantetsu.Observability
             {
                 _worker.Acknowledge(workerToken);
                 // The slot stays non-reusable until the frame completion and
-                // its declared artifact completions have all been collected.
+                // its declared artifact completions have all been collected,
+                // and the surface (if deferred) has been released.
                 _states[slot] = SlotState.AwaitingCollection;
                 _pendingCollections[slot] = 1 + frameCompletion.ProducedArtifactCount;
-                _tokens[slot] = default;
                 _frames[slot] = null;
             }
 
@@ -341,24 +326,47 @@ namespace Zantetsu.Observability
             if (completion.ImageArtifact != null) EnqueueArtifact(completion.ImageArtifact);
             if (completion.MetadataArtifact != null) EnqueueArtifact(completion.MetadataArtifact);
 
-            // Secondary: retry a deferred surface release (best effort, after
-            // the raw slot is released and the completions are published).
-            CaptureSurfaceLease surface = _surfaces[slot];
-            if (surface != null)
+            // Retry a deferred surface release (best effort). On failure the
+            // surface reference and token stay so Join/Dispose cannot succeed
+            // while the render target is still rented.
+            RetrySurfaceRelease(slot);
+        }
+
+        private void RetryDeferredSurfaceReleases()
+        {
+            for (int i = 0; i < _states.Length; i++)
             {
-                try
+                if (_states[i] != SlotState.AwaitingCollection || _surfaces[i] == null)
                 {
-                    surface.ReleaseFromBackend(_ownerToken, frameCompletion.WorkToken);
+                    continue;
                 }
-                catch
+
+                RetrySurfaceRelease(i);
+
+                if (_surfaces[i] == null && _pendingCollections[i] == 0)
                 {
-                    // The surface release remains unavailable; the raw payload
-                    // recovery above is unaffected.
+                    _states[i] = SlotState.Free;
                 }
-                finally
-                {
-                    _surfaces[slot] = null;
-                }
+            }
+        }
+
+        private void RetrySurfaceRelease(int slot)
+        {
+            CaptureSurfaceLease surface = _surfaces[slot];
+            if (surface == null)
+            {
+                return;
+            }
+
+            try
+            {
+                surface.ReleaseFromBackend(_ownerToken, _tokens[slot]);
+                _surfaces[slot] = null;
+                _tokens[slot] = default;
+            }
+            catch
+            {
+                // Deferred again; a later pump retries.
             }
         }
 
@@ -425,10 +433,10 @@ namespace Zantetsu.Observability
             }
 
             _pendingCollections[slot]--;
-            if (_pendingCollections[slot] == 0)
+            if (_pendingCollections[slot] == 0 && _surfaces[slot] == null)
             {
                 _states[slot] = SlotState.Free;
-                _surfaces[slot] = null;
+                _tokens[slot] = default;
             }
         }
 

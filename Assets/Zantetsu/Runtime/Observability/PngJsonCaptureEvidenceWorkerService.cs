@@ -74,6 +74,18 @@ namespace Zantetsu.Observability
         private bool _workerStopped;
         private bool _disposed;
 
+        /// <summary>
+        /// Test-only non-blocking notification: raised on the worker thread
+        /// after a completion is enqueued. Null in production.
+        /// </summary>
+        internal event Action CompletionEnqueued;
+
+        /// <summary>
+        /// Test-only non-blocking notification: raised on the worker thread
+        /// after the worker stops. Null in production.
+        /// </summary>
+        internal event Action WorkerStopped;
+
         internal int Capacity => _states.Length;
 
         internal Guid OwnerToken => _ownerToken;
@@ -299,46 +311,6 @@ namespace Zantetsu.Observability
             }
         }
 
-        internal bool WaitForCompletion(int timeoutMilliseconds)
-        {
-            lock (_gate)
-            {
-                int deadline = Environment.TickCount + timeoutMilliseconds;
-                while (_completionCount == 0)
-                {
-                    int remaining = deadline - Environment.TickCount;
-                    if (remaining <= 0)
-                    {
-                        return false;
-                    }
-
-                    Monitor.Wait(_gate, remaining);
-                }
-
-                return true;
-            }
-        }
-
-        internal bool WaitForJoin(int timeoutMilliseconds)
-        {
-            lock (_gate)
-            {
-                int deadline = Environment.TickCount + timeoutMilliseconds;
-                while (!_workerStopped)
-                {
-                    int remaining = deadline - Environment.TickCount;
-                    if (remaining <= 0)
-                    {
-                        return false;
-                    }
-
-                    Monitor.Wait(_gate, remaining);
-                }
-
-                return true;
-            }
-        }
-
         public void Dispose()
         {
             if (Environment.CurrentManagedThreadId != _constructingThreadId)
@@ -409,11 +381,12 @@ namespace Zantetsu.Observability
                     if (!_accepting && _submissionCount == 0)
                     {
                         _workerStopped = true;
-                        Monitor.PulseAll(_gate);
                         break;
                     }
                 }
             }
+
+            WorkerStopped?.Invoke();
         }
 
         private void ProcessSlot(int slot, bool cancelled)
@@ -579,8 +552,9 @@ namespace Zantetsu.Observability
                 _completionQueue[_completionTail] = slot;
                 _completionTail = (_completionTail + 1) % _completionQueue.Length;
                 _completionCount++;
-                Monitor.PulseAll(_gate);
             }
+
+            CompletionEnqueued?.Invoke();
         }
 
         private CaptureFrameWorkToken BuildToken(int slot)

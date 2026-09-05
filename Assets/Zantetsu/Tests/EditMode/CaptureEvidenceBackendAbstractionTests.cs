@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -334,12 +335,19 @@ namespace Zantetsu.Core.Tests
                 Assert.That(dispatcher.ActiveCount, Is.Zero);
 
                 backend.BeginDrain();
+
+                // Before the pool recovers, the backend slot stays occupied by
+                // the still-rented surface, so join must not succeed.
+                Assert.That(backend.TryJoin(), Is.False);
+
+                // Recover the pool and advance the backend once more: the pump
+                // retries the deferred surface release.
+                disposedField.SetValue(pool, false);
+                backend.TryCollectFrameCompletion(out _);
                 Assert.That(WaitForJoin(backend), Is.True);
 
-                // Restore the pool and return the still-rented render target so
-                // the pool can be disposed cleanly.
-                disposedField.SetValue(pool, false);
-                pool.Return(lease);
+                // The render target is returned without a manual pool.Return.
+                Assert.That(pool.RentedCount, Is.Zero);
             }
         }
 
@@ -673,29 +681,77 @@ namespace Zantetsu.Core.Tests
 
         private static bool WaitForFrameCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureFrameCompletion completion)
         {
-            if (!backend.WaitForCompletion(5000))
+            ManualResetEvent signal = new ManualResetEvent(false);
+            Action handler = () => signal.Set();
+            backend.CompletionEnqueued += handler;
+            try
             {
-                completion = default;
-                return false;
-            }
+                // Pump once to collect and submit any completed readback.
+                if (backend.TryCollectFrameCompletion(out completion))
+                {
+                    return true;
+                }
 
-            return backend.TryCollectFrameCompletion(out completion);
+                // Wait for the worker to enqueue a completion, then pump again
+                // to apply it.
+                if (!signal.WaitOne(5000))
+                {
+                    completion = default;
+                    return false;
+                }
+
+                return backend.TryCollectFrameCompletion(out completion);
+            }
+            finally
+            {
+                backend.CompletionEnqueued -= handler;
+            }
         }
 
         private static bool WaitForArtifactCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureArtifactCompletion completion)
         {
-            if (!backend.WaitForCompletion(5000))
+            ManualResetEvent signal = new ManualResetEvent(false);
+            Action handler = () => signal.Set();
+            backend.CompletionEnqueued += handler;
+            try
             {
-                completion = null;
-                return false;
-            }
+                if (backend.TryCollectArtifactCompletion(out completion))
+                {
+                    return true;
+                }
 
-            return backend.TryCollectArtifactCompletion(out completion);
+                if (!signal.WaitOne(5000))
+                {
+                    completion = null;
+                    return false;
+                }
+
+                return backend.TryCollectArtifactCompletion(out completion);
+            }
+            finally
+            {
+                backend.CompletionEnqueued -= handler;
+            }
         }
 
         private static bool WaitForJoin(PngJsonCaptureEvidenceBackend backend)
         {
-            return backend.WaitForJoin(5000);
+            ManualResetEvent signal = new ManualResetEvent(false);
+            Action handler = () => signal.Set();
+            backend.WorkerStopped += handler;
+            try
+            {
+                if (backend.TryJoin())
+                {
+                    return true;
+                }
+
+                return signal.WaitOne(5000);
+            }
+            finally
+            {
+                backend.WorkerStopped -= handler;
+            }
         }
 
         private static CaptureFrameEnvelope MakeEnvelope(long frameId)

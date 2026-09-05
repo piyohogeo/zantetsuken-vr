@@ -256,7 +256,22 @@ namespace Zantetsu.Core.Tests
 
         private static bool WaitForJoin(PngJsonCaptureEvidenceWorkerService service, int timeoutMs = 5000)
         {
-            return service.WaitForJoin(timeoutMs);
+            ManualResetEvent signal = new ManualResetEvent(false);
+            Action handler = () => signal.Set();
+            service.WorkerStopped += handler;
+            try
+            {
+                if (service.TryJoin())
+                {
+                    return true;
+                }
+
+                return signal.WaitOne(timeoutMs);
+            }
+            finally
+            {
+                service.WorkerStopped -= handler;
+            }
         }
 
         private static bool WaitForCollect(
@@ -264,13 +279,28 @@ namespace Zantetsu.Core.Tests
             out PngJsonCaptureEvidenceWorkCompletion completion,
             int timeoutMs = 5000)
         {
-            if (!service.WaitForCompletion(timeoutMs))
+            ManualResetEvent signal = new ManualResetEvent(false);
+            Action handler = () => signal.Set();
+            service.CompletionEnqueued += handler;
+            try
             {
-                completion = default;
-                return false;
-            }
+                if (service.TryCollect(out completion))
+                {
+                    return true;
+                }
 
-            return service.TryCollect(out completion);
+                if (!signal.WaitOne(timeoutMs))
+                {
+                    completion = default;
+                    return false;
+                }
+
+                return service.TryCollect(out completion);
+            }
+            finally
+            {
+                service.CompletionEnqueued -= handler;
+            }
         }
 
         private static void ApplyAndAcknowledge(
