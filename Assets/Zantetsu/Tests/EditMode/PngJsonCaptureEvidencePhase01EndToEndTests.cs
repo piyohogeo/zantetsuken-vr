@@ -372,38 +372,50 @@ namespace Zantetsu.Core.Tests
             return surface;
         }
 
-        private static bool WaitForWorkItem(PngJsonCaptureEvidenceBackend backend, int timeoutMs = 5000)
+        private static bool PumpAndWaitForWorkItem(
+            PngJsonCaptureEvidenceBackend backend,
+            Func<bool> pump,
+            int timeoutMs = 5000)
         {
-            ManualResetEvent signal = new ManualResetEvent(false);
-            Action handler = () => signal.Set();
-            backend.CompletionEnqueued += handler;
-            try
+            using (ManualResetEvent signal = new ManualResetEvent(false))
             {
-                return signal.WaitOne(timeoutMs);
-            }
-            finally
-            {
-                backend.CompletionEnqueued -= handler;
+                Action handler = () => signal.Set();
+                backend.CompletionEnqueued += handler;
+                try
+                {
+                    // Subscribe before pumping: the pump hands the readback to
+                    // the worker, which may enqueue a completion and fire the
+                    // event immediately. The non-blocking pump must still
+                    // report nothing ready before the worker completes.
+                    Assert.That(pump(), Is.False);
+                    return signal.WaitOne(timeoutMs);
+                }
+                finally
+                {
+                    backend.CompletionEnqueued -= handler;
+                }
             }
         }
 
         private static bool WaitForBackendJoin(PngJsonCaptureEvidenceBackend backend, int timeoutMs = 5000)
         {
-            ManualResetEvent signal = new ManualResetEvent(false);
-            Action handler = () => signal.Set();
-            backend.WorkerStopped += handler;
-            try
+            using (ManualResetEvent signal = new ManualResetEvent(false))
             {
-                if (backend.TryJoin())
+                Action handler = () => signal.Set();
+                backend.WorkerStopped += handler;
+                try
                 {
-                    return true;
-                }
+                    if (backend.TryJoin())
+                    {
+                        return true;
+                    }
 
-                return signal.WaitOne(timeoutMs);
-            }
-            finally
-            {
-                backend.WorkerStopped -= handler;
+                    return signal.WaitOne(timeoutMs);
+                }
+                finally
+                {
+                    backend.WorkerStopped -= handler;
+                }
             }
         }
 
@@ -453,10 +465,10 @@ namespace Zantetsu.Core.Tests
                 // Non-blocking main-thread apply: the first call only collects
                 // the readback and submits it to the worker, so nothing is
                 // ready yet.
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
                 Assert.That(scope.DraftCoordinator.TryJoin(), Is.False);
-
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
 
                 // Frame completion is applied before either artifact completion.
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True);
@@ -621,8 +633,9 @@ namespace Zantetsu.Core.Tests
 
                 // The first pump collects A's readback and releases its render
                 // target; the worker is still encoding, so nothing is ready.
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
 
                 // A's frame completion is applied first; its two artifacts are
                 // still pending, so the slot stays occupied.
@@ -658,8 +671,9 @@ namespace Zantetsu.Core.Tests
                 scope.DraftCoordinator.BeginDrain();
 
                 AsyncGPUReadback.WaitAllRequests();
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // frame B
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // image B
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // metadata B
@@ -693,8 +707,9 @@ namespace Zantetsu.Core.Tests
                 SubmitDrawnFrame(scope, draftA, out _);
 
                 AsyncGPUReadback.WaitAllRequests();
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // failed frame A
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
 
@@ -716,8 +731,9 @@ namespace Zantetsu.Core.Tests
                 scope.DraftCoordinator.BeginDrain();
 
                 AsyncGPUReadback.WaitAllRequests();
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // frame B
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // image B
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // metadata B
@@ -776,8 +792,9 @@ namespace Zantetsu.Core.Tests
 
                 scope.DraftCoordinator.BeginDrain();
                 AsyncGPUReadback.WaitAllRequests();
-                Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.False);
-                Assert.That(WaitForWorkItem(scope.Backend), Is.True);
+                Assert.That(
+                    PumpAndWaitForWorkItem(scope.Backend, () => scope.DraftCoordinator.TryApplyNextCompletion()),
+                    Is.True);
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // frame
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // image
                 Assert.That(scope.DraftCoordinator.TryApplyNextCompletion(), Is.True); // metadata
