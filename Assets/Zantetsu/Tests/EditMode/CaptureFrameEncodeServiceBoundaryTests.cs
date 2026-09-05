@@ -460,47 +460,49 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void EncodeExecutionFailure_CompletionIsAppliedOnceAndOriginalExceptionPropagates()
+        public void PayloadLease_BufferCaptureFailureAtConstruction_ThrowsOriginalException()
         {
             using (CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(1, 64))
             using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool))
-            using (TraceLogger logger = new TraceLogger(8))
             {
                 RenderTexture texture = CreateTexture();
+                CaptureFrameReadbackResult result = default;
+                bool released = false;
                 try
                 {
                     Assert.That(dispatcher.TryStart(MakeRequest(1), texture), Is.True);
                     AsyncGPUReadback.WaitAllRequests();
-                    Assert.That(dispatcher.TryCollect(out CaptureFrameReadbackResult result), Is.True);
+                    Assert.That(dispatcher.TryCollect(out result), Is.True);
 
                     bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
                         .GetField("_rented", BindingFlags.Instance | BindingFlags.NonPublic)
                         .GetValue(pool);
                     rented[result.BufferSlotIndex] = false;
 
-                    object service = NewService(1);
-                    object coordinator = NewCoordinator(service, new CaptureFrameTraceObserver(logger));
-                    Assert.That(Submit(service, NewSubmission(NewPayload(dispatcher, result)), out _), Is.EqualTo(0));
+                    // The payload lease now captures the raw view eagerly at
+                    // construction, so an unrented slot is rejected immediately
+                    // with the dispatcher's original exception.
+                    TargetInvocationException ex = Assert.Throws<TargetInvocationException>(
+                        () => NewPayload(dispatcher, result));
+                    Assert.That(ex.InnerException, Is.TypeOf<InvalidOperationException>());
 
-                    // Restore only the pool invariant needed for the completion
-                    // applier's legacy Release path. The service has already
-                    // captured the original GetBuffer failure.
                     rented[result.BufferSlotIndex] = true;
-                    Assert.That(Collect(service, out object completion), Is.True);
-                    Assert.That(Convert.ToInt32(Property<object>(completion, "Status")), Is.EqualTo(1));
-
-                    Exception failure = ApplyException(coordinator, completion);
-                    Assert.That(failure, Is.TypeOf<InvalidOperationException>());
+                    dispatcher.Release(result);
+                    released = true;
                     Assert.That(dispatcher.ActiveCount, Is.EqualTo(0));
                     Assert.That(pool.RentedCount, Is.EqualTo(0));
-
-                    Exception duplicate = ApplyException(coordinator, completion);
-                    Assert.That(duplicate, Is.TypeOf<InvalidOperationException>());
-                    logger.Drain();
-                    Assert.That(logger.HistoryCount, Is.EqualTo(0));
                 }
                 finally
                 {
+                    if (result.IsValid && !released)
+                    {
+                        bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
+                            .GetField("_rented", BindingFlags.Instance | BindingFlags.NonPublic)
+                            .GetValue(pool);
+                        rented[result.BufferSlotIndex] = true;
+                        dispatcher.Release(result);
+                    }
+
                     AsyncGPUReadback.WaitAllRequests();
                     DestroyTexture(texture);
                 }

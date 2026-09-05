@@ -8,9 +8,13 @@ namespace Zantetsu.Observability
     /// result. It does not own the pool allocation itself.
     /// </summary>
     /// <remarks>
-    /// Caller ownership is transferred only by an accepted encode submission.
-    /// The synchronous Phase 1 service never copies the raw buffer and the
-    /// completion applier releases it on the main thread exactly once.
+    /// <para>
+    /// The exact raw buffer view is captured once at construction on the
+    /// constructing thread and never copied. Caller ownership is transferred
+    /// only by an accepted encode submission; the worker reads only the held
+    /// view, and the completion applier releases the dispatcher result on the
+    /// main thread exactly once.
+    /// </para>
     /// </remarks>
     internal sealed class CaptureFrameReadbackPayloadLease
     {
@@ -25,6 +29,7 @@ namespace Zantetsu.Observability
         private Guid _serviceOwner;
         private CaptureFrameWorkToken _workToken;
         private bool _releaseSucceeded;
+        private NativeArray<byte> _heldBuffer;
 
         internal CaptureFrameRequest FrameRequest => _result.FrameRequest;
 
@@ -59,6 +64,11 @@ namespace Zantetsu.Observability
             _serviceOwner = Guid.Empty;
             _workToken = default;
             _releaseSucceeded = false;
+
+            // Capture the exact raw view once on the constructing thread, so
+            // the accepted worker never touches the dispatcher. The view is
+            // non-owned: the pool slot is released by the completion applier.
+            _heldBuffer = dispatcher.GetBuffer(result);
         }
 
         internal void TransferToService(Guid serviceOwner, in CaptureFrameWorkToken workToken)
@@ -81,7 +91,7 @@ namespace Zantetsu.Observability
         internal NativeArray<byte> GetBufferForService(Guid serviceOwner, in CaptureFrameWorkToken workToken)
         {
             ValidateServiceOwnership(serviceOwner, workToken, ServiceOwned);
-            return _dispatcher.GetBuffer(_result);
+            return _heldBuffer;
         }
 
         internal void TransferToCompletion(Guid serviceOwner, in CaptureFrameWorkToken workToken)
@@ -117,6 +127,9 @@ namespace Zantetsu.Observability
             _ownershipState = ReleaseAttempted;
             _dispatcher.Release(_result);
             _releaseSucceeded = true;
+
+            // The held view must never be reused after the pool slot returns.
+            _heldBuffer = default;
         }
 
         private void ValidateServiceOwnership(

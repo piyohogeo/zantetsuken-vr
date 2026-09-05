@@ -21,8 +21,10 @@ namespace Zantetsu.Observability
     /// input and output do not share native memory. No file I/O is performed.
     /// </para>
     /// <para>
-    /// Main-thread only; multi-threaded encoding will be evaluated separately
-    /// once Unity API guarantees are confirmed.
+    /// Phase 0.1 invokes this encoder from the dedicated encode worker thread.
+    /// The encoded path is the fixed Unity
+    /// <c>ImageConversion.EncodeNativeArrayToPNG</c> call; this does not extend
+    /// a general thread-safety guarantee to other Unity APIs.
     /// </para>
     /// </remarks>
     public static class CaptureFramePngEncoder
