@@ -38,6 +38,8 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureWorkSlotPool _workSlots;
         private readonly NvencEncodeSampleSlotPool _sampleSlots;
         private readonly NvencGpuConversionSyncPool _syncSlots;
+        private readonly NvencSubmitToOutputCreditPool _submitToOutputCredits;
+        private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
         private readonly INvencSourceReadCompletedSource _completionSource;
         private readonly NvencSourceSurfaceReturnBoundary _surfaceReturnBoundary;
         private readonly Guid _backendOwner;
@@ -47,6 +49,8 @@ namespace Zantetsu.Observability
             NvencCaptureWorkSlotPool workSlots,
             NvencEncodeSampleSlotPool sampleSlots,
             NvencGpuConversionSyncPool syncSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits,
             INvencSourceReadCompletedSource completionSource,
             NvencSourceSurfaceReturnBoundary surfaceReturnBoundary,
             Guid backendOwner)
@@ -71,6 +75,16 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(syncSlots));
             }
 
+            if (submitToOutputCredits == null)
+            {
+                throw new ArgumentNullException(nameof(submitToOutputCredits));
+            }
+
+            if (frameCompletionCredits == null)
+            {
+                throw new ArgumentNullException(nameof(frameCompletionCredits));
+            }
+
             if (completionSource == null)
             {
                 throw new ArgumentNullException(nameof(completionSource));
@@ -90,6 +104,8 @@ namespace Zantetsu.Observability
             _workSlots = workSlots;
             _sampleSlots = sampleSlots;
             _syncSlots = syncSlots;
+            _submitToOutputCredits = submitToOutputCredits;
+            _frameCompletionCredits = frameCompletionCredits;
             _completionSource = completionSource;
             _surfaceReturnBoundary = surfaceReturnBoundary;
             _backendOwner = backendOwner;
@@ -106,7 +122,8 @@ namespace Zantetsu.Observability
         internal bool TryReleaseSourceResources(in NvencSubmissionRecord record)
         {
             // 1. Verify the record's current correlation against the exact pools.
-            if (!record.IsValidFor(_backendOwner, _workSlots, _sampleSlots, _syncSlots))
+            if (!record.IsValidFor(
+                _backendOwner, _workSlots, _sampleSlots, _syncSlots, _submitToOutputCredits, _frameCompletionCredits))
             {
                 return false;
             }
@@ -136,7 +153,8 @@ namespace Zantetsu.Observability
                 // 5. Re-check inside the gate: the process is not poisoned and the
                 // record and evidence still correlate.
                 if (_processState.IsPoisoned ||
-                    !record.IsValidFor(_backendOwner, _workSlots, _sampleSlots, _syncSlots) ||
+                    !record.IsValidFor(
+                        _backendOwner, _workSlots, _sampleSlots, _syncSlots, _submitToOutputCredits, _frameCompletionCredits) ||
                     !evidence.Matches(_completionSource, record))
                 {
                     return false;
@@ -194,7 +212,8 @@ namespace Zantetsu.Observability
                 // Re-check the process state and the record/evidence correlation
                 // inside the gate; poison serializes on the same gate.
                 if (_processState.IsPoisoned ||
-                    !handoff.Record.IsValidFor(_backendOwner, _workSlots, _sampleSlots, _syncSlots) ||
+                    !handoff.Record.IsValidFor(
+                        _backendOwner, _workSlots, _sampleSlots, _syncSlots, _submitToOutputCredits, _frameCompletionCredits) ||
                     !handoff.Evidence.Matches(_completionSource, handoff.Record))
                 {
                     return false;

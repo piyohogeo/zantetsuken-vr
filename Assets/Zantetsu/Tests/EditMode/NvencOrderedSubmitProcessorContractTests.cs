@@ -108,6 +108,9 @@ namespace Zantetsu.Core.Tests
                 Assert.That(output.Kind, Is.EqualTo(NvencSubmitToOutputRecordKind.Submitted));
                 Assert.That(output.Reason, Is.EqualTo(NvencFailedBeforeSubmitReason.None));
                 Assert.That(output.WorkToken.CaptureFrameId, Is.EqualTo(7));
+                Assert.That(output.SubmitToOutputCredit.IsValid, Is.True);
+                Assert.That(output.FrameCompletionCredit.IsValid, Is.True);
+                Assert.That(output.IsValidFor(h.WorkPool, h.SamplePool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.True);
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord empty), Is.False);
 
                 // Work and Sample remain active for the later output stages.
@@ -133,6 +136,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(output.Kind, Is.EqualTo(NvencSubmitToOutputRecordKind.FailedBeforeSubmit));
                 Assert.That(output.Reason, Is.EqualTo(NvencFailedBeforeSubmitReason.NvencSubmitFailed));
                 Assert.That(output.WorkToken.CaptureFrameId, Is.EqualTo(7));
+                Assert.That(output.SubmitToOutputCredit.IsValid, Is.True);
+                Assert.That(output.FrameCompletionCredit.IsValid, Is.True);
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord empty), Is.False);
             }
         }
@@ -542,6 +547,8 @@ namespace Zantetsu.Core.Tests
             internal NvencCaptureWorkSlotPool WorkPool { get; }
             internal NvencEncodeSampleSlotPool SamplePool { get; }
             internal NvencGpuConversionSyncPool SyncPool { get; }
+            internal NvencSubmitToOutputCreditPool SubmitToOutputCreditPool { get; }
+            internal NvencFrameCompletionCreditPool FrameCompletionCreditPool { get; }
             internal NvencFixedSpscQueue<NvencSubmissionRecord> SubmissionQueue { get; }
             internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue { get; }
             internal Guid Owner { get; }
@@ -560,6 +567,8 @@ namespace Zantetsu.Core.Tests
                 WorkPool = new NvencCaptureWorkSlotPool(State);
                 SamplePool = new NvencEncodeSampleSlotPool(State);
                 SyncPool = new NvencGpuConversionSyncPool(State);
+                SubmitToOutputCreditPool = new NvencSubmitToOutputCreditPool(State);
+                FrameCompletionCreditPool = new NvencFrameCompletionCreditPool(State);
                 SubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 Owner = Guid.NewGuid();
@@ -567,7 +576,9 @@ namespace Zantetsu.Core.Tests
                 Source = new FakeSourceReadCompletedSource();
                 Boundary = new NvencSourceSurfaceReturnBoundary();
                 ReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
-                    State, WorkPool, SamplePool, SyncPool, Source, Boundary, Owner);
+                    State, WorkPool, SamplePool, SyncPool,
+                    SubmitToOutputCreditPool, FrameCompletionCreditPool,
+                    Source, Boundary, Owner);
                 Submitter = new FakeSubmitter();
                 Processor = new NvencOrderedSubmitProcessor(
                     State, SubmissionQueue, OutputQueue, WorkPool, SamplePool, ReleaseCoordinator, Submitter);
@@ -583,6 +594,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(WorkPool.TryRent(out NvencCaptureWorkSlotLease work), Is.True);
                 Assert.That(SamplePool.TryRent(out NvencEncodeSampleSlotLease sample), Is.True);
                 Assert.That(SyncPool.TryRent(out NvencGpuConversionSyncLease sync), Is.True);
+                Assert.That(SubmitToOutputCreditPool.TryRent(out NvencSubmitToOutputCreditLease submitToOutput), Is.True);
+                Assert.That(FrameCompletionCreditPool.TryRent(out NvencFrameCompletionCreditLease frameCompletion), Is.True);
                 Assert.That(RenderPool.TryRent(out CaptureFrameRenderTargetLease rt), Is.True);
 
                 CaptureFrameWorkToken token = new CaptureFrameWorkToken(
@@ -591,7 +604,8 @@ namespace Zantetsu.Core.Tests
                 surface.TransferToBackend(Owner, token);
 
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    Owner, token, work, sample, sync, surface, WorkPool, SamplePool, SyncPool);
+                    Owner, token, work, sample, sync, submitToOutput, frameCompletion, surface,
+                    WorkPool, SamplePool, SyncPool, SubmitToOutputCreditPool, FrameCompletionCreditPool);
                 _records.Add(record);
                 return record;
             }
@@ -624,6 +638,8 @@ namespace Zantetsu.Core.Tests
                     SyncPool.TryReturn(record.SyncSlot);
                     SamplePool.TryReturn(record.SampleSlot);
                     WorkPool.TryReturn(record.WorkSlot);
+                    FrameCompletionCreditPool.TryReturn(record.FrameCompletionCredit);
+                    SubmitToOutputCreditPool.TryReturn(record.SubmitToOutputCredit);
                 }
 
                 RenderPool.Dispose();

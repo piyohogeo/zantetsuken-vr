@@ -24,9 +24,12 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
             {
@@ -42,12 +45,16 @@ namespace Zantetsu.Core.Tests
                     Assert.That(workPool.OccupiedCount, Is.EqualTo(1));
                     Assert.That(samplePool.OccupiedCount, Is.EqualTo(1));
                     Assert.That(syncPool.OccupiedCount, Is.EqualTo(1));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(1));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(1));
 
                     Assert.That(coordinator.TryDequeue(out NvencSubmissionRecord record), Is.True);
                     Assert.That(record.WorkToken.IdenticalTo(token), Is.True);
                     Assert.That(ReferenceEquals(record.Surface, surface), Is.True);
                     Assert.That(record.SyncSlot.IsValid, Is.True);
-                    Assert.That(record.IsValidFor(owner, workPool, samplePool, syncPool), Is.True);
+                    Assert.That(record.SubmitToOutputCredit.IsValid, Is.True);
+                    Assert.That(record.FrameCompletionCredit.IsValid, Is.True);
+                    Assert.That(record.IsValidFor(owner, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool), Is.True);
                 }
                 finally
                 {
@@ -63,9 +70,12 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(9))
             {
@@ -87,6 +97,8 @@ namespace Zantetsu.Core.Tests
                     Assert.That(workPool.OccupiedCount, Is.EqualTo(8));
                     Assert.That(samplePool.OccupiedCount, Is.EqualTo(8));
                     Assert.That(syncPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(8));
 
                     CaptureSubmitStatus ninth = coordinator.TryAccept(MakeFrame(9), surfaces[8], out CaptureFrameWorkToken ninthToken);
 
@@ -96,6 +108,8 @@ namespace Zantetsu.Core.Tests
                     Assert.That(workPool.OccupiedCount, Is.EqualTo(8));
                     Assert.That(samplePool.OccupiedCount, Is.EqualTo(8));
                     Assert.That(syncPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(8));
                 }
                 finally
                 {
@@ -217,9 +231,12 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             for (int i = 0; i < 8; i++)
             {
@@ -239,10 +256,203 @@ namespace Zantetsu.Core.Tests
                     Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
                     Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
                     Assert.That(syncPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     surface.Dispose();
+                }
+            }
+        }
+
+        [Test]
+        public void Accept_SubmitToOutputCreditPoolFull_RollsBackAllPrior()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
+            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+            Guid owner = Guid.NewGuid();
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
+
+            for (int i = 0; i < 8; i++)
+            {
+                Assert.That(submitToOutputPool.TryRent(out NvencSubmitToOutputCreditLease credit), Is.True);
+            }
+
+            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
+            {
+                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
+                try
+                {
+                    CaptureSubmitStatus status = coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token);
+
+                    Assert.That(status, Is.EqualTo(CaptureSubmitStatus.Backpressured));
+                    Assert.That(token.IsValid, Is.False);
+                    Assert.That(surface.IsCallerOwned, Is.True);
+                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(syncPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(0));
+                }
+                finally
+                {
+                    surface.Dispose();
+                }
+            }
+        }
+
+        [Test]
+        public void Accept_FrameCompletionCreditPoolFull_RollsBackAllPrior()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
+            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+            Guid owner = Guid.NewGuid();
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
+
+            for (int i = 0; i < 8; i++)
+            {
+                Assert.That(frameCompletionPool.TryRent(out NvencFrameCompletionCreditLease credit), Is.True);
+            }
+
+            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
+            {
+                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
+                try
+                {
+                    CaptureSubmitStatus status = coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token);
+
+                    Assert.That(status, Is.EqualTo(CaptureSubmitStatus.Backpressured));
+                    Assert.That(token.IsValid, Is.False);
+                    Assert.That(surface.IsCallerOwned, Is.True);
+                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(syncPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(8));
+                }
+                finally
+                {
+                    surface.Dispose();
+                }
+            }
+        }
+
+        [Test]
+        public void Accept_EnqueueFailure_RollsBackAllReservations()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
+            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+            Guid owner = Guid.NewGuid();
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
+
+            // A negative write position passes the capacity predicate but makes
+            // the backing index negative, so the post-transfer enqueue throws.
+            FieldInfo writeField = typeof(NvencFixedSpscQueue<NvencSubmissionRecord>).GetField(
+                "_writePosition", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(writeField, Is.Not.Null, "Missing field _writePosition.");
+            writeField.SetValue(queue, -1L);
+
+            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
+            {
+                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
+                try
+                {
+                    Assert.Throws<IndexOutOfRangeException>(
+                        () => coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token));
+
+                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(syncPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(0));
+                    // The surface was transferred before the enqueue and then
+                    // released back by the rollback.
+                    Assert.That(surface.IsCreated, Is.False);
+                }
+                finally
+                {
+                    ReleaseSurface(surface, owner, new CaptureFrameWorkToken(owner, 0, 1, 3, 1));
+                }
+            }
+        }
+
+        [Test]
+        public void Accept_EnqueueFailure_CleanupFailureAggregates()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
+            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+            Guid owner = Guid.NewGuid();
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
+
+            FieldInfo writeField = typeof(NvencFixedSpscQueue<NvencSubmissionRecord>).GetField(
+                "_writePosition", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(writeField, Is.Not.Null);
+            writeField.SetValue(queue, -1L);
+
+            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
+            {
+                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
+                FieldInfo poolField = typeof(CaptureSurfaceLease).GetField(
+                    "_pool", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(poolField, Is.Not.Null);
+                object originalPool = poolField.GetValue(surface);
+
+                try
+                {
+                    // The surface release in the rollback now throws, so the
+                    // original enqueue failure is aggregated with the cleanup
+                    // failure.
+                    poolField.SetValue(surface, null);
+
+                    AggregateException aggregate = Assert.Throws<AggregateException>(
+                        () => coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token));
+
+                    Assert.That(aggregate.InnerExceptions.Count, Is.EqualTo(2));
+                    Assert.That(aggregate.InnerExceptions[0], Is.TypeOf<IndexOutOfRangeException>());
+                    Assert.That(aggregate.InnerExceptions[1], Is.TypeOf<NullReferenceException>());
+
+                    // The reservation rollback completed before the surface
+                    // release failed.
+                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(syncPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(0));
+
+                    // Ownership state after the failed cleanup: the surface was
+                    // never released, so it remains backend-owned.
+                    Assert.That(surface.IsBackendOwned, Is.True);
+                    Assert.That(surface.IsCreated, Is.True);
+                }
+                finally
+                {
+                    poolField.SetValue(surface, originalPool);
+                    ReleaseSurface(surface, owner, new CaptureFrameWorkToken(owner, 0, 1, 3, 1));
                 }
             }
         }
@@ -254,9 +464,12 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             bool guardAcquired = false;
             using (ManualResetEventSlim guardHeld = new ManualResetEventSlim(false))
@@ -315,10 +528,13 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
             Assert.That(state.TryBeginDrain(), Is.True);
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
             {
@@ -346,10 +562,13 @@ namespace Zantetsu.Core.Tests
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             Guid owner = Guid.NewGuid();
             Assert.That(state.TryPoison(), Is.True);
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
 
             using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
             {
@@ -576,9 +795,12 @@ namespace Zantetsu.Core.Tests
             workPool = new NvencCaptureWorkSlotPool(state);
             samplePool = new NvencEncodeSampleSlotPool(state);
             NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
             queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
             owner = Guid.NewGuid();
-            return new NvencSubmissionAdmissionCoordinator(state, workPool, samplePool, syncPool, queue, owner);
+            return new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
         }
 
         private static CaptureFrameRenderTargetPool MakeRenderPool(int capacity)

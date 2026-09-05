@@ -5,7 +5,8 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Exclusive Submit-to-Output record carried by the fixed SPSC
     /// Submit-to-Output Queue. A readonly value type that forwards the accepted
-    /// work token and the two reserved slot leases; it stores no raw Input
+    /// work token, the two reserved slot leases, and the two reserved capacity
+    /// credits (Submit-to-Output and Frame Completion); it stores no raw Input
     /// Surface, Output Buffer, Completion Event handle, sequence, timestamp, or
     /// sort key. The capture frame ID is read through the work token, not
     /// duplicated.
@@ -15,16 +16,17 @@ namespace Zantetsu.Observability
     /// Only the two factories <see cref="CreateSubmitted"/> and
     /// <see cref="CreateFailedBeforeSubmit"/> issue records, and there is no
     /// constructor that accepts an arbitrary kind and reason. A record is valid
-    /// only when its work token and both slot leases are valid, the work token
-    /// correlates to the work slot lease (same slot index and generation), and
-    /// the kind and reason agree: Submitted pairs with <c>None</c>, and
-    /// FailedBeforeSubmit pairs with a defined non-None reason.
+    /// only when its work token, both slot leases, and both capacity credits
+    /// are valid, the work token correlates to the work slot lease (same slot
+    /// index and generation), and the kind and reason agree: Submitted pairs
+    /// with <c>None</c>, and FailedBeforeSubmit pairs with a defined non-None
+    /// reason.
     /// </para>
     /// <para>
-    /// <see cref="IsValidFor"/> additionally requires that each slot lease is
-    /// currently active in its exact pool. Foreign, returned, or stale leases
-    /// make it false. Poison decisions are left to the later coordinator and
-    /// are not mixed into this record.
+    /// <see cref="IsValidFor"/> additionally requires that each slot lease and
+    /// capacity credit is currently active in its exact pool. Foreign,
+    /// returned, or stale leases make it false. Poison decisions are left to
+    /// the later coordinator and are not mixed into this record.
     /// </para>
     /// </remarks>
     internal readonly struct NvencSubmitToOutputRecord
@@ -32,6 +34,8 @@ namespace Zantetsu.Observability
         private readonly CaptureFrameWorkToken _workToken;
         private readonly NvencCaptureWorkSlotLease _workSlot;
         private readonly NvencEncodeSampleSlotLease _sampleSlot;
+        private readonly NvencSubmitToOutputCreditLease _submitToOutputCredit;
+        private readonly NvencFrameCompletionCreditLease _frameCompletionCredit;
         private readonly NvencSubmitToOutputRecordKind _kind;
         private readonly NvencFailedBeforeSubmitReason _reason;
 
@@ -39,12 +43,16 @@ namespace Zantetsu.Observability
             CaptureFrameWorkToken workToken,
             NvencCaptureWorkSlotLease workSlot,
             NvencEncodeSampleSlotLease sampleSlot,
+            NvencSubmitToOutputCreditLease submitToOutputCredit,
+            NvencFrameCompletionCreditLease frameCompletionCredit,
             NvencSubmitToOutputRecordKind kind,
             NvencFailedBeforeSubmitReason reason)
         {
             _workToken = workToken;
             _workSlot = workSlot;
             _sampleSlot = sampleSlot;
+            _submitToOutputCredit = submitToOutputCredit;
+            _frameCompletionCredit = frameCompletionCredit;
             _kind = kind;
             _reason = reason;
         }
@@ -55,6 +63,10 @@ namespace Zantetsu.Observability
 
         internal NvencEncodeSampleSlotLease SampleSlot => _sampleSlot;
 
+        internal NvencSubmitToOutputCreditLease SubmitToOutputCredit => _submitToOutputCredit;
+
+        internal NvencFrameCompletionCreditLease FrameCompletionCredit => _frameCompletionCredit;
+
         internal NvencSubmitToOutputRecordKind Kind => _kind;
 
         internal NvencFailedBeforeSubmitReason Reason => _reason;
@@ -64,6 +76,7 @@ namespace Zantetsu.Observability
             get
             {
                 if (!_workToken.IsValid || !_workSlot.IsValid || !_sampleSlot.IsValid ||
+                    !_submitToOutputCredit.IsValid || !_frameCompletionCredit.IsValid ||
                     !CorrelatesToWorkSlot(_workToken, _workSlot))
                 {
                     return false;
@@ -83,26 +96,36 @@ namespace Zantetsu.Observability
 
         internal bool IsValidFor(
             NvencCaptureWorkSlotPool workSlots,
-            NvencEncodeSampleSlotPool sampleSlots)
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits)
         {
             return IsValid &&
                 workSlots != null &&
                 sampleSlots != null &&
+                submitToOutputCredits != null &&
+                frameCompletionCredits != null &&
                 workSlots.IsActive(_workSlot) &&
-                sampleSlots.IsActive(_sampleSlot);
+                sampleSlots.IsActive(_sampleSlot) &&
+                submitToOutputCredits.IsActive(_submitToOutputCredit) &&
+                frameCompletionCredits.IsActive(_frameCompletionCredit);
         }
 
         internal static NvencSubmitToOutputRecord CreateSubmitted(
             CaptureFrameWorkToken workToken,
             NvencCaptureWorkSlotLease workSlot,
-            NvencEncodeSampleSlotLease sampleSlot)
+            NvencEncodeSampleSlotLease sampleSlot,
+            NvencSubmitToOutputCreditLease submitToOutputCredit,
+            NvencFrameCompletionCreditLease frameCompletionCredit)
         {
-            ValidateInputs(workToken, workSlot, sampleSlot);
+            ValidateInputs(workToken, workSlot, sampleSlot, submitToOutputCredit, frameCompletionCredit);
 
             return new NvencSubmitToOutputRecord(
                 workToken,
                 workSlot,
                 sampleSlot,
+                submitToOutputCredit,
+                frameCompletionCredit,
                 NvencSubmitToOutputRecordKind.Submitted,
                 NvencFailedBeforeSubmitReason.None);
         }
@@ -111,9 +134,11 @@ namespace Zantetsu.Observability
             CaptureFrameWorkToken workToken,
             NvencCaptureWorkSlotLease workSlot,
             NvencEncodeSampleSlotLease sampleSlot,
+            NvencSubmitToOutputCreditLease submitToOutputCredit,
+            NvencFrameCompletionCreditLease frameCompletionCredit,
             NvencFailedBeforeSubmitReason reason)
         {
-            ValidateInputs(workToken, workSlot, sampleSlot);
+            ValidateInputs(workToken, workSlot, sampleSlot, submitToOutputCredit, frameCompletionCredit);
 
             if (reason == NvencFailedBeforeSubmitReason.None)
             {
@@ -129,6 +154,8 @@ namespace Zantetsu.Observability
                 workToken,
                 workSlot,
                 sampleSlot,
+                submitToOutputCredit,
+                frameCompletionCredit,
                 NvencSubmitToOutputRecordKind.FailedBeforeSubmit,
                 reason);
         }
@@ -136,7 +163,9 @@ namespace Zantetsu.Observability
         private static void ValidateInputs(
             CaptureFrameWorkToken workToken,
             NvencCaptureWorkSlotLease workSlot,
-            NvencEncodeSampleSlotLease sampleSlot)
+            NvencEncodeSampleSlotLease sampleSlot,
+            NvencSubmitToOutputCreditLease submitToOutputCredit,
+            NvencFrameCompletionCreditLease frameCompletionCredit)
         {
             if (!workToken.IsValid)
             {
@@ -151,6 +180,16 @@ namespace Zantetsu.Observability
             if (!sampleSlot.IsValid)
             {
                 throw new ArgumentException("Sample slot lease must be valid.", nameof(sampleSlot));
+            }
+
+            if (!submitToOutputCredit.IsValid)
+            {
+                throw new ArgumentException("Submit-to-Output credit must be valid.", nameof(submitToOutputCredit));
+            }
+
+            if (!frameCompletionCredit.IsValid)
+            {
+                throw new ArgumentException("Frame Completion credit must be valid.", nameof(frameCompletionCredit));
             }
 
             if (!CorrelatesToWorkSlot(workToken, workSlot))

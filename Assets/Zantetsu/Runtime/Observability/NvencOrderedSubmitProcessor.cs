@@ -171,11 +171,16 @@ namespace Zantetsu.Observability
                     throw;
                 }
 
-                // 7-8. Build the exclusive output record.
+                // 7-8. Build the exclusive output record, forwarding the two
+                // capacity credits reserved by the admission boundary. The
+                // operation itself carries only the work and slot evidence.
                 NvencSubmitToOutputRecord output = submitted
-                    ? NvencSubmitToOutputRecord.CreateSubmitted(operation.WorkToken, operation.WorkSlot, operation.SampleSlot)
+                    ? NvencSubmitToOutputRecord.CreateSubmitted(
+                        operation.WorkToken, operation.WorkSlot, operation.SampleSlot,
+                        _current.SubmitToOutputCredit, _current.FrameCompletionCredit)
                     : NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
                         operation.WorkToken, operation.WorkSlot, operation.SampleSlot,
+                        _current.SubmitToOutputCredit, _current.FrameCompletionCredit,
                         NvencFailedBeforeSubmitReason.NvencSubmitFailed);
 
                 // 9. Enqueue exactly once; the capacity was verified above.

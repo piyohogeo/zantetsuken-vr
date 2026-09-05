@@ -24,13 +24,13 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create(1))
             {
                 NvencSubmissionRecord record = h.CreateRecord(7);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.True);
 
                 Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.False);
 
                 Assert.That(record.Surface.IsBackendOwned, Is.True);
                 Assert.That(record.Surface.IsCreated, Is.True);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.True);
                 Assert.That(h.WorkPool.OccupiedCount, Is.EqualTo(1));
                 Assert.That(h.SamplePool.OccupiedCount, Is.EqualTo(1));
                 Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
@@ -68,7 +68,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
 
                 // Releasing the sync credit makes the record invalid as expected.
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.False);
             }
         }
 
@@ -94,7 +94,7 @@ namespace Zantetsu.Core.Tests
                 {
                     Assert.That(records[i].Surface.IsBackendOwned, Is.True);
                     Assert.That(h.SyncPool.IsActive(records[i].SyncSlot), Is.True);
-                    Assert.That(records[i].IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+                    Assert.That(records[i].IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.True);
                 }
 
                 Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(8));
@@ -471,7 +471,7 @@ namespace Zantetsu.Core.Tests
                 File.ReadAllText(Path.Combine(directory, "NvencSourceSurfaceReleaseHandoff.cs"));
 
             Assert.That(text, Does.Not.Contain("NvencSubmitToOutputRecord"));
-            Assert.That(text, Does.Not.Contain("FrameCompletion"));
+            Assert.That(text, Does.Not.Contain("NvencFrameCompletionCoordinator"));
             Assert.That(text, Does.Not.Contain("NvEnc"));
             Assert.That(text, Does.Not.Contain("DllImport"));
             Assert.That(text, Does.Not.Contain("IntPtr"));
@@ -552,6 +552,8 @@ namespace Zantetsu.Core.Tests
             internal NvencCaptureWorkSlotPool WorkPool { get; }
             internal NvencEncodeSampleSlotPool SamplePool { get; }
             internal NvencGpuConversionSyncPool SyncPool { get; }
+            internal NvencSubmitToOutputCreditPool SubmitToOutputCreditPool { get; }
+            internal NvencFrameCompletionCreditPool FrameCompletionCreditPool { get; }
             internal Guid Owner { get; }
             internal CaptureFrameRenderTargetPool RenderPool { get; }
             internal FakeSourceReadCompletedSource Source { get; }
@@ -566,12 +568,16 @@ namespace Zantetsu.Core.Tests
                 WorkPool = new NvencCaptureWorkSlotPool(State);
                 SamplePool = new NvencEncodeSampleSlotPool(State);
                 SyncPool = new NvencGpuConversionSyncPool(State);
+                SubmitToOutputCreditPool = new NvencSubmitToOutputCreditPool(State);
+                FrameCompletionCreditPool = new NvencFrameCompletionCreditPool(State);
                 Owner = Guid.NewGuid();
                 RenderPool = MakeRenderPool(renderCapacity);
                 Source = new FakeSourceReadCompletedSource();
                 Boundary = new NvencSourceSurfaceReturnBoundary();
                 Coordinator = new NvencSourceResourceReleaseCoordinator(
-                    State, WorkPool, SamplePool, SyncPool, Source, Boundary, Owner);
+                    State, WorkPool, SamplePool, SyncPool,
+                    SubmitToOutputCreditPool, FrameCompletionCreditPool,
+                    Source, Boundary, Owner);
             }
 
             internal static Harness Create(int renderCapacity)
@@ -584,6 +590,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(WorkPool.TryRent(out NvencCaptureWorkSlotLease work), Is.True);
                 Assert.That(SamplePool.TryRent(out NvencEncodeSampleSlotLease sample), Is.True);
                 Assert.That(SyncPool.TryRent(out NvencGpuConversionSyncLease sync), Is.True);
+                Assert.That(SubmitToOutputCreditPool.TryRent(out NvencSubmitToOutputCreditLease submitToOutput), Is.True);
+                Assert.That(FrameCompletionCreditPool.TryRent(out NvencFrameCompletionCreditLease frameCompletion), Is.True);
                 Assert.That(RenderPool.TryRent(out CaptureFrameRenderTargetLease rt), Is.True);
 
                 CaptureFrameWorkToken token = new CaptureFrameWorkToken(
@@ -592,7 +600,8 @@ namespace Zantetsu.Core.Tests
                 surface.TransferToBackend(Owner, token);
 
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    Owner, token, work, sample, sync, surface, WorkPool, SamplePool, SyncPool);
+                    Owner, token, work, sample, sync, submitToOutput, frameCompletion, surface,
+                    WorkPool, SamplePool, SyncPool, SubmitToOutputCreditPool, FrameCompletionCreditPool);
                 _records.Add(record);
                 return record;
             }
@@ -620,6 +629,8 @@ namespace Zantetsu.Core.Tests
                     SyncPool.TryReturn(record.SyncSlot);
                     SamplePool.TryReturn(record.SampleSlot);
                     WorkPool.TryReturn(record.WorkSlot);
+                    FrameCompletionCreditPool.TryReturn(record.FrameCompletionCredit);
+                    SubmitToOutputCreditPool.TryReturn(record.SubmitToOutputCredit);
                 }
 
                 RenderPool.Dispose();
