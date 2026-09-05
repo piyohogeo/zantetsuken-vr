@@ -5,23 +5,25 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Single-producer submission admission boundary for the Phase 0.11 NVENC
     /// path. It serializes <see cref="TryAccept"/> into the fixed SPSC
-    /// Submission Queue after atomically reserving one Work Slot and one Sample
-    /// Slot, transferring the caller's surface to the backend, and issuing the
-    /// accepted work token. It owns none of its injected collaborators.
+    /// Submission Queue after atomically reserving one Work Slot, one Sample
+    /// Slot, and one GPU Conversion Sync credit, transferring the caller's
+    /// surface to the backend, and issuing the accepted work token. It owns
+    /// none of its injected collaborators.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Acceptance follows a fixed order: the process state must be accepting,
-    /// the queue must have capacity, one Work Slot and one Sample Slot must be
-    /// rentable, the process state is re-checked, the work token is issued from
-    /// the backend owner and the work slot generation, the surface is
-    /// transferred, the record is built, and it is enqueued exactly once inside
-    /// the short admission guard, so the successful enqueue is the Accepted
-    /// linearization point ordered before any later drain or poison. Capacity
-    /// exhaustion of any kind is <c>Backpressured</c> and leaves the surface
-    /// caller-owned with reservations released in reverse order. A stopped or
-    /// poisoned process returns <c>NotAccepting</c> without transferring the
-    /// surface.
+    /// the queue must have capacity, one Work Slot, one Sample Slot, and one
+    /// GPU Conversion Sync credit must be rentable, the process state is
+    /// re-checked, the work token is issued from the backend owner and the work
+    /// slot generation, the surface is transferred, the record is built, and it
+    /// is enqueued exactly once inside the short admission guard, so the
+    /// successful enqueue is the Accepted linearization point ordered before
+    /// any later drain or poison. Capacity exhaustion of any kind is
+    /// <c>Backpressured</c> and leaves the surface caller-owned with
+    /// reservations released in reverse order (sync, then sample, then work).
+    /// A stopped or poisoned process returns <c>NotAccepting</c> without
+    /// transferring the surface.
     /// </para>
     /// <para>
     /// Under the strict single-producer contract a post-transfer enqueue failure
@@ -41,6 +43,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencCaptureWorkSlotPool _workSlots;
         private readonly NvencEncodeSampleSlotPool _sampleSlots;
+        private readonly NvencGpuConversionSyncPool _syncSlots;
         private readonly NvencFixedSpscQueue<NvencSubmissionRecord> _submissionQueue;
         private readonly Guid _backendOwner;
 
@@ -48,6 +51,7 @@ namespace Zantetsu.Observability
             NvencCaptureProcessState processState,
             NvencCaptureWorkSlotPool workSlots,
             NvencEncodeSampleSlotPool sampleSlots,
+            NvencGpuConversionSyncPool syncSlots,
             NvencFixedSpscQueue<NvencSubmissionRecord> submissionQueue,
             Guid backendOwner)
         {
@@ -66,6 +70,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(sampleSlots));
             }
 
+            if (syncSlots == null)
+            {
+                throw new ArgumentNullException(nameof(syncSlots));
+            }
+
             if (submissionQueue == null)
             {
                 throw new ArgumentNullException(nameof(submissionQueue));
@@ -79,6 +88,7 @@ namespace Zantetsu.Observability
             _processState = processState;
             _workSlots = workSlots;
             _sampleSlots = sampleSlots;
+            _syncSlots = syncSlots;
             _submissionQueue = submissionQueue;
             _backendOwner = backendOwner;
         }
@@ -140,8 +150,18 @@ namespace Zantetsu.Observability
                     : CaptureSubmitStatus.NotAccepting;
             }
 
+            if (!_syncSlots.TryRent(out NvencGpuConversionSyncLease syncSlot))
+            {
+                _sampleSlots.TryReturn(sampleSlot);
+                _workSlots.TryReturn(workSlot);
+                return _processState.IsAccepting
+                    ? CaptureSubmitStatus.Backpressured
+                    : CaptureSubmitStatus.NotAccepting;
+            }
+
             if (!_processState.TryBeginAdmission())
             {
+                _syncSlots.TryReturn(syncSlot);
                 _sampleSlots.TryReturn(sampleSlot);
                 _workSlots.TryReturn(workSlot);
                 return CaptureSubmitStatus.NotAccepting;
@@ -156,7 +176,7 @@ namespace Zantetsu.Observability
                 surface.TransferToBackend(_backendOwner, token);
 
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    _backendOwner, token, workSlot, sampleSlot, surface, _workSlots, _sampleSlots);
+                    _backendOwner, token, workSlot, sampleSlot, syncSlot, surface, _workSlots, _sampleSlots, _syncSlots);
 
                 if (!_submissionQueue.TryEnqueue(record))
                 {

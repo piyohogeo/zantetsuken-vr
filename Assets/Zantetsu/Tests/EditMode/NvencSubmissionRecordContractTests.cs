@@ -24,7 +24,7 @@ namespace Zantetsu.Core.Tests
 
             using (Harness h = Harness.Create())
             {
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
             }
         }
 
@@ -34,15 +34,17 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
 
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
                 Assert.That(record.WorkToken.IdenticalTo(h.Token), Is.True);
                 Assert.That(record.WorkToken.CaptureFrameId, Is.EqualTo(7));
                 Assert.That(record.WorkSlot.SlotIndex, Is.EqualTo(h.WorkLease.SlotIndex));
                 Assert.That(record.WorkSlot.Generation, Is.EqualTo(h.WorkLease.Generation));
                 Assert.That(record.SampleSlot.SlotIndex, Is.EqualTo(h.SampleLease.SlotIndex));
                 Assert.That(record.SampleSlot.Generation, Is.EqualTo(h.SampleLease.Generation));
+                Assert.That(record.SyncSlot.SlotIndex, Is.EqualTo(h.SyncLease.SlotIndex));
+                Assert.That(record.SyncSlot.Generation, Is.EqualTo(h.SyncLease.Generation));
                 Assert.That(ReferenceEquals(record.Surface, h.Surface), Is.True);
             }
         }
@@ -53,7 +55,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, null, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, null, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -63,9 +65,11 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, null, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, null, h.SamplePool, h.SyncPool));
                 Assert.Throws<ArgumentNullException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, null));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, null, h.SyncPool));
+                Assert.Throws<ArgumentNullException>(() =>
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, null));
             }
         }
 
@@ -75,7 +79,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(Guid.Empty, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(Guid.Empty, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -85,11 +89,13 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, default, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, default, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, default, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, default, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, default, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, default, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
+                Assert.Throws<ArgumentException>(() =>
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, default, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -103,7 +109,7 @@ namespace Zantetsu.Core.Tests
                 CaptureSurfaceLease callerOwned = new CaptureSurfaceLease(renderPool, rtLease);
 
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, callerOwned, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, callerOwned, h.WorkPool, h.SamplePool, h.SyncPool));
 
                 callerOwned.Dispose();
             }
@@ -115,7 +121,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(Guid.NewGuid(), h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(Guid.NewGuid(), h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -127,12 +133,12 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameWorkToken different = new CaptureFrameWorkToken(
                     h.Owner, h.WorkLease.SlotIndex, h.WorkLease.Generation, 1, 99);
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, different, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, different, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
 
                 CaptureFrameWorkToken lookalike = new CaptureFrameWorkToken(
                     h.Owner, h.WorkLease.SlotIndex, h.WorkLease.Generation, 2, 7);
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, lookalike, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, lookalike, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -146,13 +152,13 @@ namespace Zantetsu.Core.Tests
 
                 // Token for a different work slot.
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, otherWork, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, otherWork, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
 
                 // Token for the same slot but a different generation.
                 CaptureFrameWorkToken differentGeneration = new CaptureFrameWorkToken(
                     h.Owner, h.WorkLease.SlotIndex, h.WorkLease.Generation + 1, 1, 7);
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, differentGeneration, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, differentGeneration, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -163,7 +169,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencCaptureWorkSlotPool foreignWork = new NvencCaptureWorkSlotPool(h.State);
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, foreignWork, h.SamplePool));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, foreignWork, h.SamplePool, h.SyncPool));
             }
         }
 
@@ -174,7 +180,18 @@ namespace Zantetsu.Core.Tests
             {
                 NvencEncodeSampleSlotPool foreignSample = new NvencEncodeSampleSlotPool(h.State);
                 Assert.Throws<ArgumentException>(() =>
-                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, foreignSample));
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, foreignSample, h.SyncPool));
+            }
+        }
+
+        [Test]
+        public void Create_RejectsForeignSyncPool()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencGpuConversionSyncPool foreignSync = new NvencGpuConversionSyncPool(h.State);
+                Assert.Throws<ArgumentException>(() =>
+                    NvencSubmissionRecord.Create(h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, foreignSync));
             }
         }
 
@@ -184,11 +201,11 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
 
                 Assert.That(h.WorkPool.TryReturn(h.WorkLease), Is.True);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
             }
         }
 
@@ -198,11 +215,25 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
 
                 Assert.That(h.SamplePool.TryReturn(h.SampleLease), Is.True);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
+            }
+        }
+
+        [Test]
+        public void IsValidFor_FalseAfterSyncLeaseReturned()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+
+                Assert.That(h.SyncPool.TryReturn(h.SyncLease), Is.True);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
             }
         }
 
@@ -212,13 +243,29 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
 
                 Assert.That(h.WorkPool.TryReturn(h.WorkLease), Is.True);
                 Assert.That(h.WorkPool.TryRent(out NvencCaptureWorkSlotLease rerented), Is.True);
                 Assert.That(rerented.SlotIndex, Is.EqualTo(h.WorkLease.SlotIndex));
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
+            }
+        }
+
+        [Test]
+        public void IsValidFor_StaleAfterSyncSlotRerent()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+
+                Assert.That(h.SyncPool.TryReturn(h.SyncLease), Is.True);
+                Assert.That(h.SyncPool.TryRent(out NvencGpuConversionSyncLease rerented), Is.True);
+                Assert.That(rerented.SlotIndex, Is.EqualTo(h.SyncLease.SlotIndex));
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
             }
         }
 
@@ -228,25 +275,32 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
 
                 h.Surface.ReleaseFromBackend(h.Owner, h.Token);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.False);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
             }
         }
 
         [Test]
-        public void SampleSlotIndexMayDifferFromWorkSlot()
+        public void WorkSampleSyncSlotIndexesMayDiffer()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
 
             Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLease0), Is.True);
             Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLease1), Is.True);
-            Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
-            Assert.That(workLease1.SlotIndex, Is.Not.EqualTo(sampleLease.SlotIndex));
+            Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease0), Is.True);
+            Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease1), Is.True);
+            Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease2), Is.True);
+            Assert.That(syncPool.TryRent(out NvencGpuConversionSyncLease syncLease), Is.True);
+
+            Assert.That(workLease1.SlotIndex, Is.Not.EqualTo(sampleLease2.SlotIndex));
+            Assert.That(workLease1.SlotIndex, Is.Not.EqualTo(syncLease.SlotIndex));
+            Assert.That(sampleLease2.SlotIndex, Is.Not.EqualTo(syncLease.SlotIndex));
 
             Guid owner = Guid.NewGuid();
             CaptureFrameWorkToken token = new CaptureFrameWorkToken(
@@ -256,9 +310,9 @@ namespace Zantetsu.Core.Tests
             {
                 CaptureSurfaceLease surface = MakeTransferredSurface(renderPool, owner, token);
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    owner, token, workLease1, sampleLease, surface, workPool, samplePool);
+                    owner, token, workLease1, sampleLease2, syncLease, surface, workPool, samplePool, syncPool);
 
-                Assert.That(record.IsValidFor(owner, workPool, samplePool), Is.True);
+                Assert.That(record.IsValidFor(owner, workPool, samplePool, syncPool), Is.True);
 
                 surface.ReleaseFromBackend(owner, token);
             }
@@ -273,9 +327,9 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RenderPool.RentedCount, Is.EqualTo(1));
 
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
-                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool), Is.True);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
+                Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
 
                 Assert.That(h.Surface.IsBackendOwned, Is.True);
                 Assert.That(h.Surface.IsCreated, Is.True);
@@ -290,6 +344,7 @@ namespace Zantetsu.Core.Tests
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
             NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
 
             using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(count))
             {
@@ -301,11 +356,12 @@ namespace Zantetsu.Core.Tests
                 {
                     Assert.That(workPool.TryRent(out NvencCaptureWorkSlotLease workLease), Is.True);
                     Assert.That(samplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
+                    Assert.That(syncPool.TryRent(out NvencGpuConversionSyncLease syncLease), Is.True);
                     CaptureFrameWorkToken token = new CaptureFrameWorkToken(
                         owner, workLease.SlotIndex, workLease.Generation, 1, i + 1);
                     surfaces[i] = MakeTransferredSurface(renderPool, owner, token);
                     records[i] = NvencSubmissionRecord.Create(
-                        owner, token, workLease, sampleLease, surfaces[i], workPool, samplePool);
+                        owner, token, workLease, sampleLease, syncLease, surfaces[i], workPool, samplePool, syncPool);
                 }
 
                 NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
@@ -334,7 +390,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.Surface, h.WorkPool, h.SamplePool);
+                    h.Owner, h.Token, h.WorkLease, h.SampleLease, h.SyncLease, h.Surface, h.WorkPool, h.SamplePool, h.SyncPool);
 
                 NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
                 Assert.That(queue.TryEnqueue(record), Is.True);
@@ -343,6 +399,10 @@ namespace Zantetsu.Core.Tests
 
                 NvencSubmissionRecord[] items = ReadQueueItems(queue);
                 Assert.That(items[0].Surface, Is.Null);
+                Assert.That(items[0].WorkToken.IsValid, Is.False);
+                Assert.That(items[0].WorkSlot.IsValid, Is.False);
+                Assert.That(items[0].SampleSlot.IsValid, Is.False);
+                Assert.That(items[0].SyncSlot.IsValid, Is.False);
             }
         }
 
@@ -361,17 +421,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Record_HoldsOnlyFourFields_NoCollectionsOrHandles()
+        public void Record_HoldsOnlyFiveFields_NoCollectionsOrHandles()
         {
             Type type = typeof(NvencSubmissionRecord);
             FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(fields.Length, Is.EqualTo(4));
+            Assert.That(fields.Length, Is.EqualTo(5));
 
             Type[] expected =
             {
                 typeof(CaptureFrameWorkToken),
                 typeof(NvencCaptureWorkSlotLease),
                 typeof(NvencEncodeSampleSlotLease),
+                typeof(NvencGpuConversionSyncLease),
                 typeof(CaptureSurfaceLease),
             };
 
@@ -435,8 +496,10 @@ namespace Zantetsu.Core.Tests
             internal NvencCaptureProcessState State { get; }
             internal NvencCaptureWorkSlotPool WorkPool { get; }
             internal NvencEncodeSampleSlotPool SamplePool { get; }
+            internal NvencGpuConversionSyncPool SyncPool { get; }
             internal NvencCaptureWorkSlotLease WorkLease { get; }
             internal NvencEncodeSampleSlotLease SampleLease { get; }
+            internal NvencGpuConversionSyncLease SyncLease { get; }
             internal CaptureFrameRenderTargetPool RenderPool { get; }
             internal CaptureSurfaceLease Surface { get; }
             internal Guid Owner { get; }
@@ -447,10 +510,13 @@ namespace Zantetsu.Core.Tests
                 State = new NvencCaptureProcessState();
                 WorkPool = new NvencCaptureWorkSlotPool(State);
                 SamplePool = new NvencEncodeSampleSlotPool(State);
+                SyncPool = new NvencGpuConversionSyncPool(State);
                 Assert.That(WorkPool.TryRent(out NvencCaptureWorkSlotLease workLease), Is.True);
                 Assert.That(SamplePool.TryRent(out NvencEncodeSampleSlotLease sampleLease), Is.True);
+                Assert.That(SyncPool.TryRent(out NvencGpuConversionSyncLease syncLease), Is.True);
                 WorkLease = workLease;
                 SampleLease = sampleLease;
+                SyncLease = syncLease;
                 Owner = Guid.NewGuid();
                 Token = new CaptureFrameWorkToken(Owner, WorkLease.SlotIndex, WorkLease.Generation, 1, 7);
                 RenderPool = MakeRenderPool(1);
