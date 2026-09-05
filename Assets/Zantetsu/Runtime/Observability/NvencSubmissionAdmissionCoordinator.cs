@@ -13,17 +13,18 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// Acceptance follows a fixed order: the process state must be accepting,
-    /// the queue must have capacity, one Work Slot, one Sample Slot, and one
-    /// GPU Conversion Sync credit must be rentable, the process state is
-    /// re-checked, the work token is issued from the backend owner and the work
-    /// slot generation, the surface is transferred, the record is built, and it
-    /// is enqueued exactly once inside the short admission guard, so the
-    /// successful enqueue is the Accepted linearization point ordered before
-    /// any later drain or poison. Capacity exhaustion of any kind is
-    /// <c>Backpressured</c> and leaves the surface caller-owned with
-    /// reservations released in reverse order (sync, then sample, then work).
-    /// A stopped or poisoned process returns <c>NotAccepting</c> without
-    /// transferring the surface.
+    /// the queue must have capacity, one Work Slot and one Sample Slot must be
+    /// rentable, and only then the short admission guard is acquired
+    /// non-waiting. Inside that guard one GPU Conversion Sync credit is rented
+    /// (serialized with the release coordinator's return on the same gate), the
+    /// work token is issued from the backend owner and the work slot
+    /// generation, the surface is transferred, the record is built, and it is
+    /// enqueued exactly once, so the successful enqueue is the Accepted
+    /// linearization point ordered before any later drain or poison. Capacity
+    /// exhaustion of any kind is <c>Backpressured</c> and leaves the surface
+    /// caller-owned with reservations released in reverse order (sync, then
+    /// sample, then work). A stopped or poisoned process returns
+    /// <c>NotAccepting</c> without transferring the surface.
     /// </para>
     /// <para>
     /// Under the strict single-producer contract a post-transfer enqueue failure
@@ -150,42 +151,50 @@ namespace Zantetsu.Observability
                     : CaptureSubmitStatus.NotAccepting;
             }
 
-            if (!_syncSlots.TryRent(out NvencGpuConversionSyncLease syncSlot))
-            {
-                _sampleSlots.TryReturn(sampleSlot);
-                _workSlots.TryReturn(workSlot);
-                return _processState.IsAccepting
-                    ? CaptureSubmitStatus.Backpressured
-                    : CaptureSubmitStatus.NotAccepting;
-            }
-
             if (!_processState.TryBeginAdmission())
             {
-                _syncSlots.TryReturn(syncSlot);
                 _sampleSlots.TryReturn(sampleSlot);
                 _workSlots.TryReturn(workSlot);
                 return CaptureSubmitStatus.NotAccepting;
             }
 
-            CaptureFrameWorkToken token;
+            CaptureFrameWorkToken token = default;
+            bool syncRented = false;
             try
             {
-                token = new CaptureFrameWorkToken(
-                    _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
-
-                surface.TransferToBackend(_backendOwner, token);
-
-                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
-                    _backendOwner, token, workSlot, sampleSlot, syncSlot, surface, _workSlots, _sampleSlots, _syncSlots);
-
-                if (!_submissionQueue.TryEnqueue(record))
+                // The sync credit rent is inside the admission gate so it is
+                // serialized with the release coordinator's TryReturn, which
+                // runs on the same gate. Running is guaranteed while the gate
+                // is held, so a failed rent here is capacity backpressure.
+                if (_syncSlots.TryRent(out NvencGpuConversionSyncLease syncSlot))
                 {
-                    throw new InvalidOperationException("Submission queue rejected an accepted record; internal invariant violated.");
+                    syncRented = true;
+                    token = new CaptureFrameWorkToken(
+                        _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
+
+                    surface.TransferToBackend(_backendOwner, token);
+
+                    NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                        _backendOwner, token, workSlot, sampleSlot, syncSlot, surface, _workSlots, _sampleSlots, _syncSlots);
+
+                    if (!_submissionQueue.TryEnqueue(record))
+                    {
+                        throw new InvalidOperationException("Submission queue rejected an accepted record; internal invariant violated.");
+                    }
                 }
             }
             finally
             {
                 _processState.EndAdmission();
+            }
+
+            if (!syncRented)
+            {
+                // Sync credit capacity exhausted while Running: release the work
+                // and sample reservations in reverse order after the gate is free.
+                _sampleSlots.TryReturn(sampleSlot);
+                _workSlots.TryReturn(workSlot);
+                return CaptureSubmitStatus.Backpressured;
             }
 
             workToken = token;
