@@ -4,22 +4,25 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable result of one orchestrated PngJson capture publication
-    /// artifact recovery pass: the coordinator that issued it, the execution
-    /// result it produced, and the opaque proof from that result's single full
-    /// validation.
+    /// artifact recovery pass. It is a two-variant terminal: a completed
+    /// result carries the execution result it produced and the opaque proof
+    /// from that result's single full validation, while a Deferred result
+    /// carries only the exact inspection operation for which the verification
+    /// buffer could not be rented.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly three read-only reference fields and has no public
-    /// constructor; the only way to build one is through the atomic factory
+    /// The type owns exactly four read-only reference fields and has no public
+    /// constructor; the only way to build one is through the atomic factories
     /// called by
     /// <see cref="PngJsonCapturePublicationArtifactRecoveryOrchestrationCoordinator.Execute"/>.
-    /// Every accessor forwards a value from the correlated execution result
-    /// graph, and the held proof is never exposed. <see cref="IsValid"/>
-    /// recomputes the full correlation without throwing, so a result whose
-    /// nested values were forged, whose lease was released, or whose held
-    /// values became otherwise invalid reports <c>false</c> instead of
-    /// throwing.
+    /// A completed result forwards its accessors from the correlated execution
+    /// result graph, while a Deferred result forwards them from the retained
+    /// inspection operation; the held proof is never exposed.
+    /// <see cref="IsValid"/> recomputes the full correlation without throwing,
+    /// so a result whose nested values were forged, whose lease was released,
+    /// or whose held values became otherwise invalid reports <c>false</c>
+    /// instead of throwing.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing — no array, lease, stream,
@@ -403,8 +406,9 @@ namespace Zantetsu.Observability
             /// O(1), exception-safe exact binding: re-confirms the exact result,
             /// coordinator, execution result, execution result proof, and
             /// snapshot references captured at issuance against the current
-            /// result. It never re-validates the result, re-issues a token, or
-            /// scans an entry.
+            /// result, and additionally binds the null Deferred slot of the
+            /// completed variant. It never re-validates the result, re-issues a
+            /// token, or scans an entry.
             /// </summary>
             internal bool IsIssuedFor(PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result)
             {
@@ -415,6 +419,7 @@ namespace Zantetsu.Observability
                         && ReferenceEquals(_issuedBy, result._issuedBy)
                         && ReferenceEquals(_executionResult, result._executionResult)
                         && ReferenceEquals(_executionResultToken, result._token)
+                        && result._deferredOperation == null
                         && ReferenceEquals(_snapshot, result.InspectionSnapshot);
                 }
                 catch (Exception)

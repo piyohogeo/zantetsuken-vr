@@ -7,8 +7,9 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every value except <see cref="Deferred"/> mirrors a completed
-    /// <c>PngJsonCapturePublicationArtifactRecoveryExecutionResult</c>.
+    /// Every valid non-<see cref="Deferred"/> terminal value mirrors a
+    /// completed <c>PngJsonCapturePublicationArtifactRecoveryExecutionResult</c>;
+    /// <see cref="None"/> is never a valid terminal.
     /// <see cref="Deferred"/> is a pre-inspection terminal: the inspection
     /// verification buffer could not be rented for one attempt, so no snapshot,
     /// decision, plan, batch, or execution result exists and the corresponding

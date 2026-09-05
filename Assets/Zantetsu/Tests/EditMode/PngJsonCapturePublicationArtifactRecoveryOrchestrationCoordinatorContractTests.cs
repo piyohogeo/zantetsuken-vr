@@ -1318,6 +1318,7 @@ namespace Zantetsu.Core.Tests
             // throwing.
             SetField(result, "_deferredOperation", operation);
 
+            Assert.That(token.IsIssuedFor(result), Is.False);
             Assert.That(result.IsValid, Is.False);
             Assert.That(result.IsValidWithToken(token), Is.False);
             Assert.That(result.TryValidate(out var second), Is.False);
