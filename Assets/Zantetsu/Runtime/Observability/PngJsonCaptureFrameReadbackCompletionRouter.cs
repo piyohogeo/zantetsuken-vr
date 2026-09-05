@@ -567,13 +567,23 @@ namespace Zantetsu.Observability
             {
                 payload = new CaptureFrameReadbackPayloadLease(_dispatcher, collected);
             }
-            catch
+            catch (Exception captureFailure)
             {
                 // The payload lease eagerly captures the raw view in its
                 // constructor, which can fail before ownership transfers. The
-                // raw readback slot must still be released exactly once.
-                released = true;
-                _dispatcher.Release(collected);
+                // raw readback slot must still be released exactly once, and
+                // the caller must observe success only after that release
+                // completes.
+                try
+                {
+                    _dispatcher.Release(collected);
+                    released = true;
+                }
+                catch (Exception releaseFailure)
+                {
+                    throw new AggregateException(captureFailure, releaseFailure);
+                }
+
                 throw;
             }
 

@@ -94,6 +94,13 @@ namespace Zantetsu.Observability
             return _heldBuffer;
         }
 
+        internal NativeArray<byte> GetBufferAndTransferToCompletion(Guid serviceOwner, in CaptureFrameWorkToken workToken)
+        {
+            ValidateServiceOwnership(serviceOwner, workToken, ServiceOwned);
+            _ownershipState = CompletionOwned;
+            return _heldBuffer;
+        }
+
         internal void TransferToCompletion(Guid serviceOwner, in CaptureFrameWorkToken workToken)
         {
             ValidateServiceOwnership(serviceOwner, workToken, ServiceOwned);

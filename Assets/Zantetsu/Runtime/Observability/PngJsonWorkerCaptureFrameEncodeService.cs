@@ -419,6 +419,14 @@ namespace Zantetsu.Observability
                 return;
             }
 
+            // Atomic validation + ownership transfer: for an accepted payload
+            // this cannot throw, and the transition to CompletionOwned happens
+            // before the encoder runs so a Failed completion can still release
+            // the input. A failure here is an internal invariant violation and
+            // propagates as a fatal worker fault rather than a completion that
+            // would orphan a still-service-owned payload.
+            NativeArray<byte> raw = payload.GetBufferAndTransferToCompletion(_ownerToken, token);
+
             NativeArray<byte> png = default;
             ExceptionDispatchInfo failure = null;
             double elapsedMilliseconds = 0.0;
@@ -426,12 +434,11 @@ namespace Zantetsu.Observability
             long startTimestamp = Stopwatch.GetTimestamp();
             try
             {
-                // Post-accept processing boundary: buffer-view acquisition,
-                // encode, and non-empty-output validation. The encoder boundary
-                // does not contract a non-empty result, so an empty output is
-                // treated as a failed encode instead of escaping the worker
-                // loop and orphaning the accepted item.
-                NativeArray<byte> raw = payload.GetBufferForService(_ownerToken, token);
+                // Post-accept processing boundary: encode and non-empty-output
+                // validation. The encoder boundary does not contract a
+                // non-empty result, so an empty output is treated as a failed
+                // encode instead of escaping the worker loop and orphaning the
+                // accepted item.
                 png = _encoder.Encode(raw, frameRequest.PixelLayout);
                 if (!png.IsCreated || png.Length == 0)
                 {
@@ -444,18 +451,6 @@ namespace Zantetsu.Observability
             catch (Exception ex)
             {
                 failure = ExceptionDispatchInfo.Capture(ex);
-            }
-
-            try
-            {
-                payload.TransferToCompletion(_ownerToken, token);
-            }
-            catch (Exception transferEx)
-            {
-                if (failure == null)
-                {
-                    failure = ExceptionDispatchInfo.Capture(transferEx);
-                }
             }
 
             if (failure != null && png.IsCreated)

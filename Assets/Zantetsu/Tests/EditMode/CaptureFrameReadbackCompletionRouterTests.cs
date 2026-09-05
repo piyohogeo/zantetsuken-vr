@@ -403,7 +403,53 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Router_PayloadLeaseConstructionFailure_ReleasesRawSlot()
+        public void Router_CaptureFailure_ReleasesRawSlotThenPropagatesCapture()
+        {
+            using (CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(1, 64))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool))
+            using (TraceLogger logger = new TraceLogger(8))
+            {
+                CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
+                PngJsonCaptureFrameReadbackCompletionRouter router =
+                    new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
+
+                RenderTexture rt = CreateTex2D(2, 2);
+                try
+                {
+                    Assert.That(dispatcher.TryStart(MakeRequest(5), rt), Is.True);
+                    AsyncGPUReadback.WaitAllRequests();
+
+                    // Collect an errored result directly from the dispatcher:
+                    // the payload lease rejects errored results, so capture
+                    // fails while the raw slot remains rented and releasable.
+                    SetForceNextError(dispatcher);
+                    Assert.That(dispatcher.TryCollect(out CaptureFrameReadbackResult result), Is.True);
+                    Assert.That(result.HasError, Is.True);
+
+                    MethodInfo submit = typeof(PngJsonCaptureFrameReadbackCompletionRouter)
+                        .GetMethod("SubmitCollectAndApply", BindingFlags.Instance | BindingFlags.NonPublic);
+                    Assert.That(submit, Is.Not.Null);
+
+                    object[] args = { result, false };
+                    TargetInvocationException ex = Assert.Throws<TargetInvocationException>(
+                        () => submit.Invoke(router, args));
+                    Assert.That(ex.InnerException, Is.TypeOf<ArgumentException>());
+
+                    // The raw slot must be fully released (dispatcher entry and
+                    // pool slot) without any manual repair.
+                    Assert.That((bool)args[1], Is.True);
+                    Assert.That(dispatcher.ActiveCount, Is.EqualTo(0));
+                    Assert.That(pool.RentedCount, Is.EqualTo(0));
+                }
+                finally
+                {
+                    DestroyTexture(rt);
+                }
+            }
+        }
+
+        [Test]
+        public void Router_CaptureAndCleanupFailure_PropagatesBothAndDoesNotClaimRelease()
         {
             using (CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(1, 64))
             using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool))
@@ -419,10 +465,13 @@ namespace Zantetsu.Core.Tests
                 {
                     Assert.That(dispatcher.TryStart(MakeRequest(5), rt), Is.True);
                     AsyncGPUReadback.WaitAllRequests();
-                    Assert.That(router.TryCollect(out result), Is.EqualTo(CaptureFrameReadbackCollectStatus.Succeeded));
+                    SetForceNextError(dispatcher);
+                    Assert.That(dispatcher.TryCollect(out result), Is.True);
+                    Assert.That(result.HasError, Is.True);
 
-                    // Simulate the payload lease's eager buffer capture failing:
-                    // the rented flag is cleared so GetBuffer rejects the slot.
+                    // Fail the cleanup release independently: the pool slot is
+                    // marked unrented, so Release deactivates the dispatcher
+                    // entry but the pool return throws.
                     bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
                         .GetField("_rented", BindingFlags.Instance | BindingFlags.NonPublic)
                         .GetValue(pool);
@@ -435,18 +484,22 @@ namespace Zantetsu.Core.Tests
                     object[] args = { result, false };
                     TargetInvocationException ex = Assert.Throws<TargetInvocationException>(
                         () => submit.Invoke(router, args));
-                    Assert.That(ex.InnerException, Is.TypeOf<InvalidOperationException>());
 
-                    // The router's real path must release the raw slot exactly
-                    // once on construction failure, not rely on the caller.
+                    AggregateException aggregate = ex.InnerException as AggregateException;
+                    Assert.That(aggregate, Is.Not.Null);
+                    Assert.That(aggregate.InnerExceptions.Count, Is.EqualTo(2));
+                    Assert.That(aggregate.InnerExceptions[0], Is.TypeOf<ArgumentException>());
+                    Assert.That(aggregate.InnerExceptions[1], Is.TypeOf<InvalidOperationException>());
+
+                    // The release did not succeed, so the caller must not
+                    // observe released == true.
+                    Assert.That((bool)args[1], Is.False);
                     Assert.That(dispatcher.ActiveCount, Is.EqualTo(0));
-                    Assert.That((bool)args[1], Is.True);
                 }
                 finally
                 {
-                    // The failed release deactivated the dispatcher entry but
-                    // could not return the slot because the test left it marked
-                    // unrented. Restore consistency so the pool can be disposed.
+                    // The deliberately-corrupted pool state must be restored so
+                    // the pool can be disposed.
                     if (result.IsValid && pool.RentedCount != 0)
                     {
                         bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
