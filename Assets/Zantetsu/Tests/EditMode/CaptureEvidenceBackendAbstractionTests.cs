@@ -4,8 +4,10 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.Rendering;
 using Zantetsu.Observability;
 
 namespace Zantetsu.Core.Tests
@@ -141,6 +143,94 @@ namespace Zantetsu.Core.Tests
                 Assert.That(backend.TryCollectArtifactCompletion(out CaptureArtifactCompletion collectedArtifact), Is.True);
                 Assert.That(collectedArtifact.Descriptor, Is.SameAs(descriptor));
                 backend.BeginDrain();
+                Assert.That(WaitForJoin(backend), Is.True);
+            }
+        }
+
+        [Test]
+        public void PngJsonBackend_FullPipeline_StagesAndVerifiesArtifacts()
+        {
+            string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-evidence-" + Guid.NewGuid().ToString("N"));
+            string stagingBase = Path.Combine(sandbox, "staging");
+            string finalBase = Path.Combine(sandbox, "final");
+            Directory.CreateDirectory(stagingBase);
+            Directory.CreateDirectory(finalBase);
+
+            try
+            {
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
+                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
+
+                using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
+                using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(buffers))
+                using (CaptureFrameRenderTargetPool pool = MakePool())
+                using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
+                {
+                    Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease lease), Is.True);
+                    CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, lease);
+
+                    Assert.That(backend.TrySubmit(MakeEnvelope(7), surface, out CaptureFrameWorkToken token),
+                        Is.EqualTo(CaptureSubmitStatus.Accepted));
+                    Assert.That(token.IsValid, Is.True);
+                    Assert.That(surface.IsBackendOwned, Is.True);
+
+                    AsyncGPUReadback.WaitAllRequests();
+
+                    Assert.That(WaitForFrameCompletion(backend, out CaptureFrameCompletion frame), Is.True);
+                    Assert.That(frame.Status, Is.EqualTo(CaptureFrameCompletionStatus.Succeeded));
+                    Assert.That(frame.ProducedArtifactCount, Is.EqualTo(2));
+                    Assert.That(frame.CaptureFrameId, Is.EqualTo(7));
+
+                    Assert.That(WaitForArtifactCompletion(backend, out CaptureArtifactCompletion image), Is.True);
+                    Assert.That(image.Status, Is.EqualTo(CaptureArtifactCompletionStatus.Staged));
+                    Assert.That(image.Descriptor.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameImage));
+
+                    Assert.That(WaitForArtifactCompletion(backend, out CaptureArtifactCompletion metadata), Is.True);
+                    Assert.That(metadata.Status, Is.EqualTo(CaptureArtifactCompletionStatus.Staged));
+                    Assert.That(metadata.Descriptor.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameMetadata));
+
+                    // The staged files are content-verified without transformation.
+                    Assert.That(store.VerifyStaging(image.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                    Assert.That(store.VerifyStaging(metadata.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+
+                    // Surface and raw slot are fully recovered.
+                    backend.BeginDrain();
+                    Assert.That(WaitForJoin(backend), Is.True);
+                    Assert.That(pool.RentedCount, Is.Zero);
+                    Assert.That(buffers.RentedCount, Is.Zero);
+                    Assert.That(dispatcher.ActiveCount, Is.Zero);
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
+            }
+        }
+
+        [Test]
+        public void PngJsonBackend_IncompleteReadback_DoesNotJoinEarly()
+        {
+            using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(buffers))
+            using (FakeArtifactStore store = new FakeArtifactStore())
+            using (CaptureFrameRenderTargetPool pool = MakePool())
+            using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
+            {
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease lease), Is.True);
+                CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, lease);
+
+                Assert.That(backend.TrySubmit(MakeEnvelope(9), surface, out _), Is.EqualTo(CaptureSubmitStatus.Accepted));
+
+                // The readback has not been drained yet: join must stay false.
+                backend.BeginDrain();
+                Assert.That(backend.TryJoin(), Is.False);
+
+                AsyncGPUReadback.WaitAllRequests();
+                Assert.That(WaitForFrameCompletion(backend, out CaptureFrameCompletion frame), Is.True);
+                Assert.That(frame.CaptureFrameId, Is.EqualTo(9));
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+                Assert.That(WaitForArtifactCompletion(backend, out _), Is.True);
+                Assert.That(WaitForJoin(backend), Is.True);
             }
         }
 
@@ -431,14 +521,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void PngJsonBackend_OwnsReadbackAndPngImplementationDetails()
+        public void PngJsonBackend_OwnsReadbackAndDelegatesMediaToWorker()
         {
             string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/PngJsonCaptureEvidenceBackend.cs"));
             Assert.That(source, Does.Contain("UnityRenderTextureReadbackDispatcher"));
-            Assert.That(source, Does.Contain("CaptureFramePngEncoder.Encode"));
-            Assert.That(source, Does.Contain("PngJsonFrameMetadataCodec.SerializeCanonical"));
-            Assert.That(source, Does.Contain("CaptureArtifactKind.FrameImage"));
-            Assert.That(source, Does.Contain("CaptureArtifactKind.FrameMetadata"));
+            Assert.That(source, Does.Contain("PngJsonCaptureEvidenceWorkerService"));
+
+            // The production backend path must not encode, hash, serialize JSON,
+            // or stage on the main thread.
+            Assert.That(source, Does.Not.Contain("CaptureFramePngEncoder.Encode"));
+            Assert.That(source, Does.Not.Contain("PngJsonFrameMetadataCodec"));
+            Assert.That(source, Does.Not.Contain("CaptureArtifactKind.FrameImage"));
+            Assert.That(source, Does.Not.Contain("CaptureArtifactKind.FrameMetadata"));
+            Assert.That(source, Does.Not.Contain("SHA256"));
+
+            // No synchronous fallback, LINQ, resizable queues, or extra worker.
+            Assert.That(source, Does.Not.Contain("PngJsonSynchronousCaptureFrameEncodeService"));
+            Assert.That(source, Does.Not.Contain("List<"));
+            Assert.That(source, Does.Not.Contain("Queue<"));
+            Assert.That(source, Does.Not.Contain("Stack<"));
+            Assert.That(source, Does.Not.Contain("Task"));
+            Assert.That(source, Does.Not.Contain("ThreadPool"));
+            Assert.That(source, Does.Not.Contain("new Thread"));
         }
 
         [Test]
@@ -456,6 +560,65 @@ namespace Zantetsu.Core.Tests
             Assert.That(text, Does.Not.Contain("VideoCodec"));
             Assert.That(text, Does.Not.Contain("MessagePack"));
             Assert.That(text, Does.Not.Contain("Protobuf"));
+        }
+
+        private static bool WaitForFrameCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureFrameCompletion completion)
+        {
+            int deadline = Environment.TickCount + 10000;
+            while (true)
+            {
+                if (backend.TryCollectFrameCompletion(out completion))
+                {
+                    return true;
+                }
+
+                if (Environment.TickCount - deadline >= 0)
+                {
+                    completion = default;
+                    return false;
+                }
+
+                Thread.Sleep(1);
+            }
+        }
+
+        private static bool WaitForArtifactCompletion(PngJsonCaptureEvidenceBackend backend, out CaptureArtifactCompletion completion)
+        {
+            int deadline = Environment.TickCount + 10000;
+            while (true)
+            {
+                if (backend.TryCollectArtifactCompletion(out completion))
+                {
+                    return true;
+                }
+
+                if (Environment.TickCount - deadline >= 0)
+                {
+                    completion = null;
+                    return false;
+                }
+
+                Thread.Sleep(1);
+            }
+        }
+
+        private static bool WaitForJoin(PngJsonCaptureEvidenceBackend backend)
+        {
+            int deadline = Environment.TickCount + 10000;
+            while (true)
+            {
+                if (backend.TryJoin())
+                {
+                    return true;
+                }
+
+                if (Environment.TickCount - deadline >= 0)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(1);
+            }
         }
 
         private static CaptureFrameEnvelope MakeEnvelope(long frameId)

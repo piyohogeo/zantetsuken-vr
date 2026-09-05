@@ -1,21 +1,20 @@
 using System;
 using System.Runtime.ExceptionServices;
-using System.Security.Cryptography;
-using Unity.Collections;
 
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Initial Phase 0 evidence backend. Async GPU readback, PNG encoding,
-    /// per-frame JSON generation, and backend queues are confined here.
+    /// Initial Phase 0 evidence backend. Async GPU readback, backend queues,
+    /// drain, and join are confined here; PNG encode, canonical JSON, SHA-256,
+    /// and durable staging run on the single dedicated evidence worker.
     /// </summary>
     internal sealed class PngJsonCaptureEvidenceBackend : ICaptureEvidenceSession
     {
-        private enum SlotState : int { Free = 0, InFlight = 1 }
+        private enum SlotState : int { Free = 0, InFlight = 1, WorkerPending = 2 }
 
         private readonly Guid _ownerToken;
         private readonly UnityRenderTextureReadbackDispatcher _dispatcher;
-        private readonly ICaptureArtifactStore _artifactStore;
+        private readonly PngJsonCaptureEvidenceWorkerService _worker;
         private readonly SlotState[] _states;
         private readonly long[] _generations;
         private readonly CaptureFrameWorkToken[] _tokens;
@@ -40,10 +39,11 @@ namespace Zantetsu.Observability
         {
             if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-            _artifactStore = artifactStore ?? throw new ArgumentNullException(nameof(artifactStore));
+            if (artifactStore == null) throw new ArgumentNullException(nameof(artifactStore));
             if (dispatcher.Capacity < capacity) throw new ArgumentException("Dispatcher capacity must cover backend capacity.", nameof(dispatcher));
 
             _ownerToken = Guid.NewGuid();
+            _worker = new PngJsonCaptureEvidenceWorkerService(capacity, PngJsonCaptureFrameEncoder.Create(), artifactStore);
             _states = new SlotState[capacity];
             _generations = new long[capacity];
             _tokens = new CaptureFrameWorkToken[capacity];
@@ -99,13 +99,14 @@ namespace Zantetsu.Observability
         {
             ThrowIfDisposed();
             if (TryDequeueFrame(out completion)) return true;
-            PumpOneCompletedReadback();
+            Pump();
             return TryDequeueFrame(out completion);
         }
 
         public bool TryCollectArtifactCompletion(out CaptureArtifactCompletion completion)
         {
             ThrowIfDisposed();
+            Pump();
             if (_artifactCount == 0)
             {
                 completion = null;
@@ -139,14 +140,22 @@ namespace Zantetsu.Observability
         {
             ThrowIfDisposed();
             // AsyncGPUReadback requests are already in flight; there is no
-            // pre-readback queue in this backend.
+            // pre-readback queue in this backend. Accepted work drains.
             return 0;
         }
 
         public bool TryJoin()
         {
             ThrowIfDisposed();
-            return !_accepting && _dispatcher.ActiveCount == 0 && !HasInFlight();
+            if (_accepting || _dispatcher.ActiveCount != 0 || HasInFlight())
+            {
+                return false;
+            }
+
+            // All readbacks are collected and submitted; the worker can stop
+            // accepting and drain. The signal is idempotent.
+            _worker.BeginDrain();
+            return _worker.TryJoin();
         }
 
         public void Dispose()
@@ -156,99 +165,132 @@ namespace Zantetsu.Observability
             {
                 throw new InvalidOperationException("Backend must be drained and all completions collected before disposal.");
             }
+
+            _worker.Dispose();
             _accepting = false;
             _disposed = true;
         }
 
-        private void PumpOneCompletedReadback()
+        private void Pump()
         {
-            if (_frameCount == _frameCompletions.Length || _artifactCompletions.Length - _artifactCount < 2) return;
-            if (!_dispatcher.TryCollect(out CaptureFrameReadbackResult result)) return;
+            PumpCompletedReadbacks();
+            PumpWorkerCompletions();
+        }
 
-            int slot = FindSlot(result.FrameRequest.TraceContext.CaptureFrameId);
-            if (slot < 0) throw new InvalidOperationException("Readback completion has no backend slot.");
-            CaptureFrameWorkToken token = _tokens[slot];
-            CaptureFrameEnvelope frame = _frames[slot];
-            CaptureSurfaceLease surface = _surfaces[slot];
-            ExceptionDispatchInfo mediaFailure = null;
-            NativeArray<byte> png = default;
+        private void PumpCompletedReadbacks()
+        {
+            while (true)
+            {
+                if (!_dispatcher.TryCollect(out CaptureFrameReadbackResult result)) return;
+
+                int slot = FindSlot(result.FrameRequest.TraceContext.CaptureFrameId);
+                if (slot < 0) throw new InvalidOperationException("Readback completion has no backend slot.");
+                CaptureFrameWorkToken token = _tokens[slot];
+                CaptureFrameEnvelope frame = _frames[slot];
+                CaptureSurfaceLease surface = _surfaces[slot];
+
+                if (result.HasError)
+                {
+                    ReleaseReadbackAndSurface(result, surface, token, slot);
+                    EnqueueFrame(new CaptureFrameCompletion(
+                        token,
+                        frame.CaptureFrameId,
+                        CaptureFrameCompletionStatus.Failed,
+                        true,
+                        0,
+                        ExceptionDispatchInfo.Capture(new InvalidOperationException("GPU readback failed."))));
+                    continue;
+                }
+
+                CaptureFrameReadbackPayloadLease payload;
+                try
+                {
+                    payload = new CaptureFrameReadbackPayloadLease(_dispatcher, result);
+                }
+                catch (Exception payloadFailure)
+                {
+                    ReleaseReadbackAndSurface(result, surface, token, slot);
+                    EnqueueFrame(new CaptureFrameCompletion(
+                        token,
+                        frame.CaptureFrameId,
+                        CaptureFrameCompletionStatus.Failed,
+                        true,
+                        0,
+                        ExceptionDispatchInfo.Capture(payloadFailure)));
+                    continue;
+                }
+
+                PngJsonCaptureEvidenceSubmission submission = new PngJsonCaptureEvidenceSubmission(frame, payload, token);
+                PngJsonCaptureFrameEncodeSubmitStatus status = _worker.TrySubmit(submission, out _);
+                if (status == PngJsonCaptureFrameEncodeSubmitStatus.Accepted)
+                {
+                    // The raw readback is now captured by the worker-owned
+                    // payload; the surface is no longer needed and is released
+                    // exactly once here.
+                    surface.ReleaseFromBackend(_ownerToken, token);
+                    _states[slot] = SlotState.WorkerPending;
+                }
+                else
+                {
+                    // Backend and worker capacities match, so this is defensive:
+                    // recover the raw result and surface on the main thread.
+                    try
+                    {
+                        payload.ReleaseByCaller();
+                    }
+                    finally
+                    {
+                        ReleaseSurfaceAndClearSlot(surface, token, slot);
+                    }
+
+                    EnqueueFrame(new CaptureFrameCompletion(
+                        token,
+                        frame.CaptureFrameId,
+                        CaptureFrameCompletionStatus.Failed,
+                        true,
+                        0,
+                        ExceptionDispatchInfo.Capture(new InvalidOperationException("The evidence worker did not accept a collected readback."))));
+                }
+            }
+        }
+
+        private void PumpWorkerCompletions()
+        {
+            while (_worker.TryCollect(out PngJsonCaptureEvidenceWorkCompletion completion))
+            {
+                ApplyWorkerCompletion(completion);
+            }
+        }
+
+        private void ApplyWorkerCompletion(in PngJsonCaptureEvidenceWorkCompletion completion)
+        {
+            CaptureFrameWorkToken workerToken = completion.WorkToken;
+            CaptureFrameCompletion frameCompletion = completion.FrameCompletion;
+            int slot = frameCompletion.WorkToken.SlotIndex;
+
+            if (slot < 0 || slot >= _states.Length || _states[slot] != SlotState.WorkerPending ||
+                !_tokens[slot].IdenticalTo(frameCompletion.WorkToken))
+            {
+                throw new InvalidOperationException("Worker completion has no matching backend slot.");
+            }
 
             try
             {
-                if (result.HasError) throw new InvalidOperationException("GPU readback failed.");
-                png = CaptureFramePngEncoder.Encode(_dispatcher.GetBuffer(result), frame.PixelLayout);
-                CreateArtifacts(frame, token, png);
-            }
-            catch (Exception ex)
-            {
-                mediaFailure = ExceptionDispatchInfo.Capture(ex);
+                // The raw dispatcher slot is released exactly once here.
+                _worker.ReleaseInput(workerToken);
             }
             finally
             {
-                if (png.IsCreated) png.Dispose();
-                ReleaseReadbackAndSurface(result, surface, token, slot);
+                _worker.Acknowledge(workerToken);
+                _states[slot] = SlotState.Free;
+                _tokens[slot] = default;
+                _frames[slot] = null;
+                _surfaces[slot] = null;
             }
 
-            EnqueueFrame(new CaptureFrameCompletion(
-                token,
-                frame.CaptureFrameId,
-                mediaFailure == null ? CaptureFrameCompletionStatus.Succeeded : CaptureFrameCompletionStatus.Failed,
-                true,
-                mediaFailure == null ? 2 : 0,
-                mediaFailure));
-        }
-
-        private void CreateArtifacts(CaptureFrameEnvelope frame, in CaptureFrameWorkToken token, NativeArray<byte> png)
-        {
-            byte[] pngBytes = new byte[png.Length];
-            for (int i = 0; i < png.Length; i++) pngBytes[i] = png[i];
-            string id = frame.CaptureFrameId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
-                "frame/" + id + "/image",
-                CaptureArtifactKind.FrameImage,
-                "image/png",
-                1,
-                "frames/" + id + ".png.stage",
-                "frames/" + id + ".png",
-                pngBytes.LongLength,
-                Hash(pngBytes));
-            byte[] metadataBytes = PngJsonFrameMetadataCodec.SerializeCanonical(frame, image);
-            CaptureArtifactDescriptor metadata = new CaptureArtifactDescriptor(
-                "frame/" + id + "/metadata",
-                CaptureArtifactKind.FrameMetadata,
-                "application/vnd.zantetsu.capture-frame+json",
-                2,
-                "frames/" + id + ".json.stage",
-                "frames/" + id + ".json",
-                metadataBytes.LongLength,
-                Hash(metadataBytes));
-
-            StageArtifact(token, frame.CaptureFrameId, image, pngBytes);
-            StageArtifact(token, frame.CaptureFrameId, metadata, metadataBytes);
-        }
-
-        private void StageArtifact(in CaptureFrameWorkToken token, long frameId, CaptureArtifactDescriptor descriptor, byte[] bytes)
-        {
-            CaptureArtifactWriteReceipt receipt = null;
-            ExceptionDispatchInfo failure = null;
-            try
-            {
-                receipt = _artifactStore.WriteStaging(new CaptureArtifactWriteRequest(descriptor, bytes));
-                if (receipt == null || !receipt.IsIssuedFor(_artifactStore, descriptor)) throw new InvalidOperationException("Store returned an invalid receipt.");
-            }
-            catch (Exception ex)
-            {
-                failure = ExceptionDispatchInfo.Capture(ex);
-            }
-
-            EnqueueArtifact(new CaptureArtifactCompletion(
-                token,
-                frameId,
-                descriptor,
-                new CaptureArtifactFrameRelation(new[] { frameId }),
-                failure == null ? CaptureArtifactCompletionStatus.Staged : CaptureArtifactCompletionStatus.Failed,
-                receipt,
-                failure));
+            EnqueueFrame(frameCompletion);
+            if (completion.ImageArtifact != null) EnqueueArtifact(completion.ImageArtifact);
+            if (completion.MetadataArtifact != null) EnqueueArtifact(completion.MetadataArtifact);
         }
 
         private void EnqueueFrame(in CaptureFrameCompletion completion)
@@ -363,14 +405,19 @@ namespace Zantetsu.Observability
             releaseFailure?.Throw();
         }
 
-        private static string Hash(byte[] bytes)
+        private void ReleaseSurfaceAndClearSlot(CaptureSurfaceLease surface, in CaptureFrameWorkToken token, int slot)
         {
-            byte[] hash;
-            using (SHA256 sha = SHA256.Create()) hash = sha.ComputeHash(bytes);
-            const string hex = "0123456789abcdef";
-            char[] chars = new char[hash.Length * 2];
-            for (int i = 0; i < hash.Length; i++) { chars[i * 2] = hex[hash[i] >> 4]; chars[i * 2 + 1] = hex[hash[i] & 15]; }
-            return new string(chars);
+            try
+            {
+                surface.ReleaseFromBackend(_ownerToken, token);
+            }
+            finally
+            {
+                _states[slot] = SlotState.Free;
+                _tokens[slot] = default;
+                _frames[slot] = null;
+                _surfaces[slot] = null;
+            }
         }
     }
 }
