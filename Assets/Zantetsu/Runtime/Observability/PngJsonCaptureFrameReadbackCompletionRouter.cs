@@ -561,7 +561,22 @@ namespace Zantetsu.Observability
             out bool released)
         {
             released = false;
-            CaptureFrameReadbackPayloadLease payload = new CaptureFrameReadbackPayloadLease(_dispatcher, collected);
+
+            CaptureFrameReadbackPayloadLease payload;
+            try
+            {
+                payload = new CaptureFrameReadbackPayloadLease(_dispatcher, collected);
+            }
+            catch
+            {
+                // The payload lease eagerly captures the raw view in its
+                // constructor, which can fail before ownership transfers. The
+                // raw readback slot must still be released exactly once.
+                released = true;
+                _dispatcher.Release(collected);
+                throw;
+            }
+
             PngJsonCaptureFrameEncodeSubmission submission = new PngJsonCaptureFrameEncodeSubmission(payload);
 
             PngJsonCaptureFrameEncodeSubmitStatus submitStatus;

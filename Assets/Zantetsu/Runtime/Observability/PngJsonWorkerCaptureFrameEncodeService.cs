@@ -419,7 +419,6 @@ namespace Zantetsu.Observability
                 return;
             }
 
-            NativeArray<byte> raw = payload.GetBufferForService(_ownerToken, token);
             NativeArray<byte> png = default;
             ExceptionDispatchInfo failure = null;
             double elapsedMilliseconds = 0.0;
@@ -427,7 +426,18 @@ namespace Zantetsu.Observability
             long startTimestamp = Stopwatch.GetTimestamp();
             try
             {
+                // Post-accept processing boundary: buffer-view acquisition,
+                // encode, and non-empty-output validation. The encoder boundary
+                // does not contract a non-empty result, so an empty output is
+                // treated as a failed encode instead of escaping the worker
+                // loop and orphaning the accepted item.
+                NativeArray<byte> raw = payload.GetBufferForService(_ownerToken, token);
                 png = _encoder.Encode(raw, frameRequest.PixelLayout);
+                if (!png.IsCreated || png.Length == 0)
+                {
+                    throw new InvalidOperationException("PNG encode produced an empty result.");
+                }
+
                 long endTimestamp = Stopwatch.GetTimestamp();
                 elapsedMilliseconds = (endTimestamp - startTimestamp) * 1000.0 / Stopwatch.Frequency;
             }
@@ -436,7 +446,23 @@ namespace Zantetsu.Observability
                 failure = ExceptionDispatchInfo.Capture(ex);
             }
 
-            payload.TransferToCompletion(_ownerToken, token);
+            try
+            {
+                payload.TransferToCompletion(_ownerToken, token);
+            }
+            catch (Exception transferEx)
+            {
+                if (failure == null)
+                {
+                    failure = ExceptionDispatchInfo.Capture(transferEx);
+                }
+            }
+
+            if (failure != null && png.IsCreated)
+            {
+                png.Dispose();
+                png = default;
+            }
 
             if (failure == null)
             {
@@ -444,7 +470,7 @@ namespace Zantetsu.Observability
                     token,
                     frameRequest,
                     PngJsonCaptureFrameEncodeCompletionStatus.Succeeded,
-                    png.IsCreated ? png.Length : 0,
+                    png.Length,
                     elapsedMilliseconds,
                     null);
                 _pngs[slot] = png;
@@ -452,12 +478,6 @@ namespace Zantetsu.Observability
             }
             else
             {
-                if (png.IsCreated)
-                {
-                    png.Dispose();
-                    png = default;
-                }
-
                 _completions[slot] = new PngJsonCaptureFrameEncodeCompletion(
                     token,
                     frameRequest,

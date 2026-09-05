@@ -401,5 +401,64 @@ namespace Zantetsu.Core.Tests
                 }
             }
         }
+
+        [Test]
+        public void Router_PayloadLeaseConstructionFailure_ReleasesRawSlot()
+        {
+            using (CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(1, 64))
+            using (UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool))
+            using (TraceLogger logger = new TraceLogger(8))
+            {
+                CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
+                PngJsonCaptureFrameReadbackCompletionRouter router =
+                    new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
+
+                RenderTexture rt = CreateTex2D(2, 2);
+                CaptureFrameReadbackResult result = default;
+                try
+                {
+                    Assert.That(dispatcher.TryStart(MakeRequest(5), rt), Is.True);
+                    AsyncGPUReadback.WaitAllRequests();
+                    Assert.That(router.TryCollect(out result), Is.EqualTo(CaptureFrameReadbackCollectStatus.Succeeded));
+
+                    // Simulate the payload lease's eager buffer capture failing:
+                    // the rented flag is cleared so GetBuffer rejects the slot.
+                    bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
+                        .GetField("_rented", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .GetValue(pool);
+                    rented[result.BufferSlotIndex] = false;
+
+                    MethodInfo submit = typeof(PngJsonCaptureFrameReadbackCompletionRouter)
+                        .GetMethod("SubmitCollectAndApply", BindingFlags.Instance | BindingFlags.NonPublic);
+                    Assert.That(submit, Is.Not.Null);
+
+                    object[] args = { result, false };
+                    TargetInvocationException ex = Assert.Throws<TargetInvocationException>(
+                        () => submit.Invoke(router, args));
+                    Assert.That(ex.InnerException, Is.TypeOf<InvalidOperationException>());
+
+                    // The router's real path must release the raw slot exactly
+                    // once on construction failure, not rely on the caller.
+                    Assert.That(dispatcher.ActiveCount, Is.EqualTo(0));
+                    Assert.That((bool)args[1], Is.True);
+                }
+                finally
+                {
+                    // The failed release deactivated the dispatcher entry but
+                    // could not return the slot because the test left it marked
+                    // unrented. Restore consistency so the pool can be disposed.
+                    if (result.IsValid && pool.RentedCount != 0)
+                    {
+                        bool[] rented = (bool[])typeof(CaptureFrameReadbackBufferPool)
+                            .GetField("_rented", BindingFlags.Instance | BindingFlags.NonPublic)
+                            .GetValue(pool);
+                        rented[result.BufferSlotIndex] = true;
+                        pool.Return(result.BufferSlotIndex);
+                    }
+
+                    DestroyTexture(rt);
+                }
+            }
+        }
     }
 }

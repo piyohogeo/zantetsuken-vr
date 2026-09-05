@@ -26,6 +26,8 @@ namespace Zantetsu.Core.Tests
 
             public volatile bool Block;
 
+            public bool ReturnEmpty { get; set; }
+
             public int FailOnCall { get; set; } = -1;
 
             public Exception ExceptionToThrow { get; set; }
@@ -68,6 +70,11 @@ namespace Zantetsu.Core.Tests
                 {
                     _blockEntered.Set();
                     _releaseBlock.WaitOne();
+                }
+
+                if (ReturnEmpty)
+                {
+                    return default;
                 }
 
                 return new NativeArray<byte>(5, Allocator.Persistent);
@@ -488,6 +495,54 @@ namespace Zantetsu.Core.Tests
                     InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
                         () => coordinator.Apply(completion));
                     Assert.That(ex.Message, Is.EqualTo("fake encode failure"));
+
+                    Assert.That(scope.Pool.RentedCount, Is.EqualTo(0));
+                    Assert.That(scope.Dispatcher.ActiveCount, Is.EqualTo(0));
+                    logger.Drain();
+                    Assert.That(logger.HistoryCount, Is.EqualTo(0));
+
+                    service.Dispose();
+                }
+                finally
+                {
+                }
+            }
+        }
+
+        [Test]
+        public void EncoderEmptyOutput_FailedCompletionAndWorkerContinues()
+        {
+            using (ReadbackScope scope = new ReadbackScope(2))
+            using (TraceLogger logger = new TraceLogger(8))
+            {
+                FakeEncoder encoder = new FakeEncoder { ReturnEmpty = true };
+                PngJsonWorkerCaptureFrameEncodeService service =
+                    new PngJsonWorkerCaptureFrameEncodeService(2, encoder);
+                try
+                {
+                    Assert.That(service.TrySubmit(scope.MakeSubmission(1), out _),
+                        Is.EqualTo(PngJsonCaptureFrameEncodeSubmitStatus.Accepted));
+                    Assert.That(service.TrySubmit(scope.MakeSubmission(2), out _),
+                        Is.EqualTo(PngJsonCaptureFrameEncodeSubmitStatus.Accepted));
+                    service.BeginDrain();
+                    Assert.That(WaitForJoin(service), Is.True);
+
+                    Assert.That(WaitForCollect(service, out PngJsonCaptureFrameEncodeCompletion first), Is.True);
+                    Assert.That(first.Status, Is.EqualTo(PngJsonCaptureFrameEncodeCompletionStatus.Failed));
+                    Assert.That(first.WorkToken.CaptureFrameId, Is.EqualTo(1));
+
+                    Assert.That(WaitForCollect(service, out PngJsonCaptureFrameEncodeCompletion second), Is.True);
+                    Assert.That(second.Status, Is.EqualTo(PngJsonCaptureFrameEncodeCompletionStatus.Failed));
+                    Assert.That(second.WorkToken.CaptureFrameId, Is.EqualTo(2));
+
+                    PngJsonCaptureFrameEncodeCompletionCoordinator coordinator =
+                        new PngJsonCaptureFrameEncodeCompletionCoordinator(service, new CaptureFrameTraceObserver(logger));
+
+                    InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+                        () => coordinator.Apply(first));
+                    Assert.That(ex.Message, Is.EqualTo("PNG encode produced an empty result."));
+
+                    Assert.Throws<InvalidOperationException>(() => coordinator.Apply(second));
 
                     Assert.That(scope.Pool.RentedCount, Is.EqualTo(0));
                     Assert.That(scope.Dispatcher.ActiveCount, Is.EqualTo(0));
