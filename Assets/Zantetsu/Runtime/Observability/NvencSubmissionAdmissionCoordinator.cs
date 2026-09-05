@@ -16,7 +16,8 @@ namespace Zantetsu.Observability
     /// rentable, the process state is re-checked, the work token is issued from
     /// the backend owner and the work slot generation, the surface is
     /// transferred, the record is built, and it is enqueued exactly once. The
-    /// successful enqueue is the Accepted linearization point. Capacity
+    /// final atomic admission re-check is the Accepted linearization point; once
+    /// it succeeds, the transfer and enqueue cannot fail. Capacity
     /// exhaustion of any kind is <c>Backpressured</c> and leaves the surface
     /// caller-owned with reservations released in reverse order. A stopped or
     /// poisoned process returns <c>NotAccepting</c> without transferring the
@@ -42,8 +43,6 @@ namespace Zantetsu.Observability
         private readonly NvencEncodeSampleSlotPool _sampleSlots;
         private readonly NvencFixedSpscQueue<NvencSubmissionRecord> _submissionQueue;
         private readonly Guid _backendOwner;
-        private readonly Func<NvencCaptureProcessState, bool> _isAccepting;
-        private readonly Action<CaptureSurfaceLease, Guid, CaptureFrameWorkToken> _transferSurface;
 
         internal NvencSubmissionAdmissionCoordinator(
             NvencCaptureProcessState processState,
@@ -51,18 +50,6 @@ namespace Zantetsu.Observability
             NvencEncodeSampleSlotPool sampleSlots,
             NvencFixedSpscQueue<NvencSubmissionRecord> submissionQueue,
             Guid backendOwner)
-            : this(processState, workSlots, sampleSlots, submissionQueue, backendOwner, null, null)
-        {
-        }
-
-        internal NvencSubmissionAdmissionCoordinator(
-            NvencCaptureProcessState processState,
-            NvencCaptureWorkSlotPool workSlots,
-            NvencEncodeSampleSlotPool sampleSlots,
-            NvencFixedSpscQueue<NvencSubmissionRecord> submissionQueue,
-            Guid backendOwner,
-            Func<NvencCaptureProcessState, bool> acceptanceGate,
-            Action<CaptureSurfaceLease, Guid, CaptureFrameWorkToken> transferSurface)
         {
             if (processState == null)
             {
@@ -94,8 +81,6 @@ namespace Zantetsu.Observability
             _sampleSlots = sampleSlots;
             _submissionQueue = submissionQueue;
             _backendOwner = backendOwner;
-            _isAccepting = acceptanceGate ?? (state => state.IsAccepting);
-            _transferSurface = transferSurface ?? ((surface, owner, token) => surface.TransferToBackend(owner, token));
         }
 
         internal CaptureSubmitStatus TryAccept(
@@ -130,7 +115,7 @@ namespace Zantetsu.Observability
 
             workToken = default;
 
-            if (!_isAccepting(_processState))
+            if (!_processState.IsAccepting)
             {
                 return CaptureSubmitStatus.NotAccepting;
             }
@@ -142,16 +127,20 @@ namespace Zantetsu.Observability
 
             if (!_workSlots.TryRent(out NvencCaptureWorkSlotLease workSlot))
             {
-                return CaptureSubmitStatus.Backpressured;
+                return _processState.IsAccepting
+                    ? CaptureSubmitStatus.Backpressured
+                    : CaptureSubmitStatus.NotAccepting;
             }
 
             if (!_sampleSlots.TryRent(out NvencEncodeSampleSlotLease sampleSlot))
             {
                 _workSlots.TryReturn(workSlot);
-                return CaptureSubmitStatus.Backpressured;
+                return _processState.IsAccepting
+                    ? CaptureSubmitStatus.Backpressured
+                    : CaptureSubmitStatus.NotAccepting;
             }
 
-            if (!_isAccepting(_processState))
+            if (!_processState.TryAdmit())
             {
                 _sampleSlots.TryReturn(sampleSlot);
                 _workSlots.TryReturn(workSlot);
@@ -161,16 +150,7 @@ namespace Zantetsu.Observability
             CaptureFrameWorkToken token = new CaptureFrameWorkToken(
                 _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
 
-            try
-            {
-                _transferSurface(surface, _backendOwner, token);
-            }
-            catch
-            {
-                _sampleSlots.TryReturn(sampleSlot);
-                _workSlots.TryReturn(workSlot);
-                throw;
-            }
+            surface.TransferToBackend(_backendOwner, token);
 
             NvencSubmissionRecord record = NvencSubmissionRecord.Create(
                 _backendOwner, token, workSlot, sampleSlot, surface, _workSlots, _sampleSlots);

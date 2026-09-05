@@ -62,5 +62,23 @@ namespace Zantetsu.Observability
                 (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart,
                 (int)NvencCaptureProcessStatus.Draining) == (int)NvencCaptureProcessStatus.Draining;
         }
+
+        /// <summary>
+        /// Atomic admission linearization point. It is a full-fence
+        /// read-modify-write on the control state, totally ordered with
+        /// <see cref="TryBeginDrain"/> and <see cref="TryPoison"/>: it
+        /// succeeds only while the state is Running, so an admission that
+        /// succeeds here is guaranteed to precede any later drain or poison
+        /// transition, and an admission attempted after such a transition
+        /// observes the new state and fails. It performs no state transition
+        /// and no allocation.
+        /// </summary>
+        internal bool TryAdmit()
+        {
+            return Interlocked.CompareExchange(
+                ref _state,
+                (int)NvencCaptureProcessStatus.Running,
+                (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running;
+        }
     }
 }

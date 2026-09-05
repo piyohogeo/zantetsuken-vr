@@ -95,6 +95,36 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void TryAdmit_RunningSucceeds_WithoutChangingState()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+
+            Assert.That(state.TryAdmit(), Is.True);
+            Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+            Assert.That(state.IsAccepting, Is.True);
+        }
+
+        [Test]
+        public void TryAdmit_FailsAfterDrain()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginDrain(), Is.True);
+
+            Assert.That(state.TryAdmit(), Is.False);
+            Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.Draining));
+        }
+
+        [Test]
+        public void TryAdmit_FailsAfterPoison()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryPoison(), Is.True);
+
+            Assert.That(state.TryAdmit(), Is.False);
+            Assert.That(state.State, Is.EqualTo(NvencCaptureProcessStatus.PoisonedUntilProcessRestart));
+        }
+
+        [Test]
         public void NoTransitionBackToRunning()
         {
             Type type = typeof(NvencCaptureProcessState);
@@ -108,9 +138,9 @@ namespace Zantetsu.Core.Tests
                 }
 
                 Assert.That(
-                    method.Name == "TryBeginDrain" || method.Name == "TryPoison",
+                    method.Name == "TryBeginDrain" || method.Name == "TryPoison" || method.Name == "TryAdmit",
                     Is.True,
-                    type.Name + "." + method.Name + " must be the only transition method.");
+                    type.Name + "." + method.Name + " must be a transition or admission method.");
             }
         }
 

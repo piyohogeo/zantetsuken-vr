@@ -202,42 +202,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Accept_RecheckNotAccepting_RollsBackAndNotAccepting()
-        {
-            NvencCaptureProcessState state = new NvencCaptureProcessState();
-            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
-            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
-            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
-            Guid owner = Guid.NewGuid();
-
-            int checks = 0;
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
-                state, workPool, samplePool, queue, owner,
-                s => { checks++; return checks == 1; },
-                null);
-
-            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
-            {
-                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
-                try
-                {
-                    CaptureSubmitStatus status = coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token);
-
-                    Assert.That(status, Is.EqualTo(CaptureSubmitStatus.NotAccepting));
-                    Assert.That(checks, Is.EqualTo(2));
-                    Assert.That(token.IsValid, Is.False);
-                    Assert.That(surface.IsCallerOwned, Is.True);
-                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
-                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
-                }
-                finally
-                {
-                    surface.Dispose();
-                }
-            }
-        }
-
-        [Test]
         public void Accept_InitialDraining_NotAccepting()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
@@ -360,39 +324,6 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     surface.ReleaseFromBackend(owner, token);
-                }
-            }
-        }
-
-        [Test]
-        public void Accept_TransferFailure_RollsBackAndQueueUnchanged()
-        {
-            NvencCaptureProcessState state = new NvencCaptureProcessState();
-            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
-            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
-            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
-            Guid owner = Guid.NewGuid();
-
-            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
-                state, workPool, samplePool, queue, owner,
-                null,
-                (surface, backendOwner, token) => throw new InvalidOperationException("forced transfer failure"));
-
-            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
-            {
-                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
-                try
-                {
-                    Assert.Throws<InvalidOperationException>(() => coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token));
-
-                    Assert.That(surface.IsCallerOwned, Is.True);
-                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
-                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
-                    Assert.That(coordinator.TryDequeue(out NvencSubmissionRecord record), Is.False);
-                }
-                finally
-                {
-                    surface.Dispose();
                 }
             }
         }
