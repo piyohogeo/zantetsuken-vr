@@ -58,6 +58,21 @@ namespace Zantetsu.Observability
             return _pool.GetRenderTexture(_lease);
         }
 
+        /// <summary>
+        /// O(1), exception-free ownership query. Returns true only while the
+        /// surface is backend-owned by the exact non-empty
+        /// <paramref name="backendOwner"/> and the held work token is identical
+        /// to <paramref name="workToken"/>. It never touches the pool or the
+        /// render texture and performs no ownership transition or release.
+        /// </summary>
+        internal bool IsOwnedBy(Guid backendOwner, in CaptureFrameWorkToken workToken)
+        {
+            return IsBackendOwned &&
+                backendOwner != Guid.Empty &&
+                _backendOwner == backendOwner &&
+                _workToken.IdenticalTo(workToken);
+        }
+
         internal void TransferToBackend(Guid backendOwner, in CaptureFrameWorkToken token)
         {
             if (!IsCallerOwned)
