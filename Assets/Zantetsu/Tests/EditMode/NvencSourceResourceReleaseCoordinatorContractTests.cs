@@ -47,29 +47,28 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
 
-                // The sync credit is returned immediately on the worker.
-                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
-                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
-
-                // The surface is handed off to the main thread, not yet
-                // released, so the main-thread-only render pool is not touched
-                // from the worker.
+                // The worker only hands off; it returns no sync credit and does
+                // not touch the main-thread-only render pool.
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
                 Assert.That(record.Surface.IsCreated, Is.True);
                 Assert.That(record.Surface.IsBackendOwned, Is.True);
 
                 // Work and Sample remain reserved for the later stages.
                 Assert.That(h.WorkPool.OccupiedCount, Is.EqualTo(1));
                 Assert.That(h.SamplePool.OccupiedCount, Is.EqualTo(1));
+
+                // The main thread applies the handoff: surface and sync released.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(record.Surface.IsCreated, Is.False);
+                Assert.That(record.Surface.IsBackendOwned, Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
                 Assert.That(h.WorkPool.IsActive(record.WorkSlot), Is.True);
                 Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
 
-                // Returning the sync credit makes the record invalid as expected.
+                // Releasing the sync credit makes the record invalid as expected.
                 Assert.That(record.IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.False);
-
-                // The main thread drains and releases the handed-off surface.
-                h.DrainSurfaceReturns();
-                Assert.That(record.Surface.IsCreated, Is.False);
-                Assert.That(record.Surface.IsBackendOwned, Is.False);
             }
         }
 
@@ -87,9 +86,8 @@ namespace Zantetsu.Core.Tests
                 h.Source.MarkCompleted(records[0].WorkToken);
                 Assert.That(h.Coordinator.TryReleaseSourceResources(records[0]), Is.True);
 
-                // The released work's sync credit is returned; its surface is
-                // handed off, not yet released.
-                Assert.That(h.SyncPool.IsActive(records[0].SyncSlot), Is.False);
+                // Handed off, not yet released: sync still active, surface owned.
+                Assert.That(h.SyncPool.IsActive(records[0].SyncSlot), Is.True);
                 Assert.That(records[0].Surface.IsBackendOwned, Is.True);
 
                 for (int i = 1; i < 8; i++)
@@ -99,15 +97,18 @@ namespace Zantetsu.Core.Tests
                     Assert.That(records[i].IsValidFor(h.Owner, h.WorkPool, h.SamplePool, h.SyncPool), Is.True);
                 }
 
-                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(7));
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(8));
 
-                // The main thread drains and releases only the handed-off surface.
-                h.DrainSurfaceReturns();
+                // The main thread applies and releases only the handed-off work.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
                 Assert.That(records[0].Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.IsActive(records[0].SyncSlot), Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(7));
 
                 for (int i = 1; i < 8; i++)
                 {
                     Assert.That(records[i].Surface.IsBackendOwned, Is.True);
+                    Assert.That(h.SyncPool.IsActive(records[i].SyncSlot), Is.True);
                 }
             }
         }
@@ -191,6 +192,7 @@ namespace Zantetsu.Core.Tests
                 NvencSubmissionRecord first = h.CreateRecord(7);
                 h.Source.MarkCompleted(first.WorkToken);
                 Assert.That(h.Coordinator.TryReleaseSourceResources(first), Is.True);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
 
                 NvencSubmissionRecord second = h.CreateRecord(8);
                 Assert.That(second.SyncSlot.SlotIndex, Is.EqualTo(first.SyncSlot.SlotIndex));
@@ -214,12 +216,14 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
                 Assert.That(record.Surface.IsCreated, Is.True);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
+
+                // Draining still allows the main-thread apply.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(record.Surface.IsCreated, Is.False);
                 Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
                 Assert.That(h.WorkPool.OccupiedCount, Is.EqualTo(1));
                 Assert.That(h.SamplePool.OccupiedCount, Is.EqualTo(1));
-
-                h.DrainSurfaceReturns();
-                Assert.That(record.Surface.IsCreated, Is.False);
             }
         }
 
@@ -277,62 +281,62 @@ namespace Zantetsu.Core.Tests
                     Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "Holder did not finish in time.");
                 }
 
-                // Retry after the gate is free succeeds.
+                // Retry after the gate is free succeeds: handoff, then apply.
                 Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
                 Assert.That(record.Surface.IsCreated, Is.True);
-                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
 
-                h.DrainSurfaceReturns();
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
                 Assert.That(record.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
             }
         }
 
         [Test]
-        public void Release_PoisonRace_ReleaseLinearizesFirst_NoPartialRelease()
+        public void Release_HandoffThenPoisonBeforeApply_RetainsBothAndKeepsQueueItem()
         {
             using (Harness h = Harness.Create(1))
             {
                 NvencSubmissionRecord record = h.CreateRecord(7);
                 h.Source.MarkCompleted(record.WorkToken);
 
-                // The main thread holds the resource-resolution gate, so a
-                // concurrent poison blocks until the release has fully
-                // linearized (both resources freed).
-                Assert.That(h.State.TryBeginResourceResolution(), Is.True);
-
-                bool poisonResult = false;
-                using (ManualResetEventSlim poisonStarted = new ManualResetEventSlim(false))
-                {
-                    Thread poisonThread = new Thread(() =>
-                    {
-                        poisonStarted.Set();
-                        poisonResult = h.State.TryPoison();
-                    });
-                    poisonThread.IsBackground = true;
-                    poisonThread.Start();
-
-                    Assert.That(poisonStarted.Wait(WatchdogTimeoutMs), Is.True, "Poison thread did not start in time.");
-
-                    // Poison is blocked on the gate while the release runs.
-                    Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
-                    Assert.That(h.State.IsPoisoned, Is.False);
-
-                    h.State.EndResourceResolution();
-                    Assert.That(poisonThread.Join(WatchdogTimeoutMs), Is.True, "Poison thread did not finish in time.");
-                }
-
-                Assert.That(poisonResult, Is.True);
-                Assert.That(h.State.IsPoisoned, Is.True);
-
-                // Release linearized first: the sync credit was returned and the
-                // surface was handed off, never just one of them.
-                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
-                Assert.That(record.Surface.IsCreated, Is.True);
+                // Worker hands off while Running; nothing is released yet.
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
                 Assert.That(record.Surface.IsBackendOwned, Is.True);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
 
-                // The main thread later drains and releases the surface.
-                h.DrainSurfaceReturns();
+                // Poison linearizes before the main thread applies.
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // The main thread apply fails and retains both resources and
+                // the queued handoff.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsBackendOwned, Is.True);
+                Assert.That(record.Surface.IsCreated, Is.True);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.Boundary.HasPending, Is.True);
+            }
+        }
+
+        [Test]
+        public void Release_ApplyFirstThenPoison_BothReleased()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
+
+                // The main thread applies first: surface and sync both released.
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
                 Assert.That(record.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(0));
+
+                // Poison then linearizes after the release.
+                Assert.That(h.State.TryPoison(), Is.True);
             }
         }
 
@@ -352,18 +356,21 @@ namespace Zantetsu.Core.Tests
                     h.Source.MarkCompleted(records[i].WorkToken);
                     Assert.That(h.Coordinator.TryReleaseSourceResources(records[i]), Is.True);
 
+                    // Handoff does not return the sync credit yet.
+                    Assert.That(h.SyncPool.IsActive(records[i].SyncSlot), Is.True);
+                    Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(8 - i));
+
+                    // The main thread applies the handoff: sync returned + surface released.
+                    Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
                     Assert.That(h.SyncPool.IsActive(records[i].SyncSlot), Is.False);
                     Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(7 - i));
+                    Assert.That(records[i].Surface.IsCreated, Is.False);
 
                     // The freed credit is immediately reusable.
                     Assert.That(h.SyncPool.TryRent(out NvencGpuConversionSyncLease rerented), Is.True);
                     Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(8 - i));
                     Assert.That(h.SyncPool.TryReturn(rerented), Is.True);
                     Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(7 - i));
-
-                    // The handed-off surface is released on the main thread.
-                    h.DrainSurfaceReturns();
-                    Assert.That(records[i].Surface.IsCreated, Is.False);
 
                     for (int j = i + 1; j < 8; j++)
                     {
@@ -399,11 +406,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(record.Surface.IsBackendOwned, Is.True);
                 Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
                 Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
-
-                // Discard the placeholder records so the harness drains cleanly.
-                while (h.Boundary.TryDequeue(out _))
-                {
-                }
             }
         }
 
@@ -415,7 +417,8 @@ namespace Zantetsu.Core.Tests
                 File.ReadAllText(Path.Combine(directory, "INvencSourceReadCompletedSource.cs")) +
                 File.ReadAllText(Path.Combine(directory, "NvencSourceReadCompletedEvidence.cs")) +
                 File.ReadAllText(Path.Combine(directory, "NvencSourceResourceReleaseCoordinator.cs")) +
-                File.ReadAllText(Path.Combine(directory, "NvencSourceSurfaceReturnBoundary.cs"));
+                File.ReadAllText(Path.Combine(directory, "NvencSourceSurfaceReturnBoundary.cs")) +
+                File.ReadAllText(Path.Combine(directory, "NvencSourceSurfaceReleaseHandoff.cs"));
 
             Assert.That(text, Does.Not.Contain("NvencSubmitToOutputRecord"));
             Assert.That(text, Does.Not.Contain("FrameCompletion"));
@@ -526,11 +529,6 @@ namespace Zantetsu.Core.Tests
                 return new Harness(renderCapacity);
             }
 
-            internal void DrainSurfaceReturns()
-            {
-                Boundary.DrainAll(Owner);
-            }
-
             internal NvencSubmissionRecord CreateRecord(long frameId)
             {
                 Assert.That(WorkPool.TryRent(out NvencCaptureWorkSlotLease work), Is.True);
@@ -551,7 +549,9 @@ namespace Zantetsu.Core.Tests
 
             public void Dispose()
             {
-                Boundary.DrainAll(Owner);
+                while (Coordinator.TryApplyPendingRelease())
+                {
+                }
 
                 foreach (NvencSubmissionRecord record in _records)
                 {

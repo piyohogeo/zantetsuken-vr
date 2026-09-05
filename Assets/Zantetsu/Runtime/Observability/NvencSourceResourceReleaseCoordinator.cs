@@ -4,28 +4,27 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Early release boundary for the Phase 0.11 source surface and GPU
-    /// conversion sync credit. Once a work's source read has completed, this
-    /// coordinator returns the exact sync credit and hands the source surface
-    /// return to the Main Thread through a fixed-capacity handoff boundary; it
-    /// never releases the Work Slot or the Encode Sample Slot, which stay
-    /// reserved for the later stages of the submission. The main-thread-only
-    /// render target pool is therefore never touched from the Submit Worker.
+    /// conversion sync credit. The Submit Worker only hands off an evidenced
+    /// release request; the Main Thread later applies it under the same short
+    /// resource-resolution gate, returning the exact sync credit and releasing
+    /// the exact source surface in one critical section. Work and Sample Slots
+    /// are never released here. The main-thread-only render target pool is
+    /// therefore never touched from the Submit Worker.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The release follows a fixed order: the record's current correlation is
-    /// verified against the exact pools, the source read completion is observed
-    /// exactly once, the evidence is bound to the exact source, work, sync
-    /// credit, and surface, and only then a short resource-resolution gate is
-    /// acquired without waiting. Inside that gate the process is re-checked for
-    /// poison, the record and evidence are re-verified, the handoff boundary
-    /// capacity is checked, the sync credit is returned, and the surface return
-    /// is handed to the Main Thread. Success is reported only when both the
-    /// credit return and the handoff completed, so a poison race either
-    /// linearizes the release first (both resources freed) or poison first
-    /// (both retained) with no partial release. A busy gate or a full handoff
-    /// boundary fails without waiting and leaves the record unchanged so the
-    /// caller can retry later.
+    /// The worker side verifies the record's current correlation, observes the
+    /// source read completion exactly once, binds the evidence to the exact
+    /// source, work, sync credit, and surface, and then hands the request off
+    /// without waiting and without releasing anything. The main thread side
+    /// fetches one retained handoff, re-acquires the same gate, re-checks that
+    /// the process is not poisoned and that the record and evidence still
+    /// correlate, and only then returns the sync credit and releases the
+    /// surface in the same short critical section. A poison race therefore
+    /// either linearizes the apply first (both resources freed) or poison first
+    /// (both retained, and the handoff is never lost) with no partial release.
+    /// A busy gate or a full handoff boundary fails without waiting and leaves
+    /// everything unchanged so the caller can retry later.
     /// </para>
     /// <para>
     /// This coordinator never creates a Submit-to-Output record, never performs
@@ -96,6 +95,14 @@ namespace Zantetsu.Observability
             _backendOwner = backendOwner;
         }
 
+        /// <summary>
+        /// Submit Worker side: verify the record and evidence and hand off an
+        /// evidenced release request without releasing the sync credit or the
+        /// surface. Returns false without handing anything off when the record
+        /// is stale, the source read is not completed, the evidence does not
+        /// match, the process is poisoned, the gate is busy, or the boundary is
+        /// full; the caller may retry later.
+        /// </summary>
         internal bool TryReleaseSourceResources(in NvencSubmissionRecord record)
         {
             // 1. Verify the record's current correlation against the exact pools.
@@ -117,7 +124,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // 4. Acquire the short resource-resolution gate without waiting.
+            // 4. Acquire the short resource-resolution gate without waiting to
+            // serialize the verification and handoff with poison and transitions.
             if (!_processState.TryBeginResourceResolution())
             {
                 return false;
@@ -126,9 +134,7 @@ namespace Zantetsu.Observability
             try
             {
                 // 5. Re-check inside the gate: the process is not poisoned and the
-                // record and evidence still correlate. Poison, admission sync
-                // rent, and other releases serialize on the same gate, so this
-                // region is atomic with respect to them.
+                // record and evidence still correlate.
                 if (_processState.IsPoisoned ||
                     !record.IsValidFor(_backendOwner, _workSlots, _sampleSlots, _syncSlots) ||
                     !evidence.Matches(_completionSource, record))
@@ -136,32 +142,57 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // 6. Check the handoff boundary capacity without waiting. A full
-                // boundary fails the release before the sync credit is returned,
-                // so no partial release can occur.
-                if (!_surfaceReturnBoundary.CanEnqueue)
+                // 6. Hand off the evidenced release request. Nothing is released
+                // here; the Main Thread applies it under the same gate.
+                return _surfaceReturnBoundary.TryEnqueue(
+                    new NvencSourceSurfaceReleaseHandoff(record, evidence));
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Main Thread side: apply one retained handoff under the same short
+        /// resource-resolution gate. Returns false while there is nothing
+        /// pending, the gate is busy, or the process is poisoned, in which case
+        /// the handoff is retained so it is never lost. On success the exact
+        /// source surface and the exact sync credit are both released inside the
+        /// same critical section.
+        /// </summary>
+        internal bool TryApplyPendingRelease()
+        {
+            if (!_surfaceReturnBoundary.TryGetPending(out NvencSourceSurfaceReleaseHandoff handoff))
+            {
+                return false;
+            }
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Re-check the process state and the record/evidence correlation
+                // inside the gate; poison serializes on the same gate.
+                if (_processState.IsPoisoned ||
+                    !handoff.Record.IsValidFor(_backendOwner, _workSlots, _sampleSlots, _syncSlots) ||
+                    !handoff.Evidence.Matches(_completionSource, handoff.Record))
                 {
                     return false;
                 }
 
-                // 7. Return the exact sync credit. Step 5 re-verified the credit
-                // is active, and the state is Running or Draining while the gate
-                // is held, so this cannot fail.
-                if (!_syncSlots.TryReturn(record.SyncSlot))
+                handoff.Record.Surface.ReleaseFromBackend(_backendOwner, handoff.Record.WorkToken);
+
+                if (!_syncSlots.TryReturn(handoff.Record.SyncSlot))
                 {
                     throw new InvalidOperationException(
-                        "Sync credit return failed while holding the resource-resolution gate; internal invariant violated.");
+                        "Sync credit return failed inside the resource-resolution gate; internal invariant violated.");
                 }
 
-                // 8. Hand the source surface return to the Main Thread. The
-                // capacity was verified above, so this cannot fail.
-                if (!_surfaceReturnBoundary.TryEnqueue(record))
-                {
-                    throw new InvalidOperationException(
-                        "Surface handoff enqueue failed after its capacity was verified; internal invariant violated.");
-                }
-
-                // 9. Both the credit return and the surface handoff succeeded.
+                _surfaceReturnBoundary.CompletePending();
                 return true;
             }
             finally
