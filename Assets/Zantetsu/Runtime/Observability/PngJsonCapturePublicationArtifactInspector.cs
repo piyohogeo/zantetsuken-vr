@@ -258,16 +258,19 @@ namespace Zantetsu.Observability
                 long expectedLength = entry.PngByteLength;
                 long limit = Min(expectedLength, operation.MaximumPngByteCount);
 
+                long maximumProbe = checked(limit + 1);
+
                 long observed = 0;
                 string hash;
                 using (SHA256 sha = SHA256.Create())
                 {
-                    while (true)
+                    while (observed < maximumProbe)
                     {
+                        int request = (int)Math.Min(buffer.Length, maximumProbe - observed);
                         int read;
                         try
                         {
-                            read = result.Stream.Read(buffer, 0, buffer.Length);
+                            read = result.Stream.Read(buffer, 0, request);
                         }
                         catch (Exception)
                         {
@@ -289,12 +292,13 @@ namespace Zantetsu.Observability
                             return (CaptureRunPublicationEvidenceStatus.Invalid, observed);
                         }
 
-                        if (next > limit)
+                        observed = next;
+
+                        if (observed > limit)
                         {
-                            return (CaptureRunPublicationEvidenceStatus.LimitExceeded, checked(limit + 1));
+                            return (CaptureRunPublicationEvidenceStatus.LimitExceeded, observed);
                         }
 
-                        observed = next;
                         sha.TransformBlock(buffer, 0, read, null, 0);
                     }
 
@@ -362,6 +366,22 @@ namespace Zantetsu.Observability
                 if (readResult.Count == 0)
                 {
                     return (CaptureRunPublicationEvidenceStatus.Invalid, 0);
+                }
+
+                if (readResult.Count != entry.SidecarByteLength)
+                {
+                    return (CaptureRunPublicationEvidenceStatus.Mismatch, readResult.Count);
+                }
+
+                string sidecarHash;
+                using (SHA256 sha = SHA256.Create())
+                {
+                    sidecarHash = ToLowerHex(sha.ComputeHash(readResult.Bytes));
+                }
+
+                if (!string.Equals(sidecarHash, entry.SidecarContentSha256, StringComparison.Ordinal))
+                {
+                    return (CaptureRunPublicationEvidenceStatus.Mismatch, readResult.Count);
                 }
 
                 if (manifest == null)

@@ -228,6 +228,54 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class RecordingFileStream : FileStream
+        {
+            public int MaxReadRequest { get; private set; }
+            public int TotalRead { get; private set; }
+
+            public RecordingFileStream(string path)
+                : base(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+            {
+            }
+
+            public override int Read(byte[] array, int offset, int count)
+            {
+                if (count > MaxReadRequest)
+                {
+                    MaxReadRequest = count;
+                }
+
+                int read = base.Read(array, offset, count);
+                TotalRead += read;
+                return read;
+            }
+        }
+
+        private sealed class StreamInjectingNoFollowOpener : ICaptureArtifactNoFollowOpener
+        {
+            private readonly string _streamPath;
+            private readonly FileStream _stream;
+
+            public bool IsSupported => true;
+
+            public StreamInjectingNoFollowOpener(string streamPath, FileStream stream)
+            {
+                _streamPath = streamPath;
+                _stream = stream;
+            }
+
+            public CaptureArtifactNoFollowOpenResult TryOpen(string root, string relativePath)
+            {
+                string full = Path.Combine(root, relativePath);
+                if (string.Equals(Path.GetFullPath(full), Path.GetFullPath(_streamPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    return CaptureArtifactNoFollowOpenResult.Opened(_stream, null);
+                }
+
+                return CaptureArtifactNoFollowOpenResult.Of(CaptureArtifactNoFollowOpenStatus.Absent);
+            }
+        }
+
         // ---- Recovery authority construction ----
 
         private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout)
@@ -466,6 +514,21 @@ namespace Zantetsu.Core.Tests
             CaptureRunReference run = MakeRun(manifest);
             CaptureFrameRequest request = MakeRequest(captureFrameId);
             CaptureFrameRecord record = MakeRecord(run, request);
+            CaptureFramePngSaveReceipt receipt = MakeReceipt(@"C:\capture\out.png", pngBytes.Length, Sha256(pngBytes));
+            return new CaptureFramePngArtifact(record, request, receipt);
+        }
+
+        private static CaptureFramePngArtifact MakeArtifactWithPose(
+            TraceRunManifest manifest,
+            long captureFrameId,
+            byte[] pngBytes,
+            float poseX)
+        {
+            CaptureRunReference run = MakeRun(manifest);
+            CaptureFrameRequest request = MakeRequest(captureFrameId);
+            CaptureFrameRecord record = new CaptureFrameRecord(
+                run, request, MakeTiming(),
+                MakePose(poseX, 2f, 3f), MakePose(4f, 5f, 6f), MakePose(7f, 8f, 9f), 1);
             CaptureFramePngSaveReceipt receipt = MakeReceipt(@"C:\capture\out.png", pngBytes.Length, Sha256(pngBytes));
             return new CaptureFramePngArtifact(record, request, receipt);
         }
@@ -711,6 +774,123 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = inspector.Inspect(operation);
 
             Assert.That(snapshot.GetEntry(0).StagingSidecarStatus, Is.EqualTo(CaptureRunPublicationEvidenceStatus.Mismatch));
+        }
+
+        [Test]
+        public void Inspect_SidecarContentSha256Mismatch_Rejected()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            _sandboxes.Add(sandbox);
+            CaptureRunRootLayout layout = MakeLayout(staging, final, 1);
+
+            TraceRunManifest manifest = MakeManifest(1);
+            byte[] manifestBytes = TraceRunManifestCodec.SerializeCanonical(manifest);
+            string manifestHash = TraceRunManifestCodec.ComputeContentSha256(manifest);
+
+            string bundleDirectory = Path.Combine(sandbox, "bundle");
+            WriteBytes(Path.Combine(bundleDirectory, "manifest.json"), manifestBytes);
+
+            byte[] png = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 0 };
+            string pngHash = Sha256(png);
+
+            CaptureFramePngArtifact expectedArtifact = MakeArtifact(manifest, 10, png);
+            byte[] expectedSidecar = CaptureFramePngArtifactCodec.SerializeCanonical(expectedArtifact);
+
+            // Same run / frame / PNG but a different canonical sidecar: the
+            // decoded frame id, PNG hash, PNG length, and run-manifest hash all
+            // still match, so only the raw sidecar bytes differ.
+            CaptureFramePngArtifact foreignArtifact = MakeArtifactWithPose(manifest, 10, png, 9f);
+            byte[] foreignSidecar = CaptureFramePngArtifactCodec.SerializeCanonical(foreignArtifact);
+            Assert.That(foreignSidecar, Is.Not.EqualTo(expectedSidecar));
+
+            PngJsonCapturePublicationPlanEntry entry = MakeEntry(
+                10, png.LongLength, foreignSidecar.LongLength, pngHash, Sha256(expectedSidecar));
+            PngJsonCapturePublicationPlan plan = MakePlan(1, manifestHash, new[] { entry });
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(plan, layout, out _);
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(authority);
+
+            WriteBytes(Path.Combine(layout.StagingRunRoot, "frames", "10.png.stage"), png);
+            WriteBytes(Path.Combine(layout.StagingRunRoot, "frames", "10.json.stage"), foreignSidecar);
+
+            PngJsonCapturePublicationArtifactInspector inspector = new PngJsonCapturePublicationArtifactInspector(bundleDirectory);
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = inspector.Inspect(operation);
+
+            Assert.That(snapshot.GetEntry(0).StagingSidecarStatus, Is.EqualTo(CaptureRunPublicationEvidenceStatus.Mismatch));
+        }
+
+        [Test]
+        public void Inspect_SidecarByteLengthMismatch_Rejected()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            _sandboxes.Add(sandbox);
+            CaptureRunRootLayout layout = MakeLayout(staging, final, 1);
+
+            TraceRunManifest manifest = MakeManifest(1);
+            byte[] manifestBytes = TraceRunManifestCodec.SerializeCanonical(manifest);
+            string manifestHash = TraceRunManifestCodec.ComputeContentSha256(manifest);
+
+            string bundleDirectory = Path.Combine(sandbox, "bundle");
+            WriteBytes(Path.Combine(bundleDirectory, "manifest.json"), manifestBytes);
+
+            byte[] png = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10, 0 };
+            string pngHash = Sha256(png);
+
+            CaptureFramePngArtifact artifact = MakeArtifact(manifest, 10, png);
+            byte[] sidecar = CaptureFramePngArtifactCodec.SerializeCanonical(artifact);
+
+            // Declared sidecar byte length is one byte longer than the actual
+            // file, so the observed read count can never match.
+            PngJsonCapturePublicationPlanEntry entry = MakeEntry(
+                10, png.LongLength, sidecar.LongLength + 1, pngHash, Sha256(sidecar));
+            PngJsonCapturePublicationPlan plan = MakePlan(1, manifestHash, new[] { entry });
+            PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(plan, layout, out _);
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(authority);
+
+            WriteBytes(Path.Combine(layout.StagingRunRoot, "frames", "10.json.stage"), sidecar);
+
+            PngJsonCapturePublicationArtifactInspector inspector = new PngJsonCapturePublicationArtifactInspector(bundleDirectory);
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = inspector.Inspect(operation);
+
+            Assert.That(snapshot.GetEntry(0).StagingSidecarStatus, Is.EqualTo(CaptureRunPublicationEvidenceStatus.Mismatch));
+        }
+
+        [Test]
+        public void Inspect_PngProbe_StopsAfterLimitPlusOne()
+        {
+            (string sandbox, string staging, string final) = MakeSandbox();
+            _sandboxes.Add(sandbox);
+            CaptureRunRootLayout layout = MakeLayout(staging, final, 1);
+
+            // A 20-byte PNG with a declared length of 5: the bounded probe must
+            // stop after exactly 6 bytes (limit + 1) instead of requesting the
+            // whole buffer.
+            byte[] png = new byte[20];
+            for (int i = 0; i < png.Length; i++)
+            {
+                png[i] = (byte)(i + 1);
+            }
+
+            string pngPath = Path.Combine(layout.StagingRunRoot, "frames", "10.png.stage");
+            WriteBytes(pngPath, png);
+
+            PngJsonCapturePublicationPlanEntry entry = MakeEntry(10, 5, 32, HashA, HashA);
+            PngJsonCapturePublicationArtifactInspectionAuthority authority =
+                MakeRecoveryAuthority(MakePlan(1, HashA, new[] { entry }), layout, out _);
+            PngJsonCapturePublicationArtifactInspectionOperation operation = MakeOperation(authority);
+
+            RecordingFileStream stream = new RecordingFileStream(pngPath);
+            StreamInjectingNoFollowOpener opener = new StreamInjectingNoFollowOpener(pngPath, stream);
+            PngJsonCapturePublicationArtifactInspector inspector =
+                new PngJsonCapturePublicationArtifactInspector(
+                    Path.Combine(sandbox, "bundle"), opener, new CaptureArtifactVerificationBufferPool(4096));
+
+            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = inspector.Inspect(operation);
+
+            PngJsonCapturePublicationArtifactEntryObservation observation = snapshot.GetEntry(0);
+            Assert.That(observation.StagingPngStatus, Is.EqualTo(CaptureRunPublicationEvidenceStatus.LimitExceeded));
+            Assert.That(observation.StagingPngProbedByteCount, Is.EqualTo(6));
+            Assert.That(stream.MaxReadRequest, Is.LessThanOrEqualTo(6));
+            Assert.That(stream.TotalRead, Is.EqualTo(6));
         }
 
         [Test]
