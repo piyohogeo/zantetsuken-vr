@@ -624,19 +624,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void SourceBlockedDuringReleaseAndRereserve_OldCopyDoesNotCommitToNewGeneration()
+        public void CopyInFlight_ReleaseAndRereserveBlocked_OldCopyContentSurvives()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             CaptureFrameWorkToken token1 = MakeToken(1);
-            CaptureFrameWorkToken token2 = MakeToken(2);
             Assert.That(buffer.TryBeginWrite(token1, out NvencAccessUnitWriteLease write1), Is.True);
+
+            byte[] pattern = new byte[16];
+            for (int i = 0; i < pattern.Length; i++)
+            {
+                pattern[i] = (byte)(0xA0 + i);
+            }
 
             BlockingSource source = new BlockingSource
             {
                 Entered = new ManualResetEventSlim(false),
                 WaitFor = new ManualResetEventSlim(false),
+                Pattern = pattern,
+                Length = pattern.Length,
             };
 
             Exception copierError = null;
@@ -659,24 +666,33 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(source.Entered.Wait(WatchdogTimeoutMs), Is.True, "source did not enter");
 
-            // While the source is blocked, release the old generation and
-            // reserve a new one: the old copy must not commit into it.
-            Assert.That(buffer.CancelWrite(write1), Is.True);
-            Assert.That(buffer.TryBeginWrite(token2, out NvencAccessUnitWriteLease write2), Is.True);
+            // The external copy is in flight: release and re-reservation are
+            // both refused, so the shared storage cannot be reused under it.
+            Assert.That(buffer.CancelWrite(write1), Is.False);
+            Assert.That(buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
 
+            // Resume: the old source writes its distinct pattern into the
+            // still-current region and commits it.
             source.WaitFor.Set();
             Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
             Assert.That(copierError, Is.Null);
 
-            // The old copy fails closed without committing anything.
-            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.NotStarted));
-            Assert.That(ReadContentReady(buffer), Is.False);
-            Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
+            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
+            Assert.That(ReadValidLength(buffer), Is.EqualTo(pattern.Length));
+            Assert.That(ReadContentReady(buffer), Is.True);
 
-            // The new generation proceeds with its own copy.
-            Assert.That(buffer.TryCopyCompletedOutput(write2, default, new FixedLengthSource(1024), out _),
-                Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
-            Assert.That(ReadValidLength(buffer), Is.EqualTo(1024));
+            // The distinct pattern landed intact in the shared storage.
+            Assert.That(source.LastDestination, Is.Not.Null);
+            Assert.That(source.LastDestination[0], Is.EqualTo(pattern[0]));
+            Assert.That(source.LastDestination[pattern.Length - 1], Is.EqualTo(pattern[pattern.Length - 1]));
+
+            // Transfer to the sink and release, then the next generation can be
+            // reserved.
+            Assert.That(buffer.TryTransferToSink(write1, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(owned.WorkToken.IdenticalTo(token1), Is.True);
+            Assert.That(buffer.Return(owned), Is.True);
+            Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
+            Assert.That(buffer.TryBeginWrite(MakeToken(2), out NvencAccessUnitWriteLease write2), Is.True);
         }
 
         [Test]
@@ -699,6 +715,25 @@ namespace Zantetsu.Core.Tests
                 Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
             Assert.That(buffer2.TryCommitCopiedContent(write2, proof), Is.False);
             Assert.That(ReadContentReady(buffer2), Is.False);
+        }
+
+        [Test]
+        public void CommitCopiedContent_DirectlyConstructedProof_Rejected()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
+
+            // Reconstructing a proof from the lease's owner token and generation
+            // (with any length and a guessed nonce) must not commit: the proof
+            // is bound to a per-generation secret held only by the buffer.
+            NvencAccessUnitCopyProof forged = new NvencAccessUnitCopyProof(
+                write.OwnerToken, write.Generation, 4096, Guid.Empty);
+
+            Assert.That(buffer.TryCommitCopiedContent(write, forged), Is.False);
+            Assert.That(ReadContentReady(buffer), Is.False);
+            Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
         }
 
         [Test]
@@ -847,6 +882,8 @@ namespace Zantetsu.Core.Tests
             internal bool Result = true;
             internal ManualResetEventSlim Entered;
             internal ManualResetEventSlim WaitFor;
+            internal byte[] Pattern;
+            internal byte[] LastDestination;
 
             public bool TryCopyCompletedOutput(
                 in CaptureFrameWorkToken workToken,
@@ -856,6 +893,7 @@ namespace Zantetsu.Core.Tests
                 out int validLength)
             {
                 CallCount++;
+                LastDestination = destination;
                 if (Entered != null)
                 {
                     Entered.Set();
@@ -864,6 +902,12 @@ namespace Zantetsu.Core.Tests
                 if (WaitFor != null)
                 {
                     WaitFor.Wait(WatchdogTimeoutMs);
+                }
+
+                if (Pattern != null)
+                {
+                    int count = Math.Min(Pattern.Length, destinationCapacity);
+                    Buffer.BlockCopy(Pattern, 0, destination, 0, count);
                 }
 
                 validLength = Length;

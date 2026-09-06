@@ -69,21 +69,34 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Generation-bound proof that one source copy succeeded and its valid
         /// length is pending commit. Issued only by
-        /// <see cref="TryCopyCompletedOutput"/> when it defers a commit, so a
-        /// caller cannot commit a length that never came from a successful
-        /// source call.
+        /// <see cref="TryCopyCompletedOutput"/> when it defers a commit, and
+        /// bound to a per-generation secret held only by this buffer, so an
+        /// equivalent proof cannot be reproduced from the lease or other
+        /// constituent values.
         /// </summary>
         internal readonly struct NvencAccessUnitCopyProof
         {
-            internal readonly Guid OwnerToken;
-            internal readonly long Generation;
-            internal readonly int ValidLength;
+            private readonly Guid _ownerToken;
+            private readonly long _generation;
+            private readonly int _validLength;
+            private readonly Guid _nonce;
 
-            internal NvencAccessUnitCopyProof(Guid ownerToken, long generation, int validLength)
+            internal NvencAccessUnitCopyProof(Guid ownerToken, long generation, int validLength, Guid nonce)
             {
-                OwnerToken = ownerToken;
-                Generation = generation;
-                ValidLength = validLength;
+                _ownerToken = ownerToken;
+                _generation = generation;
+                _validLength = validLength;
+                _nonce = nonce;
+            }
+
+            internal bool Matches(Guid ownerToken, long generation, Guid nonce, int capacity, out int validLength)
+            {
+                validLength = _validLength;
+                return _ownerToken == ownerToken &&
+                    _generation == generation &&
+                    _nonce == nonce &&
+                    _validLength > 0 &&
+                    _validLength <= capacity;
             }
         }
 
@@ -98,6 +111,8 @@ namespace Zantetsu.Observability
         private bool _contentReady;
         private bool _retired;
         private bool _copyInProgress;
+        private bool _copyInFlight;
+        private Guid _copyNonce;
 
         internal NvencOwnedAccessUnitBuffer(NvencCaptureProcessState processState)
         {
@@ -114,6 +129,7 @@ namespace Zantetsu.Observability
             _workToken = default;
             _validLength = 0;
             _retired = false;
+            _copyNonce = Guid.NewGuid();
         }
 
         /// <summary>
@@ -159,6 +175,8 @@ namespace Zantetsu.Observability
                 _validLength = 0;
                 _contentReady = false;
                 _copyInProgress = false;
+                _copyInFlight = false;
+                _copyNonce = Guid.NewGuid();
                 writeLease = new NvencAccessUnitWriteLease(_ownerToken, _generation, workToken);
                 return true;
             }
@@ -211,6 +229,7 @@ namespace Zantetsu.Observability
                 }
 
                 _copyInProgress = true;
+                _copyInFlight = true;
             }
             finally
             {
@@ -220,8 +239,13 @@ namespace Zantetsu.Observability
             // External call: completion wait, lock, copy, unlock, unmap.
             if (!source.TryCopyCompletedOutput(_workToken, sampleSlot, _storage, _storage.Length, out int validLength))
             {
+                _copyInFlight = false;
                 return NvencAccessUnitCopyStatus.Rejected;
             }
+
+            // The external copy has returned: release and re-reservation may
+            // proceed again.
+            _copyInFlight = false;
 
             if (validLength <= 0 || validLength > _storage.Length)
             {
@@ -233,7 +257,7 @@ namespace Zantetsu.Observability
             // proof carries the length for a later commit.
             if (!_processState.TryBeginResourceResolution())
             {
-                proof = new NvencAccessUnitCopyProof(_ownerToken, _generation, validLength);
+                proof = new NvencAccessUnitCopyProof(_ownerToken, _generation, validLength, _copyNonce);
                 return NvencAccessUnitCopyStatus.Pending;
             }
 
@@ -277,12 +301,17 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (!IsExactCollector(writeLease) || !IsExactProof(proof))
+                if (!IsExactCollector(writeLease))
                 {
                     return false;
                 }
 
-                _validLength = proof.ValidLength;
+                if (!proof.Matches(_ownerToken, _generation, _copyNonce, _storage.Length, out int validLength))
+                {
+                    return false;
+                }
+
+                _validLength = validLength;
                 _contentReady = true;
                 return true;
             }
@@ -290,14 +319,6 @@ namespace Zantetsu.Observability
             {
                 _processState.EndResourceResolution();
             }
-        }
-
-        private bool IsExactProof(in NvencAccessUnitCopyProof proof)
-        {
-            return proof.OwnerToken == _ownerToken &&
-                proof.Generation == _generation &&
-                proof.ValidLength > 0 &&
-                proof.ValidLength <= _storage.Length;
         }
 
         /// <summary>
@@ -343,7 +364,9 @@ namespace Zantetsu.Observability
         /// Collector-side controlled failure: releases an exact CollectorOwned
         /// write lease back to Free exactly once and advances the generation.
         /// Foreign, stale, double, or wrong-phase leases are rejected without
-        /// changing any field.
+        /// changing any field, and the release is refused while the external
+        /// source copy is still in flight so the shared storage is never
+        /// reused under a running copy.
         /// </summary>
         internal bool CancelWrite(in NvencAccessUnitWriteLease writeLease)
         {
@@ -354,7 +377,7 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (!IsExactCollector(writeLease))
+                if (!IsExactCollector(writeLease) || _copyInFlight)
                 {
                     return false;
                 }
@@ -431,6 +454,7 @@ namespace Zantetsu.Observability
             _validLength = 0;
             _contentReady = false;
             _copyInProgress = false;
+            _copyInFlight = false;
         }
     }
 }
