@@ -393,57 +393,93 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void RecoveryResult_Create_RejectsMismatchedOwnedUnit()
+        public void RecoveryResult_Create_NeverIssued_Accepted()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedRecovered(
+                1, out NvencRunAbandonedRecoveryResult result);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Matches(record, h.SampleSlots, h.Buffer), Is.True);
+        }
+
+        [Test]
+        public void RecoveryResult_Create_IssuedThenReturned_Accepted()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(
+                1, out NvencOwnedAccessUnitLease ownedLease);
+
+            Assert.That(h.Buffer.TryReturnOwnedAccessUnit(
+                ownedLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+
+            NvencRunAbandonedRecoveryResult result =
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, proof);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Matches(record, h.SampleSlots, h.Buffer), Is.True);
+        }
+
+        [Test]
+        public void RecoveryResult_Create_DefaultProof_Rejected()
         {
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(
                 1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
             Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
 
-            CaptureFrameWorkToken otherToken = new CaptureFrameWorkToken(
-                Guid.NewGuid(), record.WorkSlot.SlotIndex, record.WorkSlot.Generation, 1, 99);
-            NvencOwnedAccessUnitLease otherUnit = new NvencOwnedAccessUnitLease(Guid.NewGuid(), 1, otherToken);
-
+            // A default (never minted) proof cannot certify recovery.
             Assert.Throws<ArgumentException>(() =>
-                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, otherUnit));
-        }
-
-        [Test]
-        public void RecoveryResult_CreateWhileUnitHeld_DefaultRejected()
-        {
-            Harness h = new Harness();
-            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out _);
-
-            // The Owned Access Unit is held (SinkOwned); default cannot claim "never issued".
-            Assert.Throws<InvalidOperationException>(() =>
                 NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, default));
         }
 
         [Test]
-        public void RecoveryResult_CreateWhileUnitHeld_PreReturnLeaseRejected()
+        public void RecoveryResult_Create_FakeGenerationLease_CannotMintProof()
         {
             Harness h = new Harness();
-            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out NvencOwnedAccessUnitLease ownedLease);
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(
+                1, out NvencOwnedAccessUnitLease ownedLease);
 
-            // The still-held lease must be rejected before it is returned.
-            Assert.Throws<InvalidOperationException>(() =>
-                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, ownedLease));
+            // A lease forged with the same owner token but a wrong generation
+            // is not exact and therefore cannot mint a recovery proof.
+            NvencOwnedAccessUnitLease fake = new NvencOwnedAccessUnitLease(
+                ownedLease.OwnerToken, ownedLease.Generation + 5, ownedLease.WorkToken);
+
+            Assert.That(h.Buffer.TryReturnOwnedAccessUnit(
+                fake, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof forgedProof), Is.False);
+            Assert.That(h.Buffer.VerifyRecoveryProof(forgedProof, record.WorkToken), Is.False);
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
         }
 
         [Test]
-        public void RecoveryResult_AfterReturn_Accepted()
+        public void RecoveryResult_Create_ForgedProof_Rejected()
         {
             Harness h = new Harness();
-            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out NvencOwnedAccessUnitLease ownedLease);
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(
+                1, out NvencOwnedAccessUnitLease ownedLease);
 
-            Assert.That(h.Buffer.Return(ownedLease), Is.True);
+            // A proof forged with the correct owner token but a wrong nonce is rejected.
+            NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof forged =
+                new NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof(
+                    ownedLease.OwnerToken, Guid.NewGuid(), record.WorkToken);
+            Assert.That(h.Buffer.VerifyRecoveryProof(forged, record.WorkToken), Is.False);
 
-            NvencRunAbandonedRecoveryResult result =
-                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, ownedLease);
+            Assert.Throws<ArgumentException>(() =>
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, forged));
+        }
 
-            Assert.That(result.IsValid, Is.True);
-            Assert.That(result.Matches(record, h.SampleSlots, h.Buffer), Is.True);
-            Assert.That(result.OwnedAccessUnit.IsValid, Is.True);
+        [Test]
+        public void RecoveryResult_Create_ForeignBufferProof_Rejected()
+        {
+            Harness h = new Harness();
+            Harness other = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedRecovered(1, out _);
+
+            Assert.That(other.Buffer.TryConfirmNoOwnedAccessUnit(
+                record.WorkToken, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof foreignProof), Is.True);
+
+            Assert.Throws<ArgumentException>(() =>
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, foreignProof));
         }
 
         [Test]
@@ -898,10 +934,12 @@ namespace Zantetsu.Core.Tests
                     out _,
                     out _);
 
-                // The abandon recovery returned the Sample Slot and issued no
-                // Owned Access Unit.
+                // The abandon recovery returned the Sample Slot and confirmed
+                // that no Owned Access Unit was issued.
                 Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
-                recoveryResult = NvencRunAbandonedRecoveryResult.Create(record, SampleSlots, Buffer, default);
+                Assert.That(Buffer.TryConfirmNoOwnedAccessUnit(
+                    record.WorkToken, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+                recoveryResult = NvencRunAbandonedRecoveryResult.Create(record, SampleSlots, Buffer, proof);
 
                 return record;
             }

@@ -148,6 +148,41 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Opaque, allocation-free, non-forgeable proof that one work token's
+        /// Owned Access Unit has been recovered by this exact buffer: either
+        /// the issued unit was returned to Free, or no unit was ever issued
+        /// while the single region is Free. It binds a private owner token and
+        /// a private nonce held only by this buffer, so an equivalent proof
+        /// cannot be reproduced from a lease or other constituent values.
+        /// </summary>
+        internal readonly struct NvencOwnedAccessUnitRecoveryProof
+        {
+            private readonly Guid _ownerToken;
+            private readonly Guid _nonce;
+            private readonly CaptureFrameWorkToken _workToken;
+
+            internal NvencOwnedAccessUnitRecoveryProof(
+                Guid ownerToken,
+                Guid nonce,
+                in CaptureFrameWorkToken workToken)
+            {
+                _ownerToken = ownerToken;
+                _nonce = nonce;
+                _workToken = workToken;
+            }
+
+            internal bool Matches(
+                Guid ownerToken,
+                Guid nonce,
+                in CaptureFrameWorkToken workToken)
+            {
+                return _ownerToken == ownerToken &&
+                    _nonce == nonce &&
+                    _workToken.IdenticalTo(workToken);
+            }
+        }
+
         private readonly byte[] _storage;
         private readonly Guid _ownerToken;
         private readonly NvencCaptureProcessState _processState;
@@ -164,6 +199,7 @@ namespace Zantetsu.Observability
         private bool _consumeInFlight;
         private bool _contentConsumed;
         private Guid _consumeNonce;
+        private Guid _recoveryNonce;
 
         internal NvencOwnedAccessUnitBuffer(NvencCaptureProcessState processState)
         {
@@ -182,6 +218,7 @@ namespace Zantetsu.Observability
             _retired = false;
             _copyNonce = Guid.NewGuid();
             _consumeNonce = Guid.NewGuid();
+            _recoveryNonce = Guid.NewGuid();
         }
 
         /// <summary>
@@ -651,23 +688,34 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// True when the single region is currently held SinkOwned by the exact
-        /// given work token, meaning an Owned Access Unit for that token is
-        /// still residual and must not be treated as recovered. Fails closed to
-        /// true while the gate is held or the process is poisoned.
+        /// Recovery-side return: releases an exact SinkOwned owned lease back
+        /// to Free exactly once and mints a non-forgeable recovery proof bound
+        /// to the returned work token. Only a successful release mints the
+        /// proof; a foreign, stale, fake-generation, or in-flight lease fails
+        /// without minting.
         /// </summary>
-        internal bool IsOwnedAccessUnitResidual(in CaptureFrameWorkToken workToken)
+        internal bool TryReturnOwnedAccessUnit(
+            in NvencOwnedAccessUnitLease ownedLease,
+            out NvencOwnedAccessUnitRecoveryProof proof)
         {
+            proof = default;
+
             if (!_processState.TryBeginResourceResolution())
             {
-                return true;
+                return false;
             }
 
             try
             {
-                return _phase == (int)NvencAccessUnitPhase.SinkOwned &&
-                    workToken.IsValid &&
-                    _workToken.IdenticalTo(workToken);
+                if (!IsExactSink(ownedLease) || _consumeInFlight)
+                {
+                    return false;
+                }
+
+                ReleaseToFree();
+                proof = new NvencOwnedAccessUnitRecoveryProof(
+                    _ownerToken, _recoveryNonce, ownedLease.WorkToken);
+                return true;
             }
             finally
             {
@@ -676,13 +724,23 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// True when the given owned lease was issued by this exact buffer and
-        /// is no longer exact, i.e. it has already been returned. A currently
-        /// held (exact) lease returns false. Fails closed to false while the
-        /// gate is held or the process is poisoned.
+        /// Recovery-side never-issued confirmation: mints a non-forgeable
+        /// recovery proof for a work token only when the single region is
+        /// Free, i.e. no collector write and no Owned Access Unit are
+        /// outstanding. A held or in-progress region fails without minting, so
+        /// this is terminal evidence, not a state snapshot.
         /// </summary>
-        internal bool IsStaleOwnedLease(in NvencOwnedAccessUnitLease ownedLease)
+        internal bool TryConfirmNoOwnedAccessUnit(
+            in CaptureFrameWorkToken workToken,
+            out NvencOwnedAccessUnitRecoveryProof proof)
         {
+            proof = default;
+
+            if (!workToken.IsValid)
+            {
+                return false;
+            }
+
             if (!_processState.TryBeginResourceResolution())
             {
                 return false;
@@ -690,14 +748,31 @@ namespace Zantetsu.Observability
 
             try
             {
-                return ownedLease.IsValid &&
-                    ownedLease.OwnerToken == _ownerToken &&
-                    !IsExactSink(ownedLease);
+                if (_phase != (int)NvencAccessUnitPhase.Free)
+                {
+                    return false;
+                }
+
+                proof = new NvencOwnedAccessUnitRecoveryProof(
+                    _ownerToken, _recoveryNonce, workToken);
+                return true;
             }
             finally
             {
                 _processState.EndResourceResolution();
             }
+        }
+
+        /// <summary>
+        /// True when the given proof was minted by this exact buffer for the
+        /// exact given work token. The private nonce is never exposed, so a
+        /// proof cannot be forged from a lease or other constituent values.
+        /// </summary>
+        internal bool VerifyRecoveryProof(
+            in NvencOwnedAccessUnitRecoveryProof proof,
+            in CaptureFrameWorkToken workToken)
+        {
+            return proof.Matches(_ownerToken, _recoveryNonce, workToken);
         }
 
         private bool IsExactCollector(in NvencAccessUnitWriteLease writeLease)

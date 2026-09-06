@@ -15,37 +15,32 @@ namespace Zantetsu.Observability
     /// <c>default</c> is invalid and matches nothing. The single factory
     /// <see cref="Create"/> verifies against the exact sample slot pool and
     /// the exact Owned Access Unit buffer that the sample slot is no longer
-    /// active and the Access Unit region is Free, so a recovery result can
-    /// only be issued after the abandoned output was safely recovered.
+    /// active and that the supplied recovery proof was minted by that buffer
+    /// for this exact work token, so a recovery result can only be issued
+    /// after the abandoned output was safely recovered.
     /// <see cref="Matches"/> re-checks the exact record, sample slot, and
-    /// Owned Access Unit binding without throwing or allocating.
+    /// recovery proof binding without throwing or allocating.
     /// </para>
     /// </remarks>
     internal readonly struct NvencRunAbandonedRecoveryResult
     {
         private readonly NvencSubmitToOutputRecord _record;
         private readonly NvencEncodeSampleSlotLease _sampleSlot;
-        private readonly NvencOwnedAccessUnitLease _ownedAccessUnit;
+        private readonly NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof _recoveryProof;
 
         private NvencRunAbandonedRecoveryResult(
             NvencSubmitToOutputRecord record,
             NvencEncodeSampleSlotLease sampleSlot,
-            NvencOwnedAccessUnitLease ownedAccessUnit)
+            NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof recoveryProof)
         {
             _record = record;
             _sampleSlot = sampleSlot;
-            _ownedAccessUnit = ownedAccessUnit;
+            _recoveryProof = recoveryProof;
         }
 
         internal NvencSubmitToOutputRecord Record => _record;
 
         internal NvencEncodeSampleSlotLease SampleSlot => _sampleSlot;
-
-        /// <summary>
-        /// The resolved Owned Access Unit: <c>default</c> when none was ever
-        /// issued, or the exact returned lease when one was issued and returned.
-        /// </summary>
-        internal NvencOwnedAccessUnitLease OwnedAccessUnit => _ownedAccessUnit;
 
         internal bool IsValid =>
             _record.Kind == NvencSubmitToOutputRecordKind.Submitted &&
@@ -56,7 +51,7 @@ namespace Zantetsu.Observability
             in NvencSubmitToOutputRecord record,
             NvencEncodeSampleSlotPool sampleSlots,
             NvencOwnedAccessUnitBuffer buffer,
-            in NvencOwnedAccessUnitLease resolvedOwnedAccessUnit)
+            in NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof recoveryProof)
         {
             if (record.Kind != NvencSubmitToOutputRecordKind.Submitted || !record.IsValid)
             {
@@ -80,31 +75,16 @@ namespace Zantetsu.Observability
                     "The record's Encode Sample Slot is still active; it must be resolved before the recovery result is issued.");
             }
 
-            if (resolvedOwnedAccessUnit.IsValid)
+            // The recovery proof must be minted by this exact buffer for this
+            // exact work token; a default, foreign, or forged proof is rejected.
+            if (!buffer.VerifyRecoveryProof(recoveryProof, record.WorkToken))
             {
-                if (!resolvedOwnedAccessUnit.WorkToken.IdenticalTo(record.WorkToken))
-                {
-                    throw new ArgumentException(
-                        "The resolved Owned Access Unit must bind to the record's work token.", nameof(resolvedOwnedAccessUnit));
-                }
-
-                // A valid resolved lease must already have been returned to this
-                // exact buffer; a still-held (exact) lease is rejected.
-                if (!buffer.IsStaleOwnedLease(resolvedOwnedAccessUnit))
-                {
-                    throw new InvalidOperationException(
-                        "The Owned Access Unit lease has not been returned to the exact buffer yet.");
-                }
-            }
-            else if (buffer.IsOwnedAccessUnitResidual(record.WorkToken))
-            {
-                // default claims "never issued", but an Owned Access Unit is
-                // currently held for this work token.
-                throw new InvalidOperationException(
-                    "An Owned Access Unit is still held for this work; it cannot be declared never-issued.");
+                throw new ArgumentException(
+                    "The recovery proof must be minted by the exact buffer for this record's work token.",
+                    nameof(recoveryProof));
             }
 
-            return new NvencRunAbandonedRecoveryResult(record, record.SampleSlot, resolvedOwnedAccessUnit);
+            return new NvencRunAbandonedRecoveryResult(record, record.SampleSlot, recoveryProof);
         }
 
         internal bool Matches(
@@ -112,22 +92,12 @@ namespace Zantetsu.Observability
             NvencEncodeSampleSlotPool sampleSlots,
             NvencOwnedAccessUnitBuffer buffer)
         {
-            if (!RecordEquals(_record, record) ||
-                !SampleSlotEquals(_sampleSlot, record.SampleSlot) ||
-                sampleSlots == null ||
-                buffer == null ||
-                sampleSlots.IsActive(record.SampleSlot))
-            {
-                return false;
-            }
-
-            if (_ownedAccessUnit.IsValid)
-            {
-                return _ownedAccessUnit.WorkToken.IdenticalTo(record.WorkToken) &&
-                    buffer.IsStaleOwnedLease(_ownedAccessUnit);
-            }
-
-            return !buffer.IsOwnedAccessUnitResidual(record.WorkToken);
+            return RecordEquals(_record, record) &&
+                SampleSlotEquals(_sampleSlot, record.SampleSlot) &&
+                sampleSlots != null &&
+                buffer != null &&
+                !sampleSlots.IsActive(record.SampleSlot) &&
+                buffer.VerifyRecoveryProof(_recoveryProof, record.WorkToken);
         }
 
         private static bool SampleSlotEquals(in NvencEncodeSampleSlotLease a, in NvencEncodeSampleSlotLease b)

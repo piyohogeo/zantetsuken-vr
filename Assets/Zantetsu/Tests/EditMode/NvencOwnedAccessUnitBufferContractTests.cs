@@ -817,6 +817,9 @@ namespace Zantetsu.Core.Tests
                 ExtractMethodBody(bufferSource, "TryCompleteConsumeContent"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
+                ExtractMethodBody(bufferSource, "TryReturnOwnedAccessUnit"),
+                ExtractMethodBody(bufferSource, "TryConfirmNoOwnedAccessUnit"),
+                ExtractMethodBody(bufferSource, "VerifyRecoveryProof"),
             };
 
             string[] allocationWords =
