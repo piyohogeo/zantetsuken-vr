@@ -942,6 +942,56 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Evidence_AfterPoison_IsIssuedForFalse()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+
+            // A post-issuance poison invalidates the evidence even though the
+            // ledger is unchanged.
+            Assert.That(h.State.TryPoison(), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.False);
+        }
+
+        [Test]
+        public void Evidence_AfterRunAbandoned_IsIssuedForFalse()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+
+            // A post-issuance run abandonment invalidates the evidence even
+            // though the ledger is unchanged.
+            Assert.That(h.State.TryBeginRunAbandoned(), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.False);
+        }
+
+        [Test]
+        public void Create_CannotBypassPendingOrBufferNonFree()
+        {
+            // Buffer not Free: the owned region is SinkOwned, so the normal
+            // capture entry point would refuse; Create must refuse too.
+            Harness owned = new Harness();
+            CaptureFrameWorkToken token = owned.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease ownedLease);
+            CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new long[] { 1 });
+            Assert.That(owned.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunChunkSinkFinalizationEvidence.Create(owned.Sink, 1, 64, 1, relation));
+
+            // Pending: a parked append blocks finalization; Create must refuse.
+            Harness pending = new Harness();
+            SetPending(pending.Sink, true);
+            CaptureArtifactFrameRelation pendingRelation = new CaptureArtifactFrameRelation(new long[] { 1 });
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunChunkSinkFinalizationEvidence.Create(pending.Sink, 1, 64, 1, pendingRelation));
+        }
+
+        [Test]
         public void EvidenceShape_SealedImmutable_ExactFields()
         {
             Type type = typeof(NvencRunChunkSinkFinalizationEvidence);
@@ -1070,6 +1120,14 @@ namespace Zantetsu.Core.Tests
         {
             FieldInfo field = typeof(NvencRunChunkSink).GetField(
                 "_accumulatedByteLength", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            field.SetValue(sink, value);
+        }
+
+        private static void SetPending(NvencRunChunkSink sink, bool value)
+        {
+            FieldInfo field = typeof(NvencRunChunkSink).GetField(
+                "_pending", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null);
             field.SetValue(sink, value);
         }

@@ -461,12 +461,7 @@ namespace Zantetsu.Observability
         {
             evidence = null;
 
-            if (_processState.IsPoisoned || _processState.IsRunAbandoned)
-            {
-                return false;
-            }
-
-            if (_pending || _buffer.Phase != NvencAccessUnitPhase.Free)
+            if (!IsFinalizationAdmissible())
             {
                 return false;
             }
@@ -549,6 +544,21 @@ namespace Zantetsu.Observability
         {
             _processState.TryPoison();
             throw new InvalidOperationException(message);
+        }
+
+        /// <summary>
+        /// True when the sink currently admits finalization: the process is not
+        /// poisoned and not run-abandoned, no append is parked, and the owned
+        /// region is Free. Shared by finalization evidence capture,
+        /// construction, and re-verification so a poisoned or abandoned chunk
+        /// can never be finalized through any entry point.
+        /// </summary>
+        internal bool IsFinalizationAdmissible()
+        {
+            return !_processState.IsPoisoned &&
+                !_processState.IsRunAbandoned &&
+                !_pending &&
+                _buffer.Phase == NvencAccessUnitPhase.Free;
         }
     }
 }

@@ -12,9 +12,10 @@ namespace Zantetsu.Observability
     /// performs no file operation, and is not an <see cref="IDisposable"/>.
     /// </summary>
     /// <remarks>
-    /// <see cref="IsIssuedFor"/> re-checks the exact sink reference and the
-    /// current count, length, last id, and frame-id sequence, so evidence goes
-    /// stale as soon as the sink appends further.
+    /// <see cref="IsIssuedFor"/> re-checks the exact sink reference, the
+    /// current finalization admissibility, and the current count, length, last
+    /// id, and frame-id sequence, so evidence goes stale as soon as the sink
+    /// appends further, is poisoned, or is run-abandoned.
     /// </remarks>
     internal sealed class NvencRunChunkSinkFinalizationEvidence
     {
@@ -53,6 +54,12 @@ namespace Zantetsu.Observability
             if (frameRelation == null)
             {
                 throw new ArgumentNullException(nameof(frameRelation));
+            }
+
+            if (!sink.IsFinalizationAdmissible())
+            {
+                throw new InvalidOperationException(
+                    "The sink does not currently admit finalization.");
             }
 
             if (appendedCount <= 0 || appendedCount > NvencBringUpProfileV1.CadenceTickCount)
@@ -98,6 +105,7 @@ namespace Zantetsu.Observability
         {
             return sink != null &&
                 ReferenceEquals(_sink, sink) &&
+                sink.IsFinalizationAdmissible() &&
                 _appendedCount == sink.AppendedCount &&
                 _accumulatedByteLength == sink.AccumulatedByteLength &&
                 _lastFrameId == sink.LastFrameId &&
