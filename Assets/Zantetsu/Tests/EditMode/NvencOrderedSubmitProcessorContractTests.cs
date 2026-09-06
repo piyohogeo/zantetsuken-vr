@@ -143,6 +143,31 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Process_Abandoned_ConvertsToCancelledWithoutSubmit()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                h.Enqueue(record);
+
+                // The run was already abandoned before the submit step.
+                Assert.That(h.State.TryBeginRunAbandoned(), Is.True);
+
+                Assert.That(h.Processor.TryProcessNext(), Is.True);
+
+                // The submitter is never contacted; the accepted work is emitted
+                // as FailedBeforeSubmit(CancelledAfterRunAbandoned).
+                Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
+                Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.True);
+                Assert.That(output.Kind, Is.EqualTo(NvencSubmitToOutputRecordKind.FailedBeforeSubmit));
+                Assert.That(output.Reason, Is.EqualTo(NvencFailedBeforeSubmitReason.CancelledAfterRunAbandoned));
+                Assert.That(output.WorkToken.CaptureFrameId, Is.EqualTo(7));
+                Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord empty), Is.False);
+            }
+        }
+
+        [Test]
         public void Process_SubmitterThrows_PoisonsNoRecordNoRetry()
         {
             using (Harness h = Harness.Create(1))

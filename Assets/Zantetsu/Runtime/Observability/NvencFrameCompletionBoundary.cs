@@ -178,6 +178,25 @@ namespace Zantetsu.Observability
                 out completion);
         }
 
+        internal bool TryPublishCollectorControlledFailure(
+            in NvencSubmitToOutputRecord record,
+            out NvencFrameCompletionRecord completion)
+        {
+            completion = default;
+
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            return PublishCore(
+                record,
+                NvencSubmitToOutputRecordKind.Submitted,
+                CaptureFrameCompletionStatus.Failed,
+                NvencFrameCompletionReason.OutputCollectControlledFailure,
+                out completion);
+        }
+
         internal bool TryCollect(out NvencFrameCompletionRecord completion)
         {
             completion = default;

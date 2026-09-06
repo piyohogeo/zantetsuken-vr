@@ -29,5 +29,8 @@ namespace Zantetsu.Observability
 
         /// <summary>The accepted work was never submitted because of shutdown or drain.</summary>
         DrainedBeforeSubmit = 6,
+
+        /// <summary>The submitted output source rejected the bitstream copy before any chunk append (a collector controlled failure).</summary>
+        OutputCollectControlledFailure = 7,
     }
 }

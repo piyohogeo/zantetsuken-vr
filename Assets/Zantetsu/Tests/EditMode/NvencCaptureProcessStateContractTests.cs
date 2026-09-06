@@ -245,6 +245,7 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(
                     method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
+                    method.Name == "TryBeginRunAbandoned" ||
                     method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
                     method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution" ||
                     method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep",
@@ -362,7 +363,7 @@ namespace Zantetsu.Core.Tests
             Type type = typeof(NvencCaptureProcessState);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(2));
+            Assert.That(fields.Length, Is.EqualTo(3));
 
             Type[] expected = { typeof(int), typeof(object) };
             foreach (FieldInfo field in fields)

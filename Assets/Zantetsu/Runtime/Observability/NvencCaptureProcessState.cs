@@ -15,18 +15,24 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// The state is read and advanced with Interlocked/Volatile only, and a
     /// short private gate orders each submission admission and each source
-    /// resource resolution against the Drain and Poison transitions. Admission
-    /// and resource resolution never wait for the gate; they acquire
-    /// non-waiting and fail if the gate is held. The lifecycle transitions wait
-    /// only for the preceding short critical section. Reads perform no
-    /// allocation, transitions are idempotent and exception-safe, and this type
-    /// is not an <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
-    /// The Composition Root, not this type, creates exactly one instance per
+    /// resource resolution against the Drain, Poison, and Run Abandoned
+    /// transitions. Admission and resource resolution never wait for the gate;
+    /// they acquire non-waiting and fail if the gate is held. The lifecycle
+    /// transitions wait only for the preceding short critical section. Run
+    /// Abandoned is a monotonic flag recorded inside the same gate that stops
+    /// new admission by advancing Running to Draining; a normal
+    /// <see cref="TryBeginDrain"/> never sets it. Reads perform no allocation,
+    /// transitions are idempotent and exception-safe, and this type is not an
+    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject. The
+    /// Composition Root, not this type, creates exactly one instance per
     /// process; no singleton or static Current is forced here.
     /// </remarks>
     internal sealed class NvencCaptureProcessState
     {
         private int _state = (int)NvencCaptureProcessStatus.Running;
+
+        // Monotonic Run Abandoned flag, recorded only inside the shared gate.
+        private int _runAbandoned;
 
         // Short private gate serializing a submission admission with the Drain
         // and Poison transitions. Admission uses non-waiting TryEnter; the
@@ -46,6 +52,9 @@ namespace Zantetsu.Observability
 
         internal bool IsPoisoned =>
             State == NvencCaptureProcessStatus.PoisonedUntilProcessRestart;
+
+        internal bool IsRunAbandoned =>
+            Volatile.Read(ref _runAbandoned) != 0;
 
         /// <summary>
         /// Acquires the short admission gate without waiting and succeeds only
@@ -174,6 +183,38 @@ namespace Zantetsu.Observability
                     ref _state,
                     (int)NvencCaptureProcessStatus.Draining,
                     (int)NvencCaptureProcessStatus.Running) == (int)NvencCaptureProcessStatus.Running;
+            }
+            finally
+            {
+                Monitor.Exit(_admissionGate);
+            }
+        }
+
+        /// <summary>
+        /// Atomically records Run Abandoned and stops new admission inside the
+        /// shared gate. While Running the state advances to Draining; while
+        /// already Draining only the abandoned flag is confirmed. Poison
+        /// performs no progress. The call is monotonic and idempotent, and a
+        /// normal <see cref="TryBeginDrain"/> never sets the flag.
+        /// </summary>
+        internal bool TryBeginRunAbandoned()
+        {
+            Monitor.Enter(_admissionGate);
+            try
+            {
+                if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
+                {
+                    return false;
+                }
+
+                Volatile.Write(ref _runAbandoned, 1);
+
+                Interlocked.CompareExchange(
+                    ref _state,
+                    (int)NvencCaptureProcessStatus.Draining,
+                    (int)NvencCaptureProcessStatus.Running);
+
+                return true;
             }
             finally
             {

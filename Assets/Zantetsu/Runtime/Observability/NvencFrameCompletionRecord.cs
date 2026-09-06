@@ -150,6 +150,7 @@ namespace Zantetsu.Observability
             switch (reason)
             {
                 case NvencFrameCompletionReason.RunChunkControlledFailure:
+                case NvencFrameCompletionReason.OutputCollectControlledFailure:
                 case NvencFrameCompletionReason.GpuConversionFailed:
                 case NvencFrameCompletionReason.NvencSubmitFailed:
                     return true;

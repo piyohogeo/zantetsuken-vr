@@ -166,6 +166,27 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // Run Abandoned: never submit work that has not been submitted
+                // yet; emit it as FailedBeforeSubmit(CancelledAfterRunAbandoned)
+                // with the same source handoff and enqueue order preserved.
+                if (_processState.IsRunAbandoned)
+                {
+                    NvencSubmitToOutputRecord cancelled = NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
+                        operation.WorkToken, operation.WorkSlot, operation.SampleSlot,
+                        _current.SubmitToOutputCredit, _current.FrameCompletionCredit,
+                        NvencFailedBeforeSubmitReason.CancelledAfterRunAbandoned);
+
+                    if (!_submitToOutputQueue.TryEnqueue(cancelled))
+                    {
+                        _processState.TryPoison();
+                        return false;
+                    }
+
+                    _hasCurrent = false;
+                    _current = default;
+                    return true;
+                }
+
                 // 6. Attempt the submit exactly once.
                 bool submitted;
                 try
