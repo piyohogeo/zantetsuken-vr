@@ -41,41 +41,106 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void CollectorAndSinkViews_ReturnSameStorageReference()
+        public void CollectorCopyAndSinkConsume_RoundTripContent()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
+            byte[] content = new byte[1024];
+            content[0] = 0xAB;
+            content[1023] = 0xCD;
+
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryGetCollectorView(write, out byte[] collectorStorage), Is.True);
-            Assert.That(collectorStorage, Is.Not.Null);
-            Assert.That(collectorStorage.Length, Is.EqualTo(buffer.Capacity));
-
+            Assert.That(buffer.TryCopyCollectorContent(write, content, 0, 1024), Is.True);
             Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
-            Assert.That(buffer.TryGetSinkView(owned, out byte[] sinkStorage, out int validLength), Is.True);
 
-            Assert.That(sinkStorage, Is.SameAs(collectorStorage));
-            Assert.That(validLength, Is.EqualTo(1024));
+            byte[] destination = new byte[1024];
+            Assert.That(buffer.TryConsumeSinkContent(owned, destination, 0, out int consumedLength), Is.True);
+            Assert.That(consumedLength, Is.EqualTo(1024));
+            Assert.That(destination[0], Is.EqualTo((byte)0xAB));
+            Assert.That(destination[1023], Is.EqualTo((byte)0xCD));
         }
 
         [Test]
-        public void Transfer_DoesNotCopyOrMutateContents()
+        public void CollectorSourceArray_IsCopiedNotAliased()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
+            byte[] content = new byte[1024];
+            content[0] = 0xAB;
+
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryGetCollectorView(write, out byte[] collectorStorage), Is.True);
-            collectorStorage[0] = 0xAB;
-            collectorStorage[1023] = 0xCD;
+            Assert.That(buffer.TryCopyCollectorContent(write, content, 0, 1024), Is.True);
+
+            // Mutating the collector's source after the copy must not reach the
+            // region: the buffer copied, it did not alias.
+            content[0] = 0x00;
 
             Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
-            Assert.That(buffer.TryGetSinkView(owned, out byte[] sinkStorage, out int validLength), Is.True);
+            byte[] destination = new byte[1024];
+            Assert.That(buffer.TryConsumeSinkContent(owned, destination, 0, out int validLength), Is.True);
             Assert.That(validLength, Is.EqualTo(1024));
+            Assert.That(destination[0], Is.EqualTo((byte)0xAB));
+        }
 
-            Assert.That(sinkStorage, Is.SameAs(collectorStorage));
-            Assert.That(sinkStorage[0], Is.EqualTo((byte)0xAB));
-            Assert.That(sinkStorage[1023], Is.EqualTo((byte)0xCD));
+        [Test]
+        public void CollectorCannotMutateRegionAfterTransfer()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            byte[] content = new byte[1024];
+            content[0] = 0xAB;
+            content[1023] = 0xCD;
+
+            Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(buffer.TryCopyCollectorContent(write, content, 0, 1024), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+
+            // The transferred write lease is stale: it cannot mutate the region
+            // the sink now owns.
+            byte[] mutation = new byte[1024];
+            mutation[0] = 0x00;
+            Assert.That(buffer.TryCopyCollectorContent(write, mutation, 0, 1024), Is.False);
+
+            byte[] destination = new byte[1024];
+            Assert.That(buffer.TryConsumeSinkContent(owned, destination, 0, out int consumed), Is.True);
+            Assert.That(consumed, Is.EqualTo(1024));
+            Assert.That(destination[0], Is.EqualTo((byte)0xAB));
+            Assert.That(destination[1023], Is.EqualTo((byte)0xCD));
+        }
+
+        [Test]
+        public void SinkCannotMutateOrReadAfterReturnOrReuse()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            byte[] content = new byte[1024];
+            content[0] = 0xAB;
+
+            Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(buffer.TryCopyCollectorContent(write, content, 0, 1024), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.Return(owned), Is.True);
+
+            // After return the owned lease is stale: it has no path to mutate
+            // or read the region it no longer owns.
+            byte[] destination = new byte[1024];
+            Assert.That(buffer.TryConsumeSinkContent(owned, destination, 0, out _), Is.False);
+
+            // A later generation writes different content; the stale lease
+            // still cannot observe or mutate it.
+            byte[] content2 = new byte[1024];
+            content2[0] = 0x22;
+            Assert.That(buffer.TryBeginWrite(MakeToken(2), out NvencAccessUnitWriteLease write2), Is.True);
+            Assert.That(buffer.TryCopyCollectorContent(write2, content2, 0, 1024), Is.True);
+            Assert.That(buffer.TryTransferToSink(write2, 1024, out NvencOwnedAccessUnitLease owned2), Is.True);
+            Assert.That(buffer.TryConsumeSinkContent(owned2, destination, 0, out int consumed2), Is.True);
+            Assert.That(destination[0], Is.EqualTo((byte)0x22));
+
+            Assert.That(buffer.TryConsumeSinkContent(owned, destination, 0, out _), Is.False);
         }
 
         [Test]
@@ -86,13 +151,15 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write1), Is.True);
             Assert.That(buffer.TryTransferToSink(write1, 1, out NvencOwnedAccessUnitLease owned1), Is.True);
-            Assert.That(buffer.TryGetSinkView(owned1, out _, out int minLength), Is.True);
+            byte[] dest1 = new byte[1];
+            Assert.That(buffer.TryConsumeSinkContent(owned1, dest1, 0, out int minLength), Is.True);
             Assert.That(minLength, Is.EqualTo(1));
             Assert.That(buffer.Return(owned1), Is.True);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(2), out NvencAccessUnitWriteLease write2), Is.True);
             Assert.That(buffer.TryTransferToSink(write2, buffer.Capacity, out NvencOwnedAccessUnitLease owned2), Is.True);
-            Assert.That(buffer.TryGetSinkView(owned2, out _, out int maxLength), Is.True);
+            byte[] dest2 = new byte[buffer.Capacity];
+            Assert.That(buffer.TryConsumeSinkContent(owned2, dest2, 0, out int maxLength), Is.True);
             Assert.That(maxLength, Is.EqualTo(buffer.Capacity));
         }
 
@@ -138,7 +205,8 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(a.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease writeA), Is.True);
 
-            Assert.That(b.TryGetCollectorView(writeA, out _), Is.False);
+            byte[] content = new byte[1024];
+            Assert.That(b.TryCopyCollectorContent(writeA, content, 0, 1024), Is.False);
             Assert.That(b.TryTransferToSink(writeA, 1024, out _), Is.False);
             Assert.That(b.CancelWrite(writeA), Is.False);
 
@@ -177,7 +245,8 @@ namespace Zantetsu.Core.Tests
             // The cancelled lease is now stale for every later use.
             Assert.That(buffer.CancelWrite(write), Is.False);
             Assert.That(buffer.TryTransferToSink(write, 1024, out _), Is.False);
-            Assert.That(buffer.TryGetCollectorView(write, out _), Is.False);
+            byte[] content = new byte[1024];
+            Assert.That(buffer.TryCopyCollectorContent(write, content, 0, 1024), Is.False);
         }
 
         [Test]
@@ -396,9 +465,9 @@ namespace Zantetsu.Core.Tests
             string[] methodBodies =
             {
                 ExtractMethodBody(bufferSource, "TryBeginWrite"),
-                ExtractMethodBody(bufferSource, "TryGetCollectorView"),
+                ExtractMethodBody(bufferSource, "TryCopyCollectorContent"),
                 ExtractMethodBody(bufferSource, "TryTransferToSink"),
-                ExtractMethodBody(bufferSource, "TryGetSinkView"),
+                ExtractMethodBody(bufferSource, "TryConsumeSinkContent"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
             };

@@ -6,25 +6,25 @@ namespace Zantetsu.Observability
     /// The single fixed Access Unit region for the Phase 0.11 NVENC path
     /// (D-147). It allocates exactly one <c>byte[]</c> of
     /// <see cref="NvencBringUpProfileV1.MaxAccessUnitByteLength"/> in its
-    /// constructor and never reallocates, resizes, copies, or reuses the
-    /// backing storage. Ownership of the region moves one way
-    /// Free → CollectorOwned → SinkOwned → Free, and at most one Access Unit
-    /// is held at any time.
+    /// constructor and never reallocates, resizes, or replaces the backing
+    /// storage; the single fixed region is reused across generations. Ownership
+    /// of the region moves one way Free → CollectorOwned → SinkOwned → Free,
+    /// and at most one Access Unit is held at any time.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The buffer authority keeps the backing storage, the current phase, the
     /// generation, the exact bound <see cref="CaptureFrameWorkToken"/>, and the
     /// determined valid length. The write and owned leases never receive the
-    /// storage reference; a caller obtains a view only by presenting the exact
-    /// lease, and every view returns the same fixed storage reference without
-    /// a defensive copy.
+    /// storage reference; the collector writes through a bounded copy and the
+    /// sink reads through a synchronous consume, each a one-shot operation
+    /// validated against the exact lease by the buffer authority.
     /// </para>
     /// <para>
     /// Every transition is serialized against the Poison transition through
     /// the injected <see cref="NvencCaptureProcessState"/> short
-    /// resource-resolution gate. Acquire, transfer, cancel, return, and both
-    /// view acquisitions all fail without changing any field while the process
+    /// resource-resolution gate. Acquire, transfer, cancel, return, copy, and
+    /// consume all fail without changing any field while the process
     /// is poisoned; an occupied region is then held, never guessed back to
     /// Free.
     /// </para>
@@ -116,14 +116,34 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Returns the backing storage for the collector after validating the
+        /// Collector-side bounded copy: writes <paramref name="count"/> bytes
+        /// from <paramref name="source"/> into the region after validating the
         /// exact write lease, its generation and work token, and the
-        /// CollectorOwned phase. Always returns the same fixed storage
-        /// reference; it never builds a defensive copy.
+        /// CollectorOwned phase. The region never escapes to the caller, so a
+        /// held lease cannot mutate the region after transfer, return, or
+        /// poison. Foreign, stale, double, wrong-phase, or out-of-range
+        /// leases and bounds are rejected without changing the region content.
         /// </summary>
-        internal bool TryGetCollectorView(in NvencAccessUnitWriteLease writeLease, out byte[] storage)
+        internal bool TryCopyCollectorContent(
+            in NvencAccessUnitWriteLease writeLease,
+            byte[] source,
+            int sourceOffset,
+            int count)
         {
-            storage = null;
+            if (source == null || sourceOffset < 0 || count <= 0)
+            {
+                return false;
+            }
+
+            if (count > _storage.Length)
+            {
+                return false;
+            }
+
+            if (sourceOffset > source.Length || count > source.Length - sourceOffset)
+            {
+                return false;
+            }
 
             if (!_processState.TryBeginResourceResolution())
             {
@@ -137,7 +157,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                storage = _storage;
+                Buffer.BlockCopy(source, sourceOffset, _storage, 0, count);
                 return true;
             }
             finally
@@ -188,19 +208,26 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Returns the backing storage and the determined valid length for the
-        /// sink after validating the exact owned lease, its generation and work
-        /// token, and the SinkOwned phase. Always returns the same fixed
-        /// storage reference the collector used, with no copy and no content
-        /// inspection.
+        /// Sink-side synchronous consume: copies the determined valid length
+        /// from the region into <paramref name="destination"/> after validating
+        /// the exact owned lease, its generation and work token, and the
+        /// SinkOwned phase. The region never escapes to the caller, so a held
+        /// lease cannot read or mutate a later generation after return.
+        /// Foreign, stale, double, wrong-phase, or undersized destinations are
+        /// rejected without changing the region content.
         /// </summary>
-        internal bool TryGetSinkView(
+        internal bool TryConsumeSinkContent(
             in NvencOwnedAccessUnitLease ownedLease,
-            out byte[] storage,
-            out int validLength)
+            byte[] destination,
+            int destinationOffset,
+            out int consumedLength)
         {
-            storage = null;
-            validLength = 0;
+            consumedLength = 0;
+
+            if (destination == null || destinationOffset < 0)
+            {
+                return false;
+            }
 
             if (!_processState.TryBeginResourceResolution())
             {
@@ -214,8 +241,14 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                storage = _storage;
-                validLength = _validLength;
+                int length = _validLength;
+                if (destinationOffset > destination.Length || length > destination.Length - destinationOffset)
+                {
+                    return false;
+                }
+
+                Buffer.BlockCopy(_storage, 0, destination, destinationOffset, length);
+                consumedLength = length;
                 return true;
             }
             finally
