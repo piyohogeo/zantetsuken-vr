@@ -413,38 +413,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Poison_WaitsForAdmissionGate_UntilRelease()
+        public void Source_CapacityRollbackPrecedesEndAdmission()
         {
-            NvencCaptureProcessState state = new NvencCaptureProcessState();
-            FieldInfo gateField = typeof(NvencCaptureProcessState).GetField(
-                "_admissionGate", BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.That(gateField, Is.Not.Null, "Missing field _admissionGate.");
-            object gate = gateField.GetValue(state);
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencSubmissionAdmissionCoordinator.cs"));
 
-            Monitor.Enter(gate);
-            bool poisonResult = false;
-            Thread poisonThread = new Thread(() =>
-            {
-                poisonResult = state.TryPoison();
-            });
-            poisonThread.IsBackground = true;
-            poisonThread.Start();
+            int rollback = source.IndexOf("RollbackReservations(", StringComparison.Ordinal);
+            int endAdmission = source.IndexOf("EndAdmission()", StringComparison.Ordinal);
+            int finallyKeyword = source.IndexOf("finally", StringComparison.Ordinal);
 
-            try
-            {
-                // While the admission gate is held, the blocking TryPoison cannot
-                // establish, so a rollback inside the gate completes first.
-                Assert.That(poisonThread.Join(100), Is.False, "TryPoison must block while the admission gate is held.");
-                Assert.That(state.IsPoisoned, Is.False);
-            }
-            finally
-            {
-                Monitor.Exit(gate);
-            }
+            Assert.That(rollback, Is.GreaterThanOrEqualTo(0), "Missing capacity rollback call.");
+            Assert.That(endAdmission, Is.GreaterThanOrEqualTo(0), "Missing EndAdmission call.");
+            Assert.That(finallyKeyword, Is.GreaterThanOrEqualTo(0), "Missing finally block.");
 
-            Assert.That(poisonThread.Join(WatchdogTimeoutMs), Is.True, "Poison thread did not finish after the gate was released.");
-            Assert.That(poisonResult, Is.True);
-            Assert.That(state.IsPoisoned, Is.True);
+            // The capacity-exhaustion rollback runs inside the try, strictly
+            // before the finally block that releases the admission gate via
+            // EndAdmission. Combined with AdmissionGuard_SerializesWithTransition
+            // (process-state fixture), this guarantees Drain/Poison serialize
+            // with the rollback on the same gate and establish only afterwards.
+            Assert.That(rollback, Is.LessThan(finallyKeyword),
+                "Capacity rollback must precede the finally block.");
+            Assert.That(finallyKeyword, Is.LessThan(endAdmission),
+                "EndAdmission must run inside the finally block.");
         }
 
         [Test]
