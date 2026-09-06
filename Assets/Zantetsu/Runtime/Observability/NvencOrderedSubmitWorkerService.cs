@@ -49,9 +49,12 @@ namespace Zantetsu.Observability
     /// <see cref="DrainCompleted"/> and <see cref="TryGetFailure"/>.
     /// </para>
     /// <para>
-    /// <see cref="Dispose"/> is idempotent and is accepted only after the
-    /// worker thread has physically stopped; it never force-stops a running
-    /// worker and only releases the owned wait primitives.
+    /// <see cref="Dispose"/> is idempotent and is accepted before the worker
+    /// is started or after the worker thread has physically stopped; it is
+    /// rejected only while the worker is starting or running, and never
+    /// force-stops a running worker. After disposal <see cref="Start"/>,
+    /// <see cref="Notify"/>, and <see cref="BeginDrain"/> are rejected before
+    /// any side effect.
     /// </para>
     /// <para>
     /// This type owns only its own thread and signals; it owns none of its
@@ -69,7 +72,13 @@ namespace Zantetsu.Observability
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
         private Action _settled;
 
+        private const int StateNotStarted = 0;
+        private const int StateStarting = 1;
+        private const int StateRunning = 2;
+        private const int StateDisposed = 3;
+
         private Thread _workerThread;
+        private int _lifecycleState;
         private volatile bool _drainRequested;
         private volatile bool _drainCompleted;
         private volatile Exception _fatalFailure;
@@ -98,18 +107,37 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void Start()
         {
-            if (Volatile.Read(ref _workerThread) != null)
+            // Exactly-once start: only the caller that flips NotStarted to
+            // Starting owns startup; any other caller (already starting,
+            // running, or disposed) observes no side effect.
+            if (Interlocked.CompareExchange(ref _lifecycleState, StateStarting, StateNotStarted)
+                != StateNotStarted)
             {
                 return;
             }
 
-            Thread thread = new Thread(Run)
+            try
             {
-                IsBackground = true,
-                Name = WorkerThreadName,
-            };
-            Volatile.Write(ref _workerThread, thread);
-            thread.Start();
+                Thread thread = new Thread(Run)
+                {
+                    IsBackground = true,
+                    Name = WorkerThreadName,
+                };
+                thread.Start();
+
+                // Publish the thread and flip to Running only after the
+                // physical thread exists, so Starting is never reported as
+                // stopped and only a started thread feeds the physical check.
+                Volatile.Write(ref _workerThread, thread);
+                Volatile.Write(ref _lifecycleState, StateRunning);
+            }
+            catch
+            {
+                // Startup failed (for example Thread.Start threw); release the
+                // startup right so a later Start can retry.
+                Interlocked.CompareExchange(ref _lifecycleState, StateNotStarted, StateStarting);
+                throw;
+            }
         }
 
         /// <summary>
@@ -119,6 +147,11 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void Notify()
         {
+            if (Volatile.Read(ref _lifecycleState) == StateDisposed)
+            {
+                throw new ObjectDisposedException(nameof(NvencOrderedSubmitWorkerService));
+            }
+
             _signal.Set();
         }
 
@@ -130,6 +163,11 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool BeginDrain()
         {
+            if (Volatile.Read(ref _lifecycleState) == StateDisposed)
+            {
+                throw new ObjectDisposedException(nameof(NvencOrderedSubmitWorkerService));
+            }
+
             if (!_processState.IsDraining)
             {
                 return false;
@@ -142,26 +180,30 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Non-waiting physical stop confirmation: true only once the worker
-        /// thread has physically exited. Derived from
-        /// <see cref="Thread.IsAlive"/> rather than a worker-maintained flag,
-        /// so it never reports true while the stop notification is still being
-        /// delivered.
+        /// thread has physically exited (or after disposal). False while the
+        /// worker is starting or running, so only a started thread feeds the
+        /// physical <see cref="Thread.IsAlive"/> check and the stop
+        /// notification is never reported as stopped mid-delivery.
         /// </summary>
         internal bool IsStopped
         {
             get
             {
+                int state = Volatile.Read(ref _lifecycleState);
+                if (state == StateDisposed)
+                {
+                    return true;
+                }
+
+                if (state != StateRunning)
+                {
+                    return false;
+                }
+
                 Thread worker = Volatile.Read(ref _workerThread);
                 return worker != null && !worker.IsAlive;
             }
         }
-
-        /// <summary>
-        /// The dedicated worker thread, exposed for a caller that must confirm
-        /// physical exit with a bounded positive join. Never null after
-        /// <see cref="Start"/>.
-        /// </summary>
-        internal Thread WorkerThread => Volatile.Read(ref _workerThread);
 
         /// <summary>
         /// Instance-local, best-effort observation notification raised whenever
@@ -200,19 +242,38 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Releases the owned wait primitive. Allowed only after the worker
-        /// thread has physically stopped; while running it throws
-        /// <see cref="InvalidOperationException"/> and never force-stops the
-        /// worker. Idempotent after a normal or poison stop.
+        /// Releases the owned wait primitive. Allowed before the worker is
+        /// started or after it has physically stopped; rejected with
+        /// <see cref="InvalidOperationException"/> only while the worker is
+        /// starting or running, and never force-stops a running worker.
+        /// Idempotent.
         /// </summary>
         public void Dispose()
         {
-            if (!IsStopped)
+            int state = Volatile.Read(ref _lifecycleState);
+            if (state == StateDisposed)
             {
-                throw new InvalidOperationException(
-                    "The Submit Worker thread has not physically stopped; dispose is allowed only after the worker thread has exited.");
+                return;
             }
 
+            if (state == StateStarting)
+            {
+                throw new InvalidOperationException(
+                    "The Submit Worker is starting; dispose is allowed only before Start or after the worker thread has physically stopped.");
+            }
+
+            if (state == StateRunning)
+            {
+                Thread worker = Volatile.Read(ref _workerThread);
+                if (worker == null || worker.IsAlive)
+                {
+                    throw new InvalidOperationException(
+                        "The Submit Worker thread has not physically stopped; dispose is allowed only after the worker thread has exited.");
+                }
+            }
+
+            // NotStarted (never started) or physically stopped Running.
+            Volatile.Write(ref _lifecycleState, StateDisposed);
             _signal.Dispose();
         }
 

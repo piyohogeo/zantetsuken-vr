@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
@@ -393,6 +394,23 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Source_Start_AtomicLifecycle_NoThreadExposure()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOrderedSubmitWorkerService.cs"));
+
+            // Startup right is claimed by a single caller via a CAS flip, so
+            // exactly one worker thread can ever be created and started.
+            Assert.That(source, Does.Contain("Interlocked.CompareExchange(ref _lifecycleState, StateStarting, StateNotStarted)"));
+            Assert.That(source, Does.Contain("StateRunning"));
+            Assert.That(source, Does.Contain("StateDisposed"));
+
+            // The owned thread is never exposed; only the non-waiting
+            // IsStopped check is public surface.
+            Assert.That(source, Does.Not.Contain("internal Thread WorkerThread"));
+            Assert.That(source, Does.Not.Contain("WorkerThread =>"));
+        }
+
+        [Test]
         public void Drain_EmptyState_Stops()
         {
             using (Harness h = Harness.Create(1))
@@ -699,6 +717,45 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void Dispose_BeforeStart_IsAllowedAndIdempotent()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                // The owned signal is released before any startup; composition
+                // teardown after a failed initialization can still dispose.
+                h.Worker.Dispose();
+                h.Worker.Dispose(); // idempotent
+            }
+        }
+
+        [Test]
+        public void Start_AfterDispose_NoSideEffect()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                h.Worker.Dispose();
+
+                // Starting a disposed service has no side effect and creates no
+                // worker thread.
+                h.Worker.Start();
+
+                Assert.That(h.Worker.IsStopped, Is.True);
+            }
+        }
+
+        [Test]
+        public void NotifyAndBeginDrain_AfterDispose_ThrowBeforeSideEffect()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                h.Worker.Dispose();
+
+                Assert.Throws<ObjectDisposedException>(() => h.Worker.Notify());
+                Assert.Throws<ObjectDisposedException>(() => h.Worker.BeginDrain());
+            }
+        }
+
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
@@ -939,9 +996,18 @@ namespace Zantetsu.Core.Tests
 
             internal void WaitForPhysicalStop(string message)
             {
-                Thread workerThread = Worker.WorkerThread;
-                Assert.That(workerThread, Is.Not.Null, message);
-                Assert.That(workerThread.Join(WatchdogTimeoutMs), Is.True, message);
+                Thread workerThread = GetWorkerThread();
+                if (workerThread != null)
+                {
+                    Assert.That(workerThread.Join(WatchdogTimeoutMs), Is.True, message);
+                }
+            }
+
+            private Thread GetWorkerThread()
+            {
+                FieldInfo field = typeof(NvencOrderedSubmitWorkerService).GetField(
+                    "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
+                return (Thread)field?.GetValue(Worker);
             }
 
             public void Dispose()
@@ -954,12 +1020,7 @@ namespace Zantetsu.Core.Tests
                     Worker.Notify();
                 }
 
-                Thread workerThread = Worker.WorkerThread;
-                if (workerThread != null)
-                {
-                    Assert.That(workerThread.Join(WatchdogTimeoutMs), Is.True,
-                        "worker thread did not physically exit during teardown");
-                }
+                WaitForPhysicalStop("worker thread did not physically exit during teardown");
 
                 Worker.Dispose();
                 Worker.Settled -= _settledHandler;
