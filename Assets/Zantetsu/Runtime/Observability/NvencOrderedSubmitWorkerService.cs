@@ -72,7 +72,6 @@ namespace Zantetsu.Observability
         private Thread _workerThread;
         private volatile bool _drainRequested;
         private volatile bool _drainCompleted;
-        private volatile bool _workerStopped;
         private volatile Exception _fatalFailure;
 
         internal NvencOrderedSubmitWorkerService(
@@ -99,17 +98,18 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void Start()
         {
-            if (_workerThread != null)
+            if (Volatile.Read(ref _workerThread) != null)
             {
                 return;
             }
 
-            _workerThread = new Thread(Run)
+            Thread thread = new Thread(Run)
             {
                 IsBackground = true,
                 Name = WorkerThreadName,
             };
-            _workerThread.Start();
+            Volatile.Write(ref _workerThread, thread);
+            thread.Start();
         }
 
         /// <summary>
@@ -141,19 +141,37 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting physical stop confirmation: true once the worker thread
-        /// has exited.
+        /// Non-waiting physical stop confirmation: true only once the worker
+        /// thread has physically exited. Derived from
+        /// <see cref="Thread.IsAlive"/> rather than a worker-maintained flag,
+        /// so it never reports true while the stop notification is still being
+        /// delivered.
         /// </summary>
-        internal bool IsStopped => _workerStopped;
+        internal bool IsStopped
+        {
+            get
+            {
+                Thread worker = Volatile.Read(ref _workerThread);
+                return worker != null && !worker.IsAlive;
+            }
+        }
+
+        /// <summary>
+        /// The dedicated worker thread, exposed for a caller that must confirm
+        /// physical exit with a bounded positive join. Never null after
+        /// <see cref="Start"/>.
+        /// </summary>
+        internal Thread WorkerThread => Volatile.Read(ref _workerThread);
 
         /// <summary>
         /// Instance-local, best-effort observation notification raised whenever
         /// the worker has drained all currently-processable work and is about
         /// to park, or when it stops. Production correctness never depends on
-        /// subscribers; observer exceptions are swallowed and never become a
-        /// fatal failure. The worker keeps ownership of its signal object, so
-        /// callers can subscribe and unsubscribe but can never reset, set, or
-        /// dispose it.
+        /// subscribers. The handler snapshot is invoked exactly once per raise
+        /// with no per-park allocation, so a throwing observer can prevent later
+        /// observers from running; the worker swallows the exception. The worker
+        /// keeps ownership of its signal object, so callers can subscribe and
+        /// unsubscribe but can never reset, set, or dispose it.
         /// </summary>
         internal event Action Settled
         {
@@ -189,10 +207,10 @@ namespace Zantetsu.Observability
         /// </summary>
         public void Dispose()
         {
-            if (!_workerStopped)
+            if (!IsStopped)
             {
                 throw new InvalidOperationException(
-                    "The Submit Worker is still running; dispose is allowed only after the worker has stopped.");
+                    "The Submit Worker thread has not physically stopped; dispose is allowed only after the worker thread has exited.");
             }
 
             _signal.Dispose();
@@ -268,10 +286,10 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                // Confirm the worker will no longer use its internal signal,
-                // then raise the stop notification so a subscriber that calls
-                // Dispose immediately already observes the stopped state.
-                _workerStopped = true;
+                // After this point the worker never touches its internal signal
+                // again. The stop notification is raised last, but IsStopped
+                // stays false until the thread physically exits, so a subscriber
+                // must join the thread before disposing.
                 RaiseSettled();
             }
         }
@@ -303,18 +321,18 @@ namespace Zantetsu.Observability
                 return;
             }
 
-            Delegate[] observers = handler.GetInvocationList();
-            for (int i = 0; i < observers.Length; i++)
+            try
             {
-                try
-                {
-                    ((Action)observers[i])();
-                }
-                catch
-                {
-                    // An observer failure must never become the worker's fatal
-                    // failure; observation is best-effort.
-                }
+                // Invoke the snapshot once without materializing an invocation
+                // list: no per-park managed allocation. A single observer is
+                // the supported shape, and subscription-time delegate
+                // combination happens before the worker thread starts.
+                handler();
+            }
+            catch
+            {
+                // An observer failure must never become the worker's fatal
+                // failure; observation is best-effort.
             }
         }
 

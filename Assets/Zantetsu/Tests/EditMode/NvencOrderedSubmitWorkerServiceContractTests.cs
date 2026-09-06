@@ -371,6 +371,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Source_IsStopped_PhysicalNonWaiting_NotFlagBased()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOrderedSubmitWorkerService.cs"));
+
+            // Physical stop is derived from the live thread, never from a flag
+            // the worker sets before its stop notification finishes.
+            Assert.That(source, Does.Contain(".IsAlive"));
+            Assert.That(source, Does.Not.Contain("_workerStopped"));
+        }
+
+        [Test]
+        public void Source_Settled_NoPerParkAllocation()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOrderedSubmitWorkerService.cs"));
+
+            // The park/stop notification path must not materialize an invocation
+            // list or any managed array on the hot path.
+            Assert.That(source, Does.Not.Contain("GetInvocationList"));
+            Assert.That(source, Does.Not.Contain("Delegate[]"));
+        }
+
+        [Test]
         public void Drain_EmptyState_Stops()
         {
             using (Harness h = Harness.Create(1))
@@ -669,6 +691,7 @@ namespace Zantetsu.Core.Tests
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.BeginDrain(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not stop");
+                h.WaitForPhysicalStop("worker thread did not physically exit");
                 Assert.That(h.Worker.IsStopped, Is.True);
 
                 h.Worker.Dispose();
@@ -914,14 +937,28 @@ namespace Zantetsu.Core.Tests
                 Assert.That(SubmissionQueue.TryEnqueue(record), Is.True);
             }
 
+            internal void WaitForPhysicalStop(string message)
+            {
+                Thread workerThread = Worker.WorkerThread;
+                Assert.That(workerThread, Is.Not.Null, message);
+                Assert.That(workerThread.Join(WatchdogTimeoutMs), Is.True, message);
+            }
+
             public void Dispose()
             {
                 if (!Worker.IsStopped)
                 {
+                    // Guarantee a stop condition exists and wake the worker so
+                    // it can exit; physical exit is confirmed by joining below.
                     State.TryPoison();
-                    SettledEvent.Reset();
                     Worker.Notify();
-                    Assert.That(SettledEvent.Wait(WatchdogTimeoutMs), Is.True, "worker did not stop during teardown");
+                }
+
+                Thread workerThread = Worker.WorkerThread;
+                if (workerThread != null)
+                {
+                    Assert.That(workerThread.Join(WatchdogTimeoutMs), Is.True,
+                        "worker thread did not physically exit during teardown");
                 }
 
                 Worker.Dispose();
