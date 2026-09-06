@@ -150,7 +150,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void SameWriteLease_SourceNotCalledTwice()
+        public void CompletedRecord_SecondAttemptPoisonsWithoutSecondSourceCall()
         {
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.CreateSubmittedRecord(1);
@@ -158,10 +158,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Collector.TryCollect(record, out _), Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(1));
 
-            // A second attempt on the same record finds the leases already
-            // returned and never contacts the source again.
-            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult second), Is.True);
-            Assert.That(second.IsControlledFailure, Is.True);
+            // The record's sample slot is now returned: a second attempt finds
+            // broken correlation and poisons instead of re-contacting the source.
+            Assert.Throws<InvalidOperationException>(() => h.Collector.TryCollect(record, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(1));
         }
 
@@ -213,40 +213,44 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void NonSubmittedKinds_SourceNotContacted()
+        public void NonSubmittedKinds_RejectedWithDefaultResult_SourceNotContacted()
         {
             Harness h = new Harness();
 
-            // FailedBeforeSubmit is rejected before any external contact.
+            // FailedBeforeSubmit is rejected with a default result and no
+            // resource touch; the caller routes it to its dedicated release path.
             NvencSubmitToOutputRecord failed = h.CreateFailedBeforeSubmitRecord(1);
-            Assert.That(h.Collector.TryCollect(failed, out NvencSubmittedOutputCollectResult failedResult), Is.True);
-            Assert.That(failedResult.IsControlledFailure, Is.True);
+            Assert.That(h.Collector.TryCollect(failed, out NvencSubmittedOutputCollectResult failedResult), Is.False);
+            Assert.That(failedResult.IsNone, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(0));
 
             // None (default) does nothing and never contacts the source.
             Assert.That(h.Collector.TryCollect(default, out NvencSubmittedOutputCollectResult none), Is.False);
+            Assert.That(none.IsNone, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(0));
         }
 
         [Test]
-        public void ForeignSampleSlot_Rejected()
+        public void ForeignSampleSlot_Poisons()
         {
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.CreateSubmittedRecordWithForeignSample();
 
-            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult result), Is.True);
-            Assert.That(result.IsControlledFailure, Is.True);
+            Assert.Throws<InvalidOperationException>(() => h.Collector.TryCollect(record, out _));
+
+            Assert.That(h.State.IsPoisoned, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(0));
         }
 
         [Test]
-        public void StaleSampleSlot_Rejected()
+        public void StaleSampleSlot_Poisons()
         {
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.CreateSubmittedRecordWithStaleSample();
 
-            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult result), Is.True);
-            Assert.That(result.IsControlledFailure, Is.True);
+            Assert.Throws<InvalidOperationException>(() => h.Collector.TryCollect(record, out _));
+
+            Assert.That(h.State.IsPoisoned, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(0));
         }
 
@@ -291,6 +295,62 @@ namespace Zantetsu.Core.Tests
             Assert.That(holderError, Is.Null);
 
             // Retry succeeds once the gate is free.
+            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult retry), Is.True);
+            Assert.That(retry.IsSucceeded, Is.True);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void GateContentionAfterSource_ParksAndConverges()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.CreateSubmittedRecord(1);
+
+            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            Exception holderError = null;
+
+            h.Source.SourceEntered = sourceEntered;
+            h.Source.WaitForGateHeld = gateHeld;
+
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (sourceEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            // The source is called once; the post-source gate is then held, so
+            // the collector parks without poisoning or a terminal result.
+            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult first), Is.False);
+            Assert.That(first.IsNone, Is.True);
+            Assert.That(h.State.IsPoisoned, Is.False);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // Retry converges without re-contacting the source.
             Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult retry), Is.True);
             Assert.That(retry.IsSucceeded, Is.True);
             Assert.That(h.Source.CallCount, Is.EqualTo(1));
@@ -358,7 +418,10 @@ namespace Zantetsu.Core.Tests
             string[] collectorBodies =
             {
                 ExtractMethodBody(collectorSource, "TryCollect"),
+                ExtractMethodBody(collectorSource, "CompleteSuccess"),
                 ExtractMethodBody(collectorSource, "CompleteControlledFailure"),
+                ExtractMethodBody(collectorSource, "CompletePending"),
+                ExtractMethodBody(collectorSource, "Park"),
             };
 
             string[] allocationWords =
@@ -496,6 +559,8 @@ namespace Zantetsu.Core.Tests
             internal NvencEncodeSampleSlotPool SamplePool;
             internal bool SampleActiveAtCopyStart;
             internal bool ReturnSampleSlotInsideCopy;
+            internal ManualResetEventSlim SourceEntered;
+            internal ManualResetEventSlim WaitForGateHeld;
 
             public bool TryCopyCompletedOutput(
                 in CaptureFrameWorkToken workToken,
@@ -529,6 +594,16 @@ namespace Zantetsu.Core.Tests
                 if (ReturnSampleSlotInsideCopy && SamplePool != null)
                 {
                     SamplePool.TryReturn(sampleSlot);
+                }
+
+                if (SourceEntered != null)
+                {
+                    SourceEntered.Set();
+                }
+
+                if (WaitForGateHeld != null)
+                {
+                    WaitForGateHeld.Wait(WatchdogTimeoutMs);
                 }
 
                 validLength = ResultLength;

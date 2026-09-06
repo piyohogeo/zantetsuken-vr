@@ -125,7 +125,8 @@ namespace Zantetsu.Observability
         /// A successful copy records the valid length exactly once and marks the
         /// content ready; a second copy in the same generation is rejected
         /// before any side effect. The completion wait, lock, copy, unlock, and
-        /// unmap run outside the short process-state gate.
+        /// unmap run outside any process-state gate, so a transient gate
+        /// contention never drops a completed copy.
         /// </summary>
         internal bool TryCopyCompletedOutput(
             in NvencAccessUnitWriteLease writeLease,
@@ -137,27 +138,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(source));
             }
 
-            // Pre-validation and claim of the single copy (short gate).
-            if (!_processState.TryBeginResourceResolution())
+            if (_processState.IsPoisoned)
             {
                 return false;
             }
 
-            try
+            if (!IsExactCollector(writeLease))
             {
-                if (!IsExactCollector(writeLease))
-                {
-                    return false;
-                }
-
-                if (_contentReady)
-                {
-                    return false;
-                }
+                return false;
             }
-            finally
+
+            if (_contentReady)
             {
-                _processState.EndResourceResolution();
+                return false;
             }
 
             // External call: completion wait, lock, copy, unlock, unmap.
@@ -171,32 +164,15 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // Record the success exactly once, serialized against poison.
-            if (!_processState.TryBeginResourceResolution())
+            // Poisoned during the copy: do not record, hold the region.
+            if (_processState.IsPoisoned)
             {
                 return false;
             }
 
-            try
-            {
-                if (!IsExactCollector(writeLease))
-                {
-                    return false;
-                }
-
-                if (_contentReady)
-                {
-                    return false;
-                }
-
-                _validLength = validLength;
-                _contentReady = true;
-                return true;
-            }
-            finally
-            {
-                _processState.EndResourceResolution();
-            }
+            _validLength = validLength;
+            _contentReady = true;
+            return true;
         }
 
         /// <summary>

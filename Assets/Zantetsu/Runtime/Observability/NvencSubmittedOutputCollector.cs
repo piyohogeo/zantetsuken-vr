@@ -22,9 +22,12 @@ namespace Zantetsu.Observability
     /// <para>
     /// A controllable source failure returns the sample slot exactly once,
     /// cancels the region back to Free, and issues a ControlledFailure result
-    /// with no owned lease. An unknown state — a source exception, a failed
-    /// sample return or transfer after a known-success copy, or a partial
-    /// cleanup — poisons the process and propagates an exception, never
+    /// with no owned lease. A transient resource-resolution gate contention
+    /// after the source has returned safely parks the single pending record,
+    /// write lease, and copy result, to be completed on the next attempt
+    /// without re-contacting the source. An unknown state — a source exception,
+    /// a failed sample return or transfer after a known-success copy, or a
+    /// partial cleanup — poisons the process and propagates an exception, never
     /// guessing a release of the sample slot or the region.
     /// </para>
     /// <para>
@@ -43,6 +46,11 @@ namespace Zantetsu.Observability
         private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
         private readonly NvencOwnedAccessUnitBuffer _buffer;
         private readonly INvencOutputBitstreamSource _source;
+
+        private bool _pending;
+        private NvencSubmitToOutputRecord _pendingRecord;
+        private NvencAccessUnitWriteLease _pendingWriteLease;
+        private bool _pendingCopied;
 
         internal NvencSubmittedOutputCollector(
             NvencCaptureProcessState processState,
@@ -68,29 +76,31 @@ namespace Zantetsu.Observability
         {
             result = default;
 
+            // Complete a parked post-source step before accepting new work.
+            if (_pending)
+            {
+                return CompletePending(out result);
+            }
+
             // Poisoned: nothing progresses and the source is never contacted.
             if (_processState.IsPoisoned)
             {
                 return false;
             }
 
-            // Only the Submitted normal path reaches the source.
-            if (record.Kind == NvencSubmitToOutputRecordKind.None)
+            // Reject non-Submitted records with a default result and no resource
+            // touch; the caller routes them to their dedicated release path.
+            if (record.Kind != NvencSubmitToOutputRecordKind.Submitted)
             {
                 return false;
             }
 
-            if (record.Kind != NvencSubmitToOutputRecordKind.Submitted)
-            {
-                result = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken);
-                return true;
-            }
-
-            // Full correlation before any external contact.
+            // A Submitted record whose current correlation is broken is an
+            // unknown ownership state: poison rather than fabricating a
+            // controlled failure that would leak its held resources.
             if (!record.IsValidFor(_workSlots, _sampleSlots, _submitToOutputCredits, _frameCompletionCredits))
             {
-                result = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken);
-                return true;
+                PoisonAndThrow("Submitted record correlation is broken.");
             }
 
             // Reserve the fixed region. Poison, gate contention, or an exhausted
@@ -113,16 +123,37 @@ namespace Zantetsu.Observability
                 throw;
             }
 
-            if (!copied)
+            if (copied)
             {
-                return CompleteControlledFailure(record, writeLease, out result);
+                return CompleteSuccess(record, writeLease, out result);
             }
 
-            // Native ownership is safely resolved. Serialize the sample return
-            // and the sink transfer as one short critical section.
+            if (_processState.IsPoisoned)
+            {
+                PoisonAndThrow("Submit-to-Output collector was poisoned during the copy.");
+            }
+
+            return CompleteControlledFailure(record, writeLease, out result);
+        }
+
+        private bool CompleteSuccess(
+            in NvencSubmitToOutputRecord record,
+            in NvencAccessUnitWriteLease writeLease,
+            out NvencSubmittedOutputCollectResult result)
+        {
+            result = default;
+
+            if (_processState.IsPoisoned)
+            {
+                PoisonAndThrow("Submit-to-Output collector was poisoned before the sink transfer.");
+            }
+
+            // A busy gate here is ordinary contention, not unknown ownership:
+            // park and retry later without re-contacting the source.
             if (!_processState.TryBeginResourceResolution())
             {
-                PoisonAndThrow("Submit-to-Output collector could not serialize the release step.");
+                Park(record, writeLease, copied: true);
+                return false;
             }
 
             try
@@ -155,9 +186,15 @@ namespace Zantetsu.Observability
         {
             result = default;
 
+            if (_processState.IsPoisoned)
+            {
+                PoisonAndThrow("Submit-to-Output collector was poisoned before the controlled release.");
+            }
+
             if (!_processState.TryBeginResourceResolution())
             {
-                PoisonAndThrow("Submit-to-Output collector could not serialize the controlled-failure release.");
+                Park(record, writeLease, copied: false);
+                return false;
             }
 
             try
@@ -179,6 +216,40 @@ namespace Zantetsu.Observability
 
             result = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken);
             return true;
+        }
+
+        private bool CompletePending(out NvencSubmittedOutputCollectResult result)
+        {
+            result = default;
+
+            NvencSubmitToOutputRecord record = _pendingRecord;
+            NvencAccessUnitWriteLease writeLease = _pendingWriteLease;
+            bool copied = _pendingCopied;
+
+            bool terminal = copied
+                ? CompleteSuccess(record, writeLease, out result)
+                : CompleteControlledFailure(record, writeLease, out result);
+
+            if (terminal)
+            {
+                _pending = false;
+                _pendingRecord = default;
+                _pendingWriteLease = default;
+                _pendingCopied = false;
+            }
+
+            return terminal;
+        }
+
+        private void Park(
+            in NvencSubmitToOutputRecord record,
+            in NvencAccessUnitWriteLease writeLease,
+            bool copied)
+        {
+            _pending = true;
+            _pendingRecord = record;
+            _pendingWriteLease = writeLease;
+            _pendingCopied = copied;
         }
 
         private void PoisonAndThrow(string message)
