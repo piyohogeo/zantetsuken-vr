@@ -269,6 +269,7 @@ namespace Zantetsu.Observability
                 _consumeInFlight = false;
                 _contentConsumed = false;
                 _consumeNonce = Guid.NewGuid();
+                _recoveryNonce = Guid.NewGuid();
                 writeLease = new NvencAccessUnitWriteLease(_ownerToken, _generation, workToken);
                 return true;
             }
@@ -636,25 +637,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool CancelWrite(in NvencAccessUnitWriteLease writeLease)
         {
-            if (!_processState.TryBeginResourceResolution())
-            {
-                return false;
-            }
-
-            try
-            {
-                if (!IsExactCollector(writeLease) || _copyInFlight)
-                {
-                    return false;
-                }
-
-                ReleaseToFree();
-                return true;
-            }
-            finally
-            {
-                _processState.EndResourceResolution();
-            }
+            return TryCancelCollectorReservation(writeLease, out _);
         }
 
         /// <summary>
@@ -724,22 +707,18 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Recovery-side never-issued confirmation: mints a non-forgeable
-        /// recovery proof for a work token only when the single region is
-        /// Free, i.e. no collector write and no Owned Access Unit are
-        /// outstanding. A held or in-progress region fails without minting, so
-        /// this is terminal evidence, not a state snapshot.
+        /// Recovery-side collector cancel: releases an exact CollectorOwned
+        /// write lease back to Free exactly once and mints a non-forgeable
+        /// recovery proof bound to the cancelled work token, certifying that no
+        /// Owned Access Unit was issued for it. Only a successful cancel mints
+        /// the proof; a foreign, stale, double, wrong-phase, or in-flight lease
+        /// fails without minting.
         /// </summary>
-        internal bool TryConfirmNoOwnedAccessUnit(
-            in CaptureFrameWorkToken workToken,
+        internal bool TryCancelCollectorReservation(
+            in NvencAccessUnitWriteLease writeLease,
             out NvencOwnedAccessUnitRecoveryProof proof)
         {
             proof = default;
-
-            if (!workToken.IsValid)
-            {
-                return false;
-            }
 
             if (!_processState.TryBeginResourceResolution())
             {
@@ -748,13 +727,14 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (_phase != (int)NvencAccessUnitPhase.Free)
+                if (!IsExactCollector(writeLease) || _copyInFlight)
                 {
                     return false;
                 }
 
+                ReleaseToFree();
                 proof = new NvencOwnedAccessUnitRecoveryProof(
-                    _ownerToken, _recoveryNonce, workToken);
+                    _ownerToken, _recoveryNonce, writeLease.WorkToken);
                 return true;
             }
             finally

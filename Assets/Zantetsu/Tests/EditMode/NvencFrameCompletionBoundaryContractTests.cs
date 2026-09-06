@@ -475,11 +475,63 @@ namespace Zantetsu.Core.Tests
             Harness other = new Harness();
             NvencSubmitToOutputRecord record = h.ProduceSubmittedRecovered(1, out _);
 
-            Assert.That(other.Buffer.TryConfirmNoOwnedAccessUnit(
-                record.WorkToken, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof foreignProof), Is.True);
+            Assert.That(other.Buffer.TryBeginWrite(
+                record.WorkToken, out NvencAccessUnitWriteLease foreignWrite), Is.True);
+            Assert.That(other.Buffer.TryCancelCollectorReservation(
+                foreignWrite, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof foreignProof), Is.True);
 
             Assert.Throws<ArgumentException>(() =>
                 NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, foreignProof));
+        }
+
+        [Test]
+        public void RecoveryResult_StaleProofAfterRereserve_Rejected()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(
+                1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+
+            // 1. Mint a "never issued" proof ahead of time via a cancel.
+            Assert.That(h.Buffer.TryBeginWrite(
+                record.WorkToken, out NvencAccessUnitWriteLease writeLease), Is.True);
+            Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
+            Assert.That(h.Buffer.TryCancelCollectorReservation(
+                writeLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof staleProof), Is.True);
+            Assert.That(h.Buffer.VerifyRecoveryProof(staleProof, record.WorkToken), Is.True);
+
+            // 2. Re-reserve the same work token and progress to SinkOwned.
+            Assert.That(h.Buffer.TryBeginWrite(
+                record.WorkToken, out NvencAccessUnitWriteLease write2), Is.True);
+            Assert.That(
+                h.Buffer.TryCopyCompletedOutput(write2, record.SampleSlot, new PatternSource(16, 0x40), out _),
+                Is.EqualTo(NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Committed));
+            Assert.That(h.Buffer.TryTransferToSink(write2, out _), Is.True);
+
+            // 3. The stale proof can no longer mint a recovery result.
+            Assert.That(h.Buffer.VerifyRecoveryProof(staleProof, record.WorkToken), Is.False);
+            Assert.Throws<ArgumentException>(() =>
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, staleProof));
+        }
+
+        [Test]
+        public void Publish_RunAbandoned_StaleProofAfterRereserve_Poisons()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedRecovered(
+                1, out NvencRunAbandonedRecoveryResult result);
+
+            // Re-reserve the same work token and progress to SinkOwned, which
+            // rotates the recovery nonce and invalidates the earlier proof.
+            Assert.That(h.Buffer.TryBeginWrite(
+                record.WorkToken, out NvencAccessUnitWriteLease writeLease), Is.True);
+            Assert.That(
+                h.Buffer.TryCopyCompletedOutput(writeLease, record.SampleSlot, new PatternSource(16, 0x40), out _),
+                Is.EqualTo(NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Committed));
+            Assert.That(h.Buffer.TryTransferToSink(writeLease, out _), Is.True);
+
+            // The stale recovery result can no longer publish a Cancelled completion.
+            Assert.Throws<InvalidOperationException>(() => h.Boundary.TryPublishRunAbandoned(record, result, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
         }
 
         [Test]
@@ -934,11 +986,13 @@ namespace Zantetsu.Core.Tests
                     out _,
                     out _);
 
-                // The abandon recovery returned the Sample Slot and confirmed
-                // that no Owned Access Unit was issued.
+                // The abandon recovery cancelled the collector's write lease
+                // before any transfer, so no Owned Access Unit was issued.
+                Assert.That(Buffer.TryBeginWrite(
+                    record.WorkToken, out NvencAccessUnitWriteLease writeLease), Is.True);
                 Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
-                Assert.That(Buffer.TryConfirmNoOwnedAccessUnit(
-                    record.WorkToken, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+                Assert.That(Buffer.TryCancelCollectorReservation(
+                    writeLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
                 recoveryResult = NvencRunAbandonedRecoveryResult.Create(record, SampleSlots, Buffer, proof);
 
                 return record;
