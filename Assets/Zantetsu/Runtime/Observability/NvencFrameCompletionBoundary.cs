@@ -51,20 +51,26 @@ namespace Zantetsu.Observability
     {
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencCaptureWorkSlotPool _workSlots;
+        private readonly NvencEncodeSampleSlotPool _sampleSlots;
         private readonly NvencSubmitToOutputCreditPool _submitToOutputCredits;
         private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
+        private readonly NvencOwnedAccessUnitBuffer _buffer;
         private readonly NvencFixedSpscQueue<NvencFrameCompletionRecord> _queue;
 
         internal NvencFrameCompletionBoundary(
             NvencCaptureProcessState processState,
             NvencCaptureWorkSlotPool workSlots,
+            NvencEncodeSampleSlotPool sampleSlots,
             NvencSubmitToOutputCreditPool submitToOutputCredits,
-            NvencFrameCompletionCreditPool frameCompletionCredits)
+            NvencFrameCompletionCreditPool frameCompletionCredits,
+            NvencOwnedAccessUnitBuffer buffer)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _workSlots = workSlots ?? throw new ArgumentNullException(nameof(workSlots));
+            _sampleSlots = sampleSlots ?? throw new ArgumentNullException(nameof(sampleSlots));
             _submitToOutputCredits = submitToOutputCredits ?? throw new ArgumentNullException(nameof(submitToOutputCredits));
             _frameCompletionCredits = frameCompletionCredits ?? throw new ArgumentNullException(nameof(frameCompletionCredits));
+            _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
             _queue = new NvencFixedSpscQueue<NvencFrameCompletionRecord>();
         }
 
@@ -126,7 +132,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!recoveryResult.Matches(record))
+            if (!recoveryResult.Matches(record, _sampleSlots, _buffer))
             {
                 PoisonAndThrow("Frame Completion abandon recovery result does not match the record.");
             }
@@ -151,7 +157,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!releaseResult.Matches(record))
+            if (!releaseResult.Matches(record, _sampleSlots))
             {
                 PoisonAndThrow("Frame Completion failed-before-submit release result does not match the record.");
             }

@@ -12,11 +12,13 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// <c>default</c> is invalid and matches nothing. The single factory
-    /// <see cref="Create"/> is the only way to issue a valid result, and it is
-    /// called only after the release processing has returned the exact sample
-    /// slot, so a Frame Completion publish cannot proceed without a completed
-    /// sample slot return. <see cref="Matches"/> re-checks the exact record
-    /// and sample slot binding without throwing or allocating.
+    /// <see cref="Create"/> verifies against the exact sample slot pool that
+    /// the record's Encode Sample Slot is no longer active, so a release
+    /// result can only be issued after the release processing has returned
+    /// the exact sample slot, and a Frame Completion publish cannot proceed
+    /// without a completed sample slot return. <see cref="Matches"/>
+    /// re-checks the exact record and sample slot binding without throwing or
+    /// allocating.
     /// </para>
     /// </remarks>
     internal readonly struct NvencFailedBeforeSubmitReleaseResult
@@ -43,7 +45,7 @@ namespace Zantetsu.Observability
 
         internal static NvencFailedBeforeSubmitReleaseResult Create(
             in NvencSubmitToOutputRecord record,
-            in NvencEncodeSampleSlotLease releasedSampleSlot)
+            NvencEncodeSampleSlotPool sampleSlots)
         {
             if (record.Kind != NvencSubmitToOutputRecordKind.FailedBeforeSubmit || !record.IsValid)
             {
@@ -51,19 +53,28 @@ namespace Zantetsu.Observability
                     "A release result requires a valid FailedBeforeSubmit record.", nameof(record));
             }
 
-            if (!SampleSlotEquals(releasedSampleSlot, record.SampleSlot))
+            if (sampleSlots == null)
             {
-                throw new ArgumentException(
-                    "The released sample slot must match the record's sample slot.", nameof(releasedSampleSlot));
+                throw new ArgumentNullException(nameof(sampleSlots));
             }
 
-            return new NvencFailedBeforeSubmitReleaseResult(record, releasedSampleSlot);
+            // The exact sample slot must already be returned in its pool; a
+            // still-active sample slot proves the release did not complete.
+            if (sampleSlots.IsActive(record.SampleSlot))
+            {
+                throw new InvalidOperationException(
+                    "The record's Encode Sample Slot is still active; it must be returned before the release result is issued.");
+            }
+
+            return new NvencFailedBeforeSubmitReleaseResult(record, record.SampleSlot);
         }
 
-        internal bool Matches(in NvencSubmitToOutputRecord record)
+        internal bool Matches(in NvencSubmitToOutputRecord record, NvencEncodeSampleSlotPool sampleSlots)
         {
             return RecordEquals(_record, record) &&
-                SampleSlotEquals(_sampleSlot, record.SampleSlot);
+                SampleSlotEquals(_sampleSlot, record.SampleSlot) &&
+                sampleSlots != null &&
+                !sampleSlots.IsActive(record.SampleSlot);
         }
 
         private static bool SampleSlotEquals(in NvencEncodeSampleSlotLease a, in NvencEncodeSampleSlotLease b)

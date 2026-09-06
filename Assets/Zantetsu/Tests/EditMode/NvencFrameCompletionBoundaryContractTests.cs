@@ -370,15 +370,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ReleaseResult_Create_RejectsMismatchedSampleSlot()
+        public void ReleaseResult_CreateBeforeReturn_Rejected()
         {
             Harness h = new Harness();
+            // The sample slot is still active (the release was not performed).
             NvencSubmitToOutputRecord record = h.ProduceFailedBeforeSubmitUnreleased(
                 1, NvencFailedBeforeSubmitReason.GpuConversionFailed, out _, out _, out _);
 
-            Assert.That(h.SampleSlots.TryRent(out NvencEncodeSampleSlotLease other), Is.True);
-            Assert.Throws<ArgumentException>(() =>
-                NvencFailedBeforeSubmitReleaseResult.Create(record, other));
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencFailedBeforeSubmitReleaseResult.Create(record, h.SampleSlots));
+        }
+
+        [Test]
+        public void ReleaseResult_CreateAfterReturn_Accepted()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceFailedBeforeSubmit(
+                1, NvencFailedBeforeSubmitReason.GpuConversionFailed, out _, out _, out NvencFailedBeforeSubmitReleaseResult result);
+
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(result.Matches(record, h.SampleSlots), Is.True);
         }
 
         [Test]
@@ -387,30 +398,51 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(
                 1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+            Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
 
             CaptureFrameWorkToken otherToken = new CaptureFrameWorkToken(
                 Guid.NewGuid(), record.WorkSlot.SlotIndex, record.WorkSlot.Generation, 1, 99);
             NvencOwnedAccessUnitLease otherUnit = new NvencOwnedAccessUnitLease(Guid.NewGuid(), 1, otherToken);
 
             Assert.Throws<ArgumentException>(() =>
-                NvencRunAbandonedRecoveryResult.Create(record, sampleLease, otherUnit));
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, otherUnit));
         }
 
         [Test]
-        public void RecoveryResult_AcceptsReturnedOwnedUnit()
+        public void RecoveryResult_CreateWhileUnitHeld_DefaultRejected()
         {
             Harness h = new Harness();
-            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(
-                1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out _);
 
-            NvencOwnedAccessUnitLease returnedUnit = new NvencOwnedAccessUnitLease(
-                Guid.NewGuid(), 1, record.WorkToken);
+            // The Owned Access Unit is held (SinkOwned); default cannot claim "never issued".
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, default));
+        }
+
+        [Test]
+        public void RecoveryResult_CreateWhileUnitHeld_PreReturnLeaseRejected()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out NvencOwnedAccessUnitLease ownedLease);
+
+            // The still-held lease must be rejected before it is returned.
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, ownedLease));
+        }
+
+        [Test]
+        public void RecoveryResult_AfterReturn_Accepted()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedWithHeldOwnedUnit(1, out NvencOwnedAccessUnitLease ownedLease);
+
+            Assert.That(h.Buffer.Return(ownedLease), Is.True);
 
             NvencRunAbandonedRecoveryResult result =
-                NvencRunAbandonedRecoveryResult.Create(record, sampleLease, returnedUnit);
+                NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, ownedLease);
 
             Assert.That(result.IsValid, Is.True);
-            Assert.That(result.Matches(record), Is.True);
+            Assert.That(result.Matches(record, h.SampleSlots, h.Buffer), Is.True);
             Assert.That(result.OwnedAccessUnit.IsValid, Is.True);
         }
 
@@ -818,6 +850,7 @@ namespace Zantetsu.Core.Tests
             internal NvencEncodeSampleSlotPool SampleSlots;
             internal NvencSubmitToOutputCreditPool SubmitToOutputCredits;
             internal NvencFrameCompletionCreditPool FrameCompletionCredits;
+            internal NvencOwnedAccessUnitBuffer Buffer;
             internal NvencFrameCompletionBoundary Boundary;
 
             internal Harness()
@@ -826,7 +859,8 @@ namespace Zantetsu.Core.Tests
                 SampleSlots = new NvencEncodeSampleSlotPool(State);
                 SubmitToOutputCredits = new NvencSubmitToOutputCreditPool(State);
                 FrameCompletionCredits = new NvencFrameCompletionCreditPool(State);
-                Boundary = new NvencFrameCompletionBoundary(State, WorkSlots, SubmitToOutputCredits, FrameCompletionCredits);
+                Buffer = new NvencOwnedAccessUnitBuffer(State);
+                Boundary = new NvencFrameCompletionBoundary(State, WorkSlots, SampleSlots, SubmitToOutputCredits, FrameCompletionCredits, Buffer);
             }
 
             internal NvencSubmitToOutputRecord ProduceSubmitted(
@@ -867,7 +901,7 @@ namespace Zantetsu.Core.Tests
                 // The abandon recovery returned the Sample Slot and issued no
                 // Owned Access Unit.
                 Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
-                recoveryResult = NvencRunAbandonedRecoveryResult.Create(record, sampleLease, default);
+                recoveryResult = NvencRunAbandonedRecoveryResult.Create(record, SampleSlots, Buffer, default);
 
                 return record;
             }
@@ -911,7 +945,7 @@ namespace Zantetsu.Core.Tests
 
                 // The failed-before-submit release returned the Sample Slot.
                 Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
-                releaseResult = NvencFailedBeforeSubmitReleaseResult.Create(record, sampleLease);
+                releaseResult = NvencFailedBeforeSubmitReleaseResult.Create(record, SampleSlots);
 
                 return record;
             }
@@ -934,6 +968,32 @@ namespace Zantetsu.Core.Tests
                     out frameCompletionCredit);
 
                 // The Sample Slot is intentionally still active (not released).
+                return record;
+            }
+
+            internal NvencSubmitToOutputRecord ProduceSubmittedWithHeldOwnedUnit(
+                long frameId,
+                out NvencOwnedAccessUnitLease ownedLease)
+            {
+                RentRecord(
+                    NvencSubmitToOutputRecordKind.Submitted,
+                    frameId,
+                    NvencFailedBeforeSubmitReason.None,
+                    out NvencSubmitToOutputRecord record,
+                    out _,
+                    out NvencEncodeSampleSlotLease sampleLease,
+                    out _,
+                    out _);
+
+                // Collector: copy the bitstream, return the Sample Slot, and
+                // transfer the recorded content to SinkOwned.
+                Assert.That(Buffer.TryBeginWrite(record.WorkToken, out NvencAccessUnitWriteLease writeLease), Is.True);
+                Assert.That(
+                    Buffer.TryCopyCompletedOutput(writeLease, sampleLease, new PatternSource(16, 0x40), out _),
+                    Is.EqualTo(NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Committed));
+                Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
+                Assert.That(Buffer.TryTransferToSink(writeLease, out ownedLease), Is.True);
+
                 return record;
             }
 
@@ -965,6 +1025,35 @@ namespace Zantetsu.Core.Tests
                     record = NvencSubmitToOutputRecord.CreateFailedBeforeSubmit(
                         token, workLease, sampleLease, submitToOutputCredit, frameCompletionCredit, reason);
                 }
+            }
+        }
+
+        private sealed class PatternSource : INvencOutputBitstreamSource
+        {
+            private readonly int _length;
+            private readonly byte _seed;
+
+            internal PatternSource(int length, byte seed)
+            {
+                _length = length;
+                _seed = seed;
+            }
+
+            public bool TryCopyCompletedOutput(
+                in CaptureFrameWorkToken workToken,
+                in NvencEncodeSampleSlotLease sampleSlot,
+                byte[] destination,
+                int destinationCapacity,
+                out int validLength)
+            {
+                int count = _length < destinationCapacity ? _length : destinationCapacity;
+                for (int i = 0; i < count; i++)
+                {
+                    destination[i] = (byte)(_seed + i);
+                }
+
+                validLength = _length;
+                return true;
             }
         }
     }

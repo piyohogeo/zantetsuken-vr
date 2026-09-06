@@ -13,11 +13,12 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// <c>default</c> is invalid and matches nothing. The single factory
-    /// <see cref="Create"/> is the only way to issue a valid result, and it is
-    /// called only after the abandon recovery has resolved the sample slot and
-    /// the owned Access Unit, so a Cancelled publish cannot proceed while the
-    /// NVENC output is still unresolved. <see cref="Matches"/> re-checks the
-    /// exact record and sample slot binding without throwing or allocating.
+    /// <see cref="Create"/> verifies against the exact sample slot pool and
+    /// the exact Owned Access Unit buffer that the sample slot is no longer
+    /// active and the Access Unit region is Free, so a recovery result can
+    /// only be issued after the abandoned output was safely recovered.
+    /// <see cref="Matches"/> re-checks the exact record, sample slot, and
+    /// Owned Access Unit binding without throwing or allocating.
     /// </para>
     /// </remarks>
     internal readonly struct NvencRunAbandonedRecoveryResult
@@ -53,7 +54,8 @@ namespace Zantetsu.Observability
 
         internal static NvencRunAbandonedRecoveryResult Create(
             in NvencSubmitToOutputRecord record,
-            in NvencEncodeSampleSlotLease resolvedSampleSlot,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencOwnedAccessUnitBuffer buffer,
             in NvencOwnedAccessUnitLease resolvedOwnedAccessUnit)
         {
             if (record.Kind != NvencSubmitToOutputRecordKind.Submitted || !record.IsValid)
@@ -62,26 +64,70 @@ namespace Zantetsu.Observability
                     "A recovery result requires a valid Submitted record.", nameof(record));
             }
 
-            if (!SampleSlotEquals(resolvedSampleSlot, record.SampleSlot))
+            if (sampleSlots == null)
             {
-                throw new ArgumentException(
-                    "The resolved sample slot must match the record's sample slot.", nameof(resolvedSampleSlot));
+                throw new ArgumentNullException(nameof(sampleSlots));
             }
 
-            if (resolvedOwnedAccessUnit.IsValid &&
-                !resolvedOwnedAccessUnit.WorkToken.IdenticalTo(record.WorkToken))
+            if (buffer == null)
             {
-                throw new ArgumentException(
-                    "The resolved Owned Access Unit must bind to the record's work token.", nameof(resolvedOwnedAccessUnit));
+                throw new ArgumentNullException(nameof(buffer));
             }
 
-            return new NvencRunAbandonedRecoveryResult(record, resolvedSampleSlot, resolvedOwnedAccessUnit);
+            if (sampleSlots.IsActive(record.SampleSlot))
+            {
+                throw new InvalidOperationException(
+                    "The record's Encode Sample Slot is still active; it must be resolved before the recovery result is issued.");
+            }
+
+            if (resolvedOwnedAccessUnit.IsValid)
+            {
+                if (!resolvedOwnedAccessUnit.WorkToken.IdenticalTo(record.WorkToken))
+                {
+                    throw new ArgumentException(
+                        "The resolved Owned Access Unit must bind to the record's work token.", nameof(resolvedOwnedAccessUnit));
+                }
+
+                // A valid resolved lease must already have been returned to this
+                // exact buffer; a still-held (exact) lease is rejected.
+                if (!buffer.IsStaleOwnedLease(resolvedOwnedAccessUnit))
+                {
+                    throw new InvalidOperationException(
+                        "The Owned Access Unit lease has not been returned to the exact buffer yet.");
+                }
+            }
+            else if (buffer.IsOwnedAccessUnitResidual(record.WorkToken))
+            {
+                // default claims "never issued", but an Owned Access Unit is
+                // currently held for this work token.
+                throw new InvalidOperationException(
+                    "An Owned Access Unit is still held for this work; it cannot be declared never-issued.");
+            }
+
+            return new NvencRunAbandonedRecoveryResult(record, record.SampleSlot, resolvedOwnedAccessUnit);
         }
 
-        internal bool Matches(in NvencSubmitToOutputRecord record)
+        internal bool Matches(
+            in NvencSubmitToOutputRecord record,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencOwnedAccessUnitBuffer buffer)
         {
-            return RecordEquals(_record, record) &&
-                SampleSlotEquals(_sampleSlot, record.SampleSlot);
+            if (!RecordEquals(_record, record) ||
+                !SampleSlotEquals(_sampleSlot, record.SampleSlot) ||
+                sampleSlots == null ||
+                buffer == null ||
+                sampleSlots.IsActive(record.SampleSlot))
+            {
+                return false;
+            }
+
+            if (_ownedAccessUnit.IsValid)
+            {
+                return _ownedAccessUnit.WorkToken.IdenticalTo(record.WorkToken) &&
+                    buffer.IsStaleOwnedLease(_ownedAccessUnit);
+            }
+
+            return !buffer.IsOwnedAccessUnitResidual(record.WorkToken);
         }
 
         private static bool SampleSlotEquals(in NvencEncodeSampleSlotLease a, in NvencEncodeSampleSlotLease b)

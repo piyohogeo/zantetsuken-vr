@@ -650,6 +650,56 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// True when the single region is currently held SinkOwned by the exact
+        /// given work token, meaning an Owned Access Unit for that token is
+        /// still residual and must not be treated as recovered. Fails closed to
+        /// true while the gate is held or the process is poisoned.
+        /// </summary>
+        internal bool IsOwnedAccessUnitResidual(in CaptureFrameWorkToken workToken)
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return true;
+            }
+
+            try
+            {
+                return _phase == (int)NvencAccessUnitPhase.SinkOwned &&
+                    workToken.IsValid &&
+                    _workToken.IdenticalTo(workToken);
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// True when the given owned lease was issued by this exact buffer and
+        /// is no longer exact, i.e. it has already been returned. A currently
+        /// held (exact) lease returns false. Fails closed to false while the
+        /// gate is held or the process is poisoned.
+        /// </summary>
+        internal bool IsStaleOwnedLease(in NvencOwnedAccessUnitLease ownedLease)
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                return ownedLease.IsValid &&
+                    ownedLease.OwnerToken == _ownerToken &&
+                    !IsExactSink(ownedLease);
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
         private bool IsExactCollector(in NvencAccessUnitWriteLease writeLease)
         {
             return writeLease.IsValid &&
