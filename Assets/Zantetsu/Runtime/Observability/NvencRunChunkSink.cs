@@ -38,6 +38,7 @@ namespace Zantetsu.Observability
         {
             ConsumeNotStarted,
             ConsumeDeferred,
+            ConsumeCommitted,
         }
 
         private readonly NvencCaptureProcessState _processState;
@@ -54,6 +55,7 @@ namespace Zantetsu.Observability
         private NvencRunChunkSinkPendingStage _pendingStage;
         private NvencRunChunkAppendOutcome _pendingOutcome;
         private int _pendingValidLength;
+        private NvencOwnedAccessUnitBuffer.NvencAccessUnitConsumeProof _pendingProof;
 
         internal NvencRunChunkSink(
             NvencCaptureProcessState processState,
@@ -93,6 +95,14 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            // The presented work token must be the exact token bound to the
+            // owned lease; a mismatch is an ownership break, never a
+            // controllable path, and must poison before any writer contact.
+            if (!ownedLease.WorkToken.IdenticalTo(workToken))
+            {
+                PoisonAndThrow("Run Chunk Sink work token and owned lease are not correlated.");
+            }
+
             return CompleteAppend(workToken, ownedLease, out result);
         }
 
@@ -127,7 +137,7 @@ namespace Zantetsu.Observability
                     {
                         PoisonAndThrow("Run Chunk Sink was poisoned before the append.");
                     }
-                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeNotStarted, default, 0);
+                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeNotStarted, default, 0, default);
                     return false;
 
                 default:
@@ -136,12 +146,13 @@ namespace Zantetsu.Observability
             }
 
             // Synchronous consume; a writer exception poisons and propagates the
-            // same instance.
+            // same instance, leaving the consume claim held.
             NvencOwnedAccessUnitBoundaryStatus consumeStatus;
             NvencRunChunkAppendOutcome outcome;
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitConsumeProof proof;
             try
             {
-                consumeStatus = _buffer.TryConsumeSinkContent(ownedLease, _writer, out outcome);
+                consumeStatus = _buffer.TryConsumeSinkContent(ownedLease, _writer, out outcome, out proof);
             }
             catch
             {
@@ -155,7 +166,8 @@ namespace Zantetsu.Observability
                     return CompleteConsumed(workToken, ownedLease, validLength, outcome, out result);
 
                 case NvencOwnedAccessUnitBoundaryStatus.Deferred:
-                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeDeferred, outcome, validLength);
+                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeDeferred,
+                        outcome, validLength, proof);
                     return false;
 
                 case NvencOwnedAccessUnitBoundaryStatus.Busy:
@@ -163,7 +175,7 @@ namespace Zantetsu.Observability
                     {
                         PoisonAndThrow("Run Chunk Sink was poisoned during the append.");
                     }
-                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeNotStarted, default, 0);
+                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeNotStarted, default, 0, default);
                     return false;
 
                 default:
@@ -205,15 +217,15 @@ namespace Zantetsu.Observability
 
             if (_processState.IsPoisoned)
             {
-                PoisonAndThrow("Run Chunk Sink was poisoned before the post-append release.");
+                PoisonAndThrow("Run Chunk Sink was poisoned before the post-append commit.");
             }
 
             // A busy gate here is ordinary contention, not unknown ownership:
             // park and complete later without re-running the writer.
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeDeferred,
-                    NvencRunChunkAppendOutcome.Appended, validLength);
+                Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeCommitted,
+                    NvencRunChunkAppendOutcome.Appended, validLength, default);
                 return false;
             }
 
@@ -223,18 +235,22 @@ namespace Zantetsu.Observability
                 {
                     PoisonAndThrow("Run Chunk Sink owned Access Unit return failed after a known-success append.");
                 }
+
+                // The return, the counter advances, and the terminal result are
+                // committed inside the same resource-resolution gate, so a
+                // concurrent poison cannot interleave a released buffer with a
+                // later success commit.
+                _appendedCount++;
+                _accumulatedByteLength += validLength;
+                _lastFrameId = workToken.CaptureFrameId;
+
+                result = NvencRunChunkSinkResult.Appended(workToken, validLength);
+                return true;
             }
             finally
             {
                 _processState.EndResourceResolution();
             }
-
-            _appendedCount++;
-            _accumulatedByteLength += validLength;
-            _lastFrameId = workToken.CaptureFrameId;
-
-            result = NvencRunChunkSinkResult.Appended(workToken, validLength);
-            return true;
         }
 
         private bool CompleteControlledFailure(
@@ -251,8 +267,8 @@ namespace Zantetsu.Observability
 
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeDeferred,
-                    NvencRunChunkAppendOutcome.RejectedBeforeWrite, 0);
+                Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeCommitted,
+                    NvencRunChunkAppendOutcome.RejectedBeforeWrite, 0, default);
                 return false;
             }
 
@@ -262,17 +278,19 @@ namespace Zantetsu.Observability
                 {
                     PoisonAndThrow("Run Chunk Sink owned Access Unit return failed during the controlled release.");
                 }
+
+                // The return and the terminal result are committed inside the
+                // same resource-resolution gate.
+                result = NvencRunChunkSinkResult.ControlledFailure(workToken);
+                return true;
             }
             finally
             {
                 _processState.EndResourceResolution();
             }
-
-            result = NvencRunChunkSinkResult.ControlledFailure(workToken);
-            return true;
         }
 
-        private bool CompleteDeferred(
+        private bool CompleteCommitted(
             in CaptureFrameWorkToken workToken,
             in NvencOwnedAccessUnitLease ownedLease,
             NvencRunChunkAppendOutcome outcome,
@@ -290,9 +308,47 @@ namespace Zantetsu.Observability
                     return CompleteControlledFailure(workToken, ownedLease, out result);
 
                 default:
-                    PoisonAndThrow("Run Chunk Sink append result is indeterminate.");
+                    PoisonAndThrow("Run Chunk Sink committed outcome is indeterminate.");
                     return false;
             }
+        }
+
+        private bool CompleteDeferred(
+            in CaptureFrameWorkToken workToken,
+            in NvencOwnedAccessUnitLease ownedLease,
+            NvencRunChunkAppendOutcome outcome,
+            int validLength,
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitConsumeProof proof,
+            out NvencRunChunkSinkResult result)
+        {
+            result = default;
+
+            // Complete the deferred consumer return behind the gate. The claim
+            // stays held until this completes, so the region cannot be returned
+            // or reused before the outcome is committed.
+            NvencOwnedAccessUnitBoundaryStatus completeStatus =
+                _buffer.TryCompleteConsumeContent(ownedLease, proof);
+
+            switch (completeStatus)
+            {
+                case NvencOwnedAccessUnitBoundaryStatus.Ready:
+                    break;
+
+                case NvencOwnedAccessUnitBoundaryStatus.Deferred:
+                    if (_processState.IsPoisoned)
+                    {
+                        PoisonAndThrow("Run Chunk Sink was poisoned before the deferred consume completion.");
+                    }
+                    Park(workToken, ownedLease, NvencRunChunkSinkPendingStage.ConsumeDeferred,
+                        outcome, validLength, proof);
+                    return false;
+
+                default:
+                    PoisonAndThrow("Run Chunk Sink deferred consume completion failed.");
+                    return false;
+            }
+
+            return CompleteCommitted(workToken, ownedLease, outcome, validLength, out result);
         }
 
         private bool CompletePending(
@@ -312,6 +368,7 @@ namespace Zantetsu.Observability
             NvencRunChunkSinkPendingStage stage = _pendingStage;
             NvencRunChunkAppendOutcome outcome = _pendingOutcome;
             int validLength = _pendingValidLength;
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitConsumeProof proof = _pendingProof;
 
             bool terminal;
             switch (stage)
@@ -320,8 +377,12 @@ namespace Zantetsu.Observability
                     terminal = CompleteAppend(parkedToken, parkedLease, out result);
                     break;
 
+                case NvencRunChunkSinkPendingStage.ConsumeDeferred:
+                    terminal = CompleteDeferred(parkedToken, parkedLease, outcome, validLength, proof, out result);
+                    break;
+
                 default:
-                    terminal = CompleteDeferred(parkedToken, parkedLease, outcome, validLength, out result);
+                    terminal = CompleteCommitted(parkedToken, parkedLease, outcome, validLength, out result);
                     break;
             }
 
@@ -338,7 +399,8 @@ namespace Zantetsu.Observability
             in NvencOwnedAccessUnitLease ownedLease,
             NvencRunChunkSinkPendingStage stage,
             NvencRunChunkAppendOutcome outcome,
-            int validLength)
+            int validLength,
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitConsumeProof proof)
         {
             _pending = true;
             _pendingWorkToken = workToken;
@@ -346,6 +408,7 @@ namespace Zantetsu.Observability
             _pendingStage = stage;
             _pendingOutcome = outcome;
             _pendingValidLength = validLength;
+            _pendingProof = proof;
         }
 
         private void ClearPending()
@@ -356,6 +419,7 @@ namespace Zantetsu.Observability
             _pendingStage = NvencRunChunkSinkPendingStage.ConsumeNotStarted;
             _pendingOutcome = default;
             _pendingValidLength = 0;
+            _pendingProof = default;
         }
 
         private bool MatchesPending(in CaptureFrameWorkToken workToken, in NvencOwnedAccessUnitLease ownedLease)

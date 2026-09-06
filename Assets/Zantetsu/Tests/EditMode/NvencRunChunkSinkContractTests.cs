@@ -81,6 +81,23 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Append_MismatchedWorkTokenAndLease_PoisonsBeforeWriterContact()
+        {
+            Harness h = new Harness();
+            // The lease is bound to frame 1; the presented work token names a
+            // different frame, so the pair is not correlated.
+            h.ProduceOwnedLease(1, 32, Seed, out NvencOwnedAccessUnitLease lease);
+            CaptureFrameWorkToken foreign = MakeToken(2);
+
+            Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(foreign, lease, out _));
+
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+        }
+
+        [Test]
         public void Append_StaleOrReturnedLease_PoisonsWithoutWriterContact()
         {
             Harness h = new Harness();
@@ -187,6 +204,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Writer.CallCount, Is.EqualTo(1));
             Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
             Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+
+            // The consume claim stays held after a writer exception, so the
+            // region with an unknown outcome can never be returned or reused.
+            Assert.That(h.Buffer.Return(lease), Is.False);
         }
 
         [Test]
@@ -195,6 +216,22 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 40, Seed, out NvencOwnedAccessUnitLease lease);
             h.Writer.Outcome = NvencRunChunkAppendOutcome.Indeterminate;
+
+            Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(token, lease, out _));
+
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+            Assert.That(h.Sink.AccumulatedByteLength, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Append_DefaultOutcome_NonePoisonsWithoutCounters()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 40, Seed, out NvencOwnedAccessUnitLease lease);
+            h.Writer.Outcome = default; // NvencRunChunkAppendOutcome.None
 
             Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(token, lease, out _));
 
@@ -251,6 +288,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Writer.CallCount, Is.EqualTo(1));
             Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
 
+            // The consume claim stays held while parked: Return and
+            // re-reservation are refused until the deferred completion runs.
+            Assert.That(h.Buffer.Return(lease), Is.False);
+            Assert.That(h.Buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
+
             release.Set();
             Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
@@ -265,7 +307,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Append_PendingLeaseExpired_PoisonsWithoutExternalContact()
+        public void Append_PendingResumeMismatch_PoisonsWithoutWriterContact()
         {
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
@@ -309,13 +351,77 @@ namespace Zantetsu.Core.Tests
             Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
-            // The owned lease is returned out-of-band while parked.
-            Assert.That(h.Buffer.Return(lease), Is.True);
+            // The consume claim stays held while parked, so the buffer cannot
+            // be returned or re-reserved out-of-band.
+            Assert.That(h.Buffer.Return(lease), Is.False);
 
-            // Resuming finds the lease stale and poisons without the writer.
+            // Resuming with a different work token breaks the pending record
+            // and poisons without contacting the writer again.
+            Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(MakeToken(999), lease, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Append_DeferredConsumeThenPoison_ResumePoisonsWithoutCountersOrReturn()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
+
+            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+
+            h.Writer.Entered = sourceEntered;
+            h.Writer.WaitFor = gateHeld;
+
+            Exception holderError = null;
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (sourceEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            // The writer runs once and the post-consume gate is held, so the
+            // sink parks with the consume claim still held.
+            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
+            Assert.That(first.IsNone, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // Poison after the writer returned but before the deferred
+            // completion commits.
+            Assert.That(h.State.TryPoison(), Is.True);
+
+            // Resuming finds the process poisoned and never commits the return,
+            // the counters, or a terminal result.
             Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(token, lease, out _));
             Assert.That(h.State.IsPoisoned, Is.True);
             Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+            Assert.That(h.Sink.AccumulatedByteLength, Is.EqualTo(0));
         }
 
         [Test]
@@ -358,6 +464,15 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Sink.AccumulatedByteLength, Is.EqualTo(120L * 100L));
             Assert.That(h.Sink.LastFrameId, Is.EqualTo(120));
             Assert.That(h.Writer.CallCount, Is.EqualTo(120));
+        }
+
+        [Test]
+        public void AppendOutcome_NoneIsZero_AppendedIsNotZero()
+        {
+            Assert.That((int)NvencRunChunkAppendOutcome.None, Is.EqualTo(0));
+            Assert.That((int)NvencRunChunkAppendOutcome.Appended, Is.EqualTo(1));
+            Assert.That((int)NvencRunChunkAppendOutcome.RejectedBeforeWrite, Is.EqualTo(2));
+            Assert.That((int)NvencRunChunkAppendOutcome.Indeterminate, Is.EqualTo(3));
         }
 
         [Test]
@@ -419,6 +534,7 @@ namespace Zantetsu.Core.Tests
                 ExtractMethodBody(sinkSource, "CompleteConsumed"),
                 ExtractMethodBody(sinkSource, "CompleteAppended"),
                 ExtractMethodBody(sinkSource, "CompleteControlledFailure"),
+                ExtractMethodBody(sinkSource, "CompleteCommitted"),
                 ExtractMethodBody(sinkSource, "CompleteDeferred"),
                 ExtractMethodBody(sinkSource, "CompletePending"),
                 ExtractMethodBody(sinkSource, "Park"),

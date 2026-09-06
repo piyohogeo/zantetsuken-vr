@@ -100,6 +100,54 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Generation-bound proof that one sink consume ran and its outcome is
+        /// pending finalization. Issued only by
+        /// <see cref="TryConsumeSinkContent"/> when it defers the consumer
+        /// return behind a transient gate, and bound to a per-generation secret
+        /// held only by this buffer, so an equivalent proof cannot be
+        /// reproduced from the lease or other constituent values.
+        /// </summary>
+        internal readonly struct NvencAccessUnitConsumeProof
+        {
+            private readonly Guid _ownerToken;
+            private readonly long _generation;
+            private readonly int _validLength;
+            private readonly NvencRunChunkAppendOutcome _outcome;
+            private readonly Guid _nonce;
+
+            internal NvencAccessUnitConsumeProof(
+                Guid ownerToken,
+                long generation,
+                int validLength,
+                NvencRunChunkAppendOutcome outcome,
+                Guid nonce)
+            {
+                _ownerToken = ownerToken;
+                _generation = generation;
+                _validLength = validLength;
+                _outcome = outcome;
+                _nonce = nonce;
+            }
+
+            internal bool Matches(
+                Guid ownerToken,
+                long generation,
+                Guid nonce,
+                out NvencRunChunkAppendOutcome outcome,
+                out int validLength)
+            {
+                outcome = _outcome;
+                validLength = _validLength;
+                return _ownerToken == ownerToken &&
+                    _generation == generation &&
+                    _nonce == nonce &&
+                    _validLength > 0 &&
+                    (_outcome == NvencRunChunkAppendOutcome.Appended ||
+                     _outcome == NvencRunChunkAppendOutcome.RejectedBeforeWrite);
+            }
+        }
+
         private readonly byte[] _storage;
         private readonly Guid _ownerToken;
         private readonly NvencCaptureProcessState _processState;
@@ -115,6 +163,7 @@ namespace Zantetsu.Observability
         private Guid _copyNonce;
         private bool _consumeInFlight;
         private bool _contentConsumed;
+        private Guid _consumeNonce;
 
         internal NvencOwnedAccessUnitBuffer(NvencCaptureProcessState processState)
         {
@@ -132,6 +181,7 @@ namespace Zantetsu.Observability
             _validLength = 0;
             _retired = false;
             _copyNonce = Guid.NewGuid();
+            _consumeNonce = Guid.NewGuid();
         }
 
         /// <summary>
@@ -181,6 +231,7 @@ namespace Zantetsu.Observability
                 _copyNonce = Guid.NewGuid();
                 _consumeInFlight = false;
                 _contentConsumed = false;
+                _consumeNonce = Guid.NewGuid();
                 writeLease = new NvencAccessUnitWriteLease(_ownerToken, _generation, workToken);
                 return true;
             }
@@ -363,18 +414,24 @@ namespace Zantetsu.Observability
         /// Sink-side synchronous consume. The exact owned lease is validated
         /// and the consume is claimed inside the gate; the injected appender is
         /// then called outside the gate with the fixed storage and recorded
-        /// length, which are valid only for the duration of the call. On return
-        /// the same lease, generation, and phase are re-verified inside a
-        /// second gate. A successful append marks the content consumed so the
-        /// same lease cannot re-run the consumer, and Return and re-reservation
-        /// stay blocked while the consumer is in flight.
+        /// length, which are valid only for the duration of the call. The
+        /// consumer return is committed inside a second gate that re-verifies
+        /// the same lease, generation, and phase: the in-flight claim is
+        /// lowered and a successful append marks the content consumed, so the
+        /// same lease cannot re-run the consumer. If the second gate is
+        /// contended the claim stays held and a generation-bound proof carries
+        /// the outcome for a later completion; a writer exception or an unknown
+        /// outcome also leaves the claim held so the region can never be
+        /// returned or reused while the result is unknown.
         /// </summary>
         internal NvencOwnedAccessUnitBoundaryStatus TryConsumeSinkContent(
             in NvencOwnedAccessUnitLease ownedLease,
             INvencRunChunkAppender writer,
-            out NvencRunChunkAppendOutcome outcome)
+            out NvencRunChunkAppendOutcome outcome,
+            out NvencAccessUnitConsumeProof proof)
         {
             outcome = default;
+            proof = default;
 
             if (writer == null)
             {
@@ -401,28 +458,62 @@ namespace Zantetsu.Observability
             }
 
             // External consumer call: the fixed storage and recorded length are
-            // valid only for the duration of this call.
+            // valid only for the duration of this call. A writer exception
+            // propagates with the consume claim still held; the sink poisons
+            // and the region is never returned or reused.
+            outcome = writer.Append(_storage, 0, _validLength);
+
+            // Commit the consumer return inside the same gate that re-verifies
+            // the exact lease. On gate contention the claim stays held and a
+            // generation-bound proof carries the outcome and length for a later
+            // completion.
+            if (!_processState.TryBeginResourceResolution())
+            {
+                proof = new NvencAccessUnitConsumeProof(
+                    _ownerToken, _generation, _validLength, outcome, _consumeNonce);
+                return NvencOwnedAccessUnitBoundaryStatus.Deferred;
+            }
+
             try
             {
-                outcome = writer.Append(_storage, 0, _validLength);
-            }
-            catch
-            {
+                if (!IsExactSink(ownedLease))
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                if (outcome != NvencRunChunkAppendOutcome.Appended &&
+                    outcome != NvencRunChunkAppendOutcome.RejectedBeforeWrite)
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
                 _consumeInFlight = false;
-                throw;
+                if (outcome == NvencRunChunkAppendOutcome.Appended)
+                {
+                    _contentConsumed = true;
+                }
+
+                return NvencOwnedAccessUnitBoundaryStatus.Ready;
             }
-
-            _consumeInFlight = false;
-
-            // A successful append marks the content consumed immediately so the
-            // same lease cannot re-run the consumer, even behind a deferred
-            // post-gate.
-            if (outcome == NvencRunChunkAppendOutcome.Appended)
+            finally
             {
-                _contentConsumed = true;
+                _processState.EndResourceResolution();
             }
+        }
 
-            // Re-verify the same lease, generation, and phase.
+        /// <summary>
+        /// Completes a deferred consume return behind the gate. The exact owned
+        /// lease, the held in-flight claim, and the generation-bound proof are
+        /// re-verified inside the gate before the claim is lowered and the
+        /// content is marked consumed, so an outcome that never came from a
+        /// writer call cannot be committed. Returns Ready on completion,
+        /// Deferred while the gate is held or poisoned, or Invalid on an
+        /// ownership break.
+        /// </summary>
+        internal NvencOwnedAccessUnitBoundaryStatus TryCompleteConsumeContent(
+            in NvencOwnedAccessUnitLease ownedLease,
+            in NvencAccessUnitConsumeProof proof)
+        {
             if (!_processState.TryBeginResourceResolution())
             {
                 return NvencOwnedAccessUnitBoundaryStatus.Deferred;
@@ -433,6 +524,22 @@ namespace Zantetsu.Observability
                 if (!IsExactSink(ownedLease))
                 {
                     return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                if (!proof.Matches(_ownerToken, _generation, _consumeNonce, out NvencRunChunkAppendOutcome outcome, out _))
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                if (!_consumeInFlight)
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                _consumeInFlight = false;
+                if (outcome == NvencRunChunkAppendOutcome.Appended)
+                {
+                    _contentConsumed = true;
                 }
 
                 return NvencOwnedAccessUnitBoundaryStatus.Ready;

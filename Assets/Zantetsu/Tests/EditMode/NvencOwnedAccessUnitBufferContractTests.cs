@@ -814,6 +814,7 @@ namespace Zantetsu.Core.Tests
                 ExtractMethodBody(bufferSource, "TryTransferToSink"),
                 ExtractMethodBody(bufferSource, "TryGetValidLength"),
                 ExtractMethodBody(bufferSource, "TryConsumeSinkContent"),
+                ExtractMethodBody(bufferSource, "TryCompleteConsumeContent"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
             };
