@@ -23,9 +23,12 @@ namespace Zantetsu.Observability
     /// A controllable source failure returns the sample slot exactly once,
     /// cancels the region back to Free, and issues a ControlledFailure result
     /// with no owned lease. A transient resource-resolution gate contention
-    /// after the source has returned safely parks the single pending record,
-    /// write lease, and copy result, to be completed on the next attempt
-    /// without re-contacting the source. An unknown state — a source exception,
+    /// (before the copy, on the copy commit, or after the source has returned)
+    /// parks the single pending record, write lease, and resume stage, to be
+    /// completed on the next attempt without re-contacting the source. The
+    /// parked record is matched exactly against the next incoming record, and
+    /// a mismatch poisons as an order/ownership break. An unknown state — a
+    /// source exception,
     /// a failed sample return or transfer after a known-success copy, or a
     /// partial cleanup — poisons the process and propagates an exception, never
     /// guessing a release of the sample slot or the region.
@@ -39,6 +42,14 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class NvencSubmittedOutputCollector
     {
+        private enum NvencCollectorPendingStage
+        {
+            CopyNotStarted,
+            CopyPending,
+            Success,
+            ControlledFailure,
+        }
+
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencCaptureWorkSlotPool _workSlots;
         private readonly NvencEncodeSampleSlotPool _sampleSlots;
@@ -50,7 +61,7 @@ namespace Zantetsu.Observability
         private bool _pending;
         private NvencSubmitToOutputRecord _pendingRecord;
         private NvencAccessUnitWriteLease _pendingWriteLease;
-        private bool _pendingCopied;
+        private NvencCollectorPendingStage _pendingStage;
 
         internal NvencSubmittedOutputCollector(
             NvencCaptureProcessState processState,
@@ -76,10 +87,11 @@ namespace Zantetsu.Observability
         {
             result = default;
 
-            // Complete a parked post-source step before accepting new work.
+            // Complete a parked step before accepting new work. The parked
+            // record is matched exactly against the argument first.
             if (_pending)
             {
-                return CompletePending(out result);
+                return CompletePending(record, out result);
             }
 
             // Poisoned: nothing progresses and the source is never contacted.
@@ -110,12 +122,25 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            // The buffer authority synchronously calls the source with its fixed
-            // storage. A source exception poisons and rethrows the same instance.
-            bool copied;
+            return CompleteCopy(record, writeLease, out result);
+        }
+
+        /// <summary>
+        /// Runs or resumes the source copy for an already-reserved region and
+        /// dispatches the buffer's outcome. A source exception poisons and
+        /// rethrows the same instance.
+        /// </summary>
+        private bool CompleteCopy(
+            in NvencSubmitToOutputRecord record,
+            in NvencAccessUnitWriteLease writeLease,
+            out NvencSubmittedOutputCollectResult result)
+        {
+            result = default;
+
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus status;
             try
             {
-                copied = _buffer.TryCopyCompletedOutput(writeLease, record.SampleSlot, _source);
+                status = _buffer.TryCopyCompletedOutput(writeLease, record.SampleSlot, _source);
             }
             catch
             {
@@ -123,17 +148,32 @@ namespace Zantetsu.Observability
                 throw;
             }
 
-            if (copied)
+            switch (status)
             {
-                return CompleteSuccess(record, writeLease, out result);
-            }
+                case NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Committed:
+                    return CompleteSuccess(record, writeLease, out result);
 
-            if (_processState.IsPoisoned)
-            {
-                PoisonAndThrow("Submit-to-Output collector was poisoned during the copy.");
-            }
+                case NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Pending:
+                    Park(record, writeLease, NvencCollectorPendingStage.CopyPending);
+                    return false;
 
-            return CompleteControlledFailure(record, writeLease, out result);
+                case NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Rejected:
+                    if (_processState.IsPoisoned)
+                    {
+                        PoisonAndThrow("Submit-to-Output collector was poisoned during the copy.");
+                    }
+
+                    return CompleteControlledFailure(record, writeLease, out result);
+
+                default:
+                    if (_processState.IsPoisoned)
+                    {
+                        PoisonAndThrow("Submit-to-Output collector was poisoned before the copy.");
+                    }
+
+                    Park(record, writeLease, NvencCollectorPendingStage.CopyNotStarted);
+                    return false;
+            }
         }
 
         private bool CompleteSuccess(
@@ -152,7 +192,7 @@ namespace Zantetsu.Observability
             // park and retry later without re-contacting the source.
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(record, writeLease, copied: true);
+                Park(record, writeLease, NvencCollectorPendingStage.Success);
                 return false;
             }
 
@@ -193,7 +233,7 @@ namespace Zantetsu.Observability
 
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(record, writeLease, copied: false);
+                Park(record, writeLease, NvencCollectorPendingStage.ControlledFailure);
                 return false;
             }
 
@@ -218,24 +258,56 @@ namespace Zantetsu.Observability
             return true;
         }
 
-        private bool CompletePending(out NvencSubmittedOutputCollectResult result)
+        private bool CompletePending(
+            in NvencSubmitToOutputRecord record,
+            out NvencSubmittedOutputCollectResult result)
         {
             result = default;
 
-            NvencSubmitToOutputRecord record = _pendingRecord;
-            NvencAccessUnitWriteLease writeLease = _pendingWriteLease;
-            bool copied = _pendingCopied;
+            // The parked record must match the incoming record exactly; any
+            // mismatch means the FIFO order or ownership is broken.
+            if (!MatchesPending(record))
+            {
+                PoisonAndThrow("Submit-to-Output collector pending record mismatch.");
+            }
 
-            bool terminal = copied
-                ? CompleteSuccess(record, writeLease, out result)
-                : CompleteControlledFailure(record, writeLease, out result);
+            NvencSubmitToOutputRecord parkedRecord = _pendingRecord;
+            NvencAccessUnitWriteLease writeLease = _pendingWriteLease;
+            NvencCollectorPendingStage stage = _pendingStage;
+
+            bool terminal;
+            switch (stage)
+            {
+                case NvencCollectorPendingStage.CopyNotStarted:
+                    terminal = CompleteCopy(parkedRecord, writeLease, out result);
+                    break;
+
+                case NvencCollectorPendingStage.CopyPending:
+                    if (!_buffer.TryCommitPendingCopy(writeLease))
+                    {
+                        if (_processState.IsPoisoned)
+                        {
+                            PoisonAndThrow("Submit-to-Output collector was poisoned before the pending copy commit.");
+                        }
+
+                        return false;
+                    }
+
+                    terminal = CompleteSuccess(parkedRecord, writeLease, out result);
+                    break;
+
+                case NvencCollectorPendingStage.Success:
+                    terminal = CompleteSuccess(parkedRecord, writeLease, out result);
+                    break;
+
+                default:
+                    terminal = CompleteControlledFailure(parkedRecord, writeLease, out result);
+                    break;
+            }
 
             if (terminal)
             {
-                _pending = false;
-                _pendingRecord = default;
-                _pendingWriteLease = default;
-                _pendingCopied = false;
+                ClearPending();
             }
 
             return terminal;
@@ -244,12 +316,53 @@ namespace Zantetsu.Observability
         private void Park(
             in NvencSubmitToOutputRecord record,
             in NvencAccessUnitWriteLease writeLease,
-            bool copied)
+            NvencCollectorPendingStage stage)
         {
             _pending = true;
             _pendingRecord = record;
             _pendingWriteLease = writeLease;
-            _pendingCopied = copied;
+            _pendingStage = stage;
+        }
+
+        private void ClearPending()
+        {
+            _pending = false;
+            _pendingRecord = default;
+            _pendingWriteLease = default;
+            _pendingStage = NvencCollectorPendingStage.CopyNotStarted;
+        }
+
+        private bool MatchesPending(in NvencSubmitToOutputRecord record)
+        {
+            NvencSubmitToOutputRecord parked = _pendingRecord;
+
+            return parked.WorkToken.IdenticalTo(record.WorkToken) &&
+                WorkSlotEquals(parked.WorkSlot, record.WorkSlot) &&
+                SampleSlotEquals(parked.SampleSlot, record.SampleSlot) &&
+                SubmitCreditEquals(parked.SubmitToOutputCredit, record.SubmitToOutputCredit) &&
+                FrameCreditEquals(parked.FrameCompletionCredit, record.FrameCompletionCredit) &&
+                parked.Kind == record.Kind &&
+                parked.Reason == record.Reason;
+        }
+
+        private static bool WorkSlotEquals(in NvencCaptureWorkSlotLease a, in NvencCaptureWorkSlotLease b)
+        {
+            return a.OwnerToken == b.OwnerToken && a.SlotIndex == b.SlotIndex && a.Generation == b.Generation;
+        }
+
+        private static bool SampleSlotEquals(in NvencEncodeSampleSlotLease a, in NvencEncodeSampleSlotLease b)
+        {
+            return a.OwnerToken == b.OwnerToken && a.SlotIndex == b.SlotIndex && a.Generation == b.Generation;
+        }
+
+        private static bool SubmitCreditEquals(in NvencSubmitToOutputCreditLease a, in NvencSubmitToOutputCreditLease b)
+        {
+            return a.OwnerToken == b.OwnerToken && a.SlotIndex == b.SlotIndex && a.Generation == b.Generation;
+        }
+
+        private static bool FrameCreditEquals(in NvencFrameCompletionCreditLease a, in NvencFrameCompletionCreditLease b)
+        {
+            return a.OwnerToken == b.OwnerToken && a.SlotIndex == b.SlotIndex && a.Generation == b.Generation;
         }
 
         private void PoisonAndThrow(string message)

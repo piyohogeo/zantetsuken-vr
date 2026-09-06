@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
+using NvencAccessUnitCopyStatus = Zantetsu.Observability.NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus;
 
 namespace Zantetsu.Core.Tests
 {
@@ -15,6 +17,8 @@ namespace Zantetsu.Core.Tests
     /// </summary>
     public class NvencOwnedAccessUnitBufferContractTests
     {
+        private const int WatchdogTimeoutMs = 5000;
+
         [Test]
         public void Capacity_EqualsProfileMaxAccessUnitLength()
         {
@@ -51,13 +55,13 @@ namespace Zantetsu.Core.Tests
             Assert.That(validLengthField, Is.Not.Null);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write1), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write1, out NvencOwnedAccessUnitLease owned1), Is.True);
             Assert.That(validLengthField.GetValue(buffer), Is.EqualTo(1));
             Assert.That(buffer.Return(owned1), Is.True);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(2), out NvencAccessUnitWriteLease write2), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write2, default, new FixedLengthSource(buffer.Capacity)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write2, default, new FixedLengthSource(buffer.Capacity)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write2, out NvencOwnedAccessUnitLease owned2), Is.True);
             Assert.That(validLengthField.GetValue(buffer), Is.EqualTo(buffer.Capacity));
         }
@@ -69,9 +73,9 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(0)), Is.False);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(-1)), Is.False);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(buffer.Capacity + 1)), Is.False);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(0)), Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(-1)), Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(buffer.Capacity + 1)), Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
 
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
 
@@ -95,7 +99,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
             Assert.That(write.WorkToken.IdenticalTo(token), Is.True);
 
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(owned.WorkToken.IdenticalTo(token), Is.True);
         }
@@ -132,7 +136,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
 
             // The genuine lease still copies and transfers.
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out _), Is.True);
         }
 
@@ -157,7 +161,7 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
             Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
@@ -174,7 +178,7 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
             Assert.That(buffer.Return(owned), Is.True);
@@ -206,7 +210,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease first), Is.True);
             long firstGeneration = first.Generation;
-            Assert.That(buffer.TryCopyCompletedOutput(first, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(first, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(first, out NvencOwnedAccessUnitLease owned), Is.True);
 
             Assert.That(buffer.Return(owned), Is.True);
@@ -223,7 +227,7 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write1), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write1, out NvencOwnedAccessUnitLease owned1), Is.True);
 
             Assert.That(state.TryBeginDrain(), Is.True);
@@ -269,7 +273,7 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(state.TryPoison(), Is.True);
 
@@ -286,7 +290,7 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
             // Hold the resource-resolution gate and poison inside it: the poison
@@ -298,6 +302,180 @@ namespace Zantetsu.Core.Tests
             Assert.That(buffer.Return(owned), Is.False);
             Assert.That(buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+        }
+
+        [Test]
+        public void CopyInProgress_SecondCallSameLease_RejectedBeforeSecondSourceCall()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            CaptureFrameWorkToken token = MakeToken(1);
+            Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+
+            BlockingSource source = new BlockingSource
+            {
+                Entered = new ManualResetEventSlim(false),
+                WaitFor = new ManualResetEventSlim(false),
+            };
+
+            Exception copierError = null;
+            NvencAccessUnitCopyStatus firstStatus = default;
+            Thread copier = new Thread(() =>
+            {
+                try
+                {
+                    firstStatus = buffer.TryCopyCompletedOutput(write, default, source);
+                }
+                catch (Exception ex)
+                {
+                    copierError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            copier.Start();
+
+            Assert.That(source.Entered.Wait(WatchdogTimeoutMs), Is.True, "source did not enter");
+
+            // A concurrent second copy on the same lease is rejected before any
+            // side effect: copy-in-progress was claimed exactly once.
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, source),
+                Is.EqualTo(NvencAccessUnitCopyStatus.NotStarted));
+            Assert.That(source.CallCount, Is.EqualTo(1));
+
+            source.WaitFor.Set();
+            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+            Assert.That(copierError, Is.Null);
+            Assert.That(firstStatus, Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.True);
+        }
+
+        [Test]
+        public void PoisonDuringSourceCall_PreventsContentReadyAndTransfer()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            CaptureFrameWorkToken token = MakeToken(1);
+            Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+
+            BlockingSource source = new BlockingSource
+            {
+                Entered = new ManualResetEventSlim(false),
+                WaitFor = new ManualResetEventSlim(false),
+            };
+
+            Exception copierError = null;
+            NvencAccessUnitCopyStatus status = default;
+            Thread copier = new Thread(() =>
+            {
+                try
+                {
+                    status = buffer.TryCopyCompletedOutput(write, default, source);
+                }
+                catch (Exception ex)
+                {
+                    copierError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            copier.Start();
+
+            Assert.That(source.Entered.Wait(WatchdogTimeoutMs), Is.True, "source did not enter");
+
+            // Poison wins while the copy is in flight.
+            Assert.That(state.TryPoison(), Is.True);
+
+            source.WaitFor.Set();
+            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+            Assert.That(copierError, Is.Null);
+
+            // The copy must not commit: no content-ready and no transfer.
+            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.NotStarted));
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
+            Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
+        }
+
+        [Test]
+        public void CommitGateContention_ParksLengthAndCommitsWithoutSourceRecall()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            CaptureFrameWorkToken token = MakeToken(1);
+            Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+
+            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+
+            BlockingSource source = new BlockingSource
+            {
+                Entered = sourceEntered,
+                WaitFor = gateHeld,
+            };
+
+            Exception holderError = null;
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (sourceEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (state.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            state.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            Exception copierError = null;
+            NvencAccessUnitCopyStatus status = default;
+            Thread copier = new Thread(() =>
+            {
+                try
+                {
+                    status = buffer.TryCopyCompletedOutput(write, default, source);
+                }
+                catch (Exception ex)
+                {
+                    copierError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            copier.Start();
+
+            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+            Assert.That(copierError, Is.Null);
+            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
+            Assert.That(source.CallCount, Is.EqualTo(1));
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // The parked length is committed without re-contacting the source.
+            Assert.That(buffer.TryCommitPendingCopy(write), Is.True);
+            Assert.That(source.CallCount, Is.EqualTo(1));
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(owned.WorkToken.IdenticalTo(token), Is.True);
         }
 
         [Test]
@@ -313,7 +491,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
             Assert.That(write.Generation, Is.EqualTo(long.MaxValue));
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(buffer.Return(owned), Is.True);
 
@@ -374,6 +552,7 @@ namespace Zantetsu.Core.Tests
             {
                 ExtractMethodBody(bufferSource, "TryBeginWrite"),
                 ExtractMethodBody(bufferSource, "TryCopyCompletedOutput"),
+                ExtractMethodBody(bufferSource, "TryCommitPendingCopy"),
                 ExtractMethodBody(bufferSource, "TryTransferToSink"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
@@ -422,6 +601,37 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("TryCopyCollectorContent"));
             Assert.That(source, Does.Not.Contain("TryConsumeSinkContent"));
             Assert.That(source, Does.Not.Contain("BlockCopy"));
+        }
+
+        private sealed class BlockingSource : INvencOutputBitstreamSource
+        {
+            internal int CallCount;
+            internal int Length = 1024;
+            internal bool Result = true;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim WaitFor;
+
+            public bool TryCopyCompletedOutput(
+                in CaptureFrameWorkToken workToken,
+                in NvencEncodeSampleSlotLease sampleSlot,
+                byte[] destination,
+                int destinationCapacity,
+                out int validLength)
+            {
+                CallCount++;
+                if (Entered != null)
+                {
+                    Entered.Set();
+                }
+
+                if (WaitFor != null)
+                {
+                    WaitFor.Wait(WatchdogTimeoutMs);
+                }
+
+                validLength = Length;
+                return Result;
+            }
         }
 
         private sealed class FixedLengthSource : INvencOutputBitstreamSource

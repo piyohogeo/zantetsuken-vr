@@ -357,6 +357,62 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PendingMismatchRecord_PoisonsWithoutAdvancingSourceSampleOrBuffer()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord a = h.CreateSubmittedRecord(1);
+            NvencSubmitToOutputRecord b = h.CreateSubmittedRecord(2);
+
+            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            Exception holderError = null;
+
+            h.Source.SourceEntered = sourceEntered;
+            h.Source.WaitForGateHeld = gateHeld;
+
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (sourceEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            // Park A behind the post-source gate without a terminal result.
+            Assert.That(h.Collector.TryCollect(a, out _), Is.False);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // B is a different record and must never receive A's parked result:
+            // the mismatch poisons without advancing source, sample, or buffer.
+            Assert.Throws<InvalidOperationException>(() => h.Collector.TryCollect(b, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            Assert.That(h.SamplePool.IsActive(a.SampleSlot), Is.True);
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
+        }
+
+        [Test]
         public void Draining_ProcessesAcceptedSubmittedRecord()
         {
             Harness h = new Harness();
@@ -418,10 +474,13 @@ namespace Zantetsu.Core.Tests
             string[] collectorBodies =
             {
                 ExtractMethodBody(collectorSource, "TryCollect"),
+                ExtractMethodBody(collectorSource, "CompleteCopy"),
                 ExtractMethodBody(collectorSource, "CompleteSuccess"),
                 ExtractMethodBody(collectorSource, "CompleteControlledFailure"),
                 ExtractMethodBody(collectorSource, "CompletePending"),
                 ExtractMethodBody(collectorSource, "Park"),
+                ExtractMethodBody(collectorSource, "ClearPending"),
+                ExtractMethodBody(collectorSource, "MatchesPending"),
             };
 
             string[] allocationWords =

@@ -25,9 +25,14 @@ namespace Zantetsu.Observability
     /// <para>
     /// Every transition is serialized against the Poison transition through
     /// the injected <see cref="NvencCaptureProcessState"/> short
-    /// resource-resolution gate. Acquire, copy, transfer, cancel, and return
-    /// all fail without changing any field while the process is poisoned; an
-    /// occupied region is then held, never guessed back to Free.
+    /// resource-resolution gate. Acquire, transfer, cancel, and return all
+    /// fail without changing any field while the process is poisoned; an
+    /// occupied region is then held, never guessed back to Free. The copy
+    /// claims copy-in-progress inside the gate, runs the source outside the
+    /// gate, and commits the valid length inside a second gate; a transient
+    /// commit-gate contention parks the length and a poisoned commit is
+    /// refused, so the source is never contacted twice for one lease and
+    /// content never becomes ready after poison.
     /// </para>
     /// <para>
     /// A controlled failure releases the region exactly once: the collector
@@ -40,6 +45,27 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class NvencOwnedAccessUnitBuffer
     {
+        /// <summary>
+        /// Outcome of one collector-side copy attempt.
+        /// </summary>
+        internal enum NvencAccessUnitCopyStatus
+        {
+            /// <summary>The valid length is recorded and the content is ready.</summary>
+            Committed,
+
+            /// <summary>The copy succeeded but the commit was deferred behind a
+            /// transient gate; commit later without re-calling the source.</summary>
+            Pending,
+
+            /// <summary>The source reported no valid content; the controlled
+            /// failure path releases the region and sample slot.</summary>
+            Rejected,
+
+            /// <summary>The source was not contacted: poison, gate contention,
+            /// lease mismatch, already-ready, or copy-in-progress.</summary>
+            NotStarted,
+        }
+
         private readonly byte[] _storage;
         private readonly Guid _ownerToken;
         private readonly NvencCaptureProcessState _processState;
@@ -50,6 +76,9 @@ namespace Zantetsu.Observability
         private int _validLength;
         private bool _contentReady;
         private bool _retired;
+        private bool _copyInProgress;
+        private bool _copyPending;
+        private int _pendingValidLength;
 
         internal NvencOwnedAccessUnitBuffer(NvencCaptureProcessState processState)
         {
@@ -110,6 +139,9 @@ namespace Zantetsu.Observability
                 _workToken = workToken;
                 _validLength = 0;
                 _contentReady = false;
+                _copyInProgress = false;
+                _copyPending = false;
+                _pendingValidLength = 0;
                 writeLease = new NvencAccessUnitWriteLease(_ownerToken, _generation, workToken);
                 return true;
             }
@@ -120,15 +152,16 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Collector-side copy: validates the exact write lease and work token,
-        /// then synchronously calls the injected source with the fixed storage.
-        /// A successful copy records the valid length exactly once and marks the
-        /// content ready; a second copy in the same generation is rejected
-        /// before any side effect. The completion wait, lock, copy, unlock, and
-        /// unmap run outside any process-state gate, so a transient gate
-        /// contention never drops a completed copy.
+        /// Collector-side copy. A short resource-resolution gate validates the
+        /// exact write lease and claims copy-in-progress exactly once, so a
+        /// concurrent second copy on the same lease is rejected before any side
+        /// effect. The source call runs outside the gate; on return a second
+        /// short gate commits the valid length. Poison ordered before the
+        /// commit blocks content-ready and transfer; ordinary gate contention
+        /// parks the valid length in <c>_copyPending</c> for a later
+        /// <see cref="TryCommitPendingCopy"/> without re-calling the source.
         /// </summary>
-        internal bool TryCopyCompletedOutput(
+        internal NvencAccessUnitCopyStatus TryCopyCompletedOutput(
             in NvencAccessUnitWriteLease writeLease,
             in NvencEncodeSampleSlotLease sampleSlot,
             INvencOutputBitstreamSource source)
@@ -138,41 +171,107 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(source));
             }
 
-            if (_processState.IsPoisoned)
+            if (!_processState.TryBeginResourceResolution())
             {
-                return false;
+                return NvencAccessUnitCopyStatus.NotStarted;
             }
 
-            if (!IsExactCollector(writeLease))
+            try
             {
-                return false;
-            }
+                if (!IsExactCollector(writeLease))
+                {
+                    return NvencAccessUnitCopyStatus.NotStarted;
+                }
 
-            if (_contentReady)
+                if (_contentReady || _copyInProgress || _copyPending)
+                {
+                    return NvencAccessUnitCopyStatus.NotStarted;
+                }
+
+                _copyInProgress = true;
+            }
+            finally
             {
-                return false;
+                _processState.EndResourceResolution();
             }
 
             // External call: completion wait, lock, copy, unlock, unmap.
             if (!source.TryCopyCompletedOutput(_workToken, sampleSlot, _storage, _storage.Length, out int validLength))
             {
-                return false;
+                _copyInProgress = false;
+                return NvencAccessUnitCopyStatus.Rejected;
             }
 
             if (validLength <= 0 || validLength > _storage.Length)
             {
-                return false;
+                _copyInProgress = false;
+                return NvencAccessUnitCopyStatus.Rejected;
             }
 
-            // Poisoned during the copy: do not record, hold the region.
-            if (_processState.IsPoisoned)
+            // Commit the valid length behind a short gate.
+            if (!_processState.TryBeginResourceResolution())
+            {
+                if (_processState.IsPoisoned)
+                {
+                    _copyInProgress = false;
+                    return NvencAccessUnitCopyStatus.NotStarted;
+                }
+
+                _copyPending = true;
+                _pendingValidLength = validLength;
+                _copyInProgress = false;
+                return NvencAccessUnitCopyStatus.Pending;
+            }
+
+            try
+            {
+                _validLength = validLength;
+                _contentReady = true;
+                _copyInProgress = false;
+                return NvencAccessUnitCopyStatus.Committed;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Commits a copy parked by <see cref="TryCopyCompletedOutput"/> when
+        /// the commit gate was contended. Returns <c>true</c> once the valid
+        /// length is recorded and the content is ready, without re-calling the
+        /// source; returns <c>false</c> while the gate is held or the process
+        /// is poisoned.
+        /// </summary>
+        internal bool TryCommitPendingCopy(in NvencAccessUnitWriteLease writeLease)
+        {
+            if (!_processState.TryBeginResourceResolution())
             {
                 return false;
             }
 
-            _validLength = validLength;
-            _contentReady = true;
-            return true;
+            try
+            {
+                if (!IsExactCollector(writeLease))
+                {
+                    return false;
+                }
+
+                if (_copyPending)
+                {
+                    _validLength = _pendingValidLength;
+                    _contentReady = true;
+                    _copyPending = false;
+                    _pendingValidLength = 0;
+                    return true;
+                }
+
+                return _contentReady;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
         }
 
         /// <summary>
@@ -305,6 +404,9 @@ namespace Zantetsu.Observability
             _workToken = default;
             _validLength = 0;
             _contentReady = false;
+            _copyInProgress = false;
+            _copyPending = false;
+            _pendingValidLength = 0;
         }
     }
 }
