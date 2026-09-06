@@ -37,6 +37,8 @@ namespace Zantetsu.Observability
 
         public const long MaxAccessUnitByteLength = 16L * 1024L * 1024L;
 
+        public const long MaxChunkByteLength = 256L * 1024L * 1024L;
+
         private static readonly CaptureImageRect ImageRectValue = new CaptureImageRect(0, 0, Width, Height);
 
         private readonly int _profileId;

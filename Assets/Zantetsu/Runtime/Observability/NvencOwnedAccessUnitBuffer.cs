@@ -113,6 +113,8 @@ namespace Zantetsu.Observability
         private bool _copyInProgress;
         private bool _copyInFlight;
         private Guid _copyNonce;
+        private bool _consumeInFlight;
+        private bool _contentConsumed;
 
         internal NvencOwnedAccessUnitBuffer(NvencCaptureProcessState processState)
         {
@@ -177,6 +179,8 @@ namespace Zantetsu.Observability
                 _copyInProgress = false;
                 _copyInFlight = false;
                 _copyNonce = Guid.NewGuid();
+                _consumeInFlight = false;
+                _contentConsumed = false;
                 writeLease = new NvencAccessUnitWriteLease(_ownerToken, _generation, workToken);
                 return true;
             }
@@ -322,6 +326,124 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Sink-side length query for the checked chunk capacity decision. The
+        /// exact owned lease and content-ready state are verified inside the
+        /// gate; the backing array is never exposed. Returns Ready with the
+        /// valid length, Busy on gate contention, or Invalid on an ownership
+        /// break.
+        /// </summary>
+        internal NvencOwnedAccessUnitBoundaryStatus TryGetValidLength(
+            in NvencOwnedAccessUnitLease ownedLease,
+            out int validLength)
+        {
+            validLength = 0;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return NvencOwnedAccessUnitBoundaryStatus.Busy;
+            }
+
+            try
+            {
+                if (!IsExactSink(ownedLease) || !_contentReady || _contentConsumed || _consumeInFlight)
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                validLength = _validLength;
+                return NvencOwnedAccessUnitBoundaryStatus.Ready;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Sink-side synchronous consume. The exact owned lease is validated
+        /// and the consume is claimed inside the gate; the injected appender is
+        /// then called outside the gate with the fixed storage and recorded
+        /// length, which are valid only for the duration of the call. On return
+        /// the same lease, generation, and phase are re-verified inside a
+        /// second gate. A successful append marks the content consumed so the
+        /// same lease cannot re-run the consumer, and Return and re-reservation
+        /// stay blocked while the consumer is in flight.
+        /// </summary>
+        internal NvencOwnedAccessUnitBoundaryStatus TryConsumeSinkContent(
+            in NvencOwnedAccessUnitLease ownedLease,
+            INvencRunChunkAppender writer,
+            out NvencRunChunkAppendOutcome outcome)
+        {
+            outcome = default;
+
+            if (writer == null)
+            {
+                throw new ArgumentNullException(nameof(writer));
+            }
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return NvencOwnedAccessUnitBoundaryStatus.Busy;
+            }
+
+            try
+            {
+                if (!IsExactSink(ownedLease) || !_contentReady || _contentConsumed || _consumeInFlight)
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                _consumeInFlight = true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+
+            // External consumer call: the fixed storage and recorded length are
+            // valid only for the duration of this call.
+            try
+            {
+                outcome = writer.Append(_storage, 0, _validLength);
+            }
+            catch
+            {
+                _consumeInFlight = false;
+                throw;
+            }
+
+            _consumeInFlight = false;
+
+            // A successful append marks the content consumed immediately so the
+            // same lease cannot re-run the consumer, even behind a deferred
+            // post-gate.
+            if (outcome == NvencRunChunkAppendOutcome.Appended)
+            {
+                _contentConsumed = true;
+            }
+
+            // Re-verify the same lease, generation, and phase.
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return NvencOwnedAccessUnitBoundaryStatus.Deferred;
+            }
+
+            try
+            {
+                if (!IsExactSink(ownedLease))
+                {
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
+                }
+
+                return NvencOwnedAccessUnitBoundaryStatus.Ready;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
         /// Moves the region from CollectorOwned to SinkOwned using only the
         /// recorded valid length. Fails while no content has been copied for
         /// the current generation; the recorded length is retained by the
@@ -395,7 +517,8 @@ namespace Zantetsu.Observability
         /// Sink-side success or controlled failure: releases an exact SinkOwned
         /// owned lease back to Free exactly once and advances the generation.
         /// Foreign, stale, double, or wrong-phase leases are rejected without
-        /// changing any field.
+        /// changing any field, and the release is refused while a synchronous
+        /// consume is still in flight.
         /// </summary>
         internal bool Return(in NvencOwnedAccessUnitLease ownedLease)
         {
@@ -406,7 +529,7 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (!IsExactSink(ownedLease))
+                if (!IsExactSink(ownedLease) || _consumeInFlight)
                 {
                     return false;
                 }
@@ -455,6 +578,8 @@ namespace Zantetsu.Observability
             _contentReady = false;
             _copyInProgress = false;
             _copyInFlight = false;
+            _consumeInFlight = false;
+            _contentConsumed = false;
         }
     }
 }

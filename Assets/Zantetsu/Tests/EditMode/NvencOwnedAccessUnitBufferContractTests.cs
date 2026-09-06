@@ -812,6 +812,8 @@ namespace Zantetsu.Core.Tests
                 ExtractMethodBody(bufferSource, "TryCopyCompletedOutput"),
                 ExtractMethodBody(bufferSource, "TryCommitCopiedContent"),
                 ExtractMethodBody(bufferSource, "TryTransferToSink"),
+                ExtractMethodBody(bufferSource, "TryGetValidLength"),
+                ExtractMethodBody(bufferSource, "TryConsumeSinkContent"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
             };
@@ -853,11 +855,11 @@ namespace Zantetsu.Core.Tests
             string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOwnedAccessUnitBuffer.cs"));
 
             // The buffer never hands out the raw backing array and never copies
-            // directly; content flows only through the injected source call.
+            // directly; content flows only through the injected source call and
+            // the synchronous consume callback.
             Assert.That(source, Does.Not.Contain("TryGetCollectorView"));
             Assert.That(source, Does.Not.Contain("TryGetSinkView"));
             Assert.That(source, Does.Not.Contain("TryCopyCollectorContent"));
-            Assert.That(source, Does.Not.Contain("TryConsumeSinkContent"));
             Assert.That(source, Does.Not.Contain("BlockCopy"));
         }
 
