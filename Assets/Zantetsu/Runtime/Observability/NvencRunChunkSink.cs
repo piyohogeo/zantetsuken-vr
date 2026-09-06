@@ -48,6 +48,7 @@ namespace Zantetsu.Observability
         private long _appendedCount;
         private long _accumulatedByteLength;
         private long _lastFrameId;
+        private readonly long[] _frameIds;
 
         private bool _pending;
         private CaptureFrameWorkToken _pendingWorkToken;
@@ -65,6 +66,10 @@ namespace Zantetsu.Observability
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
             _writer = writer ?? throw new ArgumentNullException(nameof(writer));
+
+            // Fixed-length frame-id ledger allocated once before the run; it
+            // stores appended Capture Frame Ids in append order and never grows.
+            _frameIds = new long[NvencBringUpProfileV1.CadenceTickCount];
         }
 
         internal long AppendedCount => _appendedCount;
@@ -112,6 +117,13 @@ namespace Zantetsu.Observability
             out NvencRunChunkSinkResult result)
         {
             result = default;
+
+            // The fixed frame-id ledger is full: a further append is a known
+            // pre-write rejection, never a writer contact or a 121st entry.
+            if (_appendedCount >= NvencBringUpProfileV1.CadenceTickCount)
+            {
+                return CompleteControlledFailure(workToken, ownedLease, out result);
+            }
 
             // The frame id must be positive and strictly increasing across
             // successful appends; a violation is a known pre-write rejection.
@@ -231,15 +243,16 @@ namespace Zantetsu.Observability
 
             try
             {
+                // Fixed commit order inside the gate: (1) the writer already
+                // returned Appended, (2) the owned region is returned, (3) the
+                // frame id is stored into the pre-allocated ledger, (4) the
+                // counters advance, and (5) the Appended result is issued.
                 if (!_buffer.Return(ownedLease))
                 {
                     PoisonAndThrow("Run Chunk Sink owned Access Unit return failed after a known-success append.");
                 }
 
-                // The return, the counter advances, and the terminal result are
-                // committed inside the same resource-resolution gate, so a
-                // concurrent poison cannot interleave a released buffer with a
-                // later success commit.
+                _frameIds[(int)_appendedCount] = workToken.CaptureFrameId;
                 _appendedCount++;
                 _accumulatedByteLength += validLength;
                 _lastFrameId = workToken.CaptureFrameId;
@@ -431,6 +444,105 @@ namespace Zantetsu.Observability
                 lease.OwnerToken == ownedLease.OwnerToken &&
                 lease.Generation == ownedLease.Generation &&
                 lease.WorkToken.IdenticalTo(ownedLease.WorkToken);
+        }
+
+        /// <summary>
+        /// Captures a consistent finalization snapshot of the appended frame
+        /// ledger without any side effect. Succeeds only while the process is
+        /// not poisoned and not run-abandoned, the sink has no parked append,
+        /// the owned region is Free, the appended count is positive, bounded,
+        /// and equal to the caller's expectation, the accumulated length is
+        /// positive and bounded, every stored frame id is positive, unique, and
+        /// in append order, and the last frame id matches the final element.
+        /// </summary>
+        internal bool TryCaptureFinalizationEvidence(
+            long expectedAppendedCount,
+            out NvencRunChunkSinkFinalizationEvidence evidence)
+        {
+            evidence = null;
+
+            if (_processState.IsPoisoned || _processState.IsRunAbandoned)
+            {
+                return false;
+            }
+
+            if (_pending || _buffer.Phase != NvencAccessUnitPhase.Free)
+            {
+                return false;
+            }
+
+            if (_appendedCount <= 0 ||
+                _appendedCount > NvencBringUpProfileV1.CadenceTickCount ||
+                _appendedCount != expectedAppendedCount)
+            {
+                return false;
+            }
+
+            if (_accumulatedByteLength <= 0 ||
+                _accumulatedByteLength > NvencBringUpProfileV1.MaxChunkByteLength)
+            {
+                return false;
+            }
+
+            int count = (int)_appendedCount;
+
+            long previous = 0;
+            for (int i = 0; i < count; i++)
+            {
+                long id = _frameIds[i];
+                if (id <= 0 || (i > 0 && id <= previous))
+                {
+                    return false;
+                }
+
+                previous = id;
+            }
+
+            if (_lastFrameId != _frameIds[count - 1])
+            {
+                return false;
+            }
+
+            // The Frame Relation is built by copying the appended portion once,
+            // here at evidence-issue time, never on the append path.
+            long[] snapshot = new long[count];
+            Array.Copy(_frameIds, snapshot, count);
+
+            evidence = NvencRunChunkSinkFinalizationEvidence.Create(
+                this,
+                _appendedCount,
+                _accumulatedByteLength,
+                _lastFrameId,
+                new CaptureArtifactFrameRelation(snapshot));
+            return true;
+        }
+
+        /// <summary>
+        /// True when the given Frame Relation exactly matches the current
+        /// appended frame-id ledger, count included. Used by finalization
+        /// evidence re-verification; no allocation and no side effect.
+        /// </summary>
+        internal bool MatchesFrameRelation(CaptureArtifactFrameRelation relation)
+        {
+            if (relation == null)
+            {
+                return false;
+            }
+
+            if ((long)relation.Count != _appendedCount)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < (int)_appendedCount; i++)
+            {
+                if (relation.GetCaptureFrameId(i) != _frameIds[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void PoisonAndThrow(string message)

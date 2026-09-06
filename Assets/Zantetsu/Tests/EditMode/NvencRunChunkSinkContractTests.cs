@@ -588,6 +588,469 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // -------------------------------------------------------------------
+        // Finalization evidence
+        // -------------------------------------------------------------------
+
+        [Test]
+        public void Evidence_SingleAndMultiple_ReflectAppendOrderAndForwarding()
+        {
+            Harness h = new Harness();
+            int[] lengths = { 10, 20, 30 };
+
+            long expectedLength = 0;
+            for (int i = 0; i < lengths.Length; i++)
+            {
+                CaptureFrameWorkToken token = h.ProduceOwnedLease(i + 1, lengths[i], Seed, out NvencOwnedAccessUnitLease lease);
+                Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+                expectedLength += lengths[i];
+            }
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(3, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+
+            Assert.That(evidence.AppendedCount, Is.EqualTo(3));
+            Assert.That(evidence.AccumulatedByteLength, Is.EqualTo(expectedLength));
+            Assert.That(evidence.LastFrameId, Is.EqualTo(3));
+
+            CaptureArtifactFrameRelation relation = evidence.FrameRelation;
+            Assert.That(relation.Count, Is.EqualTo(3));
+            Assert.That(relation.GetCaptureFrameId(0), Is.EqualTo(1));
+            Assert.That(relation.GetCaptureFrameId(1), Is.EqualTo(2));
+            Assert.That(relation.GetCaptureFrameId(2), Is.EqualTo(3));
+            Assert.That(relation.Contains(1), Is.True);
+            Assert.That(relation.Contains(3), Is.True);
+
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+        }
+
+        [Test]
+        public void Evidence_120Appends_AllStoredInOrder()
+        {
+            Harness h = new Harness();
+
+            for (long frameId = 1; frameId <= 120; frameId++)
+            {
+                CaptureFrameWorkToken token = h.ProduceOwnedLease(frameId, 100, Seed, out NvencOwnedAccessUnitLease lease);
+                Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            }
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(120, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+
+            Assert.That(evidence.AppendedCount, Is.EqualTo(120));
+            Assert.That(evidence.LastFrameId, Is.EqualTo(120));
+
+            CaptureArtifactFrameRelation relation = evidence.FrameRelation;
+            Assert.That(relation.Count, Is.EqualTo(120));
+            Assert.That(relation.GetCaptureFrameId(0), Is.EqualTo(1));
+            Assert.That(relation.GetCaptureFrameId(119), Is.EqualTo(120));
+            Assert.That(relation.Contains(120), Is.True);
+        }
+
+        [Test]
+        public void Append_121st_ControlledFailureWithoutWriterContact()
+        {
+            Harness h = new Harness();
+
+            for (long frameId = 1; frameId <= 120; frameId++)
+            {
+                CaptureFrameWorkToken token = h.ProduceOwnedLease(frameId, 100, Seed, out NvencOwnedAccessUnitLease lease);
+                Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            }
+
+            Assert.That(h.Writer.CallCount, Is.EqualTo(120));
+
+            // The 121st append is rejected before the writer is contacted; no
+            // ledger entry or 121st frame is stored.
+            CaptureFrameWorkToken overToken = h.ProduceOwnedLease(121, 100, Seed, out NvencOwnedAccessUnitLease overLease);
+            Assert.That(h.Sink.TryAppend(overToken, overLease, out NvencRunChunkSinkResult overResult), Is.True);
+            Assert.That(overResult.IsControlledFailure, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(120));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(120));
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(120, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.FrameRelation.Count, Is.EqualTo(120));
+            Assert.That(evidence.FrameRelation.GetCaptureFrameId(119), Is.EqualTo(120));
+        }
+
+        [Test]
+        public void Append_ControlledFailure_DoesNotAdvanceLedger()
+        {
+            Harness h = new Harness();
+
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+
+            // A controlled failure (writer rejects before write) must not change
+            // the count, length, or the frame relation.
+            h.Writer.Outcome = NvencRunChunkAppendOutcome.RejectedBeforeWrite;
+            CaptureFrameWorkToken failedToken = h.ProduceOwnedLease(2, 48, Seed, out NvencOwnedAccessUnitLease failedLease);
+            Assert.That(h.Sink.TryAppend(failedToken, failedLease, out NvencRunChunkSinkResult failure), Is.True);
+            Assert.That(failure.IsControlledFailure, Is.True);
+
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(1));
+            Assert.That(h.Sink.AccumulatedByteLength, Is.EqualTo(64));
+            Assert.That(h.Sink.LastFrameId, Is.EqualTo(1));
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.FrameRelation.Count, Is.EqualTo(1));
+            Assert.That(evidence.FrameRelation.GetCaptureFrameId(0), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Evidence_BusyParkThenResume_NoDuplicateFrameId()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
+
+            ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+
+            h.Writer.Entered = writerEntered;
+            h.Writer.WaitFor = gateHeld;
+
+            Exception holderError = null;
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (writerEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            // Park behind the post-consume gate; nothing is committed yet.
+            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // Resume converges without re-running the writer; the frame id is
+            // stored exactly once.
+            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult retry), Is.True);
+            Assert.That(retry.IsAppended, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            Assert.That(h.Sink.AppendedCount, Is.EqualTo(1));
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.FrameRelation.Count, Is.EqualTo(1));
+            Assert.That(evidence.FrameRelation.GetCaptureFrameId(0), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Append_Indeterminate_PoisonsNoEvidence()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            h.Writer.Outcome = NvencRunChunkAppendOutcome.Indeterminate;
+
+            Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(token, lease, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(0, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
+            Assert.That(evidence, Is.Null);
+        }
+
+        [Test]
+        public void Append_WriterException_PoisonsNoEvidence()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            h.Writer.ExceptionToThrow = new InvalidOperationException("boom");
+
+            Assert.Throws<InvalidOperationException>(() => h.Sink.TryAppend(token, lease, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(0, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
+            Assert.That(evidence, Is.Null);
+        }
+
+        [Test]
+        public void Evidence_Pending_NotIssued()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
+
+            ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+
+            h.Writer.Entered = writerEntered;
+            h.Writer.WaitFor = gateHeld;
+
+            Exception holderError = null;
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (writerEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.False);
+
+            // No evidence while the sink is parked.
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
+            Assert.That(evidence, Is.Null);
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // Resume and then the evidence can be captured.
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out _), Is.True);
+        }
+
+        [Test]
+        public void Evidence_BufferNotFree_NotIssued()
+        {
+            Harness h = new Harness();
+            // The owned lease is still held: the buffer is SinkOwned.
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
+            Assert.That(evidence, Is.Null);
+
+            // After the append returns the region the evidence can be captured.
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out _), Is.True);
+        }
+
+        [Test]
+        public void Evidence_ZeroOrMismatchedCount_NotIssued()
+        {
+            Harness h = new Harness();
+
+            // Zero appends: never issued.
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(0, out NvencRunChunkSinkFinalizationEvidence zero), Is.False);
+            Assert.That(zero, Is.Null);
+
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+
+            // Mismatched expected count: never issued.
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(2, out NvencRunChunkSinkFinalizationEvidence mismatch), Is.False);
+            Assert.That(mismatch, Is.Null);
+        }
+
+        [Test]
+        public void Evidence_PoisonedOrAbandoned_NotIssued()
+        {
+            // Poisoned.
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.State.TryPoison(), Is.True);
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence poisoned), Is.False);
+            Assert.That(poisoned, Is.Null);
+
+            // Run abandoned.
+            Harness h2 = new Harness();
+            CaptureFrameWorkToken token2 = h2.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease2);
+            Assert.That(h2.Sink.TryAppend(token2, lease2, out _), Is.True);
+            Assert.That(h2.State.TryBeginRunAbandoned(), Is.True);
+
+            Assert.That(h2.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence abandoned), Is.False);
+            Assert.That(abandoned, Is.Null);
+        }
+
+        [Test]
+        public void Evidence_ForeignSink_IsIssuedForFalse()
+        {
+            Harness h = new Harness();
+            Harness other = new Harness();
+
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+            Assert.That(evidence.IsIssuedFor(other.Sink), Is.False);
+        }
+
+        [Test]
+        public void Evidence_AfterFurtherAppend_Stale()
+        {
+            Harness h = new Harness();
+
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+
+            // A further append advances the sink and invalidates the old evidence.
+            CaptureFrameWorkToken token2 = h.ProduceOwnedLease(2, 48, Seed, out NvencOwnedAccessUnitLease lease2);
+            Assert.That(h.Sink.TryAppend(token2, lease2, out _), Is.True);
+
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.False);
+        }
+
+        [Test]
+        public void Evidence_RelationArrayTamper_FailClosed()
+        {
+            Harness h = new Harness();
+
+            CaptureFrameWorkToken token1 = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease1);
+            Assert.That(h.Sink.TryAppend(token1, lease1, out _), Is.True);
+            CaptureFrameWorkToken token2 = h.ProduceOwnedLease(2, 48, Seed, out NvencOwnedAccessUnitLease lease2);
+            Assert.That(h.Sink.TryAppend(token2, lease2, out _), Is.True);
+
+            Assert.That(h.Sink.TryCaptureFinalizationEvidence(2, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.True);
+
+            // Tamper with the relation's internal array (shorter and wrong): the
+            // evidence must fail closed.
+            SetRelationIds(evidence.FrameRelation, new long[] { 999 });
+            Assert.That(evidence.IsIssuedFor(h.Sink), Is.False);
+        }
+
+        [Test]
+        public void EvidenceShape_SealedImmutable_ExactFields()
+        {
+            Type type = typeof(NvencRunChunkSinkFinalizationEvidence);
+
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(fields.Length, Is.EqualTo(5));
+
+            Type[] expected =
+            {
+                typeof(NvencRunChunkSink),
+                typeof(long),
+                typeof(long),
+                typeof(long),
+                typeof(CaptureArtifactFrameRelation),
+            };
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(Array.IndexOf(expected, field.FieldType), Is.GreaterThanOrEqualTo(0),
+                    field.Name + " has an unexpected type.");
+            }
+
+            // The evidence never exposes a writer, buffer, lease, stream, hash
+            // state, or process state.
+            Type[] forbiddenTypes =
+            {
+                typeof(INvencRunChunkAppender),
+                typeof(NvencOwnedAccessUnitBuffer),
+                typeof(NvencOwnedAccessUnitLease),
+                typeof(NvencCaptureProcessState),
+            };
+
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                Assert.That(Array.IndexOf(forbiddenTypes, property.PropertyType), Is.LessThan(0),
+                    property.Name + " must not expose a forbidden type.");
+            }
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                Assert.That(Array.IndexOf(forbiddenTypes, method.ReturnType), Is.LessThan(0),
+                    method.Name + " must not return a forbidden type.");
+            }
+        }
+
+        [Test]
+        public void FrameIdLedger_AllocatedOnce_CopiedOnlyAtEvidence()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencRunChunkSink.cs"));
+
+            // One fixed allocation in the constructor and one snapshot copy at
+            // evidence-issue time; no other ledger allocation or relation copy.
+            Assert.That(CountOccurrences(source, "new long["), Is.EqualTo(2));
+            Assert.That(CountOccurrences(source, "Array.Copy"), Is.EqualTo(1));
+
+            string evidenceBody = ExtractMethodBody(source, "TryCaptureFinalizationEvidence");
+            Assert.That(evidenceBody, Does.Contain("new long["));
+            Assert.That(evidenceBody, Does.Contain("Array.Copy"));
+
+            string[] appendBodies =
+            {
+                ExtractMethodBody(source, "TryAppend"),
+                ExtractMethodBody(source, "CompleteAppend"),
+                ExtractMethodBody(source, "CompleteConsumed"),
+                ExtractMethodBody(source, "CompleteAppended"),
+                ExtractMethodBody(source, "CompleteControlledFailure"),
+                ExtractMethodBody(source, "CompleteCommitted"),
+                ExtractMethodBody(source, "CompleteDeferred"),
+                ExtractMethodBody(source, "CompletePending"),
+                ExtractMethodBody(source, "Park"),
+                ExtractMethodBody(source, "ClearPending"),
+                ExtractMethodBody(source, "MatchesPending"),
+            };
+
+            foreach (string body in appendBodies)
+            {
+                Assert.That(body, Does.Not.Contain("new long["), "append path must not allocate the frame ledger.");
+                Assert.That(body, Does.Not.Contain("Array.Copy"), "append path must not copy the frame relation.");
+                Assert.That(body, Does.Not.Contain("new List"), "append path must not allocate.");
+                Assert.That(body, Does.Not.Contain("Enumerable"), "append path must not use LINQ.");
+            }
+        }
+
+        private static int CountOccurrences(string text, string value)
+        {
+            int count = 0;
+            int index = 0;
+            while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += value.Length;
+            }
+
+            return count;
+        }
+
+        private static void SetRelationIds(CaptureArtifactFrameRelation relation, long[] ids)
+        {
+            FieldInfo field = typeof(CaptureArtifactFrameRelation).GetField(
+                "_captureFrameIds", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            field.SetValue(relation, ids);
+        }
+
         private static byte[] ExpectedPattern(int length, byte seed)
         {
             byte[] pattern = new byte[length];
