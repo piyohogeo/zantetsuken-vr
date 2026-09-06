@@ -522,6 +522,43 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void RecoveryProof_IsInitialized_DefaultFalse_MintedTrue()
+        {
+            NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof none = default;
+            Assert.That(none.IsInitialized, Is.False);
+
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = MakeToken(1);
+            Assert.That(h.Buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(h.Buffer.TryCancelCollectorReservation(
+                write, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof minted), Is.True);
+            Assert.That(minted.IsInitialized, Is.True);
+        }
+
+        [Test]
+        public void Result_ControlledFailure_RequiresInitializedProof()
+        {
+            CaptureFrameWorkToken token = MakeToken(1);
+
+            // A default proof fails closed: not a terminal ControlledFailure.
+            NvencSubmittedOutputCollectResult withDefaultProof =
+                NvencSubmittedOutputCollectResult.ControlledFailure(token, default);
+            Assert.That(withDefaultProof.IsControlledFailure, Is.False);
+            Assert.That(withDefaultProof.IsSucceeded, Is.False);
+            Assert.That(withDefaultProof.IsNone, Is.False);
+
+            // A minted proof makes the ControlledFailure shape terminal.
+            Harness h = new Harness();
+            Assert.That(h.Buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(h.Buffer.TryCancelCollectorReservation(
+                write, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof minted), Is.True);
+            NvencSubmittedOutputCollectResult withMintedProof =
+                NvencSubmittedOutputCollectResult.ControlledFailure(token, minted);
+            Assert.That(withMintedProof.IsControlledFailure, Is.True);
+            Assert.That(withMintedProof.IsSucceeded, Is.False);
+        }
+
+        [Test]
         public void NormalPath_NoAllocationNoThreadNoIoNoNative()
         {
             string directory = RuntimeDirectory();

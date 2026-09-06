@@ -154,7 +154,10 @@ namespace Zantetsu.Observability
         /// the issued unit was returned to Free, or no unit was ever issued
         /// while the single region is Free. It binds a private owner token and
         /// a private nonce held only by this buffer, so an equivalent proof
-        /// cannot be reproduced from a lease or other constituent values.
+        /// cannot be reproduced from a lease or other constituent values. The
+        /// <see cref="IsInitialized"/> flag reports only whether the proof
+        /// holds non-default values and never exposes the bound owner, nonce,
+        /// or work token.
         /// </summary>
         internal readonly struct NvencOwnedAccessUnitRecoveryProof
         {
@@ -171,6 +174,15 @@ namespace Zantetsu.Observability
                 _nonce = nonce;
                 _workToken = workToken;
             }
+
+            /// <summary>
+            /// True only when this proof was populated with non-default values.
+            /// A <c>default</c> proof reports false, so a caller that treats an
+            /// uninitialized proof as evidence fails closed without exposing
+            /// the bound owner, nonce, or work token.
+            /// </summary>
+            internal bool IsInitialized =>
+                _ownerToken != Guid.Empty && _nonce != Guid.Empty && _workToken.IsValid;
 
             internal bool Matches(
                 Guid ownerToken,

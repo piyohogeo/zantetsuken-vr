@@ -6,12 +6,13 @@ namespace Zantetsu.Observability
     /// Allocation-free terminal result of one
     /// <see cref="NvencSubmittedOutputCollector"/> attempt. A readonly value
     /// type with three mutually exclusive shapes: Succeeded (an exact work
-    /// token plus a valid owned Access Unit lease and no recovery proof),
-    /// ControlledFailure (an exact work token with no owned lease and a valid
-    /// recovery proof minted by the exact cancel), and None (the default,
-    /// uninitialized). The recovery proof is minted only by the buffer on a
-    /// successful collector cancel and cannot be regenerated from external
-    /// constituent values.
+    /// token plus a valid owned Access Unit lease and an uninitialized
+    /// recovery proof), ControlledFailure (an exact work token with no owned
+    /// lease and an initialized recovery proof minted by the exact cancel),
+    /// and None (the default, uninitialized). A default or uninitialized
+    /// proof fails closed and is never a terminal ControlledFailure shape. The
+    /// recovery proof is minted only by the buffer on a successful collector
+    /// cancel and cannot be regenerated from external constituent values.
     /// </summary>
     internal readonly struct NvencSubmittedOutputCollectResult
     {
@@ -38,9 +39,11 @@ namespace Zantetsu.Observability
 
         internal NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof RecoveryProof => _recoveryProof;
 
-        internal bool IsSucceeded => _succeeded && _workToken.IsValid && _ownedLease.IsValid;
+        internal bool IsSucceeded =>
+            _succeeded && _workToken.IsValid && _ownedLease.IsValid && !_recoveryProof.IsInitialized;
 
-        internal bool IsControlledFailure => !_succeeded && _workToken.IsValid && !_ownedLease.IsValid;
+        internal bool IsControlledFailure =>
+            !_succeeded && _workToken.IsValid && !_ownedLease.IsValid && _recoveryProof.IsInitialized;
 
         internal bool IsNone => !_workToken.IsValid;
 
