@@ -23,12 +23,18 @@ namespace Zantetsu.Observability
     /// The publish order is fixed inside one resource-resolution gate: verify
     /// the exact correlation and active state, return the Submit-to-Output
     /// credit, enqueue the completion exactly once, and commit the published
-    /// state. A failed credit return, a failed enqueue, an unknown
-    /// correlation, or a sink result whose work token does not match the
-    /// record all poison without guessing a completion; the Submit-to-Output
-    /// credit becoming inactive is exactly what makes a second publish of the
-    /// same record poison, so double enqueue is impossible without a new
-    /// nonce, registry, or history set.
+    /// state. A FailedBeforeSubmit publish additionally requires a
+    /// <see cref="NvencFailedBeforeSubmitReleaseResult"/> bound to the exact
+    /// record and produced only after the Encode Sample Slot was returned; a
+    /// run-abandoned publish requires a
+    /// <see cref="NvencRunAbandonedRecoveryResult"/> bound to the exact
+    /// Submitted record and produced only after the abandoned output was
+    /// safely recovered. A failed credit return, a failed enqueue, an unknown
+    /// correlation, a missing or mismatched evidence, or a sink result whose
+    /// work token does not match the record all poison without guessing a
+    /// completion; the Submit-to-Output credit becoming inactive is exactly
+    /// what makes a second publish of the same record poison, so double
+    /// enqueue is impossible without a new nonce, registry, or history set.
     /// </para>
     /// <para>
     /// The collect side dequeues and then, inside the same resource-resolution
@@ -110,8 +116,21 @@ namespace Zantetsu.Observability
 
         internal bool TryPublishRunAbandoned(
             in NvencSubmitToOutputRecord record,
+            in NvencRunAbandonedRecoveryResult recoveryResult,
             out NvencFrameCompletionRecord completion)
         {
+            completion = default;
+
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            if (!recoveryResult.Matches(record))
+            {
+                PoisonAndThrow("Frame Completion abandon recovery result does not match the record.");
+            }
+
             return PublishCore(
                 record,
                 NvencSubmitToOutputRecordKind.Submitted,
@@ -122,6 +141,7 @@ namespace Zantetsu.Observability
 
         internal bool TryPublishFailedBeforeSubmit(
             in NvencSubmitToOutputRecord record,
+            in NvencFailedBeforeSubmitReleaseResult releaseResult,
             out NvencFrameCompletionRecord completion)
         {
             completion = default;
@@ -129,6 +149,11 @@ namespace Zantetsu.Observability
             if (_processState.IsPoisoned)
             {
                 return false;
+            }
+
+            if (!releaseResult.Matches(record))
+            {
+                PoisonAndThrow("Frame Completion failed-before-submit release result does not match the record.");
             }
 
             if (!MapFailedBeforeSubmit(
