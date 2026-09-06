@@ -38,29 +38,36 @@ namespace Zantetsu.Observability
     /// worker continues with the next work.
     /// </para>
     /// <para>
-    /// <see cref="BeginDrain"/> is non-waiting and idempotent and must be
-    /// called after the process-wide drain. After it the worker keeps
-    /// processing every already-accepted record and the held current work, and
-    /// stops exactly when the Submission Queue is empty and the processor holds
-    /// no current work. Worker stop does not drain the Submit-to-Output Queue,
-    /// complete frames, finalize chunks, or join the backend. Poison stop and
-    /// normal drain completion are distinguishable through
+    /// <see cref="BeginDrain"/> is non-waiting and idempotent, is accepted
+    /// only while the process is already draining, and must be called after
+    /// the process-wide drain. After it the worker keeps processing every
+    /// already-accepted record and the held current work, and stops exactly
+    /// when the Submission Queue is empty and the processor holds no current
+    /// work. Worker stop does not drain the Submit-to-Output Queue, complete
+    /// frames, finalize chunks, or join the backend. Poison stop and normal
+    /// drain completion are distinguishable through
     /// <see cref="DrainCompleted"/> and <see cref="TryGetFailure"/>.
     /// </para>
     /// <para>
-    /// This type owns only its own thread and signal; it owns none of its
+    /// <see cref="Dispose"/> is idempotent and is accepted only after the
+    /// worker thread has physically stopped; it never force-stops a running
+    /// worker and only releases the owned wait primitives.
+    /// </para>
+    /// <para>
+    /// This type owns only its own thread and signals; it owns none of its
     /// injected collaborators, never creates a second worker, and uses no
     /// task, thread pool, timer, sleep, busy loop, queue copy, LINQ, or
     /// static/global hook.
     /// </para>
     /// </remarks>
-    internal sealed class NvencOrderedSubmitWorkerService
+    internal sealed class NvencOrderedSubmitWorkerService : IDisposable
     {
         internal const string WorkerThreadName = "Zantetsu.NvencSubmitWorker";
 
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencOrderedSubmitProcessor _processor;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
+        private readonly ManualResetEventSlim _settled = new ManualResetEventSlim(false);
 
         private Thread _workerThread;
         private volatile bool _drainRequested;
@@ -116,14 +123,21 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting, idempotent worker drain request. Must be called after
-        /// the process-wide drain. The worker keeps processing accepted work
-        /// and stops only once nothing remains to process.
+        /// Non-waiting, idempotent worker drain request. Accepted only while
+        /// the process is already draining; returns false without any state
+        /// change while Running or Poisoned. The worker keeps processing
+        /// accepted work and stops only once nothing remains to process.
         /// </summary>
-        internal void BeginDrain()
+        internal bool BeginDrain()
         {
+            if (!_processState.IsDraining)
+            {
+                return false;
+            }
+
             _drainRequested = true;
             _signal.Set();
+            return true;
         }
 
         /// <summary>
@@ -131,6 +145,31 @@ namespace Zantetsu.Observability
         /// has exited.
         /// </summary>
         internal bool IsStopped => _workerStopped;
+
+        /// <summary>
+        /// Instance-local observation signal that is set whenever the worker
+        /// has drained all currently-processable work and is about to park, or
+        /// when it stops. Production correctness never depends on this signal;
+        /// it exists only so callers can observe worker quiescence without
+        /// polling.
+        /// </summary>
+        internal ManualResetEventSlim Settled => _settled;
+
+        /// <summary>
+        /// Idempotent release of the owned wait primitives. Accepted only
+        /// after the worker thread has physically stopped; a running worker is
+        /// never force-stopped by disposal.
+        /// </summary>
+        public void Dispose()
+        {
+            if (!_workerStopped)
+            {
+                return;
+            }
+
+            _signal.Dispose();
+            _settled.Dispose();
+        }
 
         /// <summary>
         /// True only when the worker stopped because a requested drain was
@@ -188,6 +227,7 @@ namespace Zantetsu.Observability
                         return;
                     }
 
+                    _settled.Set();
                     _signal.Wait();
                 }
             }
@@ -201,6 +241,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
+                _settled.Set();
                 _workerStopped = true;
             }
         }

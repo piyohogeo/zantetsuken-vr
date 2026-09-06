@@ -28,9 +28,10 @@ namespace Zantetsu.Core.Tests
                 NvencSubmissionRecord record = h.CreateRecord(7);
                 h.Source.MarkCompleted(record.WorkToken);
                 h.Enqueue(record);
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 1, "worker did not emit output");
+                WaitSettled(h.Worker, "worker did not emit output");
 
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.True);
@@ -58,9 +59,10 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(first);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 3, "worker did not emit three outputs");
+                WaitSettled(h.Worker, "worker did not emit three outputs");
 
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord a), Is.True);
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord b), Is.True);
@@ -88,11 +90,12 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(second);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
                 // The worker dequeues the head, observes its incomplete evidence,
                 // and holds it without touching the second work.
-                WaitUntil(() => h.Source.ObserveCount >= 1, "worker did not observe head evidence");
+                WaitSettled(h.Worker, "worker did not observe head evidence");
                 Assert.That(h.Processor.HasCurrentWork, Is.True);
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(0));
@@ -112,16 +115,18 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(second);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Source.ObserveCount >= 1, "worker did not observe head evidence");
+                WaitSettled(h.Worker, "worker did not observe head evidence");
 
                 // Complete the held head and notify; the worker resumes from the
                 // same held work, then proceeds to the second in order.
                 h.Source.MarkCompleted(first.WorkToken);
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 2, "worker did not resume the held work");
+                WaitSettled(h.Worker, "worker did not resume the held work");
 
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord a), Is.True);
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord b), Is.True);
@@ -146,11 +151,12 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(record);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
                 // The worker dequeues and holds the current work because the
                 // output queue is full, submitting nothing.
-                WaitUntil(() => h.Processor.HasCurrentWork, "worker did not hold the current work");
+                WaitSettled(h.Worker, "worker did not hold the current work");
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
 
                 // Free the output capacity and notify; the worker resumes.
@@ -159,9 +165,10 @@ namespace Zantetsu.Core.Tests
                     Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord placeholder), Is.True);
                 }
 
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 1, "worker did not resume after capacity was freed");
+                WaitSettled(h.Worker, "worker did not resume after capacity was freed");
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.True);
                 Assert.That(output.Kind, Is.EqualTo(NvencSubmitToOutputRecordKind.Submitted));
@@ -184,9 +191,10 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(second);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 2, "worker did not emit two failed records");
+                WaitSettled(h.Worker, "worker did not emit two failed records");
 
                 Assert.That(h.State.IsPoisoned, Is.False);
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(2));
@@ -219,9 +227,10 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(failed);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.OutputQueue.Count >= 2, "worker did not emit two outputs");
+                WaitSettled(h.Worker, "worker did not emit two outputs");
 
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord a), Is.True);
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord b), Is.True);
@@ -261,11 +270,12 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Submitter.Entered.Wait(WatchdogTimeoutMs), Is.True, "worker did not enter submit");
 
                 // A notification issued while the worker is busy must not be lost.
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
                 h.Submitter.ReleaseSubmit.Set();
 
-                WaitUntil(() => h.OutputQueue.Count >= 2, "early notification was lost");
+                WaitSettled(h.Worker, "early notification was lost");
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(2));
             }
         }
@@ -280,11 +290,12 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(record);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
                 h.Worker.Notify();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Submitter.SubmitCount >= 1, "worker did not submit");
+                WaitSettled(h.Worker, "worker did not submit");
 
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
@@ -367,9 +378,10 @@ namespace Zantetsu.Core.Tests
                 h.Worker.Start();
 
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after an empty drain");
+                WaitSettled(h.Worker, "worker did not stop after an empty drain");
                 Assert.That(h.Worker.DrainCompleted, Is.True);
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(0));
             }
@@ -389,9 +401,10 @@ namespace Zantetsu.Core.Tests
 
                 h.Worker.Start();
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after draining pending records");
+                WaitSettled(h.Worker, "worker did not stop after draining pending records");
                 Assert.That(h.Worker.DrainCompleted, Is.True);
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(3));
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(3));
@@ -414,24 +427,28 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(record); // source evidence not completed
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Source.ObserveCount >= 1, "worker did not observe head evidence");
+                WaitSettled(h.Worker, "worker did not observe head evidence");
 
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
 
                 // The drain re-evaluation observes the still-incomplete evidence
                 // and must not declare completion while the head is held.
-                WaitUntil(() => h.Source.ObserveCount >= 2, "worker did not re-evaluate after drain");
+                WaitSettled(h.Worker, "worker did not re-evaluate after drain");
+                Assert.That(h.Source.ObserveCount, Is.GreaterThanOrEqualTo(2));
                 Assert.That(h.Worker.DrainCompleted, Is.False);
                 Assert.That(h.Worker.IsStopped, Is.False);
 
                 // Completing the evidence lets the held work finish, then stop.
                 h.Source.MarkCompleted(record.WorkToken);
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after drain + evidence");
+                WaitSettled(h.Worker, "worker did not stop after drain + evidence");
                 Assert.That(h.Worker.DrainCompleted, Is.True);
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
             }
@@ -451,9 +468,10 @@ namespace Zantetsu.Core.Tests
 
                 h.Worker.Start();
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop");
+                WaitSettled(h.Worker, "worker did not stop");
                 Assert.That(h.Worker.DrainCompleted, Is.True);
 
                 // Worker stop does not drain the Submit-to-Output Queue.
@@ -472,8 +490,9 @@ namespace Zantetsu.Core.Tests
 
                 h.Worker.Start();
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after empty drain");
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
+                WaitSettled(h.Worker, "worker did not stop after empty drain");
 
                 // A late enqueue plus notification cannot restart a stopped worker.
                 h.Enqueue(late);
@@ -496,10 +515,11 @@ namespace Zantetsu.Core.Tests
 
                 h.Worker.Start();
                 Assert.That(h.State.TryBeginDrain(), Is.True);
-                h.Worker.BeginDrain();
-                h.Worker.BeginDrain(); // idempotent
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
+                Assert.That(h.Worker.BeginDrain(), Is.True); // idempotent
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop");
+                WaitSettled(h.Worker, "worker did not stop");
                 Assert.That(h.Worker.DrainCompleted, Is.True);
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
@@ -519,9 +539,10 @@ namespace Zantetsu.Core.Tests
                 h.Submitter.Throw(failure);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after the fatal failure");
+                WaitSettled(h.Worker, "worker did not stop after the fatal failure");
 
                 Assert.That(h.State.IsPoisoned, Is.True);
                 Assert.That(h.Worker.DrainCompleted, Is.False);
@@ -547,9 +568,10 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(second);
 
                 h.Worker.Start();
+                h.Worker.Settled.Reset();
                 h.Worker.Notify();
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after the fatal failure");
+                WaitSettled(h.Worker, "worker did not stop after the fatal failure");
 
                 Assert.That(h.State.IsPoisoned, Is.True);
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1)); // only the head was touched
@@ -568,10 +590,10 @@ namespace Zantetsu.Core.Tests
                 h.Enqueue(record);
 
                 Assert.That(h.State.TryPoison(), Is.True);
+                h.Worker.Settled.Reset();
                 h.Worker.Start();
-                h.Worker.Notify();
 
-                WaitUntil(() => h.Worker.IsStopped, "worker did not stop after poison");
+                WaitSettled(h.Worker, "worker did not stop after poison");
 
                 Assert.That(h.Worker.DrainCompleted, Is.False);
                 Assert.That(h.Worker.TryGetFailure(out _), Is.False);
@@ -580,9 +602,83 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static void WaitUntil(Func<bool> condition, string message)
+        [Test]
+        public void BeginDrain_WhileRunning_IsRejected_WorkerContinues()
         {
-            Assert.That(SpinWait.SpinUntil(condition, WatchdogTimeoutMs), Is.True, message);
+            using (Harness h = Harness.Create(2))
+            {
+                h.Worker.Start();
+
+                // While Running, BeginDrain is rejected with no state change.
+                Assert.That(h.Worker.BeginDrain(), Is.False);
+                Assert.That(h.Worker.DrainCompleted, Is.False);
+
+                NvencSubmissionRecord first = h.CreateRecord(1);
+                h.Source.MarkCompleted(first.WorkToken);
+                h.Enqueue(first);
+
+                h.Worker.Settled.Reset();
+                h.Worker.Notify();
+                WaitSettled(h.Worker, "worker did not process the accepted work");
+                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
+                Assert.That(h.Worker.IsStopped, Is.False);
+                Assert.That(h.Worker.DrainCompleted, Is.False);
+
+                // A later Accepted work is still processed: the rejected
+                // BeginDrain did not stop the worker.
+                NvencSubmissionRecord second = h.CreateRecord(2);
+                h.Source.MarkCompleted(second.WorkToken);
+                h.Enqueue(second);
+
+                h.Worker.Settled.Reset();
+                h.Worker.Notify();
+                WaitSettled(h.Worker, "worker did not process the later work");
+                Assert.That(h.OutputQueue.Count, Is.EqualTo(2));
+                Assert.That(h.Worker.IsStopped, Is.False);
+            }
+        }
+
+        [Test]
+        public void Dispose_WhileRunning_DoesNotStopWorker()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                h.Worker.Start();
+                h.Worker.Dispose(); // running: no-op, never force-stops
+
+                Assert.That(h.Worker.IsStopped, Is.False);
+
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                h.Enqueue(record);
+
+                h.Worker.Settled.Reset();
+                h.Worker.Notify();
+                WaitSettled(h.Worker, "worker did not process after the no-op dispose");
+                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Dispose_AfterStop_IsIdempotent()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                h.Worker.Start();
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.Worker.Settled.Reset();
+                Assert.That(h.Worker.BeginDrain(), Is.True);
+                WaitSettled(h.Worker, "worker did not stop");
+                Assert.That(h.Worker.IsStopped, Is.True);
+
+                h.Worker.Dispose();
+                h.Worker.Dispose(); // idempotent
+            }
+        }
+
+        private static void WaitSettled(NvencOrderedSubmitWorkerService worker, string message)
+        {
+            Assert.That(worker.Settled.Wait(WatchdogTimeoutMs), Is.True, message);
         }
 
         private static int CountOccurrences(string text, string needle)
@@ -676,7 +772,7 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private sealed class FakeSubmitter : INvencEncodePictureSubmitter
+        private sealed class FakeSubmitter : INvencEncodePictureSubmitter, IDisposable
         {
             private bool _result = true;
             private Exception _exception;
@@ -710,6 +806,12 @@ namespace Zantetsu.Core.Tests
             internal void BlockInSubmit()
             {
                 _block = true;
+            }
+
+            public void Dispose()
+            {
+                _entered.Dispose();
+                _release.Dispose();
             }
 
             public bool TrySubmit(in NvencEncodePictureSubmitOperation operation)
@@ -812,9 +914,12 @@ namespace Zantetsu.Core.Tests
                 if (!Worker.IsStopped)
                 {
                     State.TryPoison();
+                    Worker.Settled.Reset();
                     Worker.Notify();
-                    WaitUntil(() => Worker.IsStopped, "worker did not stop during teardown");
+                    Assert.That(Worker.Settled.Wait(WatchdogTimeoutMs), Is.True, "worker did not stop during teardown");
                 }
+
+                Worker.Dispose();
 
                 while (ReleaseCoordinator.TryApplyPendingRelease())
                 {
@@ -842,6 +947,7 @@ namespace Zantetsu.Core.Tests
                 }
 
                 RenderPool.Dispose();
+                Submitter.Dispose();
             }
         }
     }
