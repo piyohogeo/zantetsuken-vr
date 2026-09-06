@@ -413,6 +413,65 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PendingResume_ReturnedLeaseAfterPark_PoisonsWithoutExternalContact()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord a = h.CreateSubmittedRecord(1);
+
+            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            Exception holderError = null;
+
+            h.Source.SourceEntered = sourceEntered;
+            h.Source.WaitForGateHeld = gateHeld;
+
+            Thread holder = new Thread(() =>
+            {
+                try
+                {
+                    if (sourceEntered.Wait(WatchdogTimeoutMs))
+                    {
+                        if (h.State.TryBeginResourceResolution())
+                        {
+                            gateHeld.Set();
+                            release.Wait(WatchdogTimeoutMs);
+                            h.State.EndResourceResolution();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    holderError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            holder.Start();
+
+            // Park A behind the post-source gate without a terminal result.
+            Assert.That(h.Collector.TryCollect(a, out _), Is.False);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+
+            release.Set();
+            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderError, Is.Null);
+
+            // Return the Frame Completion credit while A is parked: its lease is
+            // no longer active even though the record values are unchanged.
+            Assert.That(h.FrameCompletionCreditPool.TryReturn(a.FrameCompletionCredit), Is.True);
+
+            // Resuming with the same old record poisons without re-calling the
+            // source, returning the sample slot, or transferring to the sink.
+            Assert.Throws<InvalidOperationException>(() => h.Collector.TryCollect(a, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            Assert.That(h.SamplePool.IsActive(a.SampleSlot), Is.True);
+            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
+        }
+
+        [Test]
         public void Draining_ProcessesAcceptedSubmittedRecord()
         {
             Harness h = new Harness();
