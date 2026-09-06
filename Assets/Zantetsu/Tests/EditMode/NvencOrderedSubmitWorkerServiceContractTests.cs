@@ -411,6 +411,20 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Source_Dispose_AtomicLifecycleTransition()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOrderedSubmitWorkerService.cs"));
+
+            // Dispose transitions to Disposed via CAS on the same lifecycle
+            // field that Start CASes, so the two are mutually exclusive.
+            Assert.That(source, Does.Contain("Interlocked.CompareExchange(ref _lifecycleState, StateDisposed, StateNotStarted)"));
+            Assert.That(source, Does.Contain("Interlocked.CompareExchange(ref _lifecycleState, StateDisposed, StateRunning)"));
+
+            // Dispose must never blindly overwrite the lifecycle state.
+            Assert.That(source, Does.Not.Contain("Volatile.Write(ref _lifecycleState, StateDisposed)"));
+        }
+
+        [Test]
         public void Drain_EmptyState_Stops()
         {
             using (Harness h = Harness.Create(1))

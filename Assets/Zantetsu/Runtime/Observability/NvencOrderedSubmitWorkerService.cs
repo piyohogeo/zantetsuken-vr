@@ -250,10 +250,21 @@ namespace Zantetsu.Observability
         /// </summary>
         public void Dispose()
         {
+            // NotStarted → Disposed must be a CAS so disposal is mutually
+            // exclusive with Start's NotStarted → Starting claim: exactly one
+            // of the two wins, and Start never creates a thread after the
+            // signal is released.
+            if (Interlocked.CompareExchange(ref _lifecycleState, StateDisposed, StateNotStarted)
+                == StateNotStarted)
+            {
+                _signal.Dispose();
+                return;
+            }
+
             int state = Volatile.Read(ref _lifecycleState);
             if (state == StateDisposed)
             {
-                return;
+                return; // another disposer already finished; idempotent
             }
 
             if (state == StateStarting)
@@ -262,19 +273,20 @@ namespace Zantetsu.Observability
                     "The Submit Worker is starting; dispose is allowed only before Start or after the worker thread has physically stopped.");
             }
 
-            if (state == StateRunning)
+            // state == StateRunning: only physical stop permits disposal.
+            Thread worker = Volatile.Read(ref _workerThread);
+            if (worker == null || worker.IsAlive)
             {
-                Thread worker = Volatile.Read(ref _workerThread);
-                if (worker == null || worker.IsAlive)
-                {
-                    throw new InvalidOperationException(
-                        "The Submit Worker thread has not physically stopped; dispose is allowed only after the worker thread has exited.");
-                }
+                throw new InvalidOperationException(
+                    "The Submit Worker thread has not physically stopped; dispose is allowed only after the worker thread has exited.");
             }
 
-            // NotStarted (never started) or physically stopped Running.
-            Volatile.Write(ref _lifecycleState, StateDisposed);
-            _signal.Dispose();
+            // Running → Disposed (physically stopped). CAS so concurrent
+            // disposals agree on a single transition and a single release.
+            if (Interlocked.CompareExchange(ref _lifecycleState, StateDisposed, StateRunning) == StateRunning)
+            {
+                _signal.Dispose();
+            }
         }
 
         /// <summary>
