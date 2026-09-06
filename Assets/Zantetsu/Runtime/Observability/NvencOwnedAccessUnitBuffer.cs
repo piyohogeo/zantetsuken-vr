@@ -16,17 +16,16 @@ namespace Zantetsu.Observability
     /// The buffer authority keeps the backing storage, the current phase, the
     /// generation, the exact bound <see cref="CaptureFrameWorkToken"/>, and the
     /// determined valid length. The write and owned leases never receive the
-    /// storage reference; the collector writes through a bounded copy and the
-    /// sink reads through a synchronous consume, each a one-shot operation
-    /// validated against the exact lease by the buffer authority.
+    /// storage reference. Content access is deliberately deferred: the
+    /// collector and sink content operations belong to their real
+    /// implementations, which the buffer authority will drive once they exist.
     /// </para>
     /// <para>
     /// Every transition is serialized against the Poison transition through
     /// the injected <see cref="NvencCaptureProcessState"/> short
-    /// resource-resolution gate. Acquire, transfer, cancel, return, copy, and
-    /// consume all fail without changing any field while the process
-    /// is poisoned; an occupied region is then held, never guessed back to
-    /// Free.
+    /// resource-resolution gate. Acquire, transfer, cancel, and return all fail
+    /// without changing any field while the process is poisoned; an occupied
+    /// region is then held, never guessed back to Free.
     /// </para>
     /// <para>
     /// A controlled failure releases the region exactly once: the collector
@@ -116,61 +115,11 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Collector-side bounded copy: writes <paramref name="count"/> bytes
-        /// from <paramref name="source"/> into the region after validating the
-        /// exact write lease, its generation and work token, and the
-        /// CollectorOwned phase. The region never escapes to the caller, so a
-        /// held lease cannot mutate the region after transfer, return, or
-        /// poison. Foreign, stale, double, wrong-phase, or out-of-range
-        /// leases and bounds are rejected without changing the region content.
-        /// </summary>
-        internal bool TryCopyCollectorContent(
-            in NvencAccessUnitWriteLease writeLease,
-            byte[] source,
-            int sourceOffset,
-            int count)
-        {
-            if (source == null || sourceOffset < 0 || count <= 0)
-            {
-                return false;
-            }
-
-            if (count > _storage.Length)
-            {
-                return false;
-            }
-
-            if (sourceOffset > source.Length || count > source.Length - sourceOffset)
-            {
-                return false;
-            }
-
-            if (!_processState.TryBeginResourceResolution())
-            {
-                return false;
-            }
-
-            try
-            {
-                if (!IsExactCollector(writeLease))
-                {
-                    return false;
-                }
-
-                Buffer.BlockCopy(source, sourceOffset, _storage, 0, count);
-                return true;
-            }
-            finally
-            {
-                _processState.EndResourceResolution();
-            }
-        }
-
-        /// <summary>
         /// Moves the region from CollectorOwned to SinkOwned and determines the
         /// valid length exactly once. The valid length must be in
         /// 1..MaxAccessUnitByteLength; on any failure the phase, length, and
-        /// generation are left unchanged.
+        /// generation are left unchanged. The valid length is retained by the
+        /// buffer authority for the deferred sink consume.
         /// </summary>
         internal bool TryTransferToSink(
             in NvencAccessUnitWriteLease writeLease,
@@ -199,56 +148,6 @@ namespace Zantetsu.Observability
                 _validLength = validLength;
                 _phase = (int)NvencAccessUnitPhase.SinkOwned;
                 ownedLease = new NvencOwnedAccessUnitLease(_ownerToken, _generation, _workToken);
-                return true;
-            }
-            finally
-            {
-                _processState.EndResourceResolution();
-            }
-        }
-
-        /// <summary>
-        /// Sink-side synchronous consume: copies the determined valid length
-        /// from the region into <paramref name="destination"/> after validating
-        /// the exact owned lease, its generation and work token, and the
-        /// SinkOwned phase. The region never escapes to the caller, so a held
-        /// lease cannot read or mutate a later generation after return.
-        /// Foreign, stale, double, wrong-phase, or undersized destinations are
-        /// rejected without changing the region content.
-        /// </summary>
-        internal bool TryConsumeSinkContent(
-            in NvencOwnedAccessUnitLease ownedLease,
-            byte[] destination,
-            int destinationOffset,
-            out int consumedLength)
-        {
-            consumedLength = 0;
-
-            if (destination == null || destinationOffset < 0)
-            {
-                return false;
-            }
-
-            if (!_processState.TryBeginResourceResolution())
-            {
-                return false;
-            }
-
-            try
-            {
-                if (!IsExactSink(ownedLease))
-                {
-                    return false;
-                }
-
-                int length = _validLength;
-                if (destinationOffset > destination.Length || length > destination.Length - destinationOffset)
-                {
-                    return false;
-                }
-
-                Buffer.BlockCopy(_storage, 0, destination, destinationOffset, length);
-                consumedLength = length;
                 return true;
             }
             finally
