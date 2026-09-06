@@ -62,7 +62,7 @@ namespace Zantetsu.Observability
         private NvencSubmitToOutputRecord _pendingRecord;
         private NvencAccessUnitWriteLease _pendingWriteLease;
         private NvencCollectorPendingStage _pendingStage;
-        private int _pendingValidLength;
+        private NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyProof _pendingProof;
 
         internal NvencSubmittedOutputCollector(
             NvencCaptureProcessState processState,
@@ -139,10 +139,10 @@ namespace Zantetsu.Observability
             result = default;
 
             NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus status;
-            int copiedLength;
+            NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyProof proof;
             try
             {
-                status = _buffer.TryCopyCompletedOutput(writeLease, record.SampleSlot, _source, out copiedLength);
+                status = _buffer.TryCopyCompletedOutput(writeLease, record.SampleSlot, _source, out proof);
             }
             catch
             {
@@ -156,7 +156,7 @@ namespace Zantetsu.Observability
                     return CompleteSuccess(record, writeLease, out result);
 
                 case NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Pending:
-                    Park(record, writeLease, NvencCollectorPendingStage.CopyPending, copiedLength);
+                    Park(record, writeLease, NvencCollectorPendingStage.CopyPending, proof);
                     return false;
 
                 case NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus.Rejected:
@@ -173,7 +173,7 @@ namespace Zantetsu.Observability
                         PoisonAndThrow("Submit-to-Output collector was poisoned before the copy.");
                     }
 
-                    Park(record, writeLease, NvencCollectorPendingStage.CopyNotStarted, 0);
+                    Park(record, writeLease, NvencCollectorPendingStage.CopyNotStarted, default);
                     return false;
             }
         }
@@ -194,7 +194,7 @@ namespace Zantetsu.Observability
             // park and retry later without re-contacting the source.
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(record, writeLease, NvencCollectorPendingStage.Success, 0);
+                Park(record, writeLease, NvencCollectorPendingStage.Success, default);
                 return false;
             }
 
@@ -235,7 +235,7 @@ namespace Zantetsu.Observability
 
             if (!_processState.TryBeginResourceResolution())
             {
-                Park(record, writeLease, NvencCollectorPendingStage.ControlledFailure, 0);
+                Park(record, writeLease, NvencCollectorPendingStage.ControlledFailure, default);
                 return false;
             }
 
@@ -294,7 +294,7 @@ namespace Zantetsu.Observability
                     break;
 
                 case NvencCollectorPendingStage.CopyPending:
-                    if (!_buffer.TryCommitCopiedContent(writeLease, _pendingValidLength))
+                    if (!_buffer.TryCommitCopiedContent(writeLease, _pendingProof))
                     {
                         if (_processState.IsPoisoned)
                         {
@@ -328,13 +328,13 @@ namespace Zantetsu.Observability
             in NvencSubmitToOutputRecord record,
             in NvencAccessUnitWriteLease writeLease,
             NvencCollectorPendingStage stage,
-            int validLength)
+            in NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyProof proof)
         {
             _pending = true;
             _pendingRecord = record;
             _pendingWriteLease = writeLease;
             _pendingStage = stage;
-            _pendingValidLength = validLength;
+            _pendingProof = proof;
         }
 
         private void ClearPending()
@@ -343,7 +343,7 @@ namespace Zantetsu.Observability
             _pendingRecord = default;
             _pendingWriteLease = default;
             _pendingStage = NvencCollectorPendingStage.CopyNotStarted;
-            _pendingValidLength = 0;
+            _pendingProof = default;
         }
 
         private bool MatchesPending(in NvencSubmitToOutputRecord record)

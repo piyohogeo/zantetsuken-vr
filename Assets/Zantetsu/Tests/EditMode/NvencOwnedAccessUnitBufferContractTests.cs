@@ -6,6 +6,7 @@ using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
 using NvencAccessUnitCopyStatus = Zantetsu.Observability.NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyStatus;
+using NvencAccessUnitCopyProof = Zantetsu.Observability.NvencOwnedAccessUnitBuffer.NvencAccessUnitCopyProof;
 
 namespace Zantetsu.Core.Tests
 {
@@ -94,11 +95,16 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(invalidLength), out _),
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(invalidLength), out NvencAccessUnitCopyProof proof),
                 Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
 
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
+            Assert.That(ReadContentReady(buffer), Is.False);
+
+            // An invalid length issues no proof: deferred commit is refused.
+            Assert.That(buffer.TryCommitCopiedContent(write, proof), Is.False);
+            Assert.That(ReadContentReady(buffer), Is.False);
             Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
         }
 
@@ -383,12 +389,12 @@ namespace Zantetsu.Core.Tests
 
             Exception copierError = null;
             NvencAccessUnitCopyStatus status = default;
-            int copiedLength = 0;
+            NvencAccessUnitCopyProof proof = default;
             Thread copier = new Thread(() =>
             {
                 try
                 {
-                    status = buffer.TryCopyCompletedOutput(write, default, source, out copiedLength);
+                    status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
                 }
                 catch (Exception ex)
                 {
@@ -409,12 +415,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
             Assert.That(copierError, Is.Null);
 
-            // The commit is deferred and no buffer field changed: the length is
+            // The commit is deferred and no buffer field changed: the proof is
             // returned for the caller to park, and poison refuses the commit.
             Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
             Assert.That(ReadContentReady(buffer), Is.False);
-            Assert.That(buffer.TryCommitCopiedContent(write, copiedLength), Is.False);
+            Assert.That(buffer.TryCommitCopiedContent(write, proof), Is.False);
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
             Assert.That(ReadContentReady(buffer), Is.False);
             Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
@@ -497,12 +503,12 @@ namespace Zantetsu.Core.Tests
 
             Exception copierError = null;
             NvencAccessUnitCopyStatus status = default;
-            int copiedLength = 0;
+            NvencAccessUnitCopyProof proof = default;
             Thread copier = new Thread(() =>
             {
                 try
                 {
-                    status = buffer.TryCopyCompletedOutput(write, default, source, out copiedLength);
+                    status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
                 }
                 catch (Exception ex)
                 {
@@ -517,7 +523,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
             Assert.That(copierError, Is.Null);
             Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
-            Assert.That(copiedLength, Is.EqualTo(1024));
 
             // The failed commit path wrote no buffer field.
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
@@ -533,7 +538,7 @@ namespace Zantetsu.Core.Tests
             // Buffer state is unchanged and the deferred commit is refused.
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
             Assert.That(ReadContentReady(buffer), Is.False);
-            Assert.That(buffer.TryCommitCopiedContent(write, copiedLength), Is.False);
+            Assert.That(buffer.TryCommitCopiedContent(write, proof), Is.False);
             Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
             Assert.That(ReadContentReady(buffer), Is.False);
         }
@@ -584,12 +589,12 @@ namespace Zantetsu.Core.Tests
 
             Exception copierError = null;
             NvencAccessUnitCopyStatus status = default;
-            int copiedLength = 0;
+            NvencAccessUnitCopyProof proof = default;
             Thread copier = new Thread(() =>
             {
                 try
                 {
-                    status = buffer.TryCopyCompletedOutput(write, default, source, out copiedLength);
+                    status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
                 }
                 catch (Exception ex)
                 {
@@ -604,7 +609,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
             Assert.That(copierError, Is.Null);
             Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
-            Assert.That(copiedLength, Is.EqualTo(1024));
             Assert.That(source.CallCount, Is.EqualTo(1));
 
             release.Set();
@@ -612,10 +616,89 @@ namespace Zantetsu.Core.Tests
             Assert.That(holderError, Is.Null);
 
             // The parked length is committed without re-contacting the source.
-            Assert.That(buffer.TryCommitCopiedContent(write, copiedLength), Is.True);
+            Assert.That(buffer.TryCommitCopiedContent(write, proof), Is.True);
+            Assert.That(ReadValidLength(buffer), Is.EqualTo(1024));
             Assert.That(source.CallCount, Is.EqualTo(1));
             Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(owned.WorkToken.IdenticalTo(token), Is.True);
+        }
+
+        [Test]
+        public void SourceBlockedDuringReleaseAndRereserve_OldCopyDoesNotCommitToNewGeneration()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            CaptureFrameWorkToken token1 = MakeToken(1);
+            CaptureFrameWorkToken token2 = MakeToken(2);
+            Assert.That(buffer.TryBeginWrite(token1, out NvencAccessUnitWriteLease write1), Is.True);
+
+            BlockingSource source = new BlockingSource
+            {
+                Entered = new ManualResetEventSlim(false),
+                WaitFor = new ManualResetEventSlim(false),
+            };
+
+            Exception copierError = null;
+            NvencAccessUnitCopyStatus status = default;
+            Thread copier = new Thread(() =>
+            {
+                try
+                {
+                    status = buffer.TryCopyCompletedOutput(write1, default, source, out _);
+                }
+                catch (Exception ex)
+                {
+                    copierError = ex;
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            copier.Start();
+
+            Assert.That(source.Entered.Wait(WatchdogTimeoutMs), Is.True, "source did not enter");
+
+            // While the source is blocked, release the old generation and
+            // reserve a new one: the old copy must not commit into it.
+            Assert.That(buffer.CancelWrite(write1), Is.True);
+            Assert.That(buffer.TryBeginWrite(token2, out NvencAccessUnitWriteLease write2), Is.True);
+
+            source.WaitFor.Set();
+            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+            Assert.That(copierError, Is.Null);
+
+            // The old copy fails closed without committing anything.
+            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.NotStarted));
+            Assert.That(ReadContentReady(buffer), Is.False);
+            Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
+
+            // The new generation proceeds with its own copy.
+            Assert.That(buffer.TryCopyCompletedOutput(write2, default, new FixedLengthSource(1024), out _),
+                Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
+            Assert.That(ReadValidLength(buffer), Is.EqualTo(1024));
+        }
+
+        [Test]
+        public void CommitCopiedContent_RejectedWithoutDeferredProof()
+        {
+            // Source never ran: no proof exists, so commit must fail.
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+
+            Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(buffer.TryCommitCopiedContent(write, default), Is.False);
+            Assert.That(ReadContentReady(buffer), Is.False);
+
+            // A source rejection issues no proof: commit still fails.
+            NvencCaptureProcessState state2 = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer2 = new NvencOwnedAccessUnitBuffer(state2);
+
+            Assert.That(buffer2.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write2), Is.True);
+            Assert.That(buffer2.TryCopyCompletedOutput(write2, default, new BlockingSource { Result = false }, out NvencAccessUnitCopyProof proof),
+                Is.EqualTo(NvencAccessUnitCopyStatus.Rejected));
+            Assert.That(buffer2.TryCommitCopiedContent(write2, proof), Is.False);
+            Assert.That(ReadContentReady(buffer2), Is.False);
         }
 
         [Test]

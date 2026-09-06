@@ -66,6 +66,27 @@ namespace Zantetsu.Observability
             NotStarted,
         }
 
+        /// <summary>
+        /// Generation-bound proof that one source copy succeeded and its valid
+        /// length is pending commit. Issued only by
+        /// <see cref="TryCopyCompletedOutput"/> when it defers a commit, so a
+        /// caller cannot commit a length that never came from a successful
+        /// source call.
+        /// </summary>
+        internal readonly struct NvencAccessUnitCopyProof
+        {
+            internal readonly Guid OwnerToken;
+            internal readonly long Generation;
+            internal readonly int ValidLength;
+
+            internal NvencAccessUnitCopyProof(Guid ownerToken, long generation, int validLength)
+            {
+                OwnerToken = ownerToken;
+                Generation = generation;
+                ValidLength = validLength;
+            }
+        }
+
         private readonly byte[] _storage;
         private readonly Guid _ownerToken;
         private readonly NvencCaptureProcessState _processState;
@@ -155,17 +176,17 @@ namespace Zantetsu.Observability
         /// effect even after a source rejection. The source call runs outside
         /// the gate; on return a second short gate commits the valid length.
         /// Poison or gate contention ordered before the commit returns Pending
-        /// with the valid length out, never writing a buffer field; the caller
-        /// parks the length and commits it later via
+        /// with a generation-bound proof, never writing a buffer field; the
+        /// caller parks the proof and commits it later via
         /// <see cref="TryCommitCopiedContent"/> without re-calling the source.
         /// </summary>
         internal NvencAccessUnitCopyStatus TryCopyCompletedOutput(
             in NvencAccessUnitWriteLease writeLease,
             in NvencEncodeSampleSlotLease sampleSlot,
             INvencOutputBitstreamSource source,
-            out int validLength)
+            out NvencAccessUnitCopyProof proof)
         {
-            validLength = 0;
+            proof = default;
 
             if (source == null)
             {
@@ -197,7 +218,7 @@ namespace Zantetsu.Observability
             }
 
             // External call: completion wait, lock, copy, unlock, unmap.
-            if (!source.TryCopyCompletedOutput(_workToken, sampleSlot, _storage, _storage.Length, out validLength))
+            if (!source.TryCopyCompletedOutput(_workToken, sampleSlot, _storage, _storage.Length, out int validLength))
             {
                 return NvencAccessUnitCopyStatus.Rejected;
             }
@@ -208,14 +229,24 @@ namespace Zantetsu.Observability
             }
 
             // Commit the valid length behind a short gate. The failure path
-            // writes no buffer field.
+            // writes no buffer field; on gate contention a generation-bound
+            // proof carries the length for a later commit.
             if (!_processState.TryBeginResourceResolution())
             {
+                proof = new NvencAccessUnitCopyProof(_ownerToken, _generation, validLength);
                 return NvencAccessUnitCopyStatus.Pending;
             }
 
             try
             {
+                // The lease and claim must still be exact: a concurrent release
+                // and re-reservation during the source call invalidates this
+                // copy for the current generation.
+                if (!IsExactCollector(writeLease) || !_copyInProgress)
+                {
+                    return NvencAccessUnitCopyStatus.NotStarted;
+                }
+
                 _validLength = validLength;
                 _contentReady = true;
                 return NvencAccessUnitCopyStatus.Committed;
@@ -227,15 +258,17 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Commits a deferred copy length behind the resource-resolution gate.
-        /// The exact write lease is re-verified inside the gate before
-        /// <c>_validLength</c> and <c>_contentReady</c> are updated. Returns
-        /// <c>false</c> while the gate is held, the process is poisoned, or the
-        /// lease is no longer exact.
+        /// Commits a deferred copy behind the resource-resolution gate. The
+        /// exact write lease and the generation-bound proof are re-verified
+        /// inside the gate before <c>_validLength</c> and <c>_contentReady</c>
+        /// are updated, so a length that never came from a successful source
+        /// call cannot be committed. Returns <c>false</c> while the gate is
+        /// held, the process is poisoned, the lease is no longer exact, or the
+        /// proof does not match the current generation.
         /// </summary>
         internal bool TryCommitCopiedContent(
             in NvencAccessUnitWriteLease writeLease,
-            int validLength)
+            in NvencAccessUnitCopyProof proof)
         {
             if (!_processState.TryBeginResourceResolution())
             {
@@ -244,12 +277,12 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (!IsExactCollector(writeLease))
+                if (!IsExactCollector(writeLease) || !IsExactProof(proof))
                 {
                     return false;
                 }
 
-                _validLength = validLength;
+                _validLength = proof.ValidLength;
                 _contentReady = true;
                 return true;
             }
@@ -257,6 +290,14 @@ namespace Zantetsu.Observability
             {
                 _processState.EndResourceResolution();
             }
+        }
+
+        private bool IsExactProof(in NvencAccessUnitCopyProof proof)
+        {
+            return proof.OwnerToken == _ownerToken &&
+                proof.Generation == _generation &&
+                proof.ValidLength > 0 &&
+                proof.ValidLength <= _storage.Length;
         }
 
         /// <summary>
