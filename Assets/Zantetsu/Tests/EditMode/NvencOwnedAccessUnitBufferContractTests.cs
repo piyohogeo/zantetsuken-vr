@@ -41,7 +41,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ValidLength_BoundaryOneAndMax_Accepted()
+        public void CopyLength_BoundaryOneAndMax_Accepted()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
@@ -51,25 +51,27 @@ namespace Zantetsu.Core.Tests
             Assert.That(validLengthField, Is.Not.Null);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write1), Is.True);
-            Assert.That(buffer.TryTransferToSink(write1, 1, out NvencOwnedAccessUnitLease owned1), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write1, out NvencOwnedAccessUnitLease owned1), Is.True);
             Assert.That(validLengthField.GetValue(buffer), Is.EqualTo(1));
             Assert.That(buffer.Return(owned1), Is.True);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(2), out NvencAccessUnitWriteLease write2), Is.True);
-            Assert.That(buffer.TryTransferToSink(write2, buffer.Capacity, out NvencOwnedAccessUnitLease owned2), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write2, default, new FixedLengthSource(buffer.Capacity)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write2, out NvencOwnedAccessUnitLease owned2), Is.True);
             Assert.That(validLengthField.GetValue(buffer), Is.EqualTo(buffer.Capacity));
         }
 
         [Test]
-        public void ValidLength_ZeroNegativeAndOverMax_RejectedWithoutStateChange()
+        public void CopyLength_ZeroNegativeAndOverMax_RejectedWithoutStateChange()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryTransferToSink(write, 0, out _), Is.False);
-            Assert.That(buffer.TryTransferToSink(write, -1, out _), Is.False);
-            Assert.That(buffer.TryTransferToSink(write, buffer.Capacity + 1, out _), Is.False);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(0)), Is.False);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(-1)), Is.False);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(buffer.Capacity + 1)), Is.False);
 
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
 
@@ -78,9 +80,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(validLengthField, Is.Not.Null);
             Assert.That(validLengthField.GetValue(buffer), Is.EqualTo(0));
 
-            // The untouched write lease still transfers.
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
-            Assert.That(owned.IsValid, Is.True);
+            // No content was recorded: transfer is refused.
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
         }
 
         [Test]
@@ -94,7 +95,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
             Assert.That(write.WorkToken.IdenticalTo(token), Is.True);
 
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(owned.WorkToken.IdenticalTo(token), Is.True);
         }
 
@@ -107,7 +109,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(a.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease writeA), Is.True);
 
-            Assert.That(b.TryTransferToSink(writeA, 1024, out _), Is.False);
+            Assert.That(b.TryTransferToSink(writeA, out _), Is.False);
             Assert.That(b.CancelWrite(writeA), Is.False);
 
             Assert.That(a.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
@@ -126,11 +128,12 @@ namespace Zantetsu.Core.Tests
             NvencAccessUnitWriteLease forged = new NvencAccessUnitWriteLease(
                 write.OwnerToken, write.Generation, MakeToken(2));
 
-            Assert.That(buffer.TryTransferToSink(forged, 1024, out _), Is.False);
+            Assert.That(buffer.TryTransferToSink(forged, out _), Is.False);
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
 
-            // The genuine lease still transfers.
-            Assert.That(buffer.TryTransferToSink(write, 1024, out _), Is.True);
+            // The genuine lease still copies and transfers.
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.True);
         }
 
         [Test]
@@ -144,7 +147,7 @@ namespace Zantetsu.Core.Tests
 
             // The cancelled lease is now stale for every later use.
             Assert.That(buffer.CancelWrite(write), Is.False);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out _), Is.False);
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
         }
 
         [Test]
@@ -154,9 +157,10 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
-            Assert.That(buffer.TryTransferToSink(write, 1024, out _), Is.False);
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
             Assert.That(buffer.CancelWrite(write), Is.False);
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
 
@@ -170,7 +174,8 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
             Assert.That(buffer.Return(owned), Is.True);
             Assert.That(buffer.Return(owned), Is.False);
@@ -201,7 +206,8 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease first), Is.True);
             long firstGeneration = first.Generation;
-            Assert.That(buffer.TryTransferToSink(first, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(first, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(first, out NvencOwnedAccessUnitLease owned), Is.True);
 
             Assert.That(buffer.Return(owned), Is.True);
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
@@ -217,7 +223,8 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write1), Is.True);
-            Assert.That(buffer.TryTransferToSink(write1, 1024, out NvencOwnedAccessUnitLease owned1), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write1, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write1, out NvencOwnedAccessUnitLease owned1), Is.True);
 
             Assert.That(state.TryBeginDrain(), Is.True);
 
@@ -249,7 +256,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(state.TryPoison(), Is.True);
 
             Assert.That(buffer.CancelWrite(write), Is.False);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out _), Is.False);
+            Assert.That(buffer.TryTransferToSink(write, out _), Is.False);
             Assert.That(buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
 
             Assert.That(buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.CollectorOwned));
@@ -262,7 +269,8 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(state.TryPoison(), Is.True);
 
             Assert.That(buffer.Return(owned), Is.False);
@@ -278,7 +286,8 @@ namespace Zantetsu.Core.Tests
             NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
 
             // Hold the resource-resolution gate and poison inside it: the poison
             // transition is ordered against the region state transitions.
@@ -304,7 +313,8 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(buffer.TryBeginWrite(MakeToken(1), out NvencAccessUnitWriteLease write), Is.True);
             Assert.That(write.Generation, Is.EqualTo(long.MaxValue));
-            Assert.That(buffer.TryTransferToSink(write, 1024, out NvencOwnedAccessUnitLease owned), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new FixedLengthSource(1024)), Is.True);
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease owned), Is.True);
             Assert.That(buffer.Return(owned), Is.True);
 
             // Retired: the single slot must not wrap back to a small generation.
@@ -363,6 +373,7 @@ namespace Zantetsu.Core.Tests
             string[] methodBodies =
             {
                 ExtractMethodBody(bufferSource, "TryBeginWrite"),
+                ExtractMethodBody(bufferSource, "TryCopyCompletedOutput"),
                 ExtractMethodBody(bufferSource, "TryTransferToSink"),
                 ExtractMethodBody(bufferSource, "CancelWrite"),
                 ExtractMethodBody(bufferSource, "Return"),
@@ -400,17 +411,38 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Source_ContentAccessDeferred_NoViewCopyOrConsumeApi()
+        public void Source_NoRawArrayExposure_NoDirectCopy()
         {
             string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOwnedAccessUnitBuffer.cs"));
 
-            // Content access belongs to the real collector and sink; this
-            // boundary must not expose a raw view, a copy, or a consume API.
+            // The buffer never hands out the raw backing array and never copies
+            // directly; content flows only through the injected source call.
             Assert.That(source, Does.Not.Contain("TryGetCollectorView"));
             Assert.That(source, Does.Not.Contain("TryGetSinkView"));
             Assert.That(source, Does.Not.Contain("TryCopyCollectorContent"));
             Assert.That(source, Does.Not.Contain("TryConsumeSinkContent"));
             Assert.That(source, Does.Not.Contain("BlockCopy"));
+        }
+
+        private sealed class FixedLengthSource : INvencOutputBitstreamSource
+        {
+            private readonly int _length;
+
+            internal FixedLengthSource(int length)
+            {
+                _length = length;
+            }
+
+            public bool TryCopyCompletedOutput(
+                in CaptureFrameWorkToken workToken,
+                in NvencEncodeSampleSlotLease sampleSlot,
+                byte[] destination,
+                int destinationCapacity,
+                out int validLength)
+            {
+                validLength = _length;
+                return true;
+            }
         }
 
         private static CaptureFrameWorkToken MakeToken(long frameId)
