@@ -370,6 +370,104 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Publish_CollectorControlledFailure_ValidEvidence_PublishesFailed()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceCollectorControlledFailure(
+                1, out NvencSubmittedOutputCollectResult collectorResult);
+
+            Assert.That(h.Boundary.TryPublishCollectorControlledFailure(
+                record, collectorResult, out NvencFrameCompletionRecord published), Is.True);
+
+            Assert.That(published.Status, Is.EqualTo(CaptureFrameCompletionStatus.Failed));
+            Assert.That(published.Reason, Is.EqualTo(NvencFrameCompletionReason.OutputCollectControlledFailure));
+            Assert.That(h.SubmitToOutputCredits.IsActive(record.SubmitToOutputCredit), Is.False);
+        }
+
+        [Test]
+        public void Publish_CollectorControlledFailure_WithoutCollector_PoisonsNoCompletionNoCreditReturn()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(1, out _, out _, out _);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                h.Boundary.TryPublishCollectorControlledFailure(record, default, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.SubmitToOutputCredits.IsActive(record.SubmitToOutputCredit), Is.True);
+            Assert.That(GetQueue(h.Boundary).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Publish_CollectorControlledFailure_ForeignProof_PoisonsNoCompletionNoCreditReturn()
+        {
+            Harness h = new Harness();
+            Harness other = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+
+            // Mint a proof from a foreign buffer for this work token.
+            Assert.That(other.Buffer.TryBeginWrite(record.WorkToken, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(other.Buffer.TryCancelCollectorReservation(
+                write, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof foreignProof), Is.True);
+            Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
+
+            NvencSubmittedOutputCollectResult collectorResult =
+                NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken, foreignProof);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                h.Boundary.TryPublishCollectorControlledFailure(record, collectorResult, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.SubmitToOutputCredits.IsActive(record.SubmitToOutputCredit), Is.True);
+            Assert.That(GetQueue(h.Boundary).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Publish_CollectorControlledFailure_StaleProofAfterRereserve_Poisons()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+
+            // Mint a valid proof, then re-reserve the same work token so the
+            // recovery nonce rotates and the proof goes stale.
+            Assert.That(h.Buffer.TryBeginWrite(record.WorkToken, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(h.Buffer.TryCancelCollectorReservation(
+                write, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof staleProof), Is.True);
+            Assert.That(h.Buffer.TryBeginWrite(record.WorkToken, out _), Is.True);
+            Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
+
+            NvencSubmittedOutputCollectResult collectorResult =
+                NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken, staleProof);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                h.Boundary.TryPublishCollectorControlledFailure(record, collectorResult, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(GetQueue(h.Boundary).Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Publish_CollectorControlledFailure_WrongWorkToken_Poisons()
+        {
+            Harness h = new Harness();
+            NvencSubmitToOutputRecord record = h.ProduceSubmittedUnresolved(1, out _, out NvencEncodeSampleSlotLease sampleLease, out _);
+            NvencSubmitToOutputRecord otherRecord = h.ProduceSubmittedUnresolved(2, out _, out _, out _);
+
+            Assert.That(h.Buffer.TryBeginWrite(record.WorkToken, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(h.Buffer.TryCancelCollectorReservation(
+                write, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+            Assert.That(h.SampleSlots.TryReturn(sampleLease), Is.True);
+
+            // A collector result naming a different work token cannot publish
+            // this record's completion.
+            NvencSubmittedOutputCollectResult collectorResult =
+                NvencSubmittedOutputCollectResult.ControlledFailure(otherRecord.WorkToken, proof);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                h.Boundary.TryPublishCollectorControlledFailure(record, collectorResult, out _));
+            Assert.That(h.State.IsPoisoned, Is.True);
+            Assert.That(h.SubmitToOutputCredits.IsActive(record.SubmitToOutputCredit), Is.True);
+            Assert.That(GetQueue(h.Boundary).Count, Is.EqualTo(0));
+        }
+
+        [Test]
         public void ReleaseResult_CreateBeforeReturn_Rejected()
         {
             Harness h = new Harness();
@@ -1062,6 +1160,32 @@ namespace Zantetsu.Core.Tests
                     out frameCompletionCredit);
 
                 // The Sample Slot is intentionally still active (not released).
+                return record;
+            }
+
+            internal NvencSubmitToOutputRecord ProduceCollectorControlledFailure(
+                long frameId,
+                out NvencSubmittedOutputCollectResult collectorResult)
+            {
+                RentRecord(
+                    NvencSubmitToOutputRecordKind.Submitted,
+                    frameId,
+                    NvencFailedBeforeSubmitReason.None,
+                    out NvencSubmitToOutputRecord record,
+                    out _,
+                    out NvencEncodeSampleSlotLease sampleLease,
+                    out _,
+                    out _);
+
+                // Exactly the collector's controlled-failure release: cancel the
+                // reservation, return the Sample Slot, and issue a
+                // ControlledFailure result carrying the minted recovery proof.
+                Assert.That(Buffer.TryBeginWrite(record.WorkToken, out NvencAccessUnitWriteLease writeLease), Is.True);
+                Assert.That(SampleSlots.TryReturn(sampleLease), Is.True);
+                Assert.That(Buffer.TryCancelCollectorReservation(
+                    writeLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+                collectorResult = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken, proof);
+
                 return record;
             }
 

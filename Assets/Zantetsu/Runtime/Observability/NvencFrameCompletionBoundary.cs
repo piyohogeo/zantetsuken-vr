@@ -180,6 +180,7 @@ namespace Zantetsu.Observability
 
         internal bool TryPublishCollectorControlledFailure(
             in NvencSubmitToOutputRecord record,
+            in NvencSubmittedOutputCollectResult collectorResult,
             out NvencFrameCompletionRecord completion)
         {
             completion = default;
@@ -187,6 +188,19 @@ namespace Zantetsu.Observability
             if (_processState.IsPoisoned)
             {
                 return false;
+            }
+
+            // The collector's controlled-failure evidence must match this exact
+            // record: its work token, its already-returned Sample Slot, and its
+            // recovery proof minted by this exact buffer cancel. A collector
+            // that never ran, a foreign or stale proof, or a proof for another
+            // work token all poison before any credit return or enqueue.
+            if (!collectorResult.IsControlledFailure ||
+                !collectorResult.WorkToken.IdenticalTo(record.WorkToken) ||
+                _sampleSlots.IsActive(record.SampleSlot) ||
+                !_buffer.VerifyRecoveryProof(collectorResult.RecoveryProof, record.WorkToken))
+            {
+                PoisonAndThrow("Frame Completion collector controlled-failure evidence does not match the record.");
             }
 
             return PublishCore(

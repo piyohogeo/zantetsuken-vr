@@ -590,7 +590,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(fields.Length, Is.EqualTo(13));
+            Assert.That(fields.Length, Is.EqualTo(14));
 
             Type[] dependencyTypes =
             {

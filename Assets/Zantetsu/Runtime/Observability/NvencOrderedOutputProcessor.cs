@@ -73,6 +73,7 @@ namespace Zantetsu.Observability
         private NvencRunChunkSinkResult _sinkResult;
         private NvencFailedBeforeSubmitReleaseResult _releaseResult;
         private NvencRunAbandonedRecoveryResult _recoveryResult;
+        private NvencSubmittedOutputCollectResult _collectorResult;
 
         internal NvencOrderedOutputProcessor(
             NvencCaptureProcessState processState,
@@ -194,7 +195,10 @@ namespace Zantetsu.Observability
             {
                 // The Sample Slot and the buffer were already safely recovered
                 // by the collector; the Sink and its writer are never contacted.
+                // Keep the collector evidence so a busy publish reuses the same
+                // proof instead of re-running the collector.
                 ConfirmRunAbandoned();
+                _collectorResult = collectorResult;
                 _stage = NvencOutputProcessorStage.CollectorFailurePublish;
                 return StepCollectorFailurePublish();
             }
@@ -247,7 +251,7 @@ namespace Zantetsu.Observability
 
         private bool StepCollectorFailurePublish()
         {
-            if (!_completionBoundary.TryPublishCollectorControlledFailure(_current, out _))
+            if (!_completionBoundary.TryPublishCollectorControlledFailure(_current, _collectorResult, out _))
             {
                 return false;
             }
@@ -316,6 +320,7 @@ namespace Zantetsu.Observability
             _sinkResult = default;
             _releaseResult = default;
             _recoveryResult = default;
+            _collectorResult = default;
         }
 
         private void PoisonAndThrow(string message)
