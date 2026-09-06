@@ -992,6 +992,47 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Create_ZeroAppendSink_Rejected()
+        {
+            // No appends: buffer Free, count 0. The normal entry point would
+            // refuse this count, so the atomic factory must refuse too.
+            Harness h = new Harness();
+            CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new long[] { 1 });
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunChunkSinkFinalizationEvidence.Create(h.Sink, 1, 64, 1, relation));
+        }
+
+        [Test]
+        public void Create_LengthMismatch_Rejected()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease);
+            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.True);
+
+            // The sink accumulated 64 bytes; a direct Create with a different
+            // length must be refused even though the rest matches.
+            CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new long[] { 1 });
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunChunkSinkFinalizationEvidence.Create(h.Sink, 1, 63, 1, relation));
+        }
+
+        [Test]
+        public void Create_RelationMismatch_Rejected()
+        {
+            Harness h = new Harness();
+            CaptureFrameWorkToken token1 = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease1);
+            Assert.That(h.Sink.TryAppend(token1, lease1, out _), Is.True);
+            CaptureFrameWorkToken token3 = h.ProduceOwnedLease(3, 48, Seed, out NvencOwnedAccessUnitLease lease3);
+            Assert.That(h.Sink.TryAppend(token3, lease3, out _), Is.True);
+
+            // Count, length, and last id match the sink, but the relation's ids
+            // do not: the atomic factory must refuse.
+            CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new long[] { 2, 3 });
+            Assert.Throws<InvalidOperationException>(() =>
+                NvencRunChunkSinkFinalizationEvidence.Create(h.Sink, 2, 112, 3, relation));
+        }
+
+        [Test]
         public void EvidenceShape_SealedImmutable_ExactFields()
         {
             Type type = typeof(NvencRunChunkSinkFinalizationEvidence);

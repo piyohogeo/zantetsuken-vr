@@ -560,5 +560,26 @@ namespace Zantetsu.Observability
                 !_pending &&
                 _buffer.Phase == NvencAccessUnitPhase.Free;
         }
+
+        /// <summary>
+        /// True when the sink currently admits finalization and the given
+        /// evidence fields exactly match the current appended count,
+        /// accumulated byte length, last Capture Frame Id, and frame-id
+        /// sequence. Shared by finalization evidence construction and
+        /// re-verification so evidence can never be created or accepted for a
+        /// mismatched or non-finalizable sink.
+        /// </summary>
+        internal bool MatchesFinalizationEvidence(
+            long appendedCount,
+            long accumulatedByteLength,
+            long lastFrameId,
+            CaptureArtifactFrameRelation relation)
+        {
+            return IsFinalizationAdmissible() &&
+                _appendedCount == appendedCount &&
+                _accumulatedByteLength == accumulatedByteLength &&
+                _lastFrameId == lastFrameId &&
+                MatchesFrameRelation(relation);
+        }
     }
 }

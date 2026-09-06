@@ -56,10 +56,14 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(frameRelation));
             }
 
-            if (!sink.IsFinalizationAdmissible())
+            if (!sink.MatchesFinalizationEvidence(
+                appendedCount,
+                accumulatedByteLength,
+                lastFrameId,
+                frameRelation))
             {
                 throw new InvalidOperationException(
-                    "The sink does not currently admit finalization.");
+                    "The evidence does not match the sink's current finalization state.");
             }
 
             if (appendedCount <= 0 || appendedCount > NvencBringUpProfileV1.CadenceTickCount)
@@ -105,11 +109,11 @@ namespace Zantetsu.Observability
         {
             return sink != null &&
                 ReferenceEquals(_sink, sink) &&
-                sink.IsFinalizationAdmissible() &&
-                _appendedCount == sink.AppendedCount &&
-                _accumulatedByteLength == sink.AccumulatedByteLength &&
-                _lastFrameId == sink.LastFrameId &&
-                sink.MatchesFrameRelation(_frameRelation);
+                sink.MatchesFinalizationEvidence(
+                    _appendedCount,
+                    _accumulatedByteLength,
+                    _lastFrameId,
+                    _frameRelation);
         }
     }
 }
