@@ -351,6 +351,103 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Accept_CapacityFailure_RollsBackWhileGateHeld_ThenReleasesGate()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workPool = new NvencCaptureWorkSlotPool(state);
+            NvencEncodeSampleSlotPool samplePool = new NvencEncodeSampleSlotPool(state);
+            NvencGpuConversionSyncPool syncPool = new NvencGpuConversionSyncPool(state);
+            NvencSubmitToOutputCreditPool submitToOutputPool = new NvencSubmitToOutputCreditPool(state);
+            NvencFrameCompletionCreditPool frameCompletionPool = new NvencFrameCompletionCreditPool(state);
+            NvencFixedSpscQueue<NvencSubmissionRecord> queue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+            Guid owner = Guid.NewGuid();
+            NvencSubmissionAdmissionCoordinator coordinator = new NvencSubmissionAdmissionCoordinator(
+                state, workPool, samplePool, syncPool, submitToOutputPool, frameCompletionPool, queue, owner);
+
+            // Pre-fill the sync pool so the admission rents Work and Sample, then
+            // fails on Sync and must roll both back before releasing the gate.
+            for (int i = 0; i < 8; i++)
+            {
+                Assert.That(syncPool.TryRent(out NvencGpuConversionSyncLease syncLease), Is.True);
+            }
+
+            using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
+            {
+                CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
+                try
+                {
+                    CaptureSubmitStatus status = coordinator.TryAccept(MakeFrame(1), surface, out CaptureFrameWorkToken token);
+
+                    Assert.That(status, Is.EqualTo(CaptureSubmitStatus.Backpressured));
+                    Assert.That(token.IsValid, Is.False);
+                    Assert.That(surface.IsCallerOwned, Is.True);
+
+                    // The partial reservations were rolled back, the pre-filled
+                    // pool is untouched, and no transition interleaved with the
+                    // rollback: the process is still accepting.
+                    Assert.That(workPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(samplePool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(syncPool.OccupiedCount, Is.EqualTo(8));
+                    Assert.That(submitToOutputPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(frameCompletionPool.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(state.IsAccepting, Is.True);
+
+                    // The gate is released only after the rollback, so it is free
+                    // for the next admission.
+                    FieldInfo gateField = typeof(NvencCaptureProcessState).GetField(
+                        "_admissionGate", BindingFlags.Instance | BindingFlags.NonPublic);
+                    Assert.That(gateField, Is.Not.Null, "Missing field _admissionGate.");
+                    object gate = gateField.GetValue(state);
+                    bool entered = Monitor.TryEnter(gate);
+                    Assert.That(entered, Is.True, "The admission gate must be released after TryAccept returns.");
+                    if (entered)
+                    {
+                        Monitor.Exit(gate);
+                    }
+                }
+                finally
+                {
+                    surface.Dispose();
+                }
+            }
+        }
+
+        [Test]
+        public void Poison_WaitsForAdmissionGate_UntilRelease()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            FieldInfo gateField = typeof(NvencCaptureProcessState).GetField(
+                "_admissionGate", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(gateField, Is.Not.Null, "Missing field _admissionGate.");
+            object gate = gateField.GetValue(state);
+
+            Monitor.Enter(gate);
+            bool poisonResult = false;
+            Thread poisonThread = new Thread(() =>
+            {
+                poisonResult = state.TryPoison();
+            });
+            poisonThread.IsBackground = true;
+            poisonThread.Start();
+
+            try
+            {
+                // While the admission gate is held, the blocking TryPoison cannot
+                // establish, so a rollback inside the gate completes first.
+                Assert.That(poisonThread.Join(100), Is.False, "TryPoison must block while the admission gate is held.");
+                Assert.That(state.IsPoisoned, Is.False);
+            }
+            finally
+            {
+                Monitor.Exit(gate);
+            }
+
+            Assert.That(poisonThread.Join(WatchdogTimeoutMs), Is.True, "Poison thread did not finish after the gate was released.");
+            Assert.That(poisonResult, Is.True);
+            Assert.That(state.IsPoisoned, Is.True);
+        }
+
+        [Test]
         public void Accept_EnqueueFailure_RollsBackAllReservations()
         {
             NvencCaptureProcessState state = new NvencCaptureProcessState();

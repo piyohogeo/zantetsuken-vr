@@ -21,9 +21,11 @@ namespace Zantetsu.Observability
     /// Submit-to-Output credit, Frame Completion credit — so that Accepted work
     /// can never be admitted with more downstream demand than the pipeline can
     /// carry. On the first failed rent the already-reserved resources are
-    /// released in strict reverse order and the call returns
-    /// <c>Backpressured</c> with the surface still caller-owned. The work token
-    /// is issued from the backend owner and the work slot generation, the
+    /// released in strict reverse order while the admission gate is still
+    /// held, and the call returns <c>Backpressured</c> with the surface still
+    /// caller-owned and a default work token; a drain or poison transition
+    /// therefore linearizes only after the rollback has completed. The work
+    /// token is issued from the backend owner and the work slot generation, the
     /// surface is transferred, the record is built, and it is enqueued exactly
     /// once, so the successful enqueue is the Accepted linearization point
     /// ordered before any later drain or poison. Capacity exhaustion of any
@@ -171,7 +173,7 @@ namespace Zantetsu.Observability
             NvencGpuConversionSyncLease syncSlot = default;
             NvencSubmitToOutputCreditLease submitToOutputCredit = default;
             NvencFrameCompletionCreditLease frameCompletionCredit = default;
-            bool allRented = false;
+            CaptureSubmitStatus status;
 
             try
             {
@@ -186,7 +188,6 @@ namespace Zantetsu.Observability
                     _submitToOutputCredits.TryRent(out submitToOutputCredit) &&
                     _frameCompletionCredits.TryRent(out frameCompletionCredit))
                 {
-                    allRented = true;
                     token = new CaptureFrameWorkToken(
                         _backendOwner, workSlot.SlotIndex, workSlot.Generation, frame.TestRunId, frame.CaptureFrameId);
 
@@ -208,12 +209,25 @@ namespace Zantetsu.Observability
                     {
                         // Post-transfer invariant violation: release every
                         // reservation in reverse order and release the
-                        // transferred surface, then propagate. If the cleanup
-                        // itself throws, aggregate it with the original.
+                        // transferred surface while still holding the gate,
+                        // then propagate. If the cleanup itself throws,
+                        // aggregate it with the original.
                         RollbackAfterTransferAndThrow(
                             enqueueFailure, workSlot, sampleSlot, syncSlot,
                             submitToOutputCredit, frameCompletionCredit, surface, token);
                     }
+
+                    status = CaptureSubmitStatus.Accepted;
+                }
+                else
+                {
+                    // Capacity exhausted while Running: release the reservations
+                    // taken so far in strict reverse order while still holding
+                    // the admission gate, so a drain or poison transition
+                    // linearizes only after the rollback has completed. Default
+                    // (unrented) leases are rejected by TryReturn and harmless.
+                    RollbackReservations(workSlot, sampleSlot, syncSlot, submitToOutputCredit, frameCompletionCredit);
+                    status = CaptureSubmitStatus.Backpressured;
                 }
             }
             finally
@@ -221,17 +235,8 @@ namespace Zantetsu.Observability
                 _processState.EndAdmission();
             }
 
-            if (!allRented)
-            {
-                // Capacity exhausted while Running: release the reservations
-                // taken so far in strict reverse order. Default (unrented)
-                // leases are rejected by TryReturn and are harmless.
-                RollbackReservations(workSlot, sampleSlot, syncSlot, submitToOutputCredit, frameCompletionCredit);
-                return CaptureSubmitStatus.Backpressured;
-            }
-
             workToken = token;
-            return CaptureSubmitStatus.Accepted;
+            return status;
         }
 
         internal bool TryDequeue(out NvencSubmissionRecord record)
