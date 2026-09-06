@@ -411,7 +411,8 @@ namespace Zantetsu.Core.Tests
                 1, out NvencOwnedAccessUnitLease ownedLease);
 
             Assert.That(h.Buffer.TryReturnOwnedAccessUnit(
-                ownedLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof), Is.True);
+                ownedLease, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof proof),
+                Is.EqualTo(NvencOwnedAccessUnitBoundaryStatus.Ready));
 
             NvencRunAbandonedRecoveryResult result =
                 NvencRunAbandonedRecoveryResult.Create(record, h.SampleSlots, h.Buffer, proof);
@@ -446,7 +447,8 @@ namespace Zantetsu.Core.Tests
                 ownedLease.OwnerToken, ownedLease.Generation + 5, ownedLease.WorkToken);
 
             Assert.That(h.Buffer.TryReturnOwnedAccessUnit(
-                fake, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof forgedProof), Is.False);
+                fake, out NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof forgedProof),
+                Is.EqualTo(NvencOwnedAccessUnitBoundaryStatus.Invalid));
             Assert.That(h.Buffer.VerifyRecoveryProof(forgedProof, record.WorkToken), Is.False);
             Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
         }

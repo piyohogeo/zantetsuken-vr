@@ -239,6 +239,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            NvencOwnedAccessUnitBuffer.NvencOwnedAccessUnitRecoveryProof recoveryProof;
             try
             {
                 if (!_sampleSlots.TryReturn(record.SampleSlot))
@@ -246,7 +247,7 @@ namespace Zantetsu.Observability
                     PoisonAndThrow("Encode Sample Slot return failed during controlled-failure release.");
                 }
 
-                if (!_buffer.CancelWrite(writeLease))
+                if (!_buffer.TryCancelCollectorReservation(writeLease, out recoveryProof))
                 {
                     PoisonAndThrow("Access Unit cancel failed during controlled-failure release.");
                 }
@@ -256,7 +257,7 @@ namespace Zantetsu.Observability
                 _processState.EndResourceResolution();
             }
 
-            result = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken);
+            result = NvencSubmittedOutputCollectResult.ControlledFailure(record.WorkToken, recoveryProof);
             return true;
         }
 

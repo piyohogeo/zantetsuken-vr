@@ -674,10 +674,12 @@ namespace Zantetsu.Observability
         /// Recovery-side return: releases an exact SinkOwned owned lease back
         /// to Free exactly once and mints a non-forgeable recovery proof bound
         /// to the returned work token. Only a successful release mints the
-        /// proof; a foreign, stale, fake-generation, or in-flight lease fails
-        /// without minting.
+        /// proof. Returns Ready with the proof on success, Busy while the gate
+        /// is held or the process is poisoned (retryable, nothing changed), or
+        /// Invalid for a foreign, stale, fake-generation, wrong-phase, or
+        /// in-flight lease (an ownership break that must poison).
         /// </summary>
-        internal bool TryReturnOwnedAccessUnit(
+        internal NvencOwnedAccessUnitBoundaryStatus TryReturnOwnedAccessUnit(
             in NvencOwnedAccessUnitLease ownedLease,
             out NvencOwnedAccessUnitRecoveryProof proof)
         {
@@ -685,20 +687,20 @@ namespace Zantetsu.Observability
 
             if (!_processState.TryBeginResourceResolution())
             {
-                return false;
+                return NvencOwnedAccessUnitBoundaryStatus.Busy;
             }
 
             try
             {
                 if (!IsExactSink(ownedLease) || _consumeInFlight)
                 {
-                    return false;
+                    return NvencOwnedAccessUnitBoundaryStatus.Invalid;
                 }
 
                 ReleaseToFree();
                 proof = new NvencOwnedAccessUnitRecoveryProof(
                     _ownerToken, _recoveryNonce, ownedLease.WorkToken);
-                return true;
+                return NvencOwnedAccessUnitBoundaryStatus.Ready;
             }
             finally
             {
