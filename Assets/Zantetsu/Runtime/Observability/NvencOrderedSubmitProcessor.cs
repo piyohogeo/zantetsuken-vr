@@ -43,7 +43,7 @@ namespace Zantetsu.Observability
         private readonly INvencEncodePictureSubmitter _submitter;
 
         private NvencSubmissionRecord _current;
-        private bool _hasCurrent;
+        private volatile bool _hasCurrent;
 
         internal NvencOrderedSubmitProcessor(
             NvencCaptureProcessState processState,
@@ -99,6 +99,15 @@ namespace Zantetsu.Observability
         }
 
         internal bool HasCurrentWork => _hasCurrent;
+
+        /// <summary>
+        /// Diagnostic-only stop predicate for the Submit Worker's drain
+        /// decision: true while the processor holds a current work or the
+        /// Submission Queue is non-empty. It exposes no queue contents and no
+        /// current record. Not a linearization point; used only to decide when
+        /// a requested drain has nothing left to process.
+        /// </summary>
+        internal bool HasPendingWork => _hasCurrent || _submissionQueue.Count > 0;
 
         internal bool TryProcessNext()
         {
