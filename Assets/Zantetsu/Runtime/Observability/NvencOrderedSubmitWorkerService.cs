@@ -67,7 +67,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencOrderedSubmitProcessor _processor;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
-        private readonly ManualResetEventSlim _settled = new ManualResetEventSlim(false);
+        private Action _settled;
 
         private Thread _workerThread;
         private volatile bool _drainRequested;
@@ -147,28 +147,55 @@ namespace Zantetsu.Observability
         internal bool IsStopped => _workerStopped;
 
         /// <summary>
-        /// Instance-local observation signal that is set whenever the worker
-        /// has drained all currently-processable work and is about to park, or
-        /// when it stops. Production correctness never depends on this signal;
-        /// it exists only so callers can observe worker quiescence without
-        /// polling.
+        /// Instance-local, best-effort observation notification raised whenever
+        /// the worker has drained all currently-processable work and is about
+        /// to park, or when it stops. Production correctness never depends on
+        /// subscribers; observer exceptions are swallowed and never become a
+        /// fatal failure. The worker keeps ownership of its signal object, so
+        /// callers can subscribe and unsubscribe but can never reset, set, or
+        /// dispose it.
         /// </summary>
-        internal ManualResetEventSlim Settled => _settled;
+        internal event Action Settled
+        {
+            add
+            {
+                Action snapshot;
+                Action updated;
+                do
+                {
+                    snapshot = Volatile.Read(ref _settled);
+                    updated = snapshot + value;
+                }
+                while (Interlocked.CompareExchange(ref _settled, updated, snapshot) != snapshot);
+            }
+            remove
+            {
+                Action snapshot;
+                Action updated;
+                do
+                {
+                    snapshot = Volatile.Read(ref _settled);
+                    updated = snapshot - value;
+                }
+                while (Interlocked.CompareExchange(ref _settled, updated, snapshot) != snapshot);
+            }
+        }
 
         /// <summary>
-        /// Idempotent release of the owned wait primitives. Accepted only
-        /// after the worker thread has physically stopped; a running worker is
-        /// never force-stopped by disposal.
+        /// Releases the owned wait primitive. Allowed only after the worker
+        /// thread has physically stopped; while running it throws
+        /// <see cref="InvalidOperationException"/> and never force-stops the
+        /// worker. Idempotent after a normal or poison stop.
         /// </summary>
         public void Dispose()
         {
             if (!_workerStopped)
             {
-                return;
+                throw new InvalidOperationException(
+                    "The Submit Worker is still running; dispose is allowed only after the worker has stopped.");
             }
 
             _signal.Dispose();
-            _settled.Dispose();
         }
 
         /// <summary>
@@ -227,7 +254,7 @@ namespace Zantetsu.Observability
                         return;
                     }
 
-                    _settled.Set();
+                    RaiseSettled();
                     _signal.Wait();
                 }
             }
@@ -241,8 +268,11 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                _settled.Set();
+                // Confirm the worker will no longer use its internal signal,
+                // then raise the stop notification so a subscriber that calls
+                // Dispose immediately already observes the stopped state.
                 _workerStopped = true;
+                RaiseSettled();
             }
         }
 
@@ -263,6 +293,29 @@ namespace Zantetsu.Observability
         private void RecordFatalFailure(Exception failure)
         {
             Interlocked.CompareExchange(ref _fatalFailure, failure, null);
+        }
+
+        private void RaiseSettled()
+        {
+            Action handler = Volatile.Read(ref _settled);
+            if (handler == null)
+            {
+                return;
+            }
+
+            Delegate[] observers = handler.GetInvocationList();
+            for (int i = 0; i < observers.Length; i++)
+            {
+                try
+                {
+                    ((Action)observers[i])();
+                }
+                catch
+                {
+                    // An observer failure must never become the worker's fatal
+                    // failure; observation is best-effort.
+                }
+            }
         }
 
         private bool TryStop()
