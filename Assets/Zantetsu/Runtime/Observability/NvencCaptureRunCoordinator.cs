@@ -44,8 +44,6 @@ namespace Zantetsu.Observability
         private readonly NvencRunChunkContext _context;
         private readonly NvencRunLocalRegistrySlot _registrySlot;
 
-        private readonly object _gate;
-
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
         private bool _allSucceeded = true;
@@ -89,8 +87,6 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "The Registry Slot must be bound to the exact Run chunk context.", nameof(registrySlot));
             }
-
-            _gate = new object();
         }
 
         /// <summary>
@@ -105,14 +101,19 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryBeginDrain(out NvencRunAcceptedFrameSnapshot snapshot)
         {
-            lock (_gate)
-            {
-                if (_processState.IsPoisoned)
-                {
-                    snapshot = null;
-                    return false;
-                }
+            snapshot = null;
 
+            // Serialize the Poison check and every state change with the
+            // process-wide Poison transition on the shared short gate: a
+            // concurrent poison either orders first (false, no change) or
+            // waits behind this critical section.
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
                 if (_snapshot != null)
                 {
                     snapshot = _snapshot;
@@ -123,14 +124,12 @@ namespace Zantetsu.Observability
                 {
                     if (!_processState.TryBeginDrain())
                     {
-                        snapshot = null;
                         return false;
                     }
                 }
 
-                if (!_processState.IsDraining || _processState.IsPoisoned)
+                if (!_processState.IsDraining)
                 {
-                    snapshot = null;
                     return false;
                 }
 
@@ -165,6 +164,10 @@ namespace Zantetsu.Observability
                 snapshot = frozen;
                 return true;
             }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
         }
 
         /// <summary>
@@ -178,13 +181,13 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryReflectCompletion(in CaptureFrameCompletion completion)
         {
-            lock (_gate)
+            if (!_processState.TryBeginResourceResolution())
             {
-                if (_processState.IsPoisoned)
-                {
-                    return false;
-                }
+                return false;
+            }
 
+            try
+            {
                 if (_snapshot == null)
                 {
                     return false;
@@ -240,6 +243,10 @@ namespace Zantetsu.Observability
                 _reflectedCount++;
                 return true;
             }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
         }
 
         /// <summary>
@@ -254,13 +261,13 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryRequestTerminal()
         {
-            lock (_gate)
+            if (!_processState.TryBeginResourceResolution())
             {
-                if (_processState.IsPoisoned)
-                {
-                    return false;
-                }
+                return false;
+            }
 
+            try
+            {
                 if (_snapshot == null || _terminalRequested)
                 {
                     return false;
@@ -291,6 +298,10 @@ namespace Zantetsu.Observability
                 _requestedFinalize = finalize;
                 return true;
             }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
         }
 
         /// <summary>
@@ -306,13 +317,13 @@ namespace Zantetsu.Observability
         {
             outcome = default;
 
-            lock (_gate)
+            if (!_processState.TryBeginResourceResolution())
             {
-                if (_processState.IsPoisoned)
-                {
-                    return false;
-                }
+                return false;
+            }
 
+            try
+            {
                 if (!_outputWorker.TryCollectTerminal(out outcome))
                 {
                     return false;
@@ -368,6 +379,10 @@ namespace Zantetsu.Observability
                 }
 
                 return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
             }
         }
     }

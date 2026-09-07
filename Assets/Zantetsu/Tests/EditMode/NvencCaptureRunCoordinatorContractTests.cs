@@ -477,6 +477,53 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void Entry_GateBusy_RefusesWithoutChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+
+                // A background thread holds the shared process-state gate,
+                // exactly as a concurrent Poison transition would; every entry
+                // must refuse without advancing any state.
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.False);
+                    Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.False);
+                    Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+                    Assert.That(h.RunCoordinator.TryBeginDrain(out NvencRunAcceptedFrameSnapshot blocked), Is.False);
+                    Assert.That(blocked, Is.Null);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                // Once the gate is released the reflection proceeds again.
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]
