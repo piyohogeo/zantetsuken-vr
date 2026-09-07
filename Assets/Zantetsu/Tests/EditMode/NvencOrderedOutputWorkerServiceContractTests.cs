@@ -19,13 +19,19 @@ namespace Zantetsu.Core.Tests
     {
         private const int WatchdogTimeoutMs = 5000;
 
+        private const string InitId = "0123456789abcdef0123456789abcdef";
+
+        private const string Hash64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
         [Test]
         public void Constructor_RejectsNullDependencies()
         {
             using (Harness h = Harness.Create())
             {
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor, h.Context, () => true));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null, h.Context, () => true));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, null, () => true));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, null));
             }
         }
 
@@ -556,9 +562,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("Peek"));
             Assert.That(source, Does.Not.Contain("System.Linq"));
 
-            // No normal drain stop API in this unit.
+            // The Output Worker has no normal drain-stop or join API of its
+            // own; its terminal acceptance is gated on the injected Submit
+            // Worker drain evidence.
             Assert.That(source, Does.Not.Contain("BeginDrain"));
-            Assert.That(source, Does.Not.Contain("DrainCompleted"));
             Assert.That(source, Does.Not.Contain("TryJoin"));
         }
 
@@ -614,6 +621,37 @@ namespace Zantetsu.Core.Tests
             return Path.Combine(Path.Combine(Application.dataPath, ".."), "Assets/Zantetsu/Runtime/Observability");
         }
 
+        private static CaptureRunInitializationSessionIssue MakeIssue()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
+            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
+            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true) { Tag = "first" };
+            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true) { Tag = "second" };
+            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first, second);
+            CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
+            CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
+            return CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+        }
+
+        private static CaptureRunRootLayout MakeLayout()
+        {
+            return new CaptureRunRootLayout(
+                Path.DirectorySeparatorChar == '\\' ? "C:\\staging" : "/staging",
+                Path.DirectorySeparatorChar == '\\' ? "D:\\final" : "/final",
+                1);
+        }
+
+        private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
+        {
+            CaptureRunInitializationDocumentSet documents = CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+            CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
+            CaptureRunInitializationExecutionCoordinator executionCoordinator = new CaptureRunInitializationExecutionCoordinator(
+                new FakeProvisioner(), new FakeMarkerWriter());
+            return executionCoordinator.Execute(batch);
+        }
+
         private static void ParkAtSubmittedPublish(
             NvencOrderedOutputProcessor processor,
             NvencSubmitToOutputRecord record)
@@ -634,6 +672,56 @@ namespace Zantetsu.Core.Tests
                 fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, fieldName + " field not found.");
             field.SetValue(target, value);
+        }
+
+        private sealed class FakeHandle : ICaptureRunLockHandle
+        {
+            public FakeHandle(string lockPath, bool isCreated)
+            {
+                LockPath = lockPath;
+                IsCreated = isCreated;
+            }
+
+            public string LockPath { get; }
+
+            public bool IsCreated { get; }
+
+            public string Tag { get; set; }
+
+            public void Dispose()
+            {
+            }
+        }
+
+        private sealed class FakeProvisioner : ICaptureRunRootProvisioner
+        {
+            public CaptureRunRootProvisionReceipt ProvisionNew(CaptureRunRootProvisionOperation operation)
+            {
+                return new CaptureRunRootProvisionReceipt(this, operation);
+            }
+        }
+
+        private sealed class FakeMarkerWriter : ICaptureRunMarkerAtomicWriter
+        {
+            public CaptureRunMarkerWriteReceipt WriteAtomic(CaptureRunMarkerWriteOperation operation)
+            {
+                return new CaptureRunMarkerWriteReceipt(this, operation);
+            }
+        }
+
+        private sealed class FakeFinalizer : INvencRunChunkAppender, INvencRunChunkFinalizer
+        {
+            public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
+            {
+                return NvencRunChunkAppendOutcome.Appended;
+            }
+
+            public NvencRunChunkFinalizationReceipt FinalizeChunk(NvencRunChunkFinalizationOperation operation)
+            {
+                CaptureArtifactDescriptor descriptor = NvencRunChunkArtifactDescriptorFactory.Create(
+                    operation.ArtifactId, operation.AccumulatedByteLength, Hash64);
+                return NvencRunChunkFinalizationReceipt.Create(this, operation, descriptor);
+            }
         }
 
         private sealed class FakeOutputSource : INvencOutputBitstreamSource
@@ -732,11 +820,26 @@ namespace Zantetsu.Core.Tests
             internal NvencOrderedOutputWorkerService Worker;
             internal ManualResetEventSlim SettledEvent;
 
+            internal NvencOwnedAccessUnitBuffer ChunkBuffer;
+            internal FakeFinalizer Finalizer;
+            internal NvencRunChunkSink ChunkSink;
+            internal NvencRunChunkFinalizationCoordinator Coordinator;
+            internal NvencRunChunkContext Context;
+
             private readonly Action _settledHandler;
 
             internal Harness()
             {
                 State = new NvencCaptureProcessState();
+
+                // Build the exact Run chunk context first: the worker is bound
+                // to it at construction.
+                ChunkBuffer = new NvencOwnedAccessUnitBuffer(State);
+                Finalizer = new FakeFinalizer();
+                ChunkSink = new NvencRunChunkSink(State, ChunkBuffer, Finalizer);
+                Coordinator = new NvencRunChunkFinalizationCoordinator(Finalizer);
+                Context = new NvencRunChunkContext(MakeIssue(), ChunkSink, Coordinator, "chunk/0");
+
                 WorkSlots = new NvencCaptureWorkSlotPool(State);
                 SampleSlots = new NvencEncodeSampleSlotPool(State);
                 SubmitToOutputCredits = new NvencSubmitToOutputCreditPool(State);
@@ -756,7 +859,7 @@ namespace Zantetsu.Core.Tests
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 Processor = new NvencOrderedOutputProcessor(
                     State, OutputQueue, Collector, Sink, ReleaseCoordinator, RecoveryCoordinator, Boundary);
-                Worker = new NvencOrderedOutputWorkerService(State, Processor);
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, () => true);
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
                 Worker.Settled += _settledHandler;

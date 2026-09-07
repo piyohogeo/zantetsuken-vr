@@ -5,11 +5,11 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Fixed one-slot Run chunk terminal request boundary. It binds the exact
-    /// <see cref="NvencRunChunkContext"/>, accepts exactly one Finalize or
-    /// Abandon request, advances it exactly once on the Output Worker, and
-    /// publishes the terminal outcome for exactly-once collection by the Main
-    /// Thread. The caller thread only ever stores the exact context and kind;
-    /// it never touches the context.
+    /// <see cref="NvencRunChunkContext"/> at construction, accepts exactly one
+    /// Finalize or Abandon request for that context only, advances it exactly
+    /// once on the Output Worker, and publishes the terminal outcome for
+    /// exactly-once collection by the Main Thread. The caller thread never
+    /// touches the context.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -38,14 +38,15 @@ namespace Zantetsu.Observability
     internal sealed class NvencRunChunkTerminalRequest
     {
         private readonly object _gate = new object();
+        private readonly NvencRunChunkContext _context;
 
         private int _state;
-        private NvencRunChunkContext _context;
         private bool _finalizeKind;
         private NvencChunkFinalizationResult _result;
 
-        internal NvencRunChunkTerminalRequest()
+        internal NvencRunChunkTerminalRequest(NvencRunChunkContext context)
         {
+            _context = context ?? throw new ArgumentNullException(nameof(context));
             _state = (int)NvencRunChunkTerminalRequestState.None;
         }
 
@@ -53,34 +54,29 @@ namespace Zantetsu.Observability
             (NvencRunChunkTerminalRequestState)Volatile.Read(ref _state);
 
         /// <summary>
-        /// Accepts an exclusive Finalize request into the empty slot. The
-        /// caller stores only the exact context; it never contacts the
+        /// Accepts an exclusive Finalize request into the empty slot for the
+        /// exact context bound at construction. The caller never contacts the
         /// context. Returns false while a request is already held or the
         /// terminal is Completed or Collected.
         /// </summary>
-        internal bool TryAcceptFinalize(NvencRunChunkContext context)
+        internal bool TryAcceptFinalize()
         {
-            return TryAccept(context, finalize: true);
+            return TryAccept(finalize: true);
         }
 
         /// <summary>
-        /// Accepts an exclusive Abandon request into the empty slot. The
-        /// caller stores only the exact context; it never contacts the
+        /// Accepts an exclusive Abandon request into the empty slot for the
+        /// exact context bound at construction. The caller never contacts the
         /// context. Returns false while a request is already held or the
         /// terminal is Completed or Collected.
         /// </summary>
-        internal bool TryAcceptAbandon(NvencRunChunkContext context)
+        internal bool TryAcceptAbandon()
         {
-            return TryAccept(context, finalize: false);
+            return TryAccept(finalize: false);
         }
 
-        private bool TryAccept(NvencRunChunkContext context, bool finalize)
+        private bool TryAccept(bool finalize)
         {
-            if (context == null)
-            {
-                return false;
-            }
-
             lock (_gate)
             {
                 if ((NvencRunChunkTerminalRequestState)Volatile.Read(ref _state) != NvencRunChunkTerminalRequestState.None)
@@ -88,7 +84,6 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                _context = context;
                 _finalizeKind = finalize;
                 Volatile.Write(
                     ref _state,
@@ -115,22 +110,15 @@ namespace Zantetsu.Observability
 
             if (state == NvencRunChunkTerminalRequestState.FinalizeRequested)
             {
-                NvencRunChunkContext context = _context;
-                if (context == null)
-                {
-                    throw new InvalidOperationException(
-                        "Run chunk terminal request holds no Run chunk context.");
-                }
-
                 // Finalizer I/O and the context call run outside the gate.
-                if (!context.TryFinalize(out NvencChunkFinalizationResult result))
+                if (!_context.TryFinalize(out NvencChunkFinalizationResult result))
                 {
                     // Transient pre-side-effect false: keep the request and
                     // retry on the next notification.
                     return false;
                 }
 
-                if (result == null || !result.IsValid || !ReferenceEquals(result.Sink, context.Sink))
+                if (result == null || !result.IsValid || !ReferenceEquals(result.Sink, _context.Sink))
                 {
                     throw new InvalidOperationException(
                         "Finalized Run chunk terminal result does not correlate to the requested context.");
@@ -142,15 +130,8 @@ namespace Zantetsu.Observability
 
             if (state == NvencRunChunkTerminalRequestState.AbandonRequested)
             {
-                NvencRunChunkContext context = _context;
-                if (context == null)
-                {
-                    throw new InvalidOperationException(
-                        "Run chunk terminal request holds no Run chunk context.");
-                }
-
                 // The abandon call runs outside the gate.
-                if (!context.TryAbandon())
+                if (!_context.TryAbandon())
                 {
                     throw new InvalidOperationException(
                         "Accepted Run chunk abandon request did not abandon the context.");

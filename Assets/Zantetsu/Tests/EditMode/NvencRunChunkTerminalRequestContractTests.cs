@@ -33,9 +33,10 @@ namespace Zantetsu.Core.Tests
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
 
                 Assert.That(h.Finalizer.CallCount, Is.EqualTo(1));
@@ -52,9 +53,10 @@ namespace Zantetsu.Core.Tests
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
 
                 Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Abandoned));
@@ -75,6 +77,7 @@ namespace Zantetsu.Core.Tests
                 NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 // Park the processor mid-record behind the sink writer.
                 ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
@@ -105,7 +108,7 @@ namespace Zantetsu.Core.Tests
                 // Accepting notifies the worker; the worker dequeues the record
                 // and blocks in the sink, so the terminal must not be touched
                 // while the processor holds the current record.
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "worker did not reach the sink");
                 Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
                 Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
@@ -133,9 +136,10 @@ namespace Zantetsu.Core.Tests
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 h.AcceptAndAppendChunk(2, 48, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
 
                 Assert.That(h.Finalizer.CallCount, Is.EqualTo(1));
@@ -156,33 +160,55 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 // Running rejects both kinds.
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
 
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 // Finalize accepts exactly once; double and cross are rejected.
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
             }
 
             using (Harness h = Harness.Create())
             {
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 // Abandon accepts exactly once; double and cross are rejected.
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.True);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
             }
 
             using (Harness h = Harness.Create())
             {
                 // Poisoned rejects both kinds.
                 Assert.That(h.State.TryPoison(), Is.True);
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+            }
+        }
+
+        [Test]
+        public void Request_RejectedBeforeSubmitWorkerDrainCompleted()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+
+                // Draining but the Submit Worker drain evidence is not yet
+                // published: the terminal must not be accepted.
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+
+                // Publish the monotonic drain evidence: acceptance now works.
+                h.SubmitDrained = true;
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
             }
         }
 
@@ -193,20 +219,53 @@ namespace Zantetsu.Core.Tests
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
 
                 // Completed, not yet collected: no new request accepted.
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
 
                 Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
 
                 // Collected: still no new request accepted.
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.False);
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+            }
+        }
+
+        [Test]
+        public void WorkerBoundToExactContext_DoesNotTouchForeignContext()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // A separate foreign Run chunk context that no worker is bound
+                // to. It must never be finalized or abandoned by worker A.
+                NvencOwnedAccessUnitBuffer foreignBuffer = new NvencOwnedAccessUnitBuffer(h.State);
+                FakeFinalizer foreignFinalizer = new FakeFinalizer();
+                NvencRunChunkSink foreignSink = new NvencRunChunkSink(h.State, foreignBuffer, foreignFinalizer);
+                NvencRunChunkFinalizationCoordinator foreignCoordinator = new NvencRunChunkFinalizationCoordinator(foreignFinalizer);
+                NvencRunChunkContext foreignContext = new NvencRunChunkContext(MakeIssue(), foreignSink, foreignCoordinator, "chunk/foreign");
+
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+
+                Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                Assert.That(outcome.IsFinalized, Is.True);
+                Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Finalized));
+
+                // The foreign context is untouched: no finalizer contact and
+                // still Open.
+                Assert.That(foreignFinalizer.CallCount, Is.EqualTo(0));
+                Assert.That(foreignContext.State, Is.EqualTo(NvencRunChunkContextState.Open));
             }
         }
 
@@ -221,9 +280,10 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.True);
                 h.AppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not park with the held request");
 
                 // Request held, finalizer never contacted, nothing published.
@@ -250,12 +310,13 @@ namespace Zantetsu.Core.Tests
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 InvalidOperationException boom = new InvalidOperationException("boom");
                 h.Finalizer.ExceptionToThrow = boom;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not stop after the finalizer exception");
                 h.WaitForPhysicalStop("worker did not physically exit");
 
@@ -277,9 +338,10 @@ namespace Zantetsu.Core.Tests
                 // request can no longer abandon the context.
                 Assert.That(h.Context.TryFinalize(out _), Is.True);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestAbandon(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not stop after the abandon invariant failure");
                 h.WaitForPhysicalStop("worker did not physically exit");
 
@@ -295,28 +357,23 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                NvencSubmitToOutputRecord record = h.CreateSubmitted(9);
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
 
                 Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
                 Assert.That(outcome.IsFinalized, Is.True);
-                Assert.That(h.Worker.IsStopped, Is.False);
 
-                // A later record is still processed: the worker never stopped.
-                h.Enqueue(record);
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not process the later record");
-
+                // Terminal completion alone never stops the worker: it stays
+                // alive waiting for an external teardown request.
                 Assert.That(h.Worker.IsStopped, Is.False);
-                Assert.That(h.Boundary.TryCollect(out NvencFrameCompletionRecord completion), Is.True);
-                Assert.That(completion.Status, Is.EqualTo(CaptureFrameCompletionStatus.Succeeded));
             }
+            // Dispose is the teardown request: it poisons and physically stops
+            // the worker.
         }
 
         [Test]
@@ -326,11 +383,12 @@ namespace Zantetsu.Core.Tests
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
 
                 // The worker is parked; the acceptance's own notify must wake it
                 // even when further notifies coalesce.
                 h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestFinalize(h.Context), Is.True);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 h.Worker.Notify();
                 h.Worker.Notify();
                 WaitSettled(h.SettledEvent, "worker did not converge the request");
@@ -340,6 +398,17 @@ namespace Zantetsu.Core.Tests
                 Assert.That(outcome.IsFinalized, Is.True);
                 Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
             }
+        }
+
+        [Test]
+        public void Outcome_DefaultIsNone_NotAbandoned()
+        {
+            NvencRunChunkTerminalOutcome none = default;
+
+            Assert.That(none.IsNone, Is.True);
+            Assert.That(none.IsFinalized, Is.False);
+            Assert.That(none.IsAbandoned, Is.False);
+            Assert.That(none.Result, Is.Null);
         }
 
         [Test]
@@ -643,11 +712,24 @@ namespace Zantetsu.Core.Tests
             internal NvencRunChunkFinalizationCoordinator Coordinator;
             internal NvencRunChunkContext Context;
 
+            // Monotonic Submit Worker drain evidence injected into the worker;
+            // the tests publish it before accepting a terminal request.
+            internal bool SubmitDrained;
+
             private readonly Action _settledHandler;
 
             internal Harness()
             {
                 State = new NvencCaptureProcessState();
+
+                // Build the exact Run chunk context first: the worker is bound
+                // to it at construction.
+                ChunkBuffer = new NvencOwnedAccessUnitBuffer(State);
+                Finalizer = new FakeFinalizer();
+                ChunkSink = new NvencRunChunkSink(State, ChunkBuffer, Finalizer);
+                Coordinator = new NvencRunChunkFinalizationCoordinator(Finalizer);
+                Context = new NvencRunChunkContext(MakeIssue(), ChunkSink, Coordinator, "chunk/0");
+
                 WorkSlots = new NvencCaptureWorkSlotPool(State);
                 SampleSlots = new NvencEncodeSampleSlotPool(State);
                 SubmitToOutputCredits = new NvencSubmitToOutputCreditPool(State);
@@ -667,15 +749,7 @@ namespace Zantetsu.Core.Tests
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 Processor = new NvencOrderedOutputProcessor(
                     State, OutputQueue, Collector, Sink, ReleaseCoordinator, RecoveryCoordinator, Boundary);
-                Worker = new NvencOrderedOutputWorkerService(State, Processor);
-
-                // Separate chunk pipeline bound to the same process state, so
-                // the terminal request acts on an exact Run chunk context.
-                ChunkBuffer = new NvencOwnedAccessUnitBuffer(State);
-                Finalizer = new FakeFinalizer();
-                ChunkSink = new NvencRunChunkSink(State, ChunkBuffer, Finalizer);
-                Coordinator = new NvencRunChunkFinalizationCoordinator(Finalizer);
-                Context = new NvencRunChunkContext(MakeIssue(), ChunkSink, Coordinator, "chunk/0");
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, () => SubmitDrained);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

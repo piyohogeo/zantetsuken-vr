@@ -54,7 +54,8 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencOrderedOutputProcessor _processor;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
-        private readonly NvencRunChunkTerminalRequest _terminalRequest = new NvencRunChunkTerminalRequest();
+        private readonly NvencRunChunkTerminalRequest _terminalRequest;
+        private readonly Func<bool> _submitWorkerDrainCompleted;
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -66,10 +67,17 @@ namespace Zantetsu.Observability
 
         internal NvencOrderedOutputWorkerService(
             NvencCaptureProcessState processState,
-            NvencOrderedOutputProcessor processor)
+            NvencOrderedOutputProcessor processor,
+            NvencRunChunkContext runChunkContext,
+            Func<bool> submitWorkerDrainCompleted)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _processor = processor ?? throw new ArgumentNullException(nameof(processor));
+            _submitWorkerDrainCompleted = submitWorkerDrainCompleted ?? throw new ArgumentNullException(nameof(submitWorkerDrainCompleted));
+
+            // Bind the exact Run chunk context so a request can never point the
+            // terminal at a foreign context.
+            _terminalRequest = new NvencRunChunkTerminalRequest(runChunkContext);
 
             // Start the single dedicated background thread in the constructor
             // with a fixed name, then publish it so IsStopped only ever observes
@@ -99,20 +107,22 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting, exclusive Finalize request entry. Accepted only while
-        /// the process is Draining (which includes a recorded Run Abandoned),
-        /// never while Running, Poisoned, already requested, or after the
-        /// terminal is Completed or Collected. On success the worker is
-        /// notified and the caller thread never touches the context.
+        /// Non-waiting, exclusive Finalize request entry for the exact Run
+        /// chunk context bound at construction. Accepted only while the process
+        /// is Draining and the Submit Worker drain evidence is published,
+        /// never while Running, Poisoned, before the Submit Worker completed
+        /// its drain, already requested, or after the terminal is Completed or
+        /// Collected. On success the worker is notified and the caller thread
+        /// never touches the context.
         /// </summary>
-        internal bool TryRequestFinalize(NvencRunChunkContext context)
+        internal bool TryRequestFinalize()
         {
-            if (context == null || !_processState.IsDraining)
+            if (!_processState.IsDraining || !_submitWorkerDrainCompleted())
             {
                 return false;
             }
 
-            if (!_terminalRequest.TryAcceptFinalize(context))
+            if (!_terminalRequest.TryAcceptFinalize())
             {
                 return false;
             }
@@ -122,20 +132,22 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting, exclusive Abandon request entry. Accepted only while
-        /// the process is Draining (which includes a recorded Run Abandoned),
-        /// never while Running, Poisoned, already requested, or after the
-        /// terminal is Completed or Collected. On success the worker is
-        /// notified and the caller thread never touches the context.
+        /// Non-waiting, exclusive Abandon request entry for the exact Run
+        /// chunk context bound at construction. Accepted only while the process
+        /// is Draining and the Submit Worker drain evidence is published,
+        /// never while Running, Poisoned, before the Submit Worker completed
+        /// its drain, already requested, or after the terminal is Completed or
+        /// Collected. On success the worker is notified and the caller thread
+        /// never touches the context.
         /// </summary>
-        internal bool TryRequestAbandon(NvencRunChunkContext context)
+        internal bool TryRequestAbandon()
         {
-            if (context == null || !_processState.IsDraining)
+            if (!_processState.IsDraining || !_submitWorkerDrainCompleted())
             {
                 return false;
             }
 
-            if (!_terminalRequest.TryAcceptAbandon(context))
+            if (!_terminalRequest.TryAcceptAbandon())
             {
                 return false;
             }
