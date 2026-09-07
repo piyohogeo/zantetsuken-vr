@@ -107,16 +107,16 @@ namespace Zantetsu.Observability
         {
             lock (_gate)
             {
-                if (_snapshot != null)
-                {
-                    snapshot = _snapshot;
-                    return true;
-                }
-
                 if (_processState.IsPoisoned)
                 {
                     snapshot = null;
                     return false;
+                }
+
+                if (_snapshot != null)
+                {
+                    snapshot = _snapshot;
+                    return true;
                 }
 
                 if (_processState.IsAccepting)
@@ -141,18 +141,28 @@ namespace Zantetsu.Observability
                         "Run chunk context could not freeze the accepted frame snapshot during drain.");
                 }
 
-                _snapshot = frozen;
+                try
+                {
+                    if (!_submitWorker.BeginDrain())
+                    {
+                        throw new InvalidOperationException(
+                            "Submit Worker rejected the drain request during drain.");
+                    }
 
-                if (!_submitWorker.BeginDrain())
+                    _outputWorker.Notify();
+                }
+                catch (Exception)
                 {
                     _processState.TryPoison();
-                    throw new InvalidOperationException(
-                        "Submit Worker rejected the drain request during drain.");
+                    throw;
                 }
 
-                _outputWorker.Notify();
-
-                snapshot = _snapshot;
+                // Publish the success state only after the snapshot fix, the
+                // Submit Worker drain request, and the Output Worker
+                // notification have all completed, so a later-step failure is
+                // never re-read as success.
+                _snapshot = frozen;
+                snapshot = frozen;
                 return true;
             }
         }
@@ -170,6 +180,11 @@ namespace Zantetsu.Observability
         {
             lock (_gate)
             {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
                 if (_snapshot == null)
                 {
                     return false;
@@ -180,6 +195,13 @@ namespace Zantetsu.Observability
                     _processState.TryPoison();
                     throw new InvalidOperationException(
                         "Frame Completion is invalid during Run chunk reflection.");
+                }
+
+                if (completion.WorkToken.TestRunId != _context.TestRunId)
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Frame Completion TestRunId does not match the Run chunk context.");
                 }
 
                 if (completion.ProducedArtifactCount != 0)
@@ -234,6 +256,11 @@ namespace Zantetsu.Observability
         {
             lock (_gate)
             {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
                 if (_snapshot == null || _terminalRequested)
                 {
                     return false;
@@ -279,13 +306,18 @@ namespace Zantetsu.Observability
         {
             outcome = default;
 
-            if (!_outputWorker.TryCollectTerminal(out outcome))
-            {
-                return false;
-            }
-
             lock (_gate)
             {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_outputWorker.TryCollectTerminal(out outcome))
+                {
+                    return false;
+                }
+
                 if (!_terminalRequested || outcome.IsNone)
                 {
                     _processState.TryPoison();

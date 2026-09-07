@@ -212,6 +212,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void BeginDrain_SubmitWorkerDisposed_PoisonsAndNoSuccessState()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+
+                // Dispose the Submit Worker so BeginDrain throws after the
+                // snapshot freeze; the coordinator must poison and must not
+                // publish a success state that a re-entry could reuse.
+                h.SubmitWorker.Dispose();
+
+                Assert.Throws<ObjectDisposedException>(() => h.RunCoordinator.TryBeginDrain(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+
+                Assert.That(h.RunCoordinator.TryBeginDrain(out NvencRunAcceptedFrameSnapshot after), Is.False);
+                Assert.That(after, Is.Null);
+            }
+        }
+
+        [Test]
         public void Reflect_BeforeDrain_RejectedWithoutChange()
         {
             using (Harness h = Harness.Create())
@@ -303,6 +323,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Reflect_ForeignRunCompletion_PoisonsAndDoesNotAdvance()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+
+                // A valid completion with the same frame id but a different
+                // Run must poison and must not advance reflection or terminal.
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryReflectCompletion(
+                        MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded, testRunId: 2)));
+                Assert.That(h.State.IsPoisoned, Is.True);
+
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.False);
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.False);
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+            }
+        }
+
+        [Test]
         public void Terminal_TransientUnready_FalseThenRetryableAfterNotify()
         {
             using (Harness h = Harness.Create())
@@ -384,6 +425,55 @@ namespace Zantetsu.Core.Tests
 
                 Assert.Throws<InvalidOperationException>(() => h.RunCoordinator.TryCollectTerminal(out _));
                 Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void Poisoned_RefusesAllProgressEntries()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out NvencRunAcceptedFrameSnapshot drained), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+
+                // Corrupt the reflection to poison the process.
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)));
+                Assert.That(h.State.IsPoisoned, Is.True);
+
+                // Every progress entry now refuses without side effect, and a
+                // drain re-entry must not report the previously-fixed state.
+                Assert.That(h.RunCoordinator.TryBeginDrain(out NvencRunAcceptedFrameSnapshot after), Is.False);
+                Assert.That(after, Is.Null);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.False);
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.False);
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void Collect_AfterPoison_DoesNotConsumeOutcome()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+
+                // Poison after the outcome is published; the coordinator must
+                // refuse collection without consuming the published outcome.
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+
+                // The published outcome is still available to the exact worker.
+                Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome direct), Is.True);
+                Assert.That(direct.IsFinalized, Is.True);
             }
         }
 
@@ -530,9 +620,10 @@ namespace Zantetsu.Core.Tests
         private static CaptureFrameCompletion MakeCompletion(
             long captureFrameId,
             CaptureFrameCompletionStatus status,
-            int producedArtifactCount = 0)
+            int producedArtifactCount = 0,
+            long testRunId = 1)
         {
-            CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 1, captureFrameId);
+            CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, testRunId, captureFrameId);
             ExceptionDispatchInfo failure = status == CaptureFrameCompletionStatus.Failed
                 ? ExceptionDispatchInfo.Capture(new InvalidOperationException("completion failed"))
                 : null;
