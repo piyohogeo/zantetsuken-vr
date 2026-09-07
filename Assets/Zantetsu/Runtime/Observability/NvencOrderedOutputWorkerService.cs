@@ -56,6 +56,7 @@ namespace Zantetsu.Observability
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
         private readonly NvencRunChunkTerminalRequest _terminalRequest;
         private readonly NvencOrderedSubmitWorkerService _submitWorker;
+        private readonly NvencRunChunkContext _runChunkContext;
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -100,6 +101,7 @@ namespace Zantetsu.Observability
             // Bind the exact Run chunk context so a request can never point the
             // terminal at a foreign context.
             _terminalRequest = new NvencRunChunkTerminalRequest(runChunkContext);
+            _runChunkContext = runChunkContext;
 
             // Start the single dedicated background thread in the constructor
             // with a fixed name, then publish it so IsStopped only ever observes
@@ -111,6 +113,21 @@ namespace Zantetsu.Observability
             };
             thread.Start();
             Volatile.Write(ref _workerThread, thread);
+        }
+
+        /// <summary>
+        /// O(1) correlation predicate: true only when this worker is bound to
+        /// the exact process state, Submit Worker, and Run chunk context,
+        /// without exposing the internal Queue, Sink, or gates.
+        /// </summary>
+        internal bool IsCorrelatedWith(
+            NvencCaptureProcessState processState,
+            NvencOrderedSubmitWorkerService submitWorker,
+            NvencRunChunkContext runChunkContext)
+        {
+            return ReferenceEquals(_processState, processState) &&
+                ReferenceEquals(_submitWorker, submitWorker) &&
+                ReferenceEquals(_runChunkContext, runChunkContext);
         }
 
         /// <summary>
