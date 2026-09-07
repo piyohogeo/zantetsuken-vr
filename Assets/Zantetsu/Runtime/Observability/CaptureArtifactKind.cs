@@ -8,6 +8,7 @@ namespace Zantetsu.Observability
         FrameMetadata = 2,
         RunManifest = 3,
         FrameIndex = 4,
-        TraceBundle = 5
+        TraceBundle = 5,
+        FrameSequence = 6
     }
 }

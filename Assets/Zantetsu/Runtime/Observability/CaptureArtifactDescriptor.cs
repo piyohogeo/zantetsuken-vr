@@ -40,11 +40,6 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Content hash must be 64 lowercase hex characters.", nameof(contentHash));
             }
 
-            if (string.Equals(stagingRelativePath, finalRelativePath, StringComparison.Ordinal))
-            {
-                throw new ArgumentException("Staging and final paths must differ.", nameof(finalRelativePath));
-            }
-
             ArtifactId = artifactId;
             ArtifactKind = artifactKind;
             FormatId = formatId;
@@ -72,7 +67,6 @@ namespace Zantetsu.Observability
             && FormatVersion > 0
             && IsRelativePath(StagingRelativePath)
             && IsRelativePath(FinalRelativePath)
-            && !string.Equals(StagingRelativePath, FinalRelativePath, StringComparison.Ordinal)
             && ByteLength > 0
             && IsLowerHex(ContentHash, 64);
 
