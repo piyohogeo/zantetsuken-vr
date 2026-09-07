@@ -52,7 +52,7 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Finalizer returned an invalid receipt.");
             }
 
-            IssuanceProof proof = IssuanceProof.Mint(this, _finalizer, operation, receipt);
+            IssuanceProof proof = IssuanceProof.Mint(IssuanceGate, this, _finalizer, operation, receipt);
             return NvencChunkFinalizationResult.Create(this, proof, operation, receipt);
         }
 
@@ -86,14 +86,21 @@ namespace Zantetsu.Observability
             }
 
             internal static IssuanceProof Mint(
+                object issuanceGate,
                 NvencRunChunkFinalizationCoordinator coordinator,
                 INvencRunChunkFinalizer finalizer,
                 NvencRunChunkFinalizationOperation operation,
                 NvencRunChunkFinalizationReceipt receipt)
             {
+                if (!ReferenceEquals(issuanceGate, NvencRunChunkFinalizationCoordinator.IssuanceGate))
+                {
+                    throw new ArgumentException(
+                        "Issuance gate does not match.", nameof(issuanceGate));
+                }
+
                 return new IssuanceProof(
                     coordinator,
-                    NvencRunChunkFinalizationCoordinator.IssuanceGate,
+                    issuanceGate,
                     finalizer,
                     operation,
                     receipt);

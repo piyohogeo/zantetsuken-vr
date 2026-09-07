@@ -164,6 +164,16 @@ namespace Zantetsu.Core.Tests
             ArgumentNullException proofEx = Assert.Throws<ArgumentNullException>(() =>
                 NvencChunkFinalizationResult.Create(coordinator, null, operation, receipt));
             Assert.That(proofEx.ParamName, Is.EqualTo("proof"));
+
+            // Mint rejects a null or foreign gate, so no proof can be minted
+            // outside Execute; the finalizer is never called.
+            Assert.Throws<ArgumentException>(() =>
+                NvencRunChunkFinalizationCoordinator.IssuanceProof.Mint(
+                    null, coordinator, finalizer, operation, receipt));
+            Assert.Throws<ArgumentException>(() =>
+                NvencRunChunkFinalizationCoordinator.IssuanceProof.Mint(
+                    new object(), coordinator, finalizer, operation, receipt));
+            Assert.That(finalizer.CallCount, Is.EqualTo(0));
         }
 
         [Test]
