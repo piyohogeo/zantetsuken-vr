@@ -100,6 +100,12 @@ namespace Zantetsu.Observability
         internal bool IsRunAbandoned => _processState.IsRunAbandoned;
 
         /// <summary>
+        /// The exact Run Chunk Sink this processor appends into, for
+        /// exact-reference correlation with the Run chunk context.
+        /// </summary>
+        internal NvencRunChunkSink Sink => _sink;
+
+        /// <summary>
         /// Advances exactly one current record toward its terminal Completion.
         /// Returns false while the queue is empty, a downstream gate is busy,
         /// or the process is poisoned, holding the current record, owned lease,

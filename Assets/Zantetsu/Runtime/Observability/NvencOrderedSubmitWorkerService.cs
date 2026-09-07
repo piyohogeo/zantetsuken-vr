@@ -296,6 +296,12 @@ namespace Zantetsu.Observability
         internal bool DrainCompleted => _drainCompleted;
 
         /// <summary>
+        /// The exact process state this worker is bound to, for exact-reference
+        /// correlation by the Output Worker.
+        /// </summary>
+        internal NvencCaptureProcessState ProcessState => _processState;
+
+        /// <summary>
         /// Non-throwing diagnostic for the first fatal processor exception, if
         /// any. Returns false when the worker stopped without a fatal failure.
         /// </summary>

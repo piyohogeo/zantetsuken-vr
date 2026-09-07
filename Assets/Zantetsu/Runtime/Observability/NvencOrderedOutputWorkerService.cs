@@ -55,7 +55,7 @@ namespace Zantetsu.Observability
         private readonly NvencOrderedOutputProcessor _processor;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
         private readonly NvencRunChunkTerminalRequest _terminalRequest;
-        private readonly Func<bool> _submitWorkerDrainCompleted;
+        private readonly NvencOrderedSubmitWorkerService _submitWorker;
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -69,11 +69,32 @@ namespace Zantetsu.Observability
             NvencCaptureProcessState processState,
             NvencOrderedOutputProcessor processor,
             NvencRunChunkContext runChunkContext,
-            Func<bool> submitWorkerDrainCompleted)
+            NvencOrderedSubmitWorkerService submitWorker)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-            _submitWorkerDrainCompleted = submitWorkerDrainCompleted ?? throw new ArgumentNullException(nameof(submitWorkerDrainCompleted));
+            _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
+
+            if (runChunkContext == null)
+            {
+                throw new ArgumentNullException(nameof(runChunkContext));
+            }
+
+            // Exact-reference correlation: the Submit Worker must be bound to
+            // the same process state, and the processor's Sink must be the
+            // exact Sink the Run chunk context finalizes, so the terminal can
+            // never act on a foreign Run or a foreign Sink.
+            if (!ReferenceEquals(submitWorker.ProcessState, _processState))
+            {
+                throw new ArgumentException(
+                    "The Submit Worker must be bound to the same process state.", nameof(submitWorker));
+            }
+
+            if (!ReferenceEquals(processor.Sink, runChunkContext.Sink))
+            {
+                throw new ArgumentException(
+                    "The Output Processor Sink must be the exact Sink of the Run chunk context.", nameof(runChunkContext));
+            }
 
             // Bind the exact Run chunk context so a request can never point the
             // terminal at a foreign context.
@@ -109,51 +130,87 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Non-waiting, exclusive Finalize request entry for the exact Run
         /// chunk context bound at construction. Accepted only while the process
-        /// is Draining and the Submit Worker drain evidence is published,
-        /// never while Running, Poisoned, before the Submit Worker completed
-        /// its drain, already requested, or after the terminal is Completed or
-        /// Collected. On success the worker is notified and the caller thread
-        /// never touches the context.
+        /// is Draining and the exact Submit Worker's monotonic DrainCompleted
+        /// evidence is published, never while Running, Poisoned, before the
+        /// Submit Worker completed its drain, already requested, or after the
+        /// terminal is Completed or Collected. The acceptance is serialized
+        /// with the Poison transition on the shared process-state gate. On
+        /// success the worker is notified and the caller thread never touches
+        /// the context.
         /// </summary>
         internal bool TryRequestFinalize()
         {
-            if (!_processState.IsDraining || !_submitWorkerDrainCompleted())
+            // Acquire the existing process-state gate without waiting, then
+            // check Draining, the exact Submit Worker drain, and the exclusive
+            // acceptance as one critical section: a poison either linearizes
+            // first (false, no change) or waits behind this acceptance.
+            if (!_processState.TryBeginSubmitStep())
             {
                 return false;
             }
 
-            if (!_terminalRequest.TryAcceptFinalize())
+            try
             {
-                return false;
-            }
+                if (!_processState.IsDraining || !_submitWorker.DrainCompleted)
+                {
+                    return false;
+                }
 
-            Notify();
-            return true;
+                if (!_terminalRequest.TryAcceptFinalize())
+                {
+                    return false;
+                }
+
+                Notify();
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
         }
 
         /// <summary>
         /// Non-waiting, exclusive Abandon request entry for the exact Run
         /// chunk context bound at construction. Accepted only while the process
-        /// is Draining and the Submit Worker drain evidence is published,
-        /// never while Running, Poisoned, before the Submit Worker completed
-        /// its drain, already requested, or after the terminal is Completed or
-        /// Collected. On success the worker is notified and the caller thread
-        /// never touches the context.
+        /// is Draining and the exact Submit Worker's monotonic DrainCompleted
+        /// evidence is published, never while Running, Poisoned, before the
+        /// Submit Worker completed its drain, already requested, or after the
+        /// terminal is Completed or Collected. The acceptance is serialized
+        /// with the Poison transition on the shared process-state gate. On
+        /// success the worker is notified and the caller thread never touches
+        /// the context.
         /// </summary>
         internal bool TryRequestAbandon()
         {
-            if (!_processState.IsDraining || !_submitWorkerDrainCompleted())
+            // Acquire the existing process-state gate without waiting, then
+            // check Draining, the exact Submit Worker drain, and the exclusive
+            // acceptance as one critical section: a poison either linearizes
+            // first (false, no change) or waits behind this acceptance.
+            if (!_processState.TryBeginSubmitStep())
             {
                 return false;
             }
 
-            if (!_terminalRequest.TryAcceptAbandon())
+            try
             {
-                return false;
-            }
+                if (!_processState.IsDraining || !_submitWorker.DrainCompleted)
+                {
+                    return false;
+                }
 
-            Notify();
-            return true;
+                if (!_terminalRequest.TryAcceptAbandon())
+                {
+                    return false;
+                }
+
+                Notify();
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
         }
 
         /// <summary>

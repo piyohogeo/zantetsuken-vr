@@ -28,9 +28,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor, h.Context, () => true));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null, h.Context, () => true));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, null, () => true));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor, h.Context, h.SubmitWorker));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null, h.Context, h.SubmitWorker));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, null, h.SubmitWorker));
                 Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, null));
             }
         }
@@ -709,11 +709,36 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private sealed class FakeFinalizer : INvencRunChunkAppender, INvencRunChunkFinalizer
+        private sealed class FakeWriter : INvencRunChunkAppender, INvencRunChunkFinalizer
         {
+            private int _appendCount;
+            internal NvencRunChunkAppendOutcome Outcome = NvencRunChunkAppendOutcome.Appended;
+            internal Exception ExceptionToThrow;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim WaitForGateHeld;
+
+            internal int AppendCount => Volatile.Read(ref _appendCount);
+
             public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
             {
-                return NvencRunChunkAppendOutcome.Appended;
+                Interlocked.Increment(ref _appendCount);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (Entered != null)
+                {
+                    Entered.Set();
+                }
+
+                if (WaitForGateHeld != null)
+                {
+                    WaitForGateHeld.Wait(WatchdogTimeoutMs);
+                }
+
+                return Outcome;
             }
 
             public NvencRunChunkFinalizationReceipt FinalizeChunk(NvencRunChunkFinalizationOperation operation)
@@ -767,36 +792,20 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private sealed class FakeAppender : INvencRunChunkAppender
+        private sealed class FakeSourceReadCompletedSource : INvencSourceReadCompletedSource
         {
-            private int _appendCount;
-            internal NvencRunChunkAppendOutcome Outcome = NvencRunChunkAppendOutcome.Appended;
-            internal Exception ExceptionToThrow;
-            internal ManualResetEventSlim Entered;
-            internal ManualResetEventSlim WaitForGateHeld;
-
-            internal int AppendCount => Volatile.Read(ref _appendCount);
-
-            public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
+            public bool TryGetEvidence(in NvencSubmissionRecord record, out NvencSourceReadCompletedEvidence evidence)
             {
-                Interlocked.Increment(ref _appendCount);
+                evidence = default;
+                return false;
+            }
+        }
 
-                if (ExceptionToThrow != null)
-                {
-                    throw ExceptionToThrow;
-                }
-
-                if (Entered != null)
-                {
-                    Entered.Set();
-                }
-
-                if (WaitForGateHeld != null)
-                {
-                    WaitForGateHeld.Wait(WatchdogTimeoutMs);
-                }
-
-                return Outcome;
+        private sealed class FakeSubmitter : INvencEncodePictureSubmitter
+        {
+            public bool TrySubmit(in NvencEncodePictureSubmitOperation operation)
+            {
+                return true;
             }
         }
 
@@ -809,7 +818,7 @@ namespace Zantetsu.Core.Tests
             internal NvencFrameCompletionCreditPool FrameCompletionCredits;
             internal NvencOwnedAccessUnitBuffer Buffer;
             internal FakeOutputSource Source;
-            internal FakeAppender Writer;
+            internal FakeWriter Writer;
             internal NvencSubmittedOutputCollector Collector;
             internal NvencRunChunkSink Sink;
             internal NvencFailedBeforeSubmitReleaseCoordinator ReleaseCoordinator;
@@ -820,11 +829,19 @@ namespace Zantetsu.Core.Tests
             internal NvencOrderedOutputWorkerService Worker;
             internal ManualResetEventSlim SettledEvent;
 
-            internal NvencOwnedAccessUnitBuffer ChunkBuffer;
-            internal FakeFinalizer Finalizer;
-            internal NvencRunChunkSink ChunkSink;
             internal NvencRunChunkFinalizationCoordinator Coordinator;
             internal NvencRunChunkContext Context;
+
+            internal NvencCaptureWorkSlotPool SubmitWorkSlots;
+            internal NvencEncodeSampleSlotPool SubmitSampleSlots;
+            internal NvencGpuConversionSyncPool SubmitSyncSlots;
+            internal NvencSubmitToOutputCreditPool SubmitToOutputCreditPool;
+            internal NvencFrameCompletionCreditPool SubmitFrameCompletionCredits;
+            internal NvencFixedSpscQueue<NvencSubmissionRecord> SubmitSubmissionQueue;
+            internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> SubmitOutputQueue;
+            internal NvencSourceResourceReleaseCoordinator SubmitReleaseCoordinator;
+            internal NvencOrderedSubmitProcessor SubmitProcessor;
+            internal NvencOrderedSubmitWorkerService SubmitWorker;
 
             private readonly Action _settledHandler;
 
@@ -832,24 +849,22 @@ namespace Zantetsu.Core.Tests
             {
                 State = new NvencCaptureProcessState();
 
-                // Build the exact Run chunk context first: the worker is bound
-                // to it at construction.
-                ChunkBuffer = new NvencOwnedAccessUnitBuffer(State);
-                Finalizer = new FakeFinalizer();
-                ChunkSink = new NvencRunChunkSink(State, ChunkBuffer, Finalizer);
-                Coordinator = new NvencRunChunkFinalizationCoordinator(Finalizer);
-                Context = new NvencRunChunkContext(MakeIssue(), ChunkSink, Coordinator, "chunk/0");
+                // One shared buffer, writer, and sink feed both the processor
+                // and the exact Run chunk context, so the processor's append
+                // boundary and the context's finalization boundary agree.
+                Buffer = new NvencOwnedAccessUnitBuffer(State);
+                Writer = new FakeWriter();
+                Sink = new NvencRunChunkSink(State, Buffer, Writer);
+                Coordinator = new NvencRunChunkFinalizationCoordinator(Writer);
+                Context = new NvencRunChunkContext(MakeIssue(), Sink, Coordinator, "chunk/0");
 
                 WorkSlots = new NvencCaptureWorkSlotPool(State);
                 SampleSlots = new NvencEncodeSampleSlotPool(State);
                 SubmitToOutputCredits = new NvencSubmitToOutputCreditPool(State);
                 FrameCompletionCredits = new NvencFrameCompletionCreditPool(State);
-                Buffer = new NvencOwnedAccessUnitBuffer(State);
                 Source = new FakeOutputSource();
-                Writer = new FakeAppender();
                 Collector = new NvencSubmittedOutputCollector(
                     State, WorkSlots, SampleSlots, SubmitToOutputCredits, FrameCompletionCredits, Buffer, Source);
-                Sink = new NvencRunChunkSink(State, Buffer, Writer);
                 ReleaseCoordinator = new NvencFailedBeforeSubmitReleaseCoordinator(
                     State, WorkSlots, SampleSlots, SubmitToOutputCredits, FrameCompletionCredits);
                 RecoveryCoordinator = new NvencSubmittedOutputAbandonRecoveryCoordinator(
@@ -859,7 +874,25 @@ namespace Zantetsu.Core.Tests
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 Processor = new NvencOrderedOutputProcessor(
                     State, OutputQueue, Collector, Sink, ReleaseCoordinator, RecoveryCoordinator, Boundary);
-                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, () => true);
+
+                // Minimal exact Submit Worker bound to the same process state.
+                SubmitWorkSlots = new NvencCaptureWorkSlotPool(State);
+                SubmitSampleSlots = new NvencEncodeSampleSlotPool(State);
+                SubmitSyncSlots = new NvencGpuConversionSyncPool(State);
+                SubmitToOutputCreditPool = new NvencSubmitToOutputCreditPool(State);
+                SubmitFrameCompletionCredits = new NvencFrameCompletionCreditPool(State);
+                SubmitSubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+                SubmitOutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
+                SubmitReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
+                    State, SubmitWorkSlots, SubmitSampleSlots, SubmitSyncSlots,
+                    SubmitToOutputCreditPool, SubmitFrameCompletionCredits,
+                    new FakeSourceReadCompletedSource(), new NvencSourceSurfaceReturnBoundary(), Guid.NewGuid());
+                SubmitProcessor = new NvencOrderedSubmitProcessor(
+                    State, SubmitSubmissionQueue, SubmitOutputQueue,
+                    SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
+                SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
+
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker);
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
                 Worker.Settled += _settledHandler;
