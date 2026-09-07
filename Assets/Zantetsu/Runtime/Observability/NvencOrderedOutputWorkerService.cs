@@ -54,6 +54,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencOrderedOutputProcessor _processor;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
+        private readonly NvencRunChunkTerminalRequest _terminalRequest = new NvencRunChunkTerminalRequest();
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -95,6 +96,63 @@ namespace Zantetsu.Observability
             }
 
             _signal.Set();
+        }
+
+        /// <summary>
+        /// Non-waiting, exclusive Finalize request entry. Accepted only while
+        /// the process is Draining (which includes a recorded Run Abandoned),
+        /// never while Running, Poisoned, already requested, or after the
+        /// terminal is Completed or Collected. On success the worker is
+        /// notified and the caller thread never touches the context.
+        /// </summary>
+        internal bool TryRequestFinalize(NvencRunChunkContext context)
+        {
+            if (context == null || !_processState.IsDraining)
+            {
+                return false;
+            }
+
+            if (!_terminalRequest.TryAcceptFinalize(context))
+            {
+                return false;
+            }
+
+            Notify();
+            return true;
+        }
+
+        /// <summary>
+        /// Non-waiting, exclusive Abandon request entry. Accepted only while
+        /// the process is Draining (which includes a recorded Run Abandoned),
+        /// never while Running, Poisoned, already requested, or after the
+        /// terminal is Completed or Collected. On success the worker is
+        /// notified and the caller thread never touches the context.
+        /// </summary>
+        internal bool TryRequestAbandon(NvencRunChunkContext context)
+        {
+            if (context == null || !_processState.IsDraining)
+            {
+                return false;
+            }
+
+            if (!_terminalRequest.TryAcceptAbandon(context))
+            {
+                return false;
+            }
+
+            Notify();
+            return true;
+        }
+
+        /// <summary>
+        /// Non-waiting terminal collection. Returns false while the terminal
+        /// is unfinished, already collected, or poisoned with no published
+        /// outcome, and never guesses a result. A Finalized outcome carries the
+        /// exact result; an Abandoned outcome carries no result.
+        /// </summary>
+        internal bool TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome)
+        {
+            return _terminalRequest.TryCollect(out outcome);
         }
 
         /// <summary>
@@ -206,6 +264,20 @@ namespace Zantetsu.Observability
                     }
                     while (progressed);
 
+                    // Only after the processor has used up all currently
+                    // processable work may a terminal request be advanced, so
+                    // the terminal never overtakes a held current or queued
+                    // record.
+                    if (!_processor.HasPendingWork && TryProcessTerminalSafely())
+                    {
+                        continue;
+                    }
+
+                    if (TryStop())
+                    {
+                        return;
+                    }
+
                     // Park on the coalescing signal. Reset first and re-check
                     // once, so a notification that landed between the last failed
                     // TryProcessNext and Reset is observed instead of lost.
@@ -217,6 +289,11 @@ namespace Zantetsu.Observability
                     }
 
                     if (TryProcessNextSafely())
+                    {
+                        continue;
+                    }
+
+                    if (!_processor.HasPendingWork && TryProcessTerminalSafely())
                     {
                         continue;
                     }
@@ -249,6 +326,25 @@ namespace Zantetsu.Observability
             try
             {
                 return _processor.TryProcessNext();
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return false;
+            }
+        }
+
+        private bool TryProcessTerminalSafely()
+        {
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            try
+            {
+                return _terminalRequest.TryAdvance();
             }
             catch (Exception ex)
             {
