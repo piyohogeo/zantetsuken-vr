@@ -101,6 +101,15 @@ namespace Zantetsu.Observability
         internal bool HasCurrentWork => _hasCurrent;
 
         /// <summary>
+        /// O(1) correlation predicate: true only when this processor emits into
+        /// the exact Submit-to-Output Queue, without exposing the queue.
+        /// </summary>
+        internal bool ProducesTo(NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
+        {
+            return ReferenceEquals(_submitToOutputQueue, queue);
+        }
+
+        /// <summary>
         /// Diagnostic-only stop predicate for the Submit Worker's drain
         /// decision: true while the processor holds a current work or the
         /// Submission Queue is non-empty. It exposes no queue contents and no

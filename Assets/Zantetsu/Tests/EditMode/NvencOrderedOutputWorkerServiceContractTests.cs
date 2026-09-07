@@ -838,7 +838,6 @@ namespace Zantetsu.Core.Tests
             internal NvencSubmitToOutputCreditPool SubmitToOutputCreditPool;
             internal NvencFrameCompletionCreditPool SubmitFrameCompletionCredits;
             internal NvencFixedSpscQueue<NvencSubmissionRecord> SubmitSubmissionQueue;
-            internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> SubmitOutputQueue;
             internal NvencSourceResourceReleaseCoordinator SubmitReleaseCoordinator;
             internal NvencOrderedSubmitProcessor SubmitProcessor;
             internal NvencOrderedSubmitWorkerService SubmitWorker;
@@ -882,13 +881,12 @@ namespace Zantetsu.Core.Tests
                 SubmitToOutputCreditPool = new NvencSubmitToOutputCreditPool(State);
                 SubmitFrameCompletionCredits = new NvencFrameCompletionCreditPool(State);
                 SubmitSubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
-                SubmitOutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 SubmitReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
                     State, SubmitWorkSlots, SubmitSampleSlots, SubmitSyncSlots,
                     SubmitToOutputCreditPool, SubmitFrameCompletionCredits,
                     new FakeSourceReadCompletedSource(), new NvencSourceSurfaceReturnBoundary(), Guid.NewGuid());
                 SubmitProcessor = new NvencOrderedSubmitProcessor(
-                    State, SubmitSubmissionQueue, SubmitOutputQueue,
+                    State, SubmitSubmissionQueue, OutputQueue,
                     SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
                 SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
 

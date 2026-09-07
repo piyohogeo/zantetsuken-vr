@@ -106,6 +106,16 @@ namespace Zantetsu.Observability
         internal NvencRunChunkSink Sink => _sink;
 
         /// <summary>
+        /// O(1) correlation predicate: true only when this processor consumes
+        /// from the exact Submit-to-Output Queue the Submit Worker emits into,
+        /// without exposing the queue.
+        /// </summary>
+        internal bool IsFedBy(NvencOrderedSubmitWorkerService submitWorker)
+        {
+            return submitWorker.ProducesTo(_queue);
+        }
+
+        /// <summary>
         /// Advances exactly one current record toward its terminal Completion.
         /// Returns false while the queue is empty, a downstream gate is busy,
         /// or the process is poisoned, holding the current record, owned lease,

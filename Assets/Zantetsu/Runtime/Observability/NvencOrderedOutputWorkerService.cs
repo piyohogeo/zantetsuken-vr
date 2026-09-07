@@ -90,6 +90,12 @@ namespace Zantetsu.Observability
                     "The Submit Worker must be bound to the same process state.", nameof(submitWorker));
             }
 
+            if (!processor.IsFedBy(submitWorker))
+            {
+                throw new ArgumentException(
+                    "The Submit Worker must produce to the exact Submit-to-Output Queue the Output Processor consumes.", nameof(submitWorker));
+            }
+
             if (!ReferenceEquals(processor.Sink, runChunkContext.Sink))
             {
                 throw new ArgumentException(

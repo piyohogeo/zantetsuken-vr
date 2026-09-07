@@ -302,6 +302,16 @@ namespace Zantetsu.Observability
         internal NvencCaptureProcessState ProcessState => _processState;
 
         /// <summary>
+        /// O(1) correlation predicate: true only when this worker's processor
+        /// emits into the exact Submit-to-Output Queue, without exposing the
+        /// queue.
+        /// </summary>
+        internal bool ProducesTo(NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
+        {
+            return _processor.ProducesTo(queue);
+        }
+
+        /// <summary>
         /// Non-throwing diagnostic for the first fatal processor exception, if
         /// any. Returns false when the worker stopped without a fatal failure.
         /// </summary>
