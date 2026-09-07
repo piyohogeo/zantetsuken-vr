@@ -142,37 +142,42 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Single allocation-free registration entry, called from the
-        /// acceptance linearization point. Records a positive, strictly
+        /// acceptance linearization point. It records a positive, strictly
         /// increasing Capture Frame Id into the pre-allocated accepted array,
-        /// in accepted order, while Open. A duplicate, a backward id, a
-        /// non-positive id, an over-capacity id, or a non-Open state is
-        /// rejected atomically without partially updating the count or array.
+        /// in accepted order, serialized on the terminal gate. A duplicate, a
+        /// backward id, a non-positive id, an over-capacity id, a claimed
+        /// finalize, or a non-Open state is rejected atomically without
+        /// partially updating the count or array.
         /// </summary>
         internal bool TryRecordAcceptedFrame(long captureFrameId)
         {
-            if ((NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+            lock (_terminalGate)
             {
-                return false;
-            }
+                if (_finalizeClaimed ||
+                    (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                {
+                    return false;
+                }
 
-            if (captureFrameId <= 0)
-            {
-                return false;
-            }
+                if (captureFrameId <= 0)
+                {
+                    return false;
+                }
 
-            if (_acceptedCount >= NvencBringUpProfileV1.CadenceTickCount)
-            {
-                return false;
-            }
+                if (_acceptedCount >= NvencBringUpProfileV1.CadenceTickCount)
+                {
+                    return false;
+                }
 
-            if (_acceptedCount > 0 && captureFrameId <= _acceptedFrameIds[_acceptedCount - 1])
-            {
-                return false;
-            }
+                if (_acceptedCount > 0 && captureFrameId <= _acceptedFrameIds[_acceptedCount - 1])
+                {
+                    return false;
+                }
 
-            _acceptedFrameIds[_acceptedCount] = captureFrameId;
-            _acceptedCount++;
-            return true;
+                _acceptedFrameIds[_acceptedCount] = captureFrameId;
+                _acceptedCount++;
+                return true;
+            }
         }
 
         /// <summary>
@@ -193,67 +198,67 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Finalizes the chunk exactly once. The accepted sequence must match
-        /// the sink's finalization evidence in count and order before the
-        /// finalization coordinator is contacted; a false before that contact
-        /// is retryable. The exactly-once claim is latched immediately before
-        /// the coordinator is called, serialized with abandon on the terminal
-        /// gate. Only after the whole result is fixed are
-        /// <see cref="NvencRunChunkContextState.Finalized"/> and the result
-        /// published; the result is written first and the state is published
-        /// with release semantics. A post-finalization correlation failure is
-        /// a fatal invariant, and a finalizer exception propagates unchanged.
+        /// Finalizes the chunk exactly once. The accepted-sequence snapshot and
+        /// match, and the exactly-once claim, are linearized on the terminal
+        /// gate before the finalizer is contacted; a false there releases the
+        /// gate without claiming, so it stays retryable. The finalizer I/O
+        /// runs outside the gate exactly once. Only after the whole result is
+        /// fixed are <see cref="NvencRunChunkContextState.Finalized"/> and the
+        /// result published; the result is written first and the state is
+        /// published with release semantics. A post-finalization correlation
+        /// failure is a fatal invariant, and a finalizer exception propagates
+        /// unchanged.
         /// </summary>
         internal bool TryFinalize(out NvencChunkFinalizationResult result)
         {
             result = null;
 
-            if ((NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
-            {
-                return false;
-            }
+            NvencRunChunkFinalizationOperation operation = null;
+            CaptureArtifactFrameRelation relation = null;
 
-            if (_acceptedCount < 1)
-            {
-                return false;
-            }
-
-            if (!_sink.TryCaptureFinalizationEvidence(_acceptedCount, out NvencRunChunkSinkFinalizationEvidence evidence))
-            {
-                return false;
-            }
-
-            CaptureArtifactFrameRelation relation = evidence.FrameRelation;
-            if (relation == null || (long)relation.Count != _acceptedCount)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < _acceptedCount; i++)
-            {
-                if (relation.GetCaptureFrameId(i) != _acceptedFrameIds[i])
-                {
-                    return false;
-                }
-            }
-
-            NvencRunChunkFinalizationOperation operation =
-                NvencRunChunkFinalizationOperationFactory.Build(_sink, evidence, _artifactId);
-
-            // Exactly-once claim, latched immediately before the finalizer is
-            // contacted, serialized with abandon on the terminal gate.
+            // Pre-side-effect verification and the exactly-once claim are
+            // serialized on the terminal gate, so an accepted frame cannot be
+            // added between the snapshot verification and the claim.
             lock (_terminalGate)
             {
-                if (_finalizeClaimed || (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                if (_finalizeClaimed ||
+                    (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
                 {
                     return false;
                 }
+
+                if (_acceptedCount < 1)
+                {
+                    return false;
+                }
+
+                if (!_sink.TryCaptureFinalizationEvidence(_acceptedCount, out NvencRunChunkSinkFinalizationEvidence evidence))
+                {
+                    return false;
+                }
+
+                relation = evidence.FrameRelation;
+                if (relation == null || (long)relation.Count != _acceptedCount)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < _acceptedCount; i++)
+                {
+                    if (relation.GetCaptureFrameId(i) != _acceptedFrameIds[i])
+                    {
+                        return false;
+                    }
+                }
+
+                operation = NvencRunChunkFinalizationOperationFactory.Build(_sink, evidence, _artifactId);
 
                 _finalizeClaimed = true;
             }
 
-            // The finalizer is contacted exactly once; an exception propagates
-            // unchanged for the Run coordinator to classify.
+            // The finalizer I/O runs outside the gate, exactly once; an
+            // exception propagates unchanged for the Run coordinator to
+            // classify.
             NvencChunkFinalizationResult finalizationResult =
                 _finalizationCoordinator.Execute(operation);
 

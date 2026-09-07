@@ -224,6 +224,53 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Accepted_AfterFinalizerException_Rejected()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            h.Writer.ExceptionToThrow = new InvalidOperationException("boom");
+            Assert.Throws<InvalidOperationException>(() => h.Context.TryFinalize(out _));
+
+            Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.False);
+            Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Accepted_AfterCoordinatorRejectsReceipt_Rejected()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            // The finalizer is contacted but returns no receipt, so the
+            // coordinator raises a fatal post-side-effect failure.
+            h.Writer.BuildReceipt = false;
+            Assert.Throws<InvalidOperationException>(() => h.Context.TryFinalize(out _));
+
+            Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.False);
+            Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Accepted_DuringFinalize_BlockedByClaim_AndNotGrownAfterTerminal()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            bool acceptedDuringFinalize = true;
+            h.Writer.OnFinalize = () => acceptedDuringFinalize = h.Context.TryRecordAcceptedFrame(2);
+
+            Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.True);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(acceptedDuringFinalize, Is.False);
+            Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+
+            // After the terminal is fixed, the accepted list can no longer grow.
+            Assert.That(h.Context.TryRecordAcceptedFrame(3), Is.False);
+            Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public void Finalized_ThenAcceptedAddReFinalizeAbandonRejected()
         {
             Harness h = new Harness();
@@ -499,6 +546,8 @@ namespace Zantetsu.Core.Tests
             internal int CallCount;
             internal Exception ExceptionToThrow;
             internal NvencRunChunkFinalizationReceipt ReceiptToReturn;
+            internal bool BuildReceipt = true;
+            internal Action OnFinalize;
 
             public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
             {
@@ -508,6 +557,7 @@ namespace Zantetsu.Core.Tests
             public NvencRunChunkFinalizationReceipt FinalizeChunk(NvencRunChunkFinalizationOperation operation)
             {
                 CallCount++;
+                OnFinalize?.Invoke();
                 if (ExceptionToThrow != null)
                 {
                     throw ExceptionToThrow;
@@ -516,6 +566,11 @@ namespace Zantetsu.Core.Tests
                 if (ReceiptToReturn != null)
                 {
                     return ReceiptToReturn;
+                }
+
+                if (!BuildReceipt)
+                {
+                    return null;
                 }
 
                 CaptureArtifactDescriptor descriptor = NvencRunChunkArtifactDescriptorFactory.Create(
