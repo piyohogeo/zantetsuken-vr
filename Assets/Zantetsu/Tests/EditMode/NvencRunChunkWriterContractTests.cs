@@ -107,6 +107,58 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Append_HashCommitFailure_FaultsAfterSessionAppended()
+        {
+            FakeFileSession session = new FakeFileSession();
+            WriterHarness h = new WriterHarness(session);
+            IncrementalHash hash = GetHashField(h.Writer);
+            hash.Dispose();
+
+            Assert.Throws<ObjectDisposedException>(() => h.Writer.Append(new byte[8], 0, 8));
+
+            Assert.That(h.Writer.State, Is.EqualTo(NvencRunChunkWriterState.Faulted));
+            Assert.That(session.Captured.Count, Is.EqualTo(8));
+            Assert.That(session.AppendCallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Finalize_DisposesHashExactlyOnce()
+        {
+            FakeFileSession session = new FakeFileSession();
+            WriterHarness h = new WriterHarness(session);
+            NvencRunChunkFinalizationOperation operation = MakeOperation(h, "chunk/0");
+            IncrementalHash hash = GetHashField(h.Writer);
+
+            NvencRunChunkFinalizationReceipt receipt = h.Writer.FinalizeChunk(operation);
+            Assert.That(receipt.IsValid, Is.True);
+
+            Assert.Throws<ObjectDisposedException>(() => hash.GetHashAndReset());
+        }
+
+        [Test]
+        public void Fault_DisposesHash_IndeterminateOrException()
+        {
+            FakeFileSession indeterminateSession = new FakeFileSession
+            {
+                Outcome = NvencRunChunkAppendOutcome.Indeterminate,
+            };
+            WriterHarness hIndeterminate = new WriterHarness(indeterminateSession);
+            IncrementalHash indeterminateHash = GetHashField(hIndeterminate.Writer);
+            Assert.That(hIndeterminate.Writer.Append(new byte[8], 0, 8),
+                Is.EqualTo(NvencRunChunkAppendOutcome.Indeterminate));
+            Assert.That(hIndeterminate.Writer.State, Is.EqualTo(NvencRunChunkWriterState.Faulted));
+            Assert.Throws<ObjectDisposedException>(() => indeterminateHash.GetHashAndReset());
+
+            FakeFileSession throwingSession = new FakeFileSession();
+            throwingSession.AppendException = new InvalidOperationException("boom");
+            WriterHarness hThrowing = new WriterHarness(throwingSession);
+            IncrementalHash throwingHash = GetHashField(hThrowing.Writer);
+            Assert.Throws<InvalidOperationException>(() => hThrowing.Writer.Append(new byte[8], 0, 8));
+            Assert.That(hThrowing.Writer.State, Is.EqualTo(NvencRunChunkWriterState.Faulted));
+            Assert.Throws<ObjectDisposedException>(() => throwingHash.GetHashAndReset());
+        }
+
+        [Test]
         public void Finalize_ExactWriterOnly()
         {
             FakeFileSession session = new FakeFileSession();
@@ -314,6 +366,14 @@ namespace Zantetsu.Core.Tests
             FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null);
             field.SetValue(target, value);
+        }
+
+        private static IncrementalHash GetHashField(NvencRunChunkWriter writer)
+        {
+            FieldInfo field = typeof(NvencRunChunkWriter).GetField(
+                "_hash", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null);
+            return (IncrementalHash)field.GetValue(writer);
         }
 
         private static CaptureFrameWorkToken MakeToken(long frameId)

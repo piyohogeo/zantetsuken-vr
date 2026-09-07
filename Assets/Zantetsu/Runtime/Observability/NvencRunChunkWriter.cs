@@ -24,6 +24,7 @@ namespace Zantetsu.Observability
         private NvencRunChunkWriterState _state;
         private long _appendCount;
         private long _accumulatedByteLength;
+        private bool _hashDisposed;
 
         internal NvencRunChunkWriter(INvencRunChunkFileSession session)
         {
@@ -59,27 +60,24 @@ namespace Zantetsu.Observability
             try
             {
                 outcome = _session.Append(buffer, offset, validLength);
-            }
-            catch
-            {
-                _state = NvencRunChunkWriterState.Faulted;
-                throw;
-            }
 
-            switch (outcome)
-            {
-                case NvencRunChunkAppendOutcome.Appended:
+                if (outcome == NvencRunChunkAppendOutcome.Appended)
+                {
                     _hash.AppendData(buffer, offset, validLength);
                     _appendCount++;
                     _accumulatedByteLength += validLength;
-                    break;
+                }
+            }
+            catch
+            {
+                MarkFaulted();
+                throw;
+            }
 
-                case NvencRunChunkAppendOutcome.RejectedBeforeWrite:
-                    break;
-
-                default:
-                    _state = NvencRunChunkWriterState.Faulted;
-                    break;
+            if (outcome != NvencRunChunkAppendOutcome.Appended &&
+                outcome != NvencRunChunkAppendOutcome.RejectedBeforeWrite)
+            {
+                MarkFaulted();
             }
 
             return outcome;
@@ -142,6 +140,25 @@ namespace Zantetsu.Observability
             {
                 _state = NvencRunChunkWriterState.Faulted;
                 throw;
+            }
+            finally
+            {
+                DisposeHash();
+            }
+        }
+
+        private void MarkFaulted()
+        {
+            _state = NvencRunChunkWriterState.Faulted;
+            DisposeHash();
+        }
+
+        private void DisposeHash()
+        {
+            if (!_hashDisposed)
+            {
+                _hashDisposed = true;
+                _hash.Dispose();
             }
         }
 
