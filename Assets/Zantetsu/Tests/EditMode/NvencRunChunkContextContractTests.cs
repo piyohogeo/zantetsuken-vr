@@ -96,10 +96,175 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+            h.Freeze();
             h.Context.TryAbandon();
 
             Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.False);
             Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+        }
+
+        // ---- StopAccepting freeze and snapshot ----
+
+        [Test]
+        public void Terminal_PreFreeze_RejectedWithoutSideEffect()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            // Before the StopAccepting freeze, finalize and abandon are both
+            // rejected with no side effect and the sequence stays unfrozen.
+            Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.False);
+            Assert.That(result, Is.Null);
+            Assert.That(h.Context.TryAbandon(), Is.False);
+            Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Open));
+            Assert.That(h.Context.TryGetAcceptedFrameSnapshot(out _), Is.False);
+        }
+
+        [Test]
+        public void Freeze_ZeroAccepted_Succeeds_CountZero()
+        {
+            Harness h = new Harness();
+
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            Assert.That(snapshot, Is.Not.Null);
+            Assert.That(snapshot.Count, Is.EqualTo(0));
+            Assert.That(snapshot.TestRunId, Is.EqualTo(h.Context.TestRunId));
+            Assert.That(ReferenceEquals(snapshot.Context, h.Context), Is.True);
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out _), Is.False);
+
+            Assert.That(h.Context.TryGetAcceptedFrameSnapshot(out NvencRunAcceptedFrameSnapshot held), Is.True);
+            Assert.That(ReferenceEquals(held, snapshot), Is.True);
+        }
+
+        [Test]
+        public void Freeze_SingleAccepted_ReflectsSequence()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(7, 64, Seed);
+
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            Assert.That(snapshot.Count, Is.EqualTo(1));
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out long id), Is.True);
+            Assert.That(id, Is.EqualTo(7));
+            Assert.That(snapshot.TryGetCaptureFrameId(1, out _), Is.False);
+        }
+
+        [Test]
+        public void Freeze_FullCadence_Count120()
+        {
+            Harness h = new Harness();
+            for (long id = 1; id <= 120; id++)
+            {
+                Assert.That(h.Context.TryRecordAcceptedFrame(id), Is.True);
+            }
+
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            Assert.That(snapshot.Count, Is.EqualTo(120));
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out long first), Is.True);
+            Assert.That(first, Is.EqualTo(1));
+            Assert.That(snapshot.TryGetCaptureFrameId(119, out long last), Is.True);
+            Assert.That(last, Is.EqualTo(120));
+            Assert.That(snapshot.TryGetCaptureFrameId(120, out _), Is.False);
+        }
+
+        [Test]
+        public void Freeze_Idempotent_SameReference()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot first), Is.True);
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot second), Is.True);
+            Assert.That(ReferenceEquals(first, second), Is.True);
+        }
+
+        [Test]
+        public void Accepted_AfterFreeze_Rejected()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+
+            // The frozen sequence can no longer grow, and the snapshot's count
+            // stays fixed even after the rejected registration.
+            Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.False);
+            Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
+            Assert.That(snapshot.Count, Is.EqualTo(1));
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out long id), Is.True);
+            Assert.That(id, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Freeze_SerializedOnTerminalGate_Source()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencRunChunkContext.cs"));
+            string body = ExtractMethodBody(source, "TryFreezeAcceptedFrames");
+            Assert.That(body, Does.Contain("lock (_terminalGate)"));
+        }
+
+        [Test]
+        public void Snapshot_SealedImmutable_ExactFields()
+        {
+            Type type = typeof(NvencRunAcceptedFrameSnapshot);
+
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(fields.Length, Is.EqualTo(2));
+
+            Type[] expected =
+            {
+                typeof(NvencRunChunkContext),
+                typeof(int),
+            };
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+                Assert.That(Array.IndexOf(expected, field.FieldType), Is.GreaterThanOrEqualTo(0),
+                    field.Name + " has an unexpected type.");
+            }
+
+            Type[] forbiddenTypes =
+            {
+                typeof(long[]), typeof(int[]), typeof(CaptureFrameWorkToken),
+                typeof(NvencOwnedAccessUnitLease), typeof(NvencRunChunkSink),
+                typeof(NvencCaptureProcessState),
+            };
+
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                Assert.That(Array.IndexOf(forbiddenTypes, property.PropertyType), Is.LessThan(0),
+                    property.Name + " must not expose a forbidden type.");
+            }
+        }
+
+        [Test]
+        public void Snapshot_ContextDivergence_FailClosed()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+
+            // Corrupt the context's accepted count so it diverges from the
+            // frozen count; reads must fail closed with a zero id.
+            SetField(h.Context, "_acceptedCount", 5);
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out long id), Is.False);
+            Assert.That(id, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Snapshot_NullContext_FailClosed()
+        {
+            NvencRunAcceptedFrameSnapshot snapshot = new NvencRunAcceptedFrameSnapshot(null, 0);
+            Assert.That(snapshot.Context, Is.Null);
+            Assert.That(snapshot.TestRunId, Is.EqualTo(0));
+            Assert.That(snapshot.Count, Is.EqualTo(0));
+            Assert.That(snapshot.TryGetCaptureFrameId(0, out long id), Is.False);
+            Assert.That(id, Is.EqualTo(0));
         }
 
         // ---- Finalize ----
@@ -111,6 +276,7 @@ namespace Zantetsu.Core.Tests
             h.AcceptAndAppend(1, 64, Seed);
             h.AcceptAndAppend(2, 48, Seed);
 
+            h.Freeze();
             Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.True);
             Assert.That(result.IsValid, Is.True);
             Assert.That(result.Sink, Is.SameAs(h.Sink));
@@ -129,6 +295,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
 
+            h.Freeze();
             Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.False);
             Assert.That(result, Is.Null);
             Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
@@ -143,6 +310,7 @@ namespace Zantetsu.Core.Tests
             insufficient.Context.TryRecordAcceptedFrame(1);
             insufficient.Context.TryRecordAcceptedFrame(2);
             insufficient.Append(1, 64, Seed);
+            insufficient.Freeze();
             Assert.That(insufficient.Context.TryFinalize(out _), Is.False);
             Assert.That(insufficient.Finalizer.CallCount, Is.EqualTo(0));
 
@@ -151,6 +319,7 @@ namespace Zantetsu.Core.Tests
             extra.Context.TryRecordAcceptedFrame(1);
             extra.Append(1, 64, Seed);
             extra.Append(2, 48, Seed);
+            extra.Freeze();
             Assert.That(extra.Context.TryFinalize(out _), Is.False);
             Assert.That(extra.Finalizer.CallCount, Is.EqualTo(0));
 
@@ -160,6 +329,7 @@ namespace Zantetsu.Core.Tests
             order.Context.TryRecordAcceptedFrame(2);
             order.Append(1, 64, Seed);
             order.Append(3, 48, Seed);
+            order.Freeze();
             Assert.That(order.Context.TryFinalize(out _), Is.False);
             Assert.That(order.Finalizer.CallCount, Is.EqualTo(0));
         }
@@ -170,6 +340,7 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
 
+            h.Freeze();
             Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.True);
             Assert.That(h.Finalizer.CallCount, Is.EqualTo(1));
 
@@ -189,6 +360,8 @@ namespace Zantetsu.Core.Tests
             h.Context.TryRecordAcceptedFrame(2);
             h.Append(1, 64, Seed);
 
+            h.Freeze();
+
             // The sink has fewer appends than accepted; this false is before
             // any finalizer contact and must be retryable.
             Assert.That(h.Context.TryFinalize(out _), Is.False);
@@ -206,6 +379,8 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+
+            h.Freeze();
 
             InvalidOperationException boom = new InvalidOperationException("boom");
             h.Writer.ExceptionToThrow = boom;
@@ -229,6 +404,7 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
 
+            h.Freeze();
             h.Writer.ExceptionToThrow = new InvalidOperationException("boom");
             Assert.Throws<InvalidOperationException>(() => h.Context.TryFinalize(out _));
 
@@ -241,6 +417,8 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+
+            h.Freeze();
 
             // The finalizer is contacted but returns no receipt, so the
             // coordinator raises a fatal post-side-effect failure.
@@ -256,6 +434,8 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+
+            h.Freeze();
 
             bool acceptedDuringFinalize = true;
             h.Writer.OnFinalize = () => acceptedDuringFinalize = h.Context.TryRecordAcceptedFrame(2);
@@ -275,6 +455,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+            h.Freeze();
             h.Context.TryFinalize(out _);
 
             Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Finalized));
@@ -292,6 +473,7 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
 
+            h.Freeze();
             Assert.That(h.Context.TryAbandon(), Is.True);
             Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Abandoned));
             Assert.That(h.Context.TryAbandon(), Is.False);
@@ -310,6 +492,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.AcceptAndAppend(1, 64, Seed);
+            h.Freeze();
             Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.True);
             Assert.That(h.Context.TryGetFinalizationResult(out NvencChunkFinalizationResult held), Is.True);
             Assert.That(ReferenceEquals(held, result), Is.True);
@@ -322,6 +505,7 @@ namespace Zantetsu.Core.Tests
             // Swapped foreign result fails closed.
             Harness other = new Harness("chunk/other");
             other.AcceptAndAppend(1, 64, Seed);
+            other.Freeze();
             Assert.That(other.Context.TryFinalize(out NvencChunkFinalizationResult foreign), Is.True);
             SetField(h.Context, "_finalizationResult", foreign);
             Assert.That(h.Context.TryGetFinalizationResult(out NvencChunkFinalizationResult afterSwap), Is.False);
@@ -652,6 +836,11 @@ namespace Zantetsu.Core.Tests
                     Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
                 Assert.That(Buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease lease), Is.True);
                 Assert.That(Sink.TryAppend(token, lease, out _), Is.True);
+            }
+
+            internal void Freeze()
+            {
+                Assert.That(Context.TryFreezeAcceptedFrames(out _), Is.True);
             }
         }
     }

@@ -34,6 +34,20 @@ namespace Zantetsu.Observability
     /// surface.
     /// </para>
     /// <para>
+    /// The coordinator is bound to the exact <see cref="NvencRunChunkContext"/>
+    /// for the same process state, so the Run's accepted Capture Frame Id
+    /// sequence is the single source of truth. Before any reservation or
+    /// surface transfer the frame's test run id must match the context and the
+    /// context's side-effect-free admission predicate must accept the frame id;
+    /// a duplicate, backward, over-capacity, frozen, or terminal frame is
+    /// rejected as <c>NotAccepting</c> with no state change. After the
+    /// successful enqueue, the frame id is registered into the context exactly
+    /// once inside the same admission gate, before <c>EndAdmission</c>, so the
+    /// Submit Worker — which must acquire the same gate before any submit side
+    /// effect — can never begin an NVENC submit before the accepted registration
+    /// has completed.
+    /// </para>
+    /// <para>
     /// Under the strict single-producer contract a post-transfer enqueue failure
     /// is an internal invariant violation and is reported as an exception, not
     /// converted to backpressure. Every already-reserved resource is released
@@ -58,6 +72,7 @@ namespace Zantetsu.Observability
         private readonly NvencSubmitToOutputCreditPool _submitToOutputCredits;
         private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
         private readonly NvencFixedSpscQueue<NvencSubmissionRecord> _submissionQueue;
+        private readonly NvencRunChunkContext _context;
         private readonly Guid _backendOwner;
 
         internal NvencSubmissionAdmissionCoordinator(
@@ -68,6 +83,7 @@ namespace Zantetsu.Observability
             NvencSubmitToOutputCreditPool submitToOutputCredits,
             NvencFrameCompletionCreditPool frameCompletionCredits,
             NvencFixedSpscQueue<NvencSubmissionRecord> submissionQueue,
+            NvencRunChunkContext context,
             Guid backendOwner)
         {
             if (processState == null)
@@ -105,6 +121,17 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(submissionQueue));
             }
 
+            if (context == null)
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
+
+            if (!ReferenceEquals(context.ProcessState, processState))
+            {
+                throw new ArgumentException(
+                    "Run chunk context must be bound to the exact process state.", nameof(context));
+            }
+
             if (backendOwner == Guid.Empty)
             {
                 throw new ArgumentException("Backend owner must not be empty.", nameof(backendOwner));
@@ -117,6 +144,7 @@ namespace Zantetsu.Observability
             _submitToOutputCredits = submitToOutputCredits;
             _frameCompletionCredits = frameCompletionCredits;
             _submissionQueue = submissionQueue;
+            _context = context;
             _backendOwner = backendOwner;
         }
 
@@ -150,7 +178,21 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(frame), frame.CaptureFrameId, "Capture frame ID must be positive.");
             }
 
+            if (frame.TestRunId != _context.TestRunId)
+            {
+                throw new ArgumentException(
+                    "Frame TestRunId does not match the Run chunk context.", nameof(frame));
+            }
+
             workToken = default;
+
+            // Side-effect-free context eligibility check before any reservation
+            // or surface transfer: a duplicate, backward, over-capacity, frozen,
+            // or terminal frame is rejected here with no state change.
+            if (!_context.CanRecordAcceptedFrame(frame.CaptureFrameId))
+            {
+                return CaptureSubmitStatus.NotAccepting;
+            }
 
             if (!_processState.IsAccepting)
             {
@@ -215,6 +257,19 @@ namespace Zantetsu.Observability
                         RollbackAfterTransferAndThrow(
                             enqueueFailure, workSlot, sampleSlot, syncSlot,
                             submitToOutputCredit, frameCompletionCredit, surface, token);
+                    }
+
+                    // Register the accepted frame id exactly once, inside the
+                    // same admission gate and only after the successful
+                    // enqueue. The pre-admission predicate already verified
+                    // this would succeed; a false here is an internal
+                    // invariant violation and is not rolled back, dequeued, or
+                    // surface-returned on guess — only the process is poisoned.
+                    if (!_context.TryRecordAcceptedFrame(frame.CaptureFrameId))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "Run chunk context rejected the accepted frame after enqueue; internal invariant violated.");
                     }
 
                     status = CaptureSubmitStatus.Accepted;

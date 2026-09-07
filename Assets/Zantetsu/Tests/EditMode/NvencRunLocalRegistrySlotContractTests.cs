@@ -60,6 +60,7 @@ namespace Zantetsu.Core.Tests
 
             Harness abandoned = new Harness(finalize: false);
             abandoned.AcceptAndAppend(1, 64, Seed);
+            Assert.That(abandoned.Context.TryFreezeAcceptedFrames(out _), Is.True);
             Assert.That(abandoned.Context.TryAbandon(), Is.True);
             Assert.That(abandoned.Slot.TryRegister(abandoned.Context, null), Is.False);
             Assert.That(abandoned.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
@@ -422,6 +423,7 @@ namespace Zantetsu.Core.Tests
                         AcceptAndAppend(id, 64, Seed);
                     }
 
+                    Assert.That(Context.TryFreezeAcceptedFrames(out _), Is.True);
                     Assert.That(Context.TryFinalize(out Result), Is.True);
                 }
             }

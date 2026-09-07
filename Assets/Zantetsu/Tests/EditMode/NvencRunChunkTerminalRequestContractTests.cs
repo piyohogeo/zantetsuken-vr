@@ -383,6 +383,7 @@ namespace Zantetsu.Core.Tests
 
                 // Finalize directly on the caller thread: the accepted abandon
                 // request can no longer abandon the context.
+                h.Freeze();
                 Assert.That(h.Context.TryFinalize(out _), Is.True);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
                 h.SubmitDrained = true;
@@ -827,10 +828,19 @@ namespace Zantetsu.Core.Tests
             internal NvencOrderedSubmitWorkerService SubmitWorker;
 
             // Write-only convenience: publishes the Submit Worker's monotonic
-            // drain completion evidence deterministically.
+            // drain completion evidence deterministically, and freezes the Run
+            // chunk's accepted sequence (StopAccepting) at that same drain
+            // boundary so a terminal request can be admitted.
             internal bool SubmitDrained
             {
-                set => SetField(SubmitWorker, "_drainCompleted", value);
+                set
+                {
+                    SetField(SubmitWorker, "_drainCompleted", value);
+                    if (value)
+                    {
+                        Freeze();
+                    }
+                }
             }
 
             private readonly Action _settledHandler;
@@ -916,6 +926,11 @@ namespace Zantetsu.Core.Tests
                     Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
                 Assert.That(Buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease lease), Is.True);
                 Assert.That(Sink.TryAppend(token, lease, out _), Is.True);
+            }
+
+            internal void Freeze()
+            {
+                Assert.That(Context.TryFreezeAcceptedFrames(out _), Is.True);
             }
 
             internal NvencSubmitToOutputRecord CreateSubmitted(long frameId)

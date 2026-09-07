@@ -49,6 +49,7 @@ namespace Zantetsu.Observability
         private int _state;
         private NvencChunkFinalizationResult _finalizationResult;
         private bool _finalizeClaimed;
+        private NvencRunAcceptedFrameSnapshot _acceptedSnapshot;
 
         internal NvencRunChunkContext(
             CaptureRunInitializationSessionIssue issue,
@@ -141,6 +142,12 @@ namespace Zantetsu.Observability
         internal NvencRunChunkSink Sink => _sink;
 
         /// <summary>
+        /// The exact process state this context's sink is bound to, for
+        /// exact-reference correlation with the admission coordinator.
+        /// </summary>
+        internal NvencCaptureProcessState ProcessState => _sink.ProcessState;
+
+        /// <summary>
         /// Single allocation-free registration entry, called from the
         /// acceptance linearization point. It records a positive, strictly
         /// increasing Capture Frame Id into the pre-allocated accepted array,
@@ -153,23 +160,7 @@ namespace Zantetsu.Observability
         {
             lock (_terminalGate)
             {
-                if (_finalizeClaimed ||
-                    (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
-                {
-                    return false;
-                }
-
-                if (captureFrameId <= 0)
-                {
-                    return false;
-                }
-
-                if (_acceptedCount >= NvencBringUpProfileV1.CadenceTickCount)
-                {
-                    return false;
-                }
-
-                if (_acceptedCount > 0 && captureFrameId <= _acceptedFrameIds[_acceptedCount - 1])
+                if (!CanRecordAcceptedFrameCore(captureFrameId))
                 {
                     return false;
                 }
@@ -178,6 +169,32 @@ namespace Zantetsu.Observability
                 _acceptedCount++;
                 return true;
             }
+        }
+
+        /// <summary>
+        /// O(1), side-effect-free admission predicate, called from the
+        /// admission boundary before any reservation or surface transfer. It
+        /// returns true only while the context is still open, not
+        /// terminal-claimed, not frozen, and the given positive, strictly
+        /// increasing Capture Frame Id fits within the fixed accepted
+        /// capacity.
+        /// </summary>
+        internal bool CanRecordAcceptedFrame(long captureFrameId)
+        {
+            lock (_terminalGate)
+            {
+                return CanRecordAcceptedFrameCore(captureFrameId);
+            }
+        }
+
+        private bool CanRecordAcceptedFrameCore(long captureFrameId)
+        {
+            return _acceptedSnapshot == null &&
+                !_finalizeClaimed &&
+                (NvencRunChunkContextState)Volatile.Read(ref _state) == NvencRunChunkContextState.Open &&
+                captureFrameId > 0 &&
+                _acceptedCount < NvencBringUpProfileV1.CadenceTickCount &&
+                (_acceptedCount == 0 || captureFrameId > _acceptedFrameIds[_acceptedCount - 1]);
         }
 
         /// <summary>
@@ -198,16 +215,55 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Finalizes the chunk exactly once. The accepted-sequence snapshot and
-        /// match, and the exactly-once claim, are linearized on the terminal
-        /// gate before the finalizer is contacted; a false there releases the
-        /// gate without claiming, so it stays retryable. The finalizer I/O
-        /// runs outside the gate exactly once. Only after the whole result is
-        /// fixed are <see cref="NvencRunChunkContextState.Finalized"/> and the
-        /// result published; the result is written first and the state is
-        /// published with release semantics. A post-finalization correlation
-        /// failure is a fatal invariant, and a finalizer exception propagates
-        /// unchanged.
+        /// Freezes the accepted Capture Frame Id sequence exactly once on the
+        /// terminal gate, serialized with accepted registration. The existing
+        /// ledger is the single source of truth and is never copied; the
+        /// snapshot binds the exact context and the frozen count by reference.
+        /// Re-freezing returns the exact previously-issued snapshot, so a
+        /// later coordinator can bounded-poll by reference.
+        /// </summary>
+        internal bool TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot)
+        {
+            lock (_terminalGate)
+            {
+                if (_acceptedSnapshot != null)
+                {
+                    snapshot = _acceptedSnapshot;
+                    return true;
+                }
+
+                snapshot = new NvencRunAcceptedFrameSnapshot(this, _acceptedCount);
+                _acceptedSnapshot = snapshot;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Non-mutating read of the frozen accepted snapshot. Returns false
+        /// while the accepted sequence has not been frozen.
+        /// </summary>
+        internal bool TryGetAcceptedFrameSnapshot(out NvencRunAcceptedFrameSnapshot snapshot)
+        {
+            lock (_terminalGate)
+            {
+                snapshot = _acceptedSnapshot;
+                return snapshot != null;
+            }
+        }
+
+        /// <summary>
+        /// Finalizes the chunk exactly once. The accepted sequence must have
+        /// been frozen with <see cref="TryFreezeAcceptedFrames"/> first; a
+        /// not-frozen context returns false without side effect. The
+        /// accepted-sequence snapshot and match, and the exactly-once claim,
+        /// are linearized on the terminal gate before the finalizer is
+        /// contacted; a false there releases the gate without claiming, so it
+        /// stays retryable. The finalizer I/O runs outside the gate exactly
+        /// once. Only after the whole result is fixed are
+        /// <see cref="NvencRunChunkContextState.Finalized"/> and the result
+        /// published; the result is written first and the state is published
+        /// with release semantics. A post-finalization correlation failure is
+        /// a fatal invariant, and a finalizer exception propagates unchanged.
         /// </summary>
         internal bool TryFinalize(out NvencChunkFinalizationResult result)
         {
@@ -221,7 +277,8 @@ namespace Zantetsu.Observability
             // added between the snapshot verification and the claim.
             lock (_terminalGate)
             {
-                if (_finalizeClaimed ||
+                if (_acceptedSnapshot == null ||
+                    _finalizeClaimed ||
                     (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
                 {
                     return false;
@@ -279,16 +336,20 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Abandons the chunk exactly once from <c>Open</c>. No result,
-        /// descriptor, or frame relation is issued, and no file delete,
-        /// truncate, rename, or lease release happens. A repeated request, or
-        /// a request from a terminal state, returns false without side effect.
+        /// Abandons the chunk exactly once from <c>Open</c>. The accepted
+        /// sequence must have been frozen first; a not-frozen context returns
+        /// false without side effect. No result, descriptor, or frame relation
+        /// is issued, and no file delete, truncate, rename, or lease release
+        /// happens. A repeated request, or a request from a terminal state,
+        /// returns false without side effect.
         /// </summary>
         internal bool TryAbandon()
         {
             lock (_terminalGate)
             {
-                if (_finalizeClaimed || (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                if (_acceptedSnapshot == null ||
+                    _finalizeClaimed ||
+                    (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
                 {
                     return false;
                 }

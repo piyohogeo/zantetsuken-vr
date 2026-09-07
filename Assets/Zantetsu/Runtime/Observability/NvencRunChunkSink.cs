@@ -78,6 +78,12 @@ namespace Zantetsu.Observability
 
         internal long LastFrameId => _lastFrameId;
 
+        /// <summary>
+        /// The exact process state this sink is bound to, for exact-reference
+        /// correlation by the Run chunk context and admission coordinator.
+        /// </summary>
+        internal NvencCaptureProcessState ProcessState => _processState;
+
         internal bool TryAppend(
             in CaptureFrameWorkToken workToken,
             in NvencOwnedAccessUnitLease ownedLease,
