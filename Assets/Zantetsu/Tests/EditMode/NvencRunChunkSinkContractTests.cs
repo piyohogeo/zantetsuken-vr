@@ -1121,6 +1121,16 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void Sink_IsBackedBy_ExactAppenderOnly()
+        {
+            Harness h = new Harness();
+
+            Assert.That(h.Sink.IsBackedBy(h.Writer), Is.True);
+            Assert.That(h.Sink.IsBackedBy(null), Is.False);
+            Assert.That(h.Sink.IsBackedBy(new FakeAppender()), Is.False);
+        }
+
         private static int CountOccurrences(string text, string value)
         {
             int count = 0;

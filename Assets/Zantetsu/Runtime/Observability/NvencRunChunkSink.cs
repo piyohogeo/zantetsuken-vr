@@ -581,5 +581,15 @@ namespace Zantetsu.Observability
                 _lastFrameId == lastFrameId &&
                 MatchesFrameRelation(relation);
         }
+
+        /// <summary>
+        /// True when the given appender is the exact append writer this sink
+        /// was constructed with. O(1) reference identity; a foreign appender
+        /// or null is never backed.
+        /// </summary>
+        internal bool IsBackedBy(INvencRunChunkAppender appender)
+        {
+            return appender != null && ReferenceEquals(_writer, appender);
+        }
     }
 }

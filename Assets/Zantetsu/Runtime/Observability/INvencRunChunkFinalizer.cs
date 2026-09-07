@@ -13,9 +13,11 @@ namespace Zantetsu.Observability
     /// Before any side effect, a <c>null</c> operation must throw
     /// <see cref="ArgumentNullException"/> for <c>operation</c>, and an
     /// invalid operation must throw <see cref="ArgumentException"/> for
-    /// <c>operation</c>. The finalizer must also confirm that the sink bound
-    /// by the operation and the finalizer's exact append writer share the same
-    /// append path.
+    /// <c>operation</c>. The finalizer must also confirm, before any side
+    /// effect, that the operation's sink is backed by the finalizer's exact
+    /// append writer via <see cref="NvencRunChunkSink.IsBackedBy"/>. A
+    /// different writer instance must be rejected even when it targets the
+    /// same location.
     /// </para>
     /// <para>
     /// The finalizer finalizes the single maintained hash without opening the
