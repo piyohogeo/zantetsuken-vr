@@ -182,6 +182,48 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Finalize_TransientEvidenceFailure_RetryableAfterSinkCatchesUp()
+        {
+            Harness h = new Harness();
+            h.Context.TryRecordAcceptedFrame(1);
+            h.Context.TryRecordAcceptedFrame(2);
+            h.Append(1, 64, Seed);
+
+            // The sink has fewer appends than accepted; this false is before
+            // any finalizer contact and must be retryable.
+            Assert.That(h.Context.TryFinalize(out _), Is.False);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(0));
+
+            h.Append(2, 48, Seed);
+
+            Assert.That(h.Context.TryFinalize(out NvencChunkFinalizationResult result), Is.True);
+            Assert.That(result.IsValid, Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Finalize_FinalizerException_PropagatesNoRetryNoAbandon()
+        {
+            Harness h = new Harness();
+            h.AcceptAndAppend(1, 64, Seed);
+
+            InvalidOperationException boom = new InvalidOperationException("boom");
+            h.Writer.ExceptionToThrow = boom;
+
+            InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(
+                () => h.Context.TryFinalize(out _));
+            Assert.That(ReferenceEquals(thrown, boom), Is.True);
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+
+            // The claim is latched before the finalizer contact: neither a
+            // re-finalize nor an abandon may follow the attempted finalize.
+            Assert.That(h.Context.TryFinalize(out _), Is.False);
+            Assert.That(h.Context.TryAbandon(), Is.False);
+            Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Open));
+            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public void Finalized_ThenAcceptedAddReFinalizeAbandonRejected()
         {
             Harness h = new Harness();
@@ -258,6 +300,36 @@ namespace Zantetsu.Core.Tests
                 new NvencRunChunkContext(MakeIssue(), h.Sink, h.Coordinator, string.Empty));
         }
 
+        [Test]
+        public void Constructor_ForeignWriter_Rejected()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+            FakeWriter writerA = new FakeWriter();
+            NvencRunChunkSink sink = new NvencRunChunkSink(state, buffer, writerA);
+            FakeWriter writerB = new FakeWriter();
+            NvencRunChunkFinalizationCoordinator coordinator = new NvencRunChunkFinalizationCoordinator(writerB);
+
+            Assert.Throws<ArgumentException>(() =>
+                new NvencRunChunkContext(MakeIssue(), sink, coordinator, "chunk/0"));
+            Assert.That(writerA.CallCount, Is.EqualTo(0));
+            Assert.That(writerB.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Constructor_FinalizerNotAppender_Rejected()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+            FakeWriter writerA = new FakeWriter();
+            NvencRunChunkSink sink = new NvencRunChunkSink(state, buffer, writerA);
+            FinalizerOnly finalizerOnly = new FinalizerOnly();
+            NvencRunChunkFinalizationCoordinator coordinator = new NvencRunChunkFinalizationCoordinator(finalizerOnly);
+
+            Assert.Throws<ArgumentException>(() =>
+                new NvencRunChunkContext(MakeIssue(), sink, coordinator, "chunk/0"));
+        }
+
         // ---- Ownership and allocation ----
 
         [Test]
@@ -279,7 +351,7 @@ namespace Zantetsu.Core.Tests
             string[] forbidden =
             {
                 "File.", "Directory.", "FileStream", "System.IO", "new Thread", "ThreadPool",
-                "Task", "lock (", "Monitor",
+                "Task",
             };
 
             foreach (string word in forbidden)
@@ -422,21 +494,40 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private sealed class FakeAppender : INvencRunChunkAppender
+        private sealed class FakeWriter : INvencRunChunkAppender, INvencRunChunkFinalizer
         {
+            internal int CallCount;
+            internal Exception ExceptionToThrow;
+            internal NvencRunChunkFinalizationReceipt ReceiptToReturn;
+
             public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
             {
                 return NvencRunChunkAppendOutcome.Appended;
             }
-        }
-
-        private sealed class FakeFinalizer : INvencRunChunkFinalizer
-        {
-            internal int CallCount;
 
             public NvencRunChunkFinalizationReceipt FinalizeChunk(NvencRunChunkFinalizationOperation operation)
             {
                 CallCount++;
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (ReceiptToReturn != null)
+                {
+                    return ReceiptToReturn;
+                }
+
+                CaptureArtifactDescriptor descriptor = NvencRunChunkArtifactDescriptorFactory.Create(
+                    operation.ArtifactId, operation.AccumulatedByteLength, Hash64);
+                return NvencRunChunkFinalizationReceipt.Create(this, operation, descriptor);
+            }
+        }
+
+        private sealed class FinalizerOnly : INvencRunChunkFinalizer
+        {
+            public NvencRunChunkFinalizationReceipt FinalizeChunk(NvencRunChunkFinalizationOperation operation)
+            {
                 CaptureArtifactDescriptor descriptor = NvencRunChunkArtifactDescriptorFactory.Create(
                     operation.ArtifactId, operation.AccumulatedByteLength, Hash64);
                 return NvencRunChunkFinalizationReceipt.Create(this, operation, descriptor);
@@ -475,17 +566,20 @@ namespace Zantetsu.Core.Tests
         {
             internal NvencCaptureProcessState State = new NvencCaptureProcessState();
             internal NvencOwnedAccessUnitBuffer Buffer;
-            internal FakeAppender Writer = new FakeAppender();
+            internal FakeWriter Writer = new FakeWriter();
             internal NvencRunChunkSink Sink;
-            internal FakeFinalizer Finalizer = new FakeFinalizer();
             internal NvencRunChunkFinalizationCoordinator Coordinator;
             internal NvencRunChunkContext Context;
+
+            // The single writer implements both the appender (sink) and the
+            // finalizer (coordinator), mirroring the production wiring.
+            internal FakeWriter Finalizer => Writer;
 
             internal Harness(string artifactId = "chunk/0")
             {
                 Buffer = new NvencOwnedAccessUnitBuffer(State);
                 Sink = new NvencRunChunkSink(State, Buffer, Writer);
-                Coordinator = new NvencRunChunkFinalizationCoordinator(Finalizer);
+                Coordinator = new NvencRunChunkFinalizationCoordinator(Writer);
                 Context = new NvencRunChunkContext(MakeIssue(), Sink, Coordinator, artifactId);
             }
 

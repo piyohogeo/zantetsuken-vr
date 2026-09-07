@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Threading;
 
 namespace Zantetsu.Observability
 {
@@ -18,11 +19,20 @@ namespace Zantetsu.Observability
     /// lease is never transferred to, exposed by, or disposed by this type.
     /// </para>
     /// <para>
-    /// Finalization contacts the exact coordinator exactly once, after the
-    /// accepted sequence is verified to match the sink's finalization evidence
-    /// in count and order. No retry, file re-read, rename retry, or result
-    /// fabrication exists; exceptions propagate for the Run coordinator to
-    /// classify.
+    /// The exact sink and coordinator are bound at construction to the same
+    /// writer that implements both the chunk appender and finalizer.
+    /// Finalization contacts the coordinator exactly once, after the accepted
+    /// sequence is verified to match the sink's finalization evidence in count
+    /// and order. No retry, file re-read, rename retry, or result fabrication
+    /// exists.
+    /// </para>
+    /// <para>
+    /// The terminal transition — finalize claim, abandon, and result
+    /// publication — is serialized on a private gate. The finalized result is
+    /// written before the <c>Finalized</c> state is published with release
+    /// semantics; readers observe the state with acquire semantics. A
+    /// post-finalization correlation failure is a fatal invariant, and a
+    /// finalizer exception propagates for the Run coordinator to classify.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunChunkContext
@@ -33,11 +43,12 @@ namespace Zantetsu.Observability
         private readonly NvencRunChunkFinalizationCoordinator _finalizationCoordinator;
         private readonly string _artifactId;
         private readonly long[] _acceptedFrameIds;
+        private readonly object _terminalGate;
 
         private int _acceptedCount;
-        private NvencRunChunkContextState _state;
+        private int _state;
         private NvencChunkFinalizationResult _finalizationResult;
-        private bool _finalizeAttempted;
+        private bool _finalizeClaimed;
 
         internal NvencRunChunkContext(
             CaptureRunInitializationSessionIssue issue,
@@ -88,6 +99,21 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(finalizationCoordinator));
             }
 
+            // The sink and the finalizer must be the same writer: the exact
+            // finalizer is also the chunk appender the sink is backed by.
+            INvencRunChunkFinalizer finalizer = finalizationCoordinator.Finalizer;
+            if (!(finalizer is INvencRunChunkAppender appender))
+            {
+                throw new ArgumentException(
+                    "Finalization coordinator finalizer must implement the chunk appender.", nameof(finalizationCoordinator));
+            }
+
+            if (!sink.IsBackedBy(appender))
+            {
+                throw new ArgumentException(
+                    "Sink must be backed by the exact finalizer writer.", nameof(sink));
+            }
+
             RequireArtifactId(artifactId);
 
             _session = session;
@@ -96,10 +122,11 @@ namespace Zantetsu.Observability
             _finalizationCoordinator = finalizationCoordinator;
             _artifactId = artifactId;
             _acceptedFrameIds = new long[NvencBringUpProfileV1.CadenceTickCount];
-            _state = NvencRunChunkContextState.Open;
+            _terminalGate = new object();
+            _state = (int)NvencRunChunkContextState.Open;
         }
 
-        internal NvencRunChunkContextState State => _state;
+        internal NvencRunChunkContextState State => (NvencRunChunkContextState)Volatile.Read(ref _state);
 
         internal long TestRunId => _session.TestRunId;
 
@@ -123,7 +150,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryRecordAcceptedFrame(long captureFrameId)
         {
-            if (_state != NvencRunChunkContextState.Open)
+            if ((NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
             {
                 return false;
             }
@@ -168,17 +195,20 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Finalizes the chunk exactly once. The accepted sequence must match
         /// the sink's finalization evidence in count and order before the
-        /// finalization coordinator is contacted. Only after the whole result
-        /// is fixed are <see cref="NvencRunChunkContextState.Finalized"/> and
-        /// the result published in the same synchronous boundary. A mismatch,
-        /// an empty accepted sequence, or a repeated call is rejected before
-        /// any finalizer contact; a finalizer exception propagates unchanged.
+        /// finalization coordinator is contacted; a false before that contact
+        /// is retryable. The exactly-once claim is latched immediately before
+        /// the coordinator is called, serialized with abandon on the terminal
+        /// gate. Only after the whole result is fixed are
+        /// <see cref="NvencRunChunkContextState.Finalized"/> and the result
+        /// published; the result is written first and the state is published
+        /// with release semantics. A post-finalization correlation failure is
+        /// a fatal invariant, and a finalizer exception propagates unchanged.
         /// </summary>
         internal bool TryFinalize(out NvencChunkFinalizationResult result)
         {
             result = null;
 
-            if (_state != NvencRunChunkContextState.Open)
+            if ((NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
             {
                 return false;
             }
@@ -187,13 +217,6 @@ namespace Zantetsu.Observability
             {
                 return false;
             }
-
-            if (_finalizeAttempted)
-            {
-                return false;
-            }
-
-            _finalizeAttempted = true;
 
             if (!_sink.TryCaptureFinalizationEvidence(_acceptedCount, out NvencRunChunkSinkFinalizationEvidence evidence))
             {
@@ -217,16 +240,35 @@ namespace Zantetsu.Observability
             NvencRunChunkFinalizationOperation operation =
                 NvencRunChunkFinalizationOperationFactory.Build(_sink, evidence, _artifactId);
 
+            // Exactly-once claim, latched immediately before the finalizer is
+            // contacted, serialized with abandon on the terminal gate.
+            lock (_terminalGate)
+            {
+                if (_finalizeClaimed || (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                {
+                    return false;
+                }
+
+                _finalizeClaimed = true;
+            }
+
+            // The finalizer is contacted exactly once; an exception propagates
+            // unchanged for the Run coordinator to classify.
             NvencChunkFinalizationResult finalizationResult =
                 _finalizationCoordinator.Execute(operation);
 
-            if (!MatchesFinalizationResult(finalizationResult, operation, relation))
+            // After the finalizer has succeeded (close and rename are
+            // known-success in the real writer), a null, foreign, or corrupted
+            // result is a fatal invariant, never a controllable false that
+            // could route the chunk into Abandon.
+            RequireFinalizationResultCorrelation(finalizationResult, operation, relation);
+
+            lock (_terminalGate)
             {
-                return false;
+                _finalizationResult = finalizationResult;
+                Volatile.Write(ref _state, (int)NvencRunChunkContextState.Finalized);
             }
 
-            _finalizationResult = finalizationResult;
-            _state = NvencRunChunkContextState.Finalized;
             result = finalizationResult;
             return true;
         }
@@ -239,13 +281,16 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryAbandon()
         {
-            if (_state != NvencRunChunkContextState.Open)
+            lock (_terminalGate)
             {
-                return false;
-            }
+                if (_finalizeClaimed || (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                {
+                    return false;
+                }
 
-            _state = NvencRunChunkContextState.Abandoned;
-            return true;
+                Volatile.Write(ref _state, (int)NvencRunChunkContextState.Abandoned);
+                return true;
+            }
         }
 
         /// <summary>
@@ -256,10 +301,16 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryGetFinalizationResult(out NvencChunkFinalizationResult result)
         {
+            // Acquire the terminal publication before reading the result.
+            if ((NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Finalized)
+            {
+                result = null;
+                return false;
+            }
+
             NvencChunkFinalizationResult held = _finalizationResult;
 
-            if (_state == NvencRunChunkContextState.Finalized &&
-                held != null &&
+            if (held != null &&
                 held.IsValid &&
                 ReferenceEquals(held.Sink, _sink) &&
                 string.Equals(held.ArtifactId, _artifactId, StringComparison.Ordinal))
@@ -272,36 +323,24 @@ namespace Zantetsu.Observability
             return false;
         }
 
-        private bool MatchesFinalizationResult(
+        private void RequireFinalizationResultCorrelation(
             NvencChunkFinalizationResult finalizationResult,
             NvencRunChunkFinalizationOperation operation,
             CaptureArtifactFrameRelation relation)
         {
-            if (finalizationResult == null || !finalizationResult.IsValid)
+            if (finalizationResult == null || !finalizationResult.IsValid ||
+                !ReferenceEquals(finalizationResult.Sink, _sink) ||
+                !ReferenceEquals(finalizationResult.Operation, operation) ||
+                finalizationResult.Descriptor == null ||
+                !finalizationResult.Descriptor.IsValid ||
+                !string.Equals(finalizationResult.Descriptor.ArtifactId, _artifactId, StringComparison.Ordinal) ||
+                finalizationResult.Descriptor.ArtifactKind != CaptureArtifactKind.FrameSequence ||
+                finalizationResult.Descriptor.ByteLength != operation.AccumulatedByteLength ||
+                !ReferenceEquals(finalizationResult.FrameRelation, relation))
             {
-                return false;
+                throw new InvalidOperationException(
+                    "Finalization result does not correlate to the finalized chunk operation.");
             }
-
-            if (!ReferenceEquals(finalizationResult.Sink, _sink) ||
-                !ReferenceEquals(finalizationResult.Operation, operation))
-            {
-                return false;
-            }
-
-            CaptureArtifactDescriptor descriptor = finalizationResult.Descriptor;
-            if (descriptor == null || !descriptor.IsValid)
-            {
-                return false;
-            }
-
-            if (!string.Equals(descriptor.ArtifactId, _artifactId, StringComparison.Ordinal) ||
-                descriptor.ArtifactKind != CaptureArtifactKind.FrameSequence ||
-                descriptor.ByteLength != operation.AccumulatedByteLength)
-            {
-                return false;
-            }
-
-            return ReferenceEquals(finalizationResult.FrameRelation, relation);
         }
 
         private static void RequireArtifactId(string artifactId)
