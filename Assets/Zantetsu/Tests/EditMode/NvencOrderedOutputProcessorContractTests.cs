@@ -637,13 +637,13 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(exposedMethods, Is.EqualTo(2),
-                "The processor must expose only TryProcessNext and the queue-correlation predicate.");
+                "The processor must expose only TryProcessNext and the correlation predicate.");
 
-            MethodInfo isFedBy = type.GetMethod(
-                "IsFedBy", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(isFedBy, Is.Not.Null);
-            Assert.That(isFedBy.ReturnType, Is.EqualTo(typeof(bool)));
-            Assert.That(isFedBy.GetParameters().Length, Is.EqualTo(1));
+            MethodInfo isCorrelated = type.GetMethod(
+                "IsCorrelatedWith", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(isCorrelated, Is.Not.Null);
+            Assert.That(isCorrelated.ReturnType, Is.EqualTo(typeof(bool)));
+            Assert.That(isCorrelated.GetParameters().Length, Is.EqualTo(3));
         }
 
         [Test]

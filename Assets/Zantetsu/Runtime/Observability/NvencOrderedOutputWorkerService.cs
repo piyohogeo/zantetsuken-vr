@@ -84,22 +84,17 @@ namespace Zantetsu.Observability
             // the same process state, and the processor's Sink must be the
             // exact Sink the Run chunk context finalizes, so the terminal can
             // never act on a foreign Run or a foreign Sink.
-            if (!ReferenceEquals(submitWorker.ProcessState, _processState))
+            // Single O(1) correlation predicate: the exact process state, the
+            // Submit-to-Output Queue, and the Run chunk Sink must all agree
+            // across the Submit Worker, its internal Submit Processor, the
+            // Output Processor, and the context. A foreign internal Submit
+            // Processor or Output Processor process state is rejected here
+            // before any side effect.
+            if (!processor.IsCorrelatedWith(_processState, submitWorker, runChunkContext))
             {
                 throw new ArgumentException(
-                    "The Submit Worker must be bound to the same process state.", nameof(submitWorker));
-            }
-
-            if (!processor.IsFedBy(submitWorker))
-            {
-                throw new ArgumentException(
-                    "The Submit Worker must produce to the exact Submit-to-Output Queue the Output Processor consumes.", nameof(submitWorker));
-            }
-
-            if (!ReferenceEquals(processor.Sink, runChunkContext.Sink))
-            {
-                throw new ArgumentException(
-                    "The Output Processor Sink must be the exact Sink of the Run chunk context.", nameof(runChunkContext));
+                    "The Output Processor must share the exact process state and Submit-to-Output Queue with the Submit Worker, and the exact Sink with the Run chunk context.",
+                    nameof(processor));
             }
 
             // Bind the exact Run chunk context so a request can never point the

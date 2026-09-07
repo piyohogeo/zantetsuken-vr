@@ -106,13 +106,19 @@ namespace Zantetsu.Observability
         internal NvencRunChunkSink Sink => _sink;
 
         /// <summary>
-        /// O(1) correlation predicate: true only when this processor consumes
-        /// from the exact Submit-to-Output Queue the Submit Worker emits into,
-        /// without exposing the queue.
+        /// O(1) correlation predicate: true only when this processor is bound to
+        /// the exact process state, consumes from the exact Submit-to-Output
+        /// Queue the Submit Worker emits into, and appends into the exact Sink
+        /// of the Run chunk context — without exposing the queue.
         /// </summary>
-        internal bool IsFedBy(NvencOrderedSubmitWorkerService submitWorker)
+        internal bool IsCorrelatedWith(
+            NvencCaptureProcessState processState,
+            NvencOrderedSubmitWorkerService submitWorker,
+            NvencRunChunkContext runChunkContext)
         {
-            return submitWorker.ProducesTo(_queue);
+            return ReferenceEquals(_processState, processState) &&
+                submitWorker.IsCorrelatedWith(processState, _queue) &&
+                ReferenceEquals(_sink, runChunkContext.Sink);
         }
 
         /// <summary>

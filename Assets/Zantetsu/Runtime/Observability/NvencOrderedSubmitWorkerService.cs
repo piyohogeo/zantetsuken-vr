@@ -302,13 +302,17 @@ namespace Zantetsu.Observability
         internal NvencCaptureProcessState ProcessState => _processState;
 
         /// <summary>
-        /// O(1) correlation predicate: true only when this worker's processor
-        /// emits into the exact Submit-to-Output Queue, without exposing the
+        /// O(1) correlation predicate: true only when this worker and its
+        /// internal Submit Processor are bound to the exact process state and
+        /// emit into the exact Submit-to-Output Queue, without exposing the
         /// queue.
         /// </summary>
-        internal bool ProducesTo(NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
+        internal bool IsCorrelatedWith(
+            NvencCaptureProcessState processState,
+            NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
         {
-            return _processor.ProducesTo(queue);
+            return ReferenceEquals(_processState, processState) &&
+                _processor.IsCorrelatedWith(processState, queue);
         }
 
         /// <summary>

@@ -298,6 +298,18 @@ namespace Zantetsu.Core.Tests
                 NvencOrderedSubmitWorkerService foreignQueueSubmitWorker = BuildSubmitWorker(h.State);
                 Assert.Throws<ArgumentException>(() =>
                     new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, foreignQueueSubmitWorker));
+
+                // A Submit Worker whose internal Submit Processor is bound to a
+                // different process state.
+                NvencOrderedSubmitWorkerService splitSubmitWorker = BuildSplitSubmitWorker(h.State, foreignState);
+                Assert.Throws<ArgumentException>(() =>
+                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, splitSubmitWorker));
+
+                // An Output Processor bound to a different process state.
+                NvencOrderedOutputProcessor foreignProcessor = new NvencOrderedOutputProcessor(
+                    foreignState, h.OutputQueue, h.Collector, h.Sink, h.ReleaseCoordinator, h.RecoveryCoordinator, h.Boundary);
+                Assert.Throws<ArgumentException>(() =>
+                    new NvencOrderedOutputWorkerService(h.State, foreignProcessor, h.Context, h.SubmitWorker));
             }
         }
 
@@ -306,30 +318,33 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                // Two accepted frames but only one append: the finalize
-                // pre-verification fails before any finalizer contact.
-                Assert.That(h.Context.TryRecordAcceptedFrame(1), Is.True);
-                Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.True);
-                h.AppendChunk(1, 64, Seed);
+                h.AcceptAndAppendChunk(1, 64, Seed);
                 Assert.That(h.State.TryBeginDrain(), Is.True);
                 h.SubmitDrained = true;
+
+                // The single owned region is temporarily reserved (not Free),
+                // so the sink is not finalization-admissible: the finalize
+                // pre-verification fails before any finalizer contact.
+                CaptureFrameWorkToken pendingToken = MakeToken(2);
+                Assert.That(h.Buffer.TryBeginWrite(pendingToken, out NvencAccessUnitWriteLease writeLease), Is.True);
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestFinalize(), Is.True);
                 WaitSettled(h.SettledEvent, "worker did not park with the held request");
 
                 // Request held, finalizer never contacted, nothing published.
-                Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
+                Assert.That(h.Writer.CallCount, Is.EqualTo(0));
                 Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Open));
                 Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
 
-                // Catch the sink up and re-notify: the held request converges.
-                h.AppendChunk(2, 48, Seed);
+                // Release the reservation through the normal cancel path and
+                // re-notify: the held request converges without any append.
+                Assert.That(h.Buffer.TryCancelCollectorReservation(writeLease, out _), Is.True);
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not converge after the sink caught up");
+                WaitSettled(h.SettledEvent, "worker did not converge after the reservation was released");
 
-                Assert.That(h.Finalizer.CallCount, Is.EqualTo(1));
+                Assert.That(h.Writer.CallCount, Is.EqualTo(1));
                 Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
                 Assert.That(outcome.IsFinalized, Is.True);
             }
@@ -559,6 +574,26 @@ namespace Zantetsu.Core.Tests
                 new NvencFixedSpscQueue<NvencSubmitToOutputRecord>(),
                 work, samples, release, new FakeSubmitter());
             return new NvencOrderedSubmitWorkerService(state, processor);
+        }
+
+        private static NvencOrderedSubmitWorkerService BuildSplitSubmitWorker(
+            NvencCaptureProcessState workerState,
+            NvencCaptureProcessState processorState)
+        {
+            NvencCaptureWorkSlotPool work = new NvencCaptureWorkSlotPool(processorState);
+            NvencEncodeSampleSlotPool samples = new NvencEncodeSampleSlotPool(processorState);
+            NvencGpuConversionSyncPool sync = new NvencGpuConversionSyncPool(processorState);
+            NvencSubmitToOutputCreditPool submitCredits = new NvencSubmitToOutputCreditPool(processorState);
+            NvencFrameCompletionCreditPool frameCredits = new NvencFrameCompletionCreditPool(processorState);
+            NvencSourceResourceReleaseCoordinator release = new NvencSourceResourceReleaseCoordinator(
+                processorState, work, samples, sync, submitCredits, frameCredits,
+                new FakeSourceReadCompletedSource(), new NvencSourceSurfaceReturnBoundary(), Guid.NewGuid());
+            NvencOrderedSubmitProcessor processor = new NvencOrderedSubmitProcessor(
+                processorState,
+                new NvencFixedSpscQueue<NvencSubmissionRecord>(),
+                new NvencFixedSpscQueue<NvencSubmitToOutputRecord>(),
+                work, samples, release, new FakeSubmitter());
+            return new NvencOrderedSubmitWorkerService(workerState, processor);
         }
 
         private static string RuntimeDirectory()

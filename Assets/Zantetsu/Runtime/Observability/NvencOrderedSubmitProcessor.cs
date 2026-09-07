@@ -101,12 +101,16 @@ namespace Zantetsu.Observability
         internal bool HasCurrentWork => _hasCurrent;
 
         /// <summary>
-        /// O(1) correlation predicate: true only when this processor emits into
-        /// the exact Submit-to-Output Queue, without exposing the queue.
+        /// O(1) correlation predicate: true only when this processor is bound to
+        /// the exact process state and emits into the exact Submit-to-Output
+        /// Queue, without exposing the queue.
         /// </summary>
-        internal bool ProducesTo(NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
+        internal bool IsCorrelatedWith(
+            NvencCaptureProcessState processState,
+            NvencFixedSpscQueue<NvencSubmitToOutputRecord> queue)
         {
-            return ReferenceEquals(_submitToOutputQueue, queue);
+            return ReferenceEquals(_processState, processState) &&
+                ReferenceEquals(_submitToOutputQueue, queue);
         }
 
         /// <summary>
