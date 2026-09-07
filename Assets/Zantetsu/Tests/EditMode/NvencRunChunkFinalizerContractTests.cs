@@ -240,7 +240,11 @@ namespace Zantetsu.Core.Tests
                     NvencRunChunkArtifactDescriptorFactory.Create("chunk/0", 64, Hash64));
             Assert.That(poisonReceipt.IsValid, Is.True);
             Assert.That(poisoned.State.TryPoison(), Is.True);
-            Assert.That(poisonReceipt.IsValid, Is.False);
+            // A post-finalization poison invalidates pre-finalization
+            // acceptance but the issued ledger binding stays intact, so the
+            // receipt remains valid.
+            Assert.That(poisonOperation.IsValid, Is.False);
+            Assert.That(poisonReceipt.IsValid, Is.True);
 
             Harness abandoned = new Harness();
             CaptureFrameWorkToken abandonToken = abandoned.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease abandonLease);
@@ -253,7 +257,10 @@ namespace Zantetsu.Core.Tests
                     NvencRunChunkArtifactDescriptorFactory.Create("chunk/0", 64, Hash64));
             Assert.That(abandonReceipt.IsValid, Is.True);
             Assert.That(abandoned.State.TryBeginRunAbandoned(), Is.True);
-            Assert.That(abandonReceipt.IsValid, Is.False);
+            // Run abandonment invalidates pre-finalization acceptance but not
+            // the issued ledger binding, so the receipt remains valid.
+            Assert.That(abandonOperation.IsValid, Is.False);
+            Assert.That(abandonReceipt.IsValid, Is.True);
         }
 
         [Test]

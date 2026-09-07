@@ -110,7 +110,7 @@ namespace Zantetsu.Observability
                     return _issuedBy != null
                         && _operation != null
                         && _descriptor != null
-                        && _operation.IsValid
+                        && _operation.IsIssuanceBindingIntact
                         && _descriptor.IsValid
                         && Correlates(_operation, _descriptor);
                 }

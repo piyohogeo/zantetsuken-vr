@@ -115,5 +115,22 @@ namespace Zantetsu.Observability
                     _lastFrameId,
                     _frameRelation);
         }
+
+        /// <summary>
+        /// True when the exact sink still holds the ledger captured at issue
+        /// time: the same sink reference, appended count, accumulated byte
+        /// length, last Capture Frame Id, and frame-id sequence. Poison, run
+        /// abandonment, a parked append, and buffer phase are not considered;
+        /// this is purely the issued-ledger-unchanged check.
+        /// </summary>
+        internal bool IsLedgerBindingIntact(NvencRunChunkSink sink)
+        {
+            return sink != null &&
+                ReferenceEquals(_sink, sink) &&
+                _appendedCount == sink.AppendedCount &&
+                _accumulatedByteLength == sink.AccumulatedByteLength &&
+                _lastFrameId == sink.LastFrameId &&
+                sink.MatchesFrameRelation(_frameRelation);
+        }
     }
 }

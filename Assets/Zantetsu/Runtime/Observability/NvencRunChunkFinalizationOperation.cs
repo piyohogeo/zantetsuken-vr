@@ -110,7 +110,15 @@ namespace Zantetsu.Observability
 
         internal string PendingRelativePath => NvencRunChunkArtifactDescriptorFactory.PendingRelativePath;
 
-        internal bool IsValid
+        /// <summary>
+        /// True when the issued binding is intact: the exact sink, evidence,
+        /// and artifact id are held, the artifact id rule holds, the evidence
+        /// ledger binding is intact, and the held count, length, and frame
+        /// relation shape are valid. Poison, run abandonment, a parked append,
+        /// and buffer phase are not considered; this is the post-issuance
+        /// binding check used after finalization is known to have succeeded.
+        /// </summary>
+        internal bool IsIssuanceBindingIntact
         {
             get
             {
@@ -126,7 +134,7 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    if (!_evidence.IsIssuedFor(_sink))
+                    if (!_evidence.IsLedgerBindingIntact(_sink))
                     {
                         return false;
                     }
@@ -155,6 +163,29 @@ namespace Zantetsu.Observability
                     }
 
                     return true;
+                }
+                catch (Exception ex) when (ex is ArgumentException
+                    || ex is ArgumentOutOfRangeException
+                    || ex is EncoderFallbackException
+                    || ex is InvalidOperationException)
+                {
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pre-finalization acceptance: the issuance binding is intact and the
+        /// evidence is currently issued for the sink, so poison, run
+        /// abandonment, a parked append, and a non-Free buffer all reject.
+        /// </summary>
+        internal bool IsValid
+        {
+            get
+            {
+                try
+                {
+                    return IsIssuanceBindingIntact && _evidence.IsIssuedFor(_sink);
                 }
                 catch (Exception ex) when (ex is ArgumentException
                     || ex is ArgumentOutOfRangeException
