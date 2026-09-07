@@ -216,11 +216,16 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Freezes the accepted Capture Frame Id sequence exactly once on the
-        /// terminal gate, serialized with accepted registration. The existing
-        /// ledger is the single source of truth and is never copied; the
-        /// snapshot binds the exact context and the frozen count by reference.
-        /// Re-freezing returns the exact previously-issued snapshot, so a
-        /// later coordinator can bounded-poll by reference.
+        /// terminal gate, serialized with accepted registration. The first
+        /// freeze is admitted only while the exact bound process state is
+        /// <c>Draining</c> (after StopAccepting) and the context is still
+        /// <c>Open</c>; while <c>Running</c> or <c>Poisoned</c> it returns
+        /// false without change, so a Run can never become permanently
+        /// non-accepting while the process still claims to accept. The
+        /// existing ledger is the single source of truth and is never copied;
+        /// the snapshot binds the exact context and the frozen count by
+        /// reference. Re-freezing returns the exact previously-issued
+        /// snapshot, so a later coordinator can bounded-poll by reference.
         /// </summary>
         internal bool TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot)
         {
@@ -232,9 +237,36 @@ namespace Zantetsu.Observability
                     return true;
                 }
 
+                if (!_sink.ProcessState.IsDraining ||
+                    (NvencRunChunkContextState)Volatile.Read(ref _state) != NvencRunChunkContextState.Open)
+                {
+                    snapshot = null;
+                    return false;
+                }
+
                 snapshot = new NvencRunAcceptedFrameSnapshot(this, _acceptedCount);
                 _acceptedSnapshot = snapshot;
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// O(1) predicate that proves a candidate snapshot is the exact frozen
+        /// snapshot this context currently holds: the same reference and the
+        /// same frozen accepted count. It is the shared boundary evidence used
+        /// by snapshot reads and by any downstream consumer, so a snapshot
+        /// built by direct construction is never accepted.
+        /// </summary>
+        internal bool IsFrozenSnapshot(NvencRunAcceptedFrameSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            lock (_terminalGate)
+            {
+                return ReferenceEquals(_acceptedSnapshot, snapshot) && _acceptedCount == snapshot.Count;
             }
         }
 

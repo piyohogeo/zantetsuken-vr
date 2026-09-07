@@ -49,9 +49,11 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Fail-closed, range-checked read of one frozen Capture Frame Id, in
-        /// accepted order. The index must be in <c>[0, Count)</c>, the context
-        /// must be non-null, and the context's current accepted count must
-        /// still equal <see cref="Count"/>; otherwise false with a zero id.
+        /// accepted order. The index must be in <c>[0, Count)</c>, the bound
+        /// context must be non-null, and this snapshot must still be the exact
+        /// frozen snapshot held by the context (same reference and same frozen
+        /// count); otherwise false with a zero id. A snapshot forged by direct
+        /// construction, or a diverged context count, fails closed.
         /// </summary>
         internal bool TryGetCaptureFrameId(int index, out long captureFrameId)
         {
@@ -60,7 +62,7 @@ namespace Zantetsu.Observability
             if (_context == null ||
                 index < 0 ||
                 index >= _count ||
-                _context.AcceptedFrameCount != _count)
+                !_context.IsFrozenSnapshot(this))
             {
                 return false;
             }

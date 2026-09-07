@@ -74,12 +74,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Snapshot_ForgedEquivalent_Rejected()
+        {
+            Harness h = new Harness();
+            h.Context.TryRecordAcceptedFrame(1);
+            NvencRunAcceptedFrameSnapshot real = h.Freeze();
+
+            // A directly constructed snapshot with the same context and count
+            // is not the exact frozen snapshot the context holds and must fail
+            // closed.
+            NvencRunAcceptedFrameSnapshot forged = new NvencRunAcceptedFrameSnapshot(h.Context, real.Count);
+            Assert.That(forged.TryGetCaptureFrameId(0, out long id), Is.False);
+            Assert.That(id, Is.EqualTo(0));
+        }
+
+        [Test]
         public void Snapshot_BoundContext_CarriesTestRunIdAndCount()
         {
             Harness h = new Harness();
             h.Context.TryRecordAcceptedFrame(7);
 
-            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            NvencRunAcceptedFrameSnapshot snapshot = h.Freeze();
             Assert.That(ReferenceEquals(snapshot.Context, h.Context), Is.True);
             Assert.That(snapshot.TestRunId, Is.EqualTo(h.Context.TestRunId));
             Assert.That(snapshot.Count, Is.EqualTo(1));
@@ -93,7 +108,7 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             h.Context.TryRecordAcceptedFrame(1);
             h.Context.TryRecordAcceptedFrame(2);
-            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            NvencRunAcceptedFrameSnapshot snapshot = h.Freeze();
 
             Assert.That(snapshot.TryGetCaptureFrameId(-1, out _), Is.False);
             Assert.That(snapshot.TryGetCaptureFrameId(2, out _), Is.False);
@@ -108,7 +123,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.Context.TryRecordAcceptedFrame(1);
-            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            NvencRunAcceptedFrameSnapshot snapshot = h.Freeze();
 
             // Corrupt the context's accepted count so it diverges from the
             // frozen count; reads must fail closed with a zero id.
@@ -122,6 +137,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.Context.TryRecordAcceptedFrame(1);
+            Assert.That(h.State.TryBeginDrain(), Is.True);
 
             Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot first), Is.True);
             Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot second), Is.True);
@@ -136,7 +152,7 @@ namespace Zantetsu.Core.Tests
         {
             Harness h = new Harness();
             h.Context.TryRecordAcceptedFrame(1);
-            Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+            NvencRunAcceptedFrameSnapshot snapshot = h.Freeze();
 
             Assert.That(h.Context.TryRecordAcceptedFrame(2), Is.False);
             Assert.That(h.Context.AcceptedFrameCount, Is.EqualTo(1));
@@ -156,7 +172,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Context.State, Is.EqualTo(NvencRunChunkContextState.Open));
 
             // After the freeze the terminal succeeds.
-            Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+            h.Freeze();
             Assert.That(h.Context.TryFinalize(out result), Is.True);
             Assert.That(result.IsValid, Is.True);
         }
@@ -190,7 +206,7 @@ namespace Zantetsu.Core.Tests
 
                     // Freezing after admission pins the accepted sequence and
                     // gates further admission with no side effect.
-                    Assert.That(h.Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+                    NvencRunAcceptedFrameSnapshot snapshot = h.Freeze();
                     Assert.That(snapshot.Count, Is.EqualTo(1));
                     Assert.That(coordinator.TryAccept(MakeFrame(8), secondSurface, out _), Is.EqualTo(CaptureSubmitStatus.NotAccepting));
                     Assert.That(secondSurface.IsCallerOwned, Is.True);
@@ -423,6 +439,13 @@ namespace Zantetsu.Core.Tests
                     Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
                 Assert.That(Buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease lease), Is.True);
                 Assert.That(Sink.TryAppend(token, lease, out _), Is.True);
+            }
+
+            internal NvencRunAcceptedFrameSnapshot Freeze()
+            {
+                Assert.That(State.TryBeginDrain(), Is.True);
+                Assert.That(Context.TryFreezeAcceptedFrames(out NvencRunAcceptedFrameSnapshot snapshot), Is.True);
+                return snapshot;
             }
         }
     }

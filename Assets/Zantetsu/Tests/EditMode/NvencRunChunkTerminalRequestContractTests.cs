@@ -380,12 +380,12 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.State.TryBeginDrain(), Is.True);
 
                 // Finalize directly on the caller thread: the accepted abandon
                 // request can no longer abandon the context.
                 h.Freeze();
                 Assert.That(h.Context.TryFinalize(out _), Is.True);
-                Assert.That(h.State.TryBeginDrain(), Is.True);
                 h.SubmitDrained = true;
 
                 h.SettledEvent.Reset();
