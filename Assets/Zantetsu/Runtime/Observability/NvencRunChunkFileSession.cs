@@ -26,9 +26,11 @@ namespace Zantetsu.Observability
     /// and the staging file is <c>chunks/chunk-0.nvenc-idr-chunk-v1.h264</c>,
     /// both fixed names under the staging Run root. The <c>chunks</c> directory
     /// is created or verified handle-relative, the <c>.partial</c> is created
-    /// create-new handle-relative, and the staging rename is a single
-    /// non-overwriting rename of a retained file identity to a destination
-    /// resolved from the pinned chunks directory handle. No
+    /// create-new handle-relative with a non-shared (share access zero) handle
+    /// so the session holds the single allowed <c>.partial</c> path exclusively,
+    /// and the staging rename is a single non-overwriting rename of a retained
+    /// file identity to a destination resolved from the pinned chunks directory
+    /// handle. No
     /// step is retried, no step is rolled back, no path fallback or copy-delete
     /// exists, the file is never re-opened or read back, and a flush-to-disk is
     /// never required.
@@ -81,7 +83,7 @@ namespace Zantetsu.Observability
         private FileStream _appendStream;
         private SafeFileHandle _identityHandle;
         private bool _closed;
-        private bool _moved;
+        private bool _moveAttempted;
         private bool _disposed;
 
         private NvencRunChunkFileSession(
@@ -187,7 +189,7 @@ namespace Zantetsu.Observability
         /// </summary>
         public NvencRunChunkAppendOutcome Append(byte[] buffer, int offset, int validLength)
         {
-            if (_closed || _moved || _disposed)
+            if (_closed || _moveAttempted || _disposed)
             {
                 return NvencRunChunkAppendOutcome.RejectedBeforeWrite;
             }
@@ -238,9 +240,9 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Renames the retained pending file identity to the fixed staging name
-        /// with one non-overwriting rename. Only a known success returns
-        /// normally; the destination is resolved from the pinned chunks
-        /// directory handle, never from a re-resolved path.
+        /// with one non-overwriting rename. The attempt is latched before the
+        /// native call, so a failed or unknown result can never be retried;
+        /// only a known success returns normally.
         /// </summary>
         public void MovePendingToStaging()
         {
@@ -249,9 +251,9 @@ namespace Zantetsu.Observability
                 throw new ObjectDisposedException(nameof(NvencRunChunkFileSession));
             }
 
-            if (_moved)
+            if (_moveAttempted)
             {
-                return;
+                throw new InvalidOperationException("Pending-to-staging move has already been attempted.");
             }
 
             if (!_closed)
@@ -259,8 +261,9 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Append handle must be closed before moving pending to staging.");
             }
 
+            _moveAttempted = true;
+
             RenameNonOverwriting(_identityHandle, _chunksDirectoryHandle, StagingFileName);
-            _moved = true;
         }
 
         /// <summary>
@@ -386,7 +389,7 @@ namespace Zantetsu.Observability
                 chunksHandle,
                 PendingFileName,
                 FileGenericRead | FileGenericWrite | DeleteAccess,
-                FileShareRead,
+                0,
                 FileCreateDisposition,
                 FileNonDirectoryFile | FileSynchronousIoNonAlert,
                 out SafeFileHandle handle);

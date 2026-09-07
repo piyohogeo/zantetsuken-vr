@@ -428,7 +428,7 @@ namespace Zantetsu.Core.Tests
                 session.CloseAppendHandle();
 
                 session.MovePendingToStaging();
-                session.MovePendingToStaging();
+                Assert.Throws<InvalidOperationException>(() => session.MovePendingToStaging());
 
                 session.Dispose();
                 session.Dispose();
@@ -440,6 +440,71 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(File.ReadAllBytes(StagingPath(layout)), Is.EqualTo(new byte[] { 5, 6, 7 }));
             Assert.That(File.Exists(PendingPath(layout)), Is.False);
+        }
+
+        [Test]
+        public void Move_FailedFirstAttempt_CannotRetryAfterConflictCleared()
+        {
+            RequireWindows();
+            (_, string staging, string final) = MakeSandbox();
+            CaptureRunRootLayout layout = MakeLayout(staging, final);
+            Directory.CreateDirectory(layout.StagingRunRoot);
+
+            using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
+            {
+                session.Append(new byte[] { 1, 2, 3 }, 0, 3);
+                session.CloseAppendHandle();
+
+                // The first attempt fails on a staging-name conflict.
+                File.WriteAllBytes(StagingPath(layout), new byte[] { 7, 7, 7 });
+                Assert.Throws<IOException>(() => session.MovePendingToStaging());
+
+                // Clearing the conflict must not make the same session
+                // retryable: the attempt was latched before the native call.
+                File.Delete(StagingPath(layout));
+                Assert.Throws<InvalidOperationException>(() => session.MovePendingToStaging());
+            }
+
+            Assert.That(File.Exists(PendingPath(layout)), Is.True);
+            Assert.That(File.Exists(StagingPath(layout)), Is.False);
+        }
+
+        [Test]
+        public void Partial_ExclusiveNonSharedHandle_RejectsExternalAccess()
+        {
+            RequireWindows();
+            (_, string staging, string final) = MakeSandbox();
+            CaptureRunRootLayout layout = MakeLayout(staging, final);
+            Directory.CreateDirectory(layout.StagingRunRoot);
+
+            byte[] data = new byte[] { 1, 2, 3, 4, 5 };
+            using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
+            {
+                session.Append(data, 0, data.Length);
+
+                // The pending handle is non-shared: read, write, and delete
+                // opens are all rejected while the session holds it.
+                Assert.Throws<IOException>(() => File.OpenRead(PendingPath(layout)));
+                Assert.Throws<IOException>(() => File.OpenWrite(PendingPath(layout)));
+                Assert.Throws<IOException>(() => File.Delete(PendingPath(layout)));
+
+                session.CloseAppendHandle();
+
+                // The retained identity handle keeps exclusivity after close.
+                Assert.Throws<IOException>(() => File.OpenRead(PendingPath(layout)));
+                Assert.Throws<IOException>(() => File.Delete(PendingPath(layout)));
+
+                session.MovePendingToStaging();
+
+                // Exclusivity follows the retained identity handle to the
+                // staged name until the session is disposed.
+                Assert.Throws<IOException>(() => File.OpenRead(StagingPath(layout)));
+                Assert.Throws<IOException>(() => File.Delete(StagingPath(layout)));
+            }
+
+            // After Dispose every handle is released and the staged file is
+            // readable again.
+            Assert.That(File.ReadAllBytes(StagingPath(layout)), Is.EqualTo(data));
         }
 
         // ---- Ownership and disposal ----
