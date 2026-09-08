@@ -69,6 +69,8 @@ namespace Zantetsu.Observability
         private int _lifecycleState = StateRunning;
         private volatile Exception _fatalFailure;
         private volatile bool _teardownRequested;
+        private volatile bool _teardownInvoked;
+        private NvencOutputWorkerTeardownReceipt _teardownReceipt;
         private volatile bool _teardownCompleted;
         private Action _settled;
 
@@ -539,26 +541,34 @@ namespace Zantetsu.Observability
             }
 
             // Run the injected teardown exactly once on the worker thread,
-            // outside the gate, so a slow teardown never blocks a concurrent
-            // Poison transition.
-            NvencOutputWorkerTeardownReceipt receipt;
-            try
+            // outside any gate, so a slow teardown never blocks a concurrent
+            // Poison transition. The exact receipt is pinned so a later
+            // transient gate contention can never re-enter TearDown().
+            if (!Volatile.Read(ref _teardownInvoked))
             {
-                receipt = _teardown.TearDown();
-            }
-            catch (Exception ex)
-            {
-                RecordFatalFailure(ex);
-                _processState.TryPoison();
-                return false;
+                try
+                {
+                    _teardownReceipt = _teardown.TearDown();
+                }
+                catch (Exception ex)
+                {
+                    RecordFatalFailure(ex);
+                    _processState.TryPoison();
+                    return false;
+                }
+
+                Volatile.Write(ref _teardownInvoked, true);
             }
 
-            // Order the post-teardown Receipt verification and the normal-stop
-            // evidence publication with the Poison transition on the shared
-            // process-state gate. A Poison that linearized during TearDown()
-            // either fails this acquisition (poisoned) or is observed by the
-            // re-check below, so no normal evidence is published.
-            if (!_processState.TryBeginSubmitStep())
+            NvencOutputWorkerTeardownReceipt receipt = _teardownReceipt;
+
+            // Block until the shared process-state gate is free, settling the
+            // Receipt verification and the normal-stop evidence publication in
+            // the same critical section as the Poison transition. A Poison
+            // that linearized during TearDown() fails this entry without
+            // holding the gate, so the receipt is never promoted to normal
+            // evidence; a transient gate holder is waited on, never spun on.
+            if (!_processState.TryBeginSettlement())
             {
                 return false;
             }
@@ -593,7 +603,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                _processState.EndSubmitStep();
+                _processState.EndSettlement();
             }
         }
 

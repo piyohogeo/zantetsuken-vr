@@ -248,9 +248,10 @@ namespace Zantetsu.Core.Tests
                     method.Name == "TryBeginRunAbandoned" ||
                     method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
                     method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution" ||
-                    method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep",
+                    method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep" ||
+                    method.Name == "TryBeginSettlement" || method.Name == "EndSettlement",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, or submit-step method.");
+                    type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, submit-step, or settlement method.");
             }
         }
 

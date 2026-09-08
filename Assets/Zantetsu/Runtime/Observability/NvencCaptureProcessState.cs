@@ -174,6 +174,38 @@ namespace Zantetsu.Observability
             Monitor.Exit(_admissionGate);
         }
 
+        /// <summary>
+        /// Blocking settlement entry used only by the Output Worker to
+        /// serialize the post-teardown Receipt verification and normal-stop
+        /// evidence publication with a concurrent Poison transition. Unlike
+        /// <see cref="TryBeginSubmitStep"/>, it blocks on the shared gate until
+        /// the current critical section finishes (a transient gate holder is
+        /// waited on, never spun on), then succeeds while Running or Draining
+        /// and fails while Poisoned. On success the gate remains held until
+        /// <see cref="EndSettlement"/>; on failure the gate is not held.
+        /// </summary>
+        internal bool TryBeginSettlement()
+        {
+            Monitor.Enter(_admissionGate);
+
+            if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
+            {
+                Monitor.Exit(_admissionGate);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases the settlement gate acquired by a successful
+        /// <see cref="TryBeginSettlement"/>.
+        /// </summary>
+        internal void EndSettlement()
+        {
+            Monitor.Exit(_admissionGate);
+        }
+
         internal bool TryBeginDrain()
         {
             Monitor.Enter(_admissionGate);

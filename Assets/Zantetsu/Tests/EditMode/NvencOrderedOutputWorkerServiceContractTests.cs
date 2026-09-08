@@ -767,6 +767,55 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Teardown_GateBusyAtReturn_DoesNotRerun_ConvergesOnRelease()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                // Park the teardown so the worker returns from it only while
+                // the Main Thread still holds the process-state gate, exactly
+                // the transient contention that previously re-ran TearDown().
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                ManualResetEventSlim returned = new ManualResetEventSlim(false);
+                h.Teardown.Entered = entered;
+                h.Teardown.Release = release;
+                h.Teardown.Returned = returned;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
+
+                // Hold the gate, as a concurrent submit step would, while the
+                // teardown returns.
+                Assert.That(h.State.TryBeginSubmitStep(), Is.True);
+
+                release.Set();
+                Assert.That(returned.Wait(WatchdogTimeoutMs), Is.True, "teardown did not return");
+
+                // Release the gate: the worker must settle the pinned receipt
+                // and converge to a normal stop without any notification and
+                // without re-running the teardown.
+                h.State.EndSubmitStep();
+
+                WaitSettled(h.SettledEvent, "worker did not converge after the gate release");
+                h.WaitForPhysicalStop("worker did not physically exit");
+
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+                Assert.That(h.Worker.IsStopped, Is.True);
+            }
+        }
+
+        [Test]
         public void Teardown_AfterStop_TerminalAndTeardownRejected()
         {
             using (Harness h = Harness.Create())
@@ -1127,6 +1176,7 @@ namespace Zantetsu.Core.Tests
             internal NvencOutputWorkerTeardownReceipt ReceiptToReturn;
             internal ManualResetEventSlim Entered;
             internal ManualResetEventSlim Release;
+            internal ManualResetEventSlim Returned;
 
             internal int CallCount => Volatile.Read(ref _callCount);
 
@@ -1150,6 +1200,11 @@ namespace Zantetsu.Core.Tests
                 if (Release != null)
                 {
                     Release.Wait(WatchdogTimeoutMs);
+                }
+
+                if (Returned != null)
+                {
+                    Returned.Set();
                 }
 
                 if (ReturnNull)
