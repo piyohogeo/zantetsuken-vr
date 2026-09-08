@@ -1445,7 +1445,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1465,7 +1465,7 @@ namespace Zantetsu.Core.Tests
                     h.Buffer, h.Processor, new FakeMainThreadTeardown { BoundContext = h.Context });
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1567,6 +1567,112 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Trace Freeze and disposition ----
+
+        [Test]
+        public void TraceFreeze_FinalizedRegistered_FreezesAndFinalizes()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out NvencTraceFreezeReceipt receipt), Is.True);
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(h.TraceRecorder.State, Is.EqualTo(TraceFlightRecorderState.Frozen));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+
+                // Finalized keeps the Registry slot Registered; it is not
+                // advanced to Committed here.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Registered));
+
+                // Idempotent: a re-call returns the same receipt and never
+                // re-seals or re-appends the trace.
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out NvencTraceFreezeReceipt again), Is.True);
+                Assert.That(ReferenceEquals(receipt, again), Is.True);
+            }
+        }
+
+        [Test]
+        public void TraceFreeze_AbandonedEmpty_FreezesAndIncomplete()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopAbandonedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out NvencTraceFreezeReceipt receipt), Is.True);
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(h.TraceRecorder.State, Is.EqualTo(TraceFlightRecorderState.Frozen));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Incomplete));
+
+                // Abandoned keeps the Registry slot Empty.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
+            }
+        }
+
+        [Test]
+        public void TraceFreeze_BeforeBackendJoin_RefusesNoTraceContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                // Backend Join has not completed: the trace is never contacted
+                // and no disposition is published.
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(MakeForcedDropSet(h), MakeCheckpoint(h), out _), Is.False);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+                Assert.That(h.TraceRecorder.State, Is.Not.EqualTo(TraceFlightRecorderState.Frozen));
+            }
+        }
+
+        [Test]
+        public void TraceFreeze_Poisoned_RefusesNoDisposition()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+
+                h.State.TryPoison();
+                Assert.That(h.State.IsPoisoned, Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(MakeForcedDropSet(h), MakeCheckpoint(h), out _), Is.False);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+            }
+        }
+
+        [Test]
+        public void TraceFreeze_LeaseLost_RefusesNoTraceContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+
+                // Release the Ownership Lease: the session issue is no longer
+                // valid, so the trace is never contacted.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(MakeForcedDropSet(h), MakeCheckpoint(h), out _), Is.False);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+                Assert.That(h.TraceRecorder.State, Is.Not.EqualTo(TraceFlightRecorderState.Frozen));
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]
@@ -1575,7 +1681,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1585,7 +1691,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1597,7 +1703,7 @@ namespace Zantetsu.Core.Tests
                 // Same process state but a different Submit Worker instance
                 // than the one the Output Worker is bound to.
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1608,7 +1714,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1618,7 +1724,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1629,7 +1735,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1648,7 +1754,7 @@ namespace Zantetsu.Core.Tests
                 };
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
             }
         }
 
@@ -1658,19 +1764,23 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null));
             }
         }
 
@@ -1846,6 +1956,20 @@ namespace Zantetsu.Core.Tests
             NvencRunChunkSink sink = new NvencRunChunkSink(state, buffer, writer);
             NvencRunChunkFinalizationCoordinator coordinator = new NvencRunChunkFinalizationCoordinator(writer);
             return new NvencRunChunkContext(MakeIssue(), sink, coordinator, "chunk/foreign");
+        }
+
+        private static ForcedDropFrameIdSet MakeForcedDropSet(Harness h)
+        {
+            h.DraftQueue.BeginProducerDrain();
+            h.DraftQueue.CloseAfterProducerJoin();
+            TerminalIntentOwnershipSnapshot snapshot = h.DraftQueue.CreateOwnershipSnapshot(0);
+            return h.DraftRegistry.ForceDropPendingForFreeze(h.DraftQueue, snapshot);
+        }
+
+        private static FreezeTerminalCheckpoint MakeCheckpoint(Harness h)
+        {
+            return new FreezeTerminalCheckpoint(
+                1000, 1, 1, Thread.CurrentThread.ManagedThreadId, h.Context.TestRunId);
         }
 
         private static NvencOrderedSubmitWorkerService BuildSubmitWorker(NvencCaptureProcessState state)
@@ -2129,6 +2253,14 @@ namespace Zantetsu.Core.Tests
             internal NvencCaptureBackendJoinCoordinator BackendJoin;
             internal ManualResetEventSlim SettledEvent;
 
+            internal CaptureRunInitializationSessionIssue SessionIssue;
+            internal TraceLogger TraceLogger;
+            internal TraceFlightRecorder TraceRecorder;
+            internal CaptureFrameFreezeTerminalCoordinator FreezeTerminalCoordinator;
+            internal CaptureFrameDraftRegistry DraftRegistry;
+            internal CaptureFrameDraftTerminalIntentQueue DraftQueue;
+            internal NvencTraceFreezeCoordinator TraceFreeze;
+
             internal FakeWriter Finalizer => Writer;
 
             private readonly Action _settledHandler;
@@ -2146,7 +2278,8 @@ namespace Zantetsu.Core.Tests
                 Writer = new FakeWriter();
                 Sink = new NvencRunChunkSink(State, Buffer, Writer);
                 FinalizationCoordinator = new NvencRunChunkFinalizationCoordinator(Writer);
-                Context = new NvencRunChunkContext(MakeIssue(), Sink, FinalizationCoordinator, "chunk/0");
+                SessionIssue = MakeIssue();
+                Context = new NvencRunChunkContext(SessionIssue, Sink, FinalizationCoordinator, "chunk/0");
                 Slot = new NvencRunLocalRegistrySlot(Context);
 
                 WorkSlots = new NvencCaptureWorkSlotPool(State);
@@ -2185,7 +2318,23 @@ namespace Zantetsu.Core.Tests
                     State, SubmitWorker, Worker, Context,
                     WorkSlots, SampleSlots, SubmitSyncSlots, SubmitToOutputCredits, FrameCompletionCredits,
                     Buffer, Processor, MainThreadTeardown);
-                RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin);
+
+                TraceLogger = new TraceLogger(16, Context.TestRunId);
+                TraceRecorder = new TraceFlightRecorder(TraceLogger, 16, 2);
+                TraceRunContext traceRunContext = new TraceRunContext(
+                    Context.TestRunId, 1000, "build-1", "6000.3.22f1", Hash64, "scene-1", 12345, 0.02, 3, "High", 1,
+                    new Vector3(0f, -4.9f, 0f));
+                CaptureDraftRunContext draftRun = new CaptureDraftRunContext(traceRunContext, 100, 5);
+                CaptureTraceProfile traceProfile = new CaptureTraceProfile(5, 4096, 2, 4);
+                DraftRegistry = new CaptureFrameDraftRegistry(draftRun, traceProfile);
+                DraftQueue = new CaptureFrameDraftTerminalIntentQueue(DraftRegistry, traceProfile);
+                FreezeTerminalTraceBufferBuilder freezeBuilder = new FreezeTerminalTraceBufferBuilder(DraftRegistry);
+                FreezeTerminalCoordinator = new CaptureFrameFreezeTerminalCoordinator(TraceRecorder, freezeBuilder);
+                TraceFreeze = new NvencTraceFreezeCoordinator(
+                    TraceLogger, TraceRecorder, FreezeTerminalCoordinator, Context, SessionIssue);
+
+                RunCoordinator = new NvencCaptureRunCoordinator(
+                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

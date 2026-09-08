@@ -137,6 +137,40 @@ namespace Zantetsu.Observability
 
         internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
 
+        /// <summary>
+        /// O(1) exception-safe correlation predicate against the exact session
+        /// issue this context was built from: the exact session, the exact
+        /// lock identity evidence, the shared TestRunId and RootLayout, and the
+        /// issue's current Ownership Lease liveness all must hold. A foreign,
+        /// invalid, or released issue converges to false without throwing.
+        /// </summary>
+        internal bool IsCorrelatedWithSessionIssue(CaptureRunInitializationSessionIssue issue)
+        {
+            if (issue == null || !issue.IsValid)
+            {
+                return false;
+            }
+
+            CaptureRunInitializationSession session = issue.Session;
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = issue.LockIdentityEvidence;
+            if (session == null || !session.IsValid || lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_session, session) || !ReferenceEquals(_lockIdentityEvidence, lockIdentityEvidence))
+            {
+                return false;
+            }
+
+            if (session.TestRunId <= 0 || session.TestRunId != _session.TestRunId)
+            {
+                return false;
+            }
+
+            return ReferenceEquals(session.RootLayout, _session.RootLayout);
+        }
+
         internal int AcceptedFrameCount => _acceptedCount;
 
         internal NvencRunChunkSink Sink => _sink;

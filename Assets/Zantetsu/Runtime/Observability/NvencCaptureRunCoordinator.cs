@@ -77,6 +77,8 @@ namespace Zantetsu.Observability
         private readonly NvencRunLocalRegistrySlot _registrySlot;
         private readonly INvencMainThreadTextureTeardown _mainThreadTextureTeardown;
         private readonly NvencCaptureBackendJoinCoordinator _backendJoin;
+        private readonly CaptureRunInitializationSessionIssue _sessionIssue;
+        private readonly NvencTraceFreezeCoordinator _traceFreeze;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -89,6 +91,8 @@ namespace Zantetsu.Observability
         private NvencMainThreadTextureTeardownReceipt _mainThreadTextureTeardownReceipt;
         private bool _backendJoined;
         private BackendJoinProof _backendJoinProof;
+        private NvencRunEvidenceDisposition _disposition;
+        private NvencTraceFreezeReceipt _traceFreezeReceipt;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -97,7 +101,9 @@ namespace Zantetsu.Observability
             NvencRunChunkContext context,
             NvencRunLocalRegistrySlot registrySlot,
             INvencMainThreadTextureTeardown mainThreadTextureTeardown,
-            NvencCaptureBackendJoinCoordinator backendJoin)
+            NvencCaptureBackendJoinCoordinator backendJoin,
+            CaptureRunInitializationSessionIssue sessionIssue,
+            NvencTraceFreezeCoordinator traceFreeze)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -106,6 +112,8 @@ namespace Zantetsu.Observability
             _registrySlot = registrySlot ?? throw new ArgumentNullException(nameof(registrySlot));
             _mainThreadTextureTeardown = mainThreadTextureTeardown ?? throw new ArgumentNullException(nameof(mainThreadTextureTeardown));
             _backendJoin = backendJoin ?? throw new ArgumentNullException(nameof(backendJoin));
+            _sessionIssue = sessionIssue ?? throw new ArgumentNullException(nameof(sessionIssue));
+            _traceFreeze = traceFreeze ?? throw new ArgumentNullException(nameof(traceFreeze));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -143,6 +151,26 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "The Backend Join must be bound to the exact process state, Submit Worker, Output Worker, Run chunk context, and Main Thread texture teardown.",
                     nameof(backendJoin));
+            }
+
+            if (!_sessionIssue.IsValid)
+            {
+                throw new ArgumentException(
+                    "The session issue must be valid and hold a live Ownership Lease.", nameof(sessionIssue));
+            }
+
+            if (!_context.IsCorrelatedWithSessionIssue(_sessionIssue))
+            {
+                throw new ArgumentException(
+                    "The Run chunk context must be correlated to the exact session, lock identity evidence, TestRunId, and RootLayout.",
+                    nameof(sessionIssue));
+            }
+
+            if (!_traceFreeze.IsCorrelatedWith(_context, _sessionIssue))
+            {
+                throw new ArgumentException(
+                    "The Trace freeze coordinator must be bound to the exact Run chunk context and session issue.",
+                    nameof(traceFreeze));
             }
         }
 
@@ -641,6 +669,138 @@ namespace Zantetsu.Observability
                 }
 
                 _backendJoined = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// The append-only evidence disposition published once by
+        /// <see cref="TryCompleteTraceFreeze"/>. <see cref="NvencRunEvidenceDisposition.None"/>
+        /// until a disposition is published.
+        /// </summary>
+        internal NvencRunEvidenceDisposition Disposition => _disposition;
+
+        /// <summary>
+        /// Non-waiting, idempotent NVENC Trace freeze and disposition boundary.
+        /// It contacts the Trace only when the process is Draining and not
+        /// Poisoned, the terminal outcome is collected, the Main Thread Texture
+        /// teardown completed, the Backend Join succeeded, the Ownership Lease
+        /// is still live, the disposition is still <see cref="NvencRunEvidenceDisposition.None"/>,
+        /// and the exact Trace graph correlation holds. A Finalized registered
+        /// entry publishes <see cref="NvencRunEvidenceDisposition.Finalized"/>;
+        /// an Abandoned empty slot publishes
+        /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>. The Registry
+        /// slot is not advanced to Committed and the Ownership Lease is not
+        /// released here.
+        /// </summary>
+        internal bool TryCompleteTraceFreeze(
+            ForcedDropFrameIdSet forcedDropFrameIds,
+            in FreezeTerminalCheckpoint checkpoint,
+            out NvencTraceFreezeReceipt receipt)
+        {
+            receipt = null;
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-published disposition returns the same
+                // receipt without re-sealing or re-appending the trace.
+                if (_disposition != NvencRunEvidenceDisposition.None)
+                {
+                    receipt = _traceFreezeReceipt;
+                    return true;
+                }
+
+                if (!_processState.IsDraining || _processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_terminalCollected)
+                {
+                    return false;
+                }
+
+                if (!_mainThreadTextureTeardownCompleted)
+                {
+                    return false;
+                }
+
+                if (!_backendJoined)
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                // Re-verify the O(1) exact-graph correlation immediately before
+                // any side effect, so a trace freeze whose binding was swapped
+                // after construction never freezes a foreign Run.
+                if (!_traceFreeze.IsCorrelatedWith(_context, _sessionIssue))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Trace freeze is no longer bound to the exact Run graph.");
+                }
+
+                bool finalized;
+                if (_context.State == NvencRunChunkContextState.Finalized
+                    && _registrySlot.State == NvencRunLocalRegistrySlotState.Registered
+                    && _registrySlot.TryGetEntry(out _, out _, out _))
+                {
+                    finalized = true;
+                }
+                else if (_context.State == NvencRunChunkContextState.Abandoned
+                    && _registrySlot.State == NvencRunLocalRegistrySlotState.Empty)
+                {
+                    finalized = false;
+                }
+                else
+                {
+                    // Readiness without a recognized final or abandoned shape:
+                    // no Trace contact and no disposition.
+                    return false;
+                }
+
+                NvencTraceFreezeReceipt freezeReceipt;
+                try
+                {
+                    if (!_traceFreeze.TryCompleteFreeze(forcedDropFrameIds, checkpoint, out freezeReceipt))
+                    {
+                        return false;
+                    }
+                }
+                catch (Exception)
+                {
+                    // A seal or append exception poisons without replacing the
+                    // original exception; no disposition is published.
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                if (freezeReceipt == null || !freezeReceipt.IsValid
+                    || !freezeReceipt.IsIssuedFor(_traceFreeze, _context, _sessionIssue))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Trace freeze returned a null, foreign, or corrupted receipt.");
+                }
+
+                _traceFreezeReceipt = freezeReceipt;
+                _disposition = finalized
+                    ? NvencRunEvidenceDisposition.Finalized
+                    : NvencRunEvidenceDisposition.Incomplete;
+                receipt = freezeReceipt;
                 return true;
             }
             finally
