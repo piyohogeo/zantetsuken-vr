@@ -78,6 +78,18 @@ namespace Zantetsu.Observability
                 && IsValid;
         }
 
+        /// <summary>
+        /// Exception-safe post-commit issuance binding: true only while the
+        /// exact coordinator retention, Trace freeze receipt, finalization
+        /// result, plan, run identity, and live Session Issue still hold,
+        /// without requiring the Registry Slot to remain <c>Registered</c>.
+        /// Used by the commit receipt and the Committed attempt result so that
+        /// advancing the slot to <c>Committed</c> does not invalidate them.
+        /// </summary>
+        internal bool IsBindingIntact =>
+            _coordinator != null
+            && _coordinator.IsPublicationPlanCommitBindingIntact(this);
+
         private bool GraphCorrelationsHold()
         {
             try

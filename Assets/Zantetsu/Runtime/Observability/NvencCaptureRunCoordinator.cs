@@ -1111,6 +1111,119 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(_publicationPlanCommitOperation, operation);
         }
 
+        /// <summary>
+        /// Exception-safe post-commit issuance binding predicate: the exact
+        /// retained operation identity plus the exact Trace freeze receipt,
+        /// the exact finalization result, the exact one-artifact full-frame
+        /// plan, the run identity, and a live Session Issue. It deliberately
+        /// does not inspect the disposition or the Registry Slot state, so
+        /// advancing the slot to <c>Committed</c> does not invalidate an
+        /// issued receipt or Committed result. A corrupted plan, descriptor,
+        /// relation, Trace receipt, or Session Issue converges to false.
+        /// </summary>
+        internal bool IsPublicationPlanCommitBindingIntact(
+            NvencRunPublicationPlanCommitOperation operation)
+        {
+            try
+            {
+                if (operation == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_publicationPlanCommitOperation, operation))
+                {
+                    return false;
+                }
+
+                NvencTraceFreezeReceipt receipt = operation.TraceFreezeReceipt;
+                NvencChunkFinalizationResult result = operation.FinalizationResult;
+                CapturePublicationPlan plan = operation.Plan;
+
+                if (receipt == null || result == null || plan == null)
+                {
+                    return false;
+                }
+
+                if (!plan.IsValid)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_traceFreezeReceipt, receipt))
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (!receipt.IsValid || !receipt.IsIssuedFor(_traceFreeze, _context, _sessionIssue))
+                {
+                    return false;
+                }
+
+                if (!result.IsValid)
+                {
+                    return false;
+                }
+
+                CaptureArtifactDescriptor descriptor = result.Descriptor;
+                if (descriptor == null || !descriptor.IsValid
+                    || descriptor.ArtifactKind != CaptureArtifactKind.FrameSequence)
+                {
+                    return false;
+                }
+
+                CaptureArtifactFrameRelation relation = result.FrameRelation;
+                if (relation == null || !relation.IsValid
+                    || relation.Count < 1 || relation.Count > NvencBringUpProfileV1.CadenceTickCount)
+                {
+                    return false;
+                }
+
+                if (plan.TestRunId != _context.TestRunId
+                    || !string.Equals(
+                        plan.RunInitializationId,
+                        _sessionIssue.Session.RunInitializationId,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (plan.ArtifactCount != 1
+                    || !ReferenceEquals(plan.GetArtifact(0), descriptor))
+                {
+                    return false;
+                }
+
+                if (plan.CaptureFrameEvidenceCount != relation.Count)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < relation.Count; i++)
+                {
+                    CaptureFrameEvidenceEntry entry = plan.GetCaptureFrameEvidence(i);
+                    if (entry == null
+                        || entry.CaptureFrameId != relation.GetCaptureFrameId(i)
+                        || entry.ArtifactCount != 1
+                        || !string.Equals(entry.GetArtifactId(0), descriptor.ArtifactId, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static bool IsLowerHex(string value, int length)
         {
             if (value == null || value.Length != length)
