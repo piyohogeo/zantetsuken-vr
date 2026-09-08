@@ -1194,7 +1194,14 @@ namespace Zantetsu.Core.Tests
 
             int start = source.IndexOf("internal bool TryCompleteMainThreadTextureTeardown", StringComparison.Ordinal);
             Assert.That(start, Is.GreaterThanOrEqualTo(0), "teardown entry not found");
-            string entry = source.Substring(start);
+
+            // Scan only the teardown entry, up to the following backend join
+            // entry, so a later independent entry never pollutes the teardown
+            // contract.
+            int nextEntry = source.IndexOf("internal bool TryCompleteBackendJoin", start + 1, StringComparison.Ordinal);
+            string entry = nextEntry >= 0
+                ? source.Substring(start, nextEntry - start)
+                : source.Substring(start);
 
             string[] forbidden =
             {
@@ -1207,6 +1214,314 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Backend Join ----
+
+        [Test]
+        public void BackendJoin_Finalized_JoinsOnceAndDisposesWorkers()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.True);
+                Assert.That(h.BackendJoin.Joined, Is.True);
+
+                // Idempotent: a second join publishes the same completed result
+                // with no second dispose; the disposed worker rejects a later
+                // notification, proving the dispose actually ran exactly once.
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.True);
+                Assert.Throws<ObjectDisposedException>(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoin_Abandoned_JoinsOnce()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopAbandonedBackend(h);
+
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.True);
+                Assert.That(h.BackendJoin.Joined, Is.True);
+                Assert.That(h.Slot.HasRegisteredEntry, Is.False);
+            }
+        }
+
+        [Test]
+        public void BackendJoin_BeforeTextureTeardown_RefusesNoBackendContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+
+                // The Main Thread NV12 Texture teardown has not completed:
+                // the backend boundary is never contacted and no worker is
+                // disposed.
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.False);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.That(h.MainThreadTeardown.CallCount, Is.EqualTo(0));
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoin_BufferNotFree_RefusesNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                // Re-claim the Access Unit after the run fully drained: the
+                // owned region is no longer Free, so the join is refused.
+                Assert.That(h.Buffer.TryBeginWrite(MakeToken(99), out _), Is.True);
+                Assert.That(h.Buffer.Phase, Is.Not.EqualTo(NvencAccessUnitPhase.Free));
+
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.False);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoin_PoolOccupied_RefusesNoDispose()
+        {
+            Action<Harness>[] renters =
+            {
+                h => Assert.That(h.WorkSlots.TryRent(out _), Is.True),
+                h => Assert.That(h.SampleSlots.TryRent(out _), Is.True),
+                h => Assert.That(h.SubmitSyncSlots.TryRent(out _), Is.True),
+                h => Assert.That(h.SubmitToOutputCredits.TryRent(out _), Is.True),
+                h => Assert.That(h.FrameCompletionCredits.TryRent(out _), Is.True),
+            };
+
+            foreach (Action<Harness> rent in renters)
+            {
+                using (Harness h = Harness.Create())
+                {
+                    rent(h);
+                    StopFinalizedBackend(h);
+                    Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                    Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.False);
+                    Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                    Assert.That(h.BackendJoin.Joined, Is.False);
+                    Assert.DoesNotThrow(() => h.Worker.Notify());
+                }
+            }
+        }
+
+        [Test]
+        public void BackendJoin_ProcessorPending_RefusesNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                FieldInfo stageField = typeof(NvencOrderedOutputProcessor).GetField(
+                    "_stage", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(stageField, Is.Not.Null, "_stage field not found.");
+                stageField.SetValue(h.Processor, Enum.Parse(stageField.FieldType, "SubmittedCollect"));
+                Assert.That(h.Processor.HasPendingWork, Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.False);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoin_SubmitWorkerNotStopped_Refuses()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h, disposeSubmitWorker: false);
+
+                Assert.That(h.SubmitWorker.IsStopped, Is.False);
+                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+
+                // Publishing the stop evidence lets the same boundary join.
+                h.SubmitWorker.Dispose();
+                Assert.That(h.BackendJoin.TryJoin(), Is.True);
+                Assert.That(h.BackendJoin.Joined, Is.True);
+            }
+        }
+
+        [Test]
+        public void BackendJoin_OutputWorkerNotStopped_Refuses()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.Teardown.Entered = entered;
+                h.Teardown.Release = release;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "worker teardown did not enter");
+
+                h.SubmitWorker.Dispose();
+
+                Assert.That(h.Worker.IsStopped, Is.False);
+                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+
+                release.Set();
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown after release");
+                h.WaitForPhysicalStop("worker did not physically exit");
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+
+                Assert.That(h.BackendJoin.TryJoin(), Is.True);
+                Assert.That(h.BackendJoin.Joined, Is.True);
+            }
+        }
+
+        [Test]
+        public void BackendJoin_Poisoned_RefusesNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+
+                h.State.TryPoison();
+                Assert.That(h.State.IsPoisoned, Is.True);
+
+                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoin_DisposeException_PoisonsNoJoinNoRetry()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                // Corrupt the Output Worker's wait primitive so its dispose
+                // throws after the lifecycle transition; the IsStopped
+                // precondition still holds, so the catch path is exercised.
+                SetField(h.Worker, "_signal", null);
+
+                Assert.Throws<NullReferenceException>(() => h.RunCoordinator.TryCompleteBackendJoin());
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+
+                // A poisoned retry never partially re-enters the dispose path.
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.False);
+            }
+        }
+
+        [Test]
+        public void BackendJoin_BindingSwappedAfterConstruction_PoisonsNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+
+                // Swap the join boundary's internal Run context after
+                // construction: the side-effect-time re-check must refuse
+                // without disposing either worker.
+                SetField(h.BackendJoin, "_context", MakeContext(h.State));
+
+                Assert.Throws<InvalidOperationException>(() => h.RunCoordinator.TryCompleteBackendJoin());
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.RunCoordinator.BackendJoined, Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void Constructor_ForeignBackendJoin_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            using (Harness other = Harness.Create())
+            {
+                Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin));
+            }
+        }
+
+        [Test]
+        public void BackendJoin_SealedNotDisposable_FieldShapeClean()
+        {
+            Type type = typeof(NvencCaptureBackendJoinCoordinator);
+
+            Assert.That(type.IsClass, Is.True);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
+
+            Type[] forbiddenFieldTypes =
+            {
+                typeof(Thread), typeof(System.Threading.Timer), typeof(Stream), typeof(byte[]),
+            };
+
+            FieldInfo[] fields = type.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields, Has.Length.EqualTo(12));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(Array.IndexOf(forbiddenFieldTypes, field.FieldType), Is.LessThan(0),
+                    field.Name + " must not hold a forbidden type.");
+                // Every collaborator reference is readonly; only the joined
+                // latch is a mutable bool.
+                Assert.That(field.IsInitOnly || field.FieldType == typeof(bool), Is.True,
+                    field.Name + " must be readonly or the bool joined latch.");
+            }
+        }
+
+        [Test]
+        public void BackendJoin_NoWaitNoSleepNoFilesystemNoContextSideContact()
+        {
+            string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencCaptureBackendJoinCoordinator.cs"));
+
+            string[] forbidden =
+            {
+                "Thread.Sleep", "new Thread", "ThreadPool", "Task", "SpinWait", "WaitHandle",
+                "ManualResetEvent", "AutoResetEvent", "Timer", "Monitor", "File.", "Directory.",
+                "FileStream", "NvEnc", "UnityEngine", "DllImport", "new []", "new List",
+                "new Dictionary", "new Queue", "Guid.NewGuid", "Enumerable",
+                "Terminal", "Registry", "Trace", "Plan", "Publication", "Disposition",
+                ".Select(", ".Where(", ".ToList(", ".ToArray(",
+            };
+
+            foreach (string word in forbidden)
+            {
+                Assert.That(source, Does.Not.Contain(word), "backend join source must not contain: " + word);
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]
@@ -1215,7 +1530,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1225,7 +1540,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1237,7 +1552,7 @@ namespace Zantetsu.Core.Tests
                 // Same process state but a different Submit Worker instance
                 // than the one the Output Worker is bound to.
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1248,7 +1563,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1258,7 +1573,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1269,7 +1584,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin));
             }
         }
 
@@ -1288,7 +1603,7 @@ namespace Zantetsu.Core.Tests
                 };
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin));
             }
         }
 
@@ -1298,17 +1613,19 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown));
+                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null));
             }
         }
 
@@ -1366,6 +1683,54 @@ namespace Zantetsu.Core.Tests
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
+        }
+
+        private static void StopFinalizedBackend(Harness h, bool disposeSubmitWorker = true)
+        {
+            h.AcceptAndAppendChunk(1, 64, Seed);
+            Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+            Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+            h.SubmitDrained = true;
+
+            h.SettledEvent.Reset();
+            Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+            WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+            Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+
+            h.SettledEvent.Reset();
+            Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+            WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+            h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+            Assert.That(h.Worker.TeardownCompleted, Is.True);
+            Assert.That(h.Worker.IsStopped, Is.True);
+
+            if (disposeSubmitWorker)
+            {
+                h.SubmitWorker.Dispose();
+            }
+        }
+
+        private static void StopAbandonedBackend(Harness h, bool disposeSubmitWorker = true)
+        {
+            Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+            h.SubmitDrained = true;
+
+            h.SettledEvent.Reset();
+            Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+            WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+            Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+            Assert.That(outcome.IsAbandoned, Is.True);
+
+            h.SettledEvent.Reset();
+            Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+            WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+            h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+            if (disposeSubmitWorker)
+            {
+                h.SubmitWorker.Dispose();
+            }
         }
 
         private static CaptureFrameCompletion MakeCompletion(
@@ -1720,6 +2085,7 @@ namespace Zantetsu.Core.Tests
             internal NvencOrderedSubmitWorkerService SubmitWorker;
 
             internal NvencCaptureRunCoordinator RunCoordinator;
+            internal NvencCaptureBackendJoinCoordinator BackendJoin;
             internal ManualResetEventSlim SettledEvent;
 
             internal FakeWriter Finalizer => Writer;
@@ -1778,7 +2144,11 @@ namespace Zantetsu.Core.Tests
                 Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker, Teardown);
 
                 MainThreadTeardown = new FakeMainThreadTeardown { BoundContext = Context };
-                RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown);
+                BackendJoin = new NvencCaptureBackendJoinCoordinator(
+                    State, SubmitWorker, Worker, Context,
+                    WorkSlots, SampleSlots, SubmitSyncSlots, SubmitToOutputCredits, FrameCompletionCredits,
+                    Buffer, Processor);
+                RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

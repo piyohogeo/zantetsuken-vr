@@ -46,6 +46,7 @@ namespace Zantetsu.Observability
         private readonly NvencRunChunkContext _context;
         private readonly NvencRunLocalRegistrySlot _registrySlot;
         private readonly INvencMainThreadTextureTeardown _mainThreadTextureTeardown;
+        private readonly NvencCaptureBackendJoinCoordinator _backendJoin;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -55,6 +56,7 @@ namespace Zantetsu.Observability
         private bool _terminalCollected;
         private bool _teardownRequested;
         private bool _mainThreadTextureTeardownCompleted;
+        private bool _backendJoined;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -62,7 +64,8 @@ namespace Zantetsu.Observability
             NvencOrderedOutputWorkerService outputWorker,
             NvencRunChunkContext context,
             NvencRunLocalRegistrySlot registrySlot,
-            INvencMainThreadTextureTeardown mainThreadTextureTeardown)
+            INvencMainThreadTextureTeardown mainThreadTextureTeardown,
+            NvencCaptureBackendJoinCoordinator backendJoin)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -70,6 +73,7 @@ namespace Zantetsu.Observability
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _registrySlot = registrySlot ?? throw new ArgumentNullException(nameof(registrySlot));
             _mainThreadTextureTeardown = mainThreadTextureTeardown ?? throw new ArgumentNullException(nameof(mainThreadTextureTeardown));
+            _backendJoin = backendJoin ?? throw new ArgumentNullException(nameof(backendJoin));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -100,6 +104,13 @@ namespace Zantetsu.Observability
             {
                 throw new ArgumentException(
                     "The Main Thread texture teardown must be bound to the exact Run chunk context.", nameof(mainThreadTextureTeardown));
+            }
+
+            if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context))
+            {
+                throw new ArgumentException(
+                    "The Backend Join must be bound to the exact process state, Submit Worker, Output Worker, and Run chunk context.",
+                    nameof(backendJoin));
             }
         }
 
@@ -537,6 +548,64 @@ namespace Zantetsu.Observability
                 }
 
                 _mainThreadTextureTeardownCompleted = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// True only after <see cref="TryCompleteBackendJoin"/> has succeeded
+        /// once.
+        /// </summary>
+        internal bool BackendJoined => _backendJoined;
+
+        /// <summary>
+        /// Non-waiting, idempotent Backend Join entry. It is admitted only
+        /// after the Main Thread NV12 Texture teardown completed, and then
+        /// delegates to the exact Backend Join boundary; on its success the
+        /// join is latched. A not-ready condition or a gate contention returns
+        /// false with no side effect, and the Main Thread Texture teardown
+        /// boundary is never contacted before it has completed.
+        /// </summary>
+        internal bool TryCompleteBackendJoin()
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-completed join returns the same result.
+                if (_backendJoined)
+                {
+                    return true;
+                }
+
+                if (!_mainThreadTextureTeardownCompleted)
+                {
+                    return false;
+                }
+
+                // Re-verify the O(1) exact-graph correlation immediately before
+                // any side effect, so a backend join whose binding was swapped
+                // after construction never joins a foreign Run.
+                if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Backend Join is no longer bound to the exact Run graph.");
+                }
+
+                if (!_backendJoin.TryJoin())
+                {
+                    return false;
+                }
+
+                _backendJoined = true;
                 return true;
             }
             finally
