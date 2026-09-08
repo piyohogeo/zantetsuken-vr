@@ -41,7 +41,7 @@ namespace Zantetsu.Observability
             _finalizationResult = finalizationResult ?? throw new ArgumentNullException(nameof(finalizationResult));
             _plan = plan ?? throw new ArgumentNullException(nameof(plan));
 
-            if (!CorrelationsHold())
+            if (!GraphCorrelationsHold())
             {
                 throw new ArgumentException(
                     "The publication plan commit operation is not fully correlated.", nameof(coordinator));
@@ -67,16 +67,18 @@ namespace Zantetsu.Observability
 
         internal string RunManifestContentHash => _plan != null ? _plan.RunManifestContentHash : null;
 
-        internal bool IsValid => CorrelationsHold();
+        internal bool IsValid =>
+            GraphCorrelationsHold()
+            && _coordinator.IsRetainedPublicationPlanCommitOperation(this);
 
         internal bool IsIssuedFor(NvencCaptureRunCoordinator coordinator)
         {
             return coordinator != null
                 && ReferenceEquals(_coordinator, coordinator)
-                && CorrelationsHold();
+                && IsValid;
         }
 
-        private bool CorrelationsHold()
+        private bool GraphCorrelationsHold()
         {
             try
             {

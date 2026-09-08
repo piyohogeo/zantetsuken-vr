@@ -333,6 +333,35 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void Prepare_InvalidManifestHash_RejectsWithoutPoison()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+
+                // A null manifest hash is a caller input error, not corruption:
+                // it is rejected at the entry without poisoning the process.
+                ArgumentNullException nullEx = Assert.Throws<ArgumentNullException>(() =>
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(null, out _));
+                Assert.That(nullEx.ParamName, Is.EqualTo("runManifestContentHash"));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // A malformed manifest hash is likewise rejected without
+                // poisoning.
+                ArgumentException malformedEx = Assert.Throws<ArgumentException>(() =>
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(new string('g', 64), out _));
+                Assert.That(malformedEx.ParamName, Is.EqualTo("runManifestContentHash"));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The gate was never claimed and the run still prepares normally.
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+                Assert.That(operation, Is.Not.Null);
+            }
+        }
+
         // ---- Operation construction fail-closed ----
 
         [Test]
@@ -386,6 +415,52 @@ namespace Zantetsu.Core.Tests
                     Assert.Throws<ArgumentException>(() => new NvencRunPublicationPlanCommitOperation(
                         h2.RunCoordinator, op1.TraceFreezeReceipt, result1, op1.Plan));
                 }
+            }
+        }
+
+        [Test]
+        public void Operation_ReconstructedSamePlan_NotIssued()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation issued),
+                    Is.True);
+
+                // Reconstructing an operation from the exact same receipt,
+                // result, and plan is graph-valid but is not the exact
+                // retained operation, so it must never be reported as issued.
+                NvencRunPublicationPlanCommitOperation reconstructed =
+                    new NvencRunPublicationPlanCommitOperation(
+                        h.RunCoordinator, issued.TraceFreezeReceipt, issued.FinalizationResult, issued.Plan);
+
+                Assert.That(reconstructed.IsValid, Is.False);
+                Assert.That(reconstructed.IsIssuedFor(h.RunCoordinator), Is.False);
+            }
+        }
+
+        [Test]
+        public void Operation_ReconstructedDifferentHash_NotIssued()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation issued),
+                    Is.True);
+
+                // A plan built with a different valid manifest hash is
+                // graph-valid but is not the exact retained operation.
+                CapturePublicationPlan otherPlan = NvencRunPublicationPlanBuilder.Build(
+                    issued.FinalizationResult, h.SessionIssue, OtherHash64);
+
+                NvencRunPublicationPlanCommitOperation forged =
+                    new NvencRunPublicationPlanCommitOperation(
+                        h.RunCoordinator, issued.TraceFreezeReceipt, issued.FinalizationResult, otherPlan);
+
+                Assert.That(forged.IsValid, Is.False);
+                Assert.That(forged.IsIssuedFor(h.RunCoordinator), Is.False);
             }
         }
 

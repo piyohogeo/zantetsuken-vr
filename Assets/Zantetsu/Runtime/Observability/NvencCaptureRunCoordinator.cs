@@ -840,6 +840,17 @@ namespace Zantetsu.Observability
         {
             operation = null;
 
+            if (runManifestContentHash == null)
+            {
+                throw new ArgumentNullException(nameof(runManifestContentHash));
+            }
+
+            if (!IsLowerHex(runManifestContentHash, 64))
+            {
+                throw new ArgumentException(
+                    "Manifest hash must be 64 lowercase hex characters.", nameof(runManifestContentHash));
+            }
+
             if (!_processState.TryBeginResourceResolution())
             {
                 return false;
@@ -950,14 +961,18 @@ namespace Zantetsu.Observability
                     throw;
                 }
 
-                if (minted == null || !minted.IsValid || !minted.IsIssuedFor(this))
+                // Retain the minted operation before the issuance re-check, so
+                // the exact retained identity is part of the predicate.
+                _publicationPlanCommitOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
                 {
+                    _publicationPlanCommitOperation = null;
                     _processState.TryPoison();
                     throw new InvalidOperationException(
                         "The publication plan commit operation does not correlate after construction.");
                 }
 
-                _publicationPlanCommitOperation = minted;
                 operation = minted;
                 return true;
             }
@@ -1079,6 +1094,40 @@ namespace Zantetsu.Observability
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Exception-safe exact-retention predicate: true only when the given
+        /// operation is the exact operation this coordinator currently holds
+        /// from its <see cref="TryPreparePublicationPlanCommit"/> issuance. A
+        /// directly reconstructed or manifest-hash-substituted operation is
+        /// therefore never treated as issued. It performs no side effect and
+        /// never throws.
+        /// </summary>
+        internal bool IsRetainedPublicationPlanCommitOperation(
+            NvencRunPublicationPlanCommitOperation operation)
+        {
+            return operation != null
+                && ReferenceEquals(_publicationPlanCommitOperation, operation);
+        }
+
+        private static bool IsLowerHex(string value, int length)
+        {
+            if (value == null || value.Length != length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }
