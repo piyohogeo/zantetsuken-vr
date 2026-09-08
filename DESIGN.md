@@ -162,6 +162,8 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 - 受付後の通常処理で非空の直接子と実在境界が確定し、5.6の構築Validatorを通過した時点で初めて、Fragment、CutBoundaryRecord、`LogicalCutOperation`を同じ境界で原子的に公開する。その際に各境界の`ExposureState`と`OperationSupportState`を正本化し、Pending Cut由来の即時表示を同じ採用面のOperation由来表示へ重複なく引き継ぐ。`Active`境界はclipと仮断面を継続する。`Dormant`境界は単独では即時clip、Stencil、仮Cap、分離を要求しないが、同じOperationが`HasDetached`またはCull失効済みなら補助Capとして`TemporaryRenderCapRecordSet`へ投入できる。`Suppressed`境界は再分類までclip、Stencil、仮Cap、Offset、Impulseを起動しない。
 
+- FixedSupportAnchorの子Cellへの所属は、受付後に7.1の入力CellのAnchor集合、採用面、local位置およびframe写像から確定し、確定子と同じ境界で公開する。No-op、受付見送りまたはOperation公開前の終端失敗では公開しない。Graph Node対応や生存Edgeによる到達性が未解決でも所属は公開でき、子の`SupportState=Unknown`、操作の`OperationSupportState=Incomplete`と既存の物理状態集約を使用する。後続の支持判定は公開済み所属とGraph解決結果から更新し、Anchor所属を追加・再発見しない。受付時に暫定子、Side PathまたはAnchor専用状態を作らない。
+
 - `LogicalCutOperation`未公開のまま、既存規則が受付済み切断を終端失敗と確定した場合だけ、その切断に由来するPending Cutと仮表示を退役させる。親の現在有効な共用Geometry、先行する有効なPending制約と履歴、既存物理および現在の姿勢・速度を維持し、`ObjectGeneration`と使用済みIDを巻き戻さない。単なる未完了、実行待ち、一時的な容量不足には適用せず、公開済みOperationまたはProvisional物理をrollbackしない。実行中Jobの完了と成果物回収を継続し、対応する有効なPending CutとCutOperationIdが存在しない後着成果物は世代が一致しても公開しない。安全な終端・回収後に未完了件数を一度だけ減らし、元の親を最新世代で新規切断の受付対象へ戻す。失敗した切断と、その間に見送った要求は再実行しない。
 
 - 投機成果物が命中したSlash／Segment、確定した`SlashFrame`、基底対象世代と一致し、対応する有効なPending Cutと`CutOperationId`が現在も一致し、通常の予測姿勢検証または19.5.1の剛体Local Plane採用検証を通れば、確定した操作Local Planeに一致する表示・物理成果物を描画フレーム／物理ステップ境界でコミットする。Actorを予測World姿勢へ移動しない。
@@ -350,6 +352,8 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
 
 - `OperationSupportState`は構築Validatorを通過した子数1以上のOperationにだけ導出し、三値へ固定する。直接子に`Unknown`が1つでもあれば`Incomplete`、Unknownがなく`Detached`が1つ以上なら`HasDetached`、全子`Anchored`なら`FullyFixed`とし、判定優先順位を`Incomplete > HasDetached > FullyFixed`とする。default値は`Incomplete=0`とし、未初期化状態をFullyFixed扱いしない。全子固定かどうかを別booleanへ重複保存せず、この三値だけを正本とする。
 
+- 各子の`SupportState`は7.1で継承した点Anchor Rootと既存接続Graphの到達性から決める。Anchor所属は4.2に従い確定子と同時に公開し、Graphによる支持判定が未解決な子は`Unknown`とする。共用Geometryの物理所属、同Side、位置一致または共有Cooked Geometryを直接支持の証明にしない。
+
 - `FullyFixedCullEligible = OperationSupportState == FullyFixed && !FullyFixedCullInvalidated`とする。Eligibleなら操作全体の`TemporaryRenderCapRecordSet`を空にする。`HasDetached`ならGeometry未Commitかつ`ExposureState != Suppressed`の全Cap Record、すなわちActiveと補助Dormantを集合へ入れる。`Incomplete`なら`ActiveTemporaryBoundarySet`に属する既知Active境界のCap Recordだけを入れ、Dormant補助CapとSuppressed境界を入れない。FullyFixedでもCull失効済みなら保守的にHasDetachedと同じ全非Suppressed規則を使う。Fixed同士の不要Capを個別除去せず、Buffer compaction、Cap Bounds Meshの部分更新、Draw List再構築を行わない。
 
 - 後続切断で過去操作の直接子が親として置換・細分されることを検出したら、新しい子や境界を公開する前に、その直接子を生成した過去`LogicalCutOperation.FullyFixedCullInvalidated`を同一フレームで不可逆に`true`へする。過去のDormant境界をActive化する場合も、その境界が属する全過去OperationをActive化前に失効させる。PoCでは過去の直接子集合を子孫集合へ再構築せず、一度失効したFully Fixed Cullを再有効化しない。これによりActive化した過去境界が古いFullyFixed判定で隠れ続けることを防ぐ。後続切断自体は対象子Fragmentを親にする新しい`LogicalCutOperation`として独立に三値集約する。
@@ -455,17 +459,21 @@ ColliderのBake／cookingは視覚切断と初回の破片別運動のクリテ�
 
 - FragmentGroup内に支持分類未完了、世代不一致、または接続が曖昧なLogicalFragmentが1つでもあれば、判定中は`PendingSupportClassification`へ入る。この状態では旧Rigidbody、Collider、ConstraintおよびTransformを変更せず、Provisional Actor生成、Group全体の分離Offset、切断Impulse、自由側解析運動を禁止する。一方、境界単位の描画判定は独立して維持し、`Active`と確定済みの境界ではclip、Stencil、仮Cap、非運動の切断演出を許可し、`Suppressed`境界ではすべての即時切断表示を禁止する。全LogicalFragmentが既知になればProvisional分裂を原子的に試みる。必要な支持・接続の対応を確定できない場合はUnknownをAnchoredへ偽装せず、旧Rigidbody／Collider／Constraintを`Stable Unsplit`として正式採用して操作を終端できる。単なる実行待ちや未完了を対応不能とみなさず、同じ未解決問題を時間経過だけで再試行しない。
 
-- 地面、壁、建物基礎などへ固定された対象は、分離運動または切断Impulseを適用する前に`FixedSupportAnchor`を切断平面の正負半空間へ分類し、必要最小限の接続判定を完了する。支持判定が未完了の間は`PendingSupportClassification`とする。全LogicalFragmentの支持が既知で固定側を含む場合、Provisional構築条件を満たせば`ProvisionalAnchoredSplit`、一時的な実行枠不足等で構築を待つ間は`PendingAnchoredSplit`とする。必要な支持・接続を確定できないか、要求構成を既存の安全規則で成立させられない場合だけ7.6の正式採用で終端できる。いずれも固定側または固定側を含む共有旧Rigidbody／旧Colliderへ切断Impulseを与えてはならない。
+- 地面、壁、建物基礎などへ固定された対象は、分離運動または切断Impulseを適用する前に`FixedSupportAnchor`を切断平面の正負半空間へ分類し、必要最小限の接続判定を完了する。FixedSupportAnchorはfiniteな点だけとし、同一対象または同一Logical Convex Cellに複数持てる。固定支持を設定する入力は、必要な各点Anchorについて初期の所属Logical Convex Cell、対応する既存`FixedSupportGraph` Node、および所属CellのFragment Physics Frameで表したfiniteなlocal位置を明示する。固定支持を設定しない対象には点Anchorを要求しない。現在所属は7.1の各CellのAnchor集合で保持し、共有Cooked Geometry ID、頂点index、COM、表示Offset、位置一致、Convex overlapを所属の正本にしない。
 
-- 単一の連結Convexと1個以上のFixedSupportAnchorだけで表せる対象は、各Anchorについて`dot(planeNormal, anchorPosition) + planeDistance`の符号を評価するだけで固定側を決める。正側だけにAnchorがあれば正側固定、負側だけなら負側固定、両側なら両側固定、どちらにもなければ通常の自由分裂とする。平面から`anchorEpsilon`以内のAnchorはPoCでは保守的に両側固定として扱い、破断可能な固定具は後続仕様とする。
+- 各切断は入力Logical Convex Cellが現在継承しているAnchorだけを、受付Snapshot、採用面、frame写像および既存のfiniteかつ非負な`anchorEpsilon = e`で分類する。`s = dot(planeNormal, anchorPosition) + planeDistance`について、`s > e`なら正側だけ、`s < -e`なら負側だけ、`-e <= s <= e`なら正負両側へ継承する。無効な値をOnPlaneへ分類しない。`anchorEpsilon`をAttachmentLinkの`attachmentEpsilon`または一般Convex頂点分類epsilonへ統合しない。
 
-- Compound Convex、建物チャンク、複数支持部を持つ対象は、プリプロセス済み`CutConnectivityGraph`へFixedSupportAnchorをRootとして付加した`FixedSupportGraph` Viewを使用する。ComponentFragment／Physics Proxy／構造チャンクをNode、SurfaceAdjacency／AttachmentPatch／構造接続をEdgeとして保持し、切断面で失われるEdgeを除いた後にRootから到達可能なGraph成分を固定、到達不能な成分を自由と分類する。これは完全なConvex B-rep切断、質量特性計算、`Physics.BakeMesh`より先に行う軽量判定である。
+- 初期Cell、そのFragment Physics Frame内local位置、初期の既存Graph Node対応はAnchorの不変入力とする。現在所属の正本は各Cellが保持するAnchor集合との所属関係であり、Anchor内に単一のmutableな現在Cellを持たせない。継承先は入力Cellから配分された有効な子Cellだけとし、非交差Cellは対応する子へそのまま継承する。OnPlaneでは同じAnchor値を正負の各子集合へ1回ずつ格納し、新しいAnchor IDを発行しない。同じSideの無関係なConvex、Geometry Resource共有だけのSibling、別ComponentへAnchorを配らず、一度系譜から外れたAnchorを祖先の頂点Bufferや再生成Colliderから再発見しない。Globalな生存フラグ、頂点への再吸着、毎切断のMesh最近傍／包含探索を設けない。
+
+- 単一の連結Convexでは上記の直接Anchor分類だけで固定側を決める。Compound Convex、建物チャンク、複数支持部を持つ対象は、継承したAnchorを入力時に明示した既存NodeへRootとして接続した`FixedSupportGraph` Viewを使用する。ComponentFragment／Physics Proxy／構造チャンクをNode、SurfaceAdjacency／AttachmentPatch／構造接続をEdgeとして保持し、切断面で失われるEdgeを除いた後にRootから到達可能なGraph成分を固定、到達不能な成分を自由と分類する。直接AnchorがないNodeも生存Edge経由でAnchoredになり得るため、点分類だけでCompound全体の支持を決めない。切断後のNode対応または生存Edgeによる到達性が未解決なら、所属公開後も子のSupportを`Unknown`とし、Groupは既存規則で`PendingSupportClassification`へ集約する。支持判定の確定不能は既存の正式採用へ接続する。Node対応を補う新Graph、全Nodeへの同Side伝播または共用Mesh探索を作らない。
 
 - `ProvisionalAnchoredSplit`では固定側の表示Offset、速度、切断Impulseを0とし、自由側だけをDynamic Provisional Actorとして分離する。自由側の旧Shape過大被覆による早い接触とGhost Contactは許容する。Provisional構築に失敗して`PendingAnchoredSplit`へ落ちた場合だけ、元の未切断Colliderを固定状態のまま残し、自由側を衝突なしの解析表示で分離できる。切断幅は0であり、両側固定なら切断をDormantにして即時分離を見せず、どちらにも分離Impulseを与えない。
 
-- FixedSupportGraphは最新の1切断面だけでなく、現在ObjectGenerationへ蓄積された全切断面で区切られた論理破片ごとにAnchor到達性を再評価する。例えば建物の最初の縦切断で両側が基礎へ接続していればDormantのままとし、交差する2面目によってAnchorなしの部品が初めて生じた時点で、その部品に接する1面目と2面目の断面を同時に可視化して分離する。
+- Provisionalの正負Actorが同じ旧Cooked Geometryを共有してもAnchorをGeometryとともに複製せず、上記の継承結果だけを各子へ渡す。Anchorが負側だけなら正側Actorは同じ旧Shapeを参照していてもそのAnchorを持たない。Final Shape交換、同形状の再cookまたはPhysics Profile昇格でも、現在のAnchor local位置、所属Cell系譜およびNode対応を維持し、最新Convexの生成、cookまたはPhysics Commitを支持分類の前提にしない。
 
-- 支持付き対象は19.5.1の初期リベース対象外であり、従来のSourceSlashPlane由来面と支持検証を維持する。FixedSupport分類は命中フレーム内で完了する固定長処理を目標とし、少数Anchorの半空間分類は同期実行してよい。SlashFrameと候補対象の未来姿勢が命中前に確定している場合は投機評価し、実命中、ObjectGeneration、Anchor／Graph世代、切断面の一致をCommit条件とする。不一致または未完了時は対象境界を`Suppressed`として全即時表示と運動を抑止し、再分類へ送る。
+- FixedSupportGraphは最新の1切断面だけでなく、現在ObjectGenerationの子Cellが継承するAnchor Rootと、生存する全接続Edgeから論理破片ごとの到達性を再評価する。例えば建物の最初の縦切断で両側が基礎へ接続していればDormantのままとし、交差する2面目によってAnchorなしの部品が初めて生じた時点で、その部品に接する1面目と2面目の断面を同時に可視化して分離する。各再切断では現在CellのAnchor集合だけを入力とし、祖先Anchor一覧を全探索して復元しない。
+
+- 支持付き対象は19.5.1の初期リベース対象外であり、従来のSourceSlashPlane由来面と支持検証を維持する。FixedSupport分類は命中フレーム内で完了する固定長処理を目標とし、少数Anchorの半空間分類は同期実行してよい。SlashFrameと候補対象の未来姿勢が命中前に確定している場合は投機評価し、実命中、ObjectGeneration、Anchor／Graph世代、採用面、入力Cell、frameおよび継承済みAnchor集合の一致をCommit条件とする。不一致または未完了時は対象境界を`Suppressed`として全即時表示と運動を抑止し、再分類へ送る。新しい世代軸、Cache、RegistryまたはTrace Eventを追加しない。
 
 - 断面間の小さな見た目上のめり込み、見えている切断隙間に旧Colliderが残ることに加え、Provisional Shapeが表示Fragmentより張り出してめり込む前に外界へ衝突することを許容する。違和感とBroadphase拡大を限定するため、Provisional中の分離距離とConstraint法線移動には物体寸法と想定Impulseに基づく上限を設ける。Kerfは常に0であり、仮分離Offsetとは別パラメータとする。
 
@@ -515,6 +523,8 @@ ColliderのBake／cookingは視覚切断と初回の破片別運動のクリテ�
 
 - ProvisionalからFinal Colliderへのhandoffでは物理Actorを正本とし、ActorのWorld pose、COM線速度、角速度をそのまま維持して、Final Shape、center of mass、inertiaだけを同一Actorへ置換する。Render Anchorを維持するためのActor pose補正や、新COMに合わせた線速度変換を行わない。Final Geometryは各Source Provisional Shapeの切断結果として同じFragment Physics Frameに保持し、由来Convexのhalf-space内に`FinalContainmentEpsilon`付きで収まることをCommit前に検証する。証明不能、許容外への張り出し、local frame不一致ではFinal Shapeを公開せず、利用可能な既存の物理表現を正式採用して終端する。19.5.1の採用Local Plane由来のFinalでもこの包含／local frame検証を省略せず、命中時Snapshotまたは予測Pose／速度へActorを戻さない。これによりFinal Collider自体を瞬間移動させて外界へ再penetrationさせる経路を作らない。表示GeometryはActorへ従属し、local origin／frame差によりFinal Commit時に瞬間的な位置・姿勢差が出ても許容する。分離ImpulseはProvisional生成時に一度だけ加え、Final Commitで重ねて再適用しない。単一GroupからFinalへ初分裂する場合だけCommit時に小さな分離Impulseを加える。Final Shape交換直後のSibling pairは既存の一時衝突抑止を使用できるが、外界とのGhost Contact履歴を理由にpose／velocityを巻き戻さない。
 
+- Final handoffはShapeの置換とは独立に、Source Logical Convex Cellが継承するFixedSupportAnchorのlocal位置、所属系譜、既存Graph Node対応を同じ子Cellへ引き継ぐ。新しいCollider頂点、Shape共有または再cook結果からAnchorを再構築せず、Geometry Resource identityをAnchor identityに代用しない。
+
 - `PendingAnchoredSplit`のCommitでは、Anchorから到達可能な破片を静的／Kinematicまたは元の固定Constraintへ残し、到達不能な自由破片だけにRigidbody、継承速度、分離Impulseを与える。複数Anchorが切断面の両側へ残る場合は両側を固定し、接続グラフ上で自由と証明できない破片へImpulseを与えない。
 
 - 表示用MeshとCollider用Meshを分離し、Collider cooking用形状は低頂点・閉形状に保つ。
@@ -524,6 +534,8 @@ ColliderのBake／cookingは視覚切断と初回の破片別運動のクリテ�
 標準Runtime経路は、Intersect／Overlapする部品を事前Boolean Unionした単一Strict Solidを要求しない。各部品を独立して閉じられる`ClosedCutComponentSet`として保持し、任意平面でComponentごとに切断・Capする。Component同士の内部Surface、二重Surface、二重Cap、重複体積は許容し、表示、Stencil、PhysicsのいずれでもRuntime幾何Unionを行わない。
 
 - `CutConnectivityGraph`のNodeは現在世代の`ComponentFragment`または対応するLogical Convex Cellとし、Edgeは同一Component内の`SurfaceAdjacency`と、別Component間の`AttachmentPatch`から構成する。親子関係は生成履歴だけに使用し、物理的な接続性の正本にしない。
+
+- CellのAnchor集合による所属と、Rootを接続するGraph Nodeの解決は別の責務である。所属は7.1の半空間継承で確定し、Graph接続はAnchorの初期Node対応と既存のCell／Component／Node子対応から解決する。一方から位置一致や全Graph探索で他方を再構築しない。所属公開後もGraph接続が未解決なら4.2に従いSupportを`Unknown`とし、確定不能は既存物理の正式採用へ接続する。
 
 - 凹Componentは1回の平面切断から3個以上の`ComponentFragment`を生成してよい。切断後のTriangle／Convex adjacencyと残存Attachment Edgeに対するGraph connected-componentsを求めてLogicalFragmentを構築するため、単純な正側子／負側子または親子1対2を前提にしない。
 
@@ -808,7 +820,7 @@ No-opではLogicalCutOperation、論理子、CutBoundaryRecord、Pending Cutを�
 
 対応を失った非空GeometryのためだけにConvex、独立質量、最終Rigidbodyを新設せず、Geometryも削除しない。所属は表示、Stencil、再切断が共通して使う追従先であり、Topologyや構造AttachmentLinkを接続し直したり、6章の入力・出力契約を救済したりしない。所属切替は担当側の公開境界で共用Geometry全用途の世代、Triangle集合、Frame、参照を同期し、表示だけを別Actorへ移さない。採用先Actorのpose／速度を表示都合で巻き戻さず、Final所属確定時の表示位置・姿勢の不連続を許容する。
 
-固定支持は既存のAnchor分類と接続判定を維持する。判定中のUnknownはPending Support Classificationとするが、必要な支持・接続または所属を確定できない場合はUnknownをAnchoredへ偽装せず、有効な既存の支持・物理所有単位と運動・Constraintを`Stable Unsplit`として正式採用できる。単なる実行待ちを対応不能とみなさず、正式採用後にUnknown集約だけでPendingへ戻したり、時間経過だけで同じ再分類を繰り返したりしない。Safety TetherとFixedSupportAnchorの表現・継承方式は変更しない。
+固定支持の点Anchor所属と継承は7.1を正本とする。共用Geometryの物理所有者を決める本節のFallbackへFixedSupportAnchor、構造RootまたはAttachmentLinkを便乗させず、Geometryが同じActorへ付属したことを支持・接続の証明にしない。判定中のUnknownはPending Support Classificationとするが、必要な支持・接続または所属を確定できない場合はUnknownをAnchoredへ偽装せず、有効な既存の支持・物理所有単位と運動・Constraintを`Stable Unsplit`として正式採用できる。単なる実行待ちを対応不能とみなさず、正式採用後にUnknown集約だけでPendingへ戻したり、時間経過だけで同じ再分類を繰り返したりしない。Safety TetherとAttachmentEndpointAnchorの表現・継承方式は変更しない。
 
 この正式採用は当該切断の物理分裂を終端するだけであり、未完了のGeometry処理や非同期仕事を完了済みとはみなさない。
 
@@ -844,7 +856,7 @@ Main Thread上の共通受付処理はPending Cut登録、対象世代更新、�
 
 各SlashはGestureのLatch時に単調増加する`SlashGeneration`を持つ。各切断対象は確定状態を示す`ObjectGeneration`を持ち、`SlashFront`のSweepによる実命中が確認され、Pending Cutを登録した時点でだけ更新する。空振り、候補列挙、投機ジョブ開始では対象世代を進めない。
 
-投機ジョブは開始時の`BaseObjectGeneration`、`SlashId`、`SlashGeneration`、命中した`FrontEdgeId`、`SlashFrame`に加え、支持判定を使用する場合は`AnchorGeneration`と`SupportGraphGeneration`を保持する。ジョブを強制キャンセルするのではなく、完成時およびCommit時に、実命中と各識別子・世代・前提条件を検証する。一致しない成果物はコミットせず破棄し、安全に再利用できる中間資産だけを回収する。
+投機ジョブは開始時の`BaseObjectGeneration`、`SlashId`、`SlashGeneration`、命中した`FrontEdgeId`、`SlashFrame`に加え、支持判定を使用する場合は`AnchorGeneration`と`SupportGraphGeneration`を保持する。支持成果物は同じ基底、採用面、入力Cell、frame、継承済みAnchor集合および`anchorEpsilon`との一致も検証する。ジョブを強制キャンセルするのではなく、完成時およびCommit時に、実命中と各識別子・世代・前提条件を検証する。一致しない成果物はコミットせず破棄し、安全に再利用できる中間資産だけを回収する。これらの照合に新しい世代軸を追加しない。
 
 状態は1個のObject単位enumへ集約せず、物理分裂、Fragment支持、切断境界の露出、Geometry完成度、非同期Work Resultの採否を直交する軸として保持する。同じ対象は、Activeな新規境界、Dormantな過去境界、Suppressedな分類待ち境界、完成済み実Mesh、未完成Colliderを同時に持ち得る。
 
@@ -893,7 +905,7 @@ SupportからExposureへの変換は次の完全な決定表を正本とする�
 2. 全LogicalFragmentが既知で、`Anchored`が1つ以上ある場合は`PendingAnchoredSplit`。
 3. 全LogicalFragmentが`Detached`の場合は`PendingPhysicsSplit`。
 
-この集約は切断追加、進行中の再分類、Anchor／Graph世代変更のたびに全LogicalFragmentを対象として再評価する。`PendingSupportClassification`が選ばれた場合は、別の既知境界が`Active`でもGroup全体のOffset／Impulse／解析運動を禁止する。ただし、そのActive境界固有のclip／Stencil／仮Capは描画できる。必要な支持・接続・所属を確定できないと判断した場合は利用可能な既存物理表現を正式採用して`Stable Unsplit`へ進め、Unknown集約だけでPendingへ戻さない。`Suppressed`境界の表示禁止は常に優先する。
+この集約は切断追加、進行中の再分類、Anchor／Graph世代変更のたびに全LogicalFragmentを対象として再評価する。直接支持は各現在Cellが継承する点Anchor Root、間接支持は既存Graphの到達性を正本とし、共有Shapeまたは共用Geometryの物理所属から補わない。`PendingSupportClassification`が選ばれた場合は、別の既知境界が`Active`でもGroup全体のOffset／Impulse／解析運動を禁止する。ただし、そのActive境界固有のclip／Stencil／仮Capは描画できる。必要な支持・接続・所属を確定できないと判断した場合は利用可能な既存物理表現を正式採用して`Stable Unsplit`へ進め、Unknown集約だけでPendingへ戻さない。`Suppressed`境界の表示禁止は常に優先する。
 
 | `CutBoundaryRecord.GeometryState` | 意味 | 許可される処理 |
 | --- | --- | --- |
@@ -912,7 +924,7 @@ SupportからExposureへの変換は次の完全な決定表を正本とする�
 
 `Dormant`、`Active`、`Suppressed`はCut Plane全体でもObject全体でもなく、切断によって生じた連結な論理Fragment境界ごとの属性とする。同じCut Plane上でも、ある境界Loopは両側固定でDormant、別の境界LoopはDetached部品に接してActive、分類不能な境界LoopはSuppressedとなり得る。`CutBoundaryRecord`は少なくとも`BoundaryId`、`CutPlaneId`、正負の`LogicalFragmentId`、`ExposureState`、`GeometryState`、作成時のObject／Anchor／SupportGraph各Generationを保持する。CutPlaneIdは操作の確定面／local frame identityへ結合し、19.5.1ではSourceSlashPlaneとSelectedObjectLocalCutPlaneを混同しない。各子frameへの写像と面はGeometry Commit後も履歴へ残す。
 
-支持Topologyの最小ランタイムモデルは`FixedSupportAnchor`、`FixedSupportNode`、`FixedSupportEdge`、`LogicalFragment`、`LogicalCutOperation`、`CutBoundaryRecord`から成る。切断面で失われるEdgeを反映してAnchor到達性を再計算し、各LogicalCutOperationが保持する直接子SupportStateから`Incomplete／FullyFixed／HasDetached`を導出する。後続切断で直接子を置換する場合は祖先OperationのFully Fixed Cullを先に失効させ、その後Detached成分に接する過去のDormant境界を同一フレームでActive化する。共用MeshやColliderが未完成でも、Cut Plane、論理Fragment、LogicalCutOperation、Cull失効履歴、Graph Edge、世代情報は破棄しない。
+支持Topologyの最小ランタイムモデルは`FixedSupportAnchor`、`FixedSupportNode`、`FixedSupportEdge`、`LogicalFragment`、`LogicalCutOperation`、`CutBoundaryRecord`から成る。各点Anchorの初期Cell、local位置、初期Node対応は不変入力とし、現在所属は各CellのAnchor集合で表す。切断時は半空間継承した集合を確定子と同時に公開し、Graph解決後に到達性とSupportを更新する。Graph解決待ちは4.2の既存Unknown規則に従う。各LogicalCutOperationが保持する直接子SupportStateから`Incomplete／FullyFixed／HasDetached`を導出する。後続切断で直接子を置換する場合は祖先OperationのFully Fixed Cullを先に失効させ、その後Detached成分に接する過去のDormant境界を同一フレームでActive化する。共用MeshやColliderが未完成でも、Cut Plane、論理Fragment、LogicalCutOperation、Cull失効履歴、継承済みAnchor、Graph Edge、世代情報は破棄しない。
 
 固定支持切断では次を不変条件とする。
 
@@ -961,8 +973,9 @@ SupportからExposureへの変換は次の完全な決定表を正本とする�
 | 共用Cut Geometry | 通常表示、最終破片、即時Stencil Volume | 6章の閉鎖・edge／vertex manifold・局所winding整合済みTopology。複数submesh、Disconnectedな閉Component、Component間のIntersection／Overlapを許容 |
 | Closed Cut Component／Connectivity Metadata | 共用Geometry内の独立部品範囲、Cap、分離判定 | SurfaceAdjacency／AttachmentPatch Graphを持ち、別Geometryを生成しない |
 | Physics Proxy | 接触とConvex切断 | 少数の低頂点Convex／Compound。各Convexは有効な閉凸形状だが、Compound内の相互Overlapを許容 |
+| Fixed Support入力 | 固定支持のRoot | 固定支持を設定する入力だけが、必要な1個以上のfiniteな点Anchorについて初期Logical Convex Cell、所属CellのFragment Physics Frame内local位置、対応する既存Graph Nodeを明示。固定支持なしの入力には要求しない |
 
-Blender側の共通変換工程として、Transform適用、原点・単位統一、共通マテリアル化、三角形化、共用Cut Geometryの閉鎖・manifold・局所winding整合、Closed Component抽出、Surface Adjacency／Attachment Patch／固定長Attachment Link生成、Compound Physics Proxy生成、Unity向け書き出しをプリセット化する。Component同士が食い込んでいてもBoolean Unionを標準工程へ入れず、全体自己交差／inside-outside検証を要求しない。接続に必要なAnchorとAttachmentPatch／Link Endpointだけを出力し、小部品専用の分類、ID、消去用Geometryは生成しない。
+Blender側の共通変換工程として、Transform適用、原点・単位統一、共通マテリアル化、三角形化、共用Cut Geometryの閉鎖・manifold・局所winding整合、Closed Component抽出、Surface Adjacency／Attachment Patch／固定長Attachment Link生成、Compound Physics Proxy生成、Unity向け書き出しをプリセット化する。Component同士が食い込んでいてもBoolean Unionを標準工程へ入れず、全体自己交差／inside-outside検証を要求しない。固定支持を設定する場合に必要な点Anchorの初期所属Cell、finiteなlocal位置、既存Graph Node対応とAttachmentPatch／Link Endpointだけを出力し、小部品専用の分類、ID、消去用Geometryは生成しない。未指定の支持またはAnchor対応をRuntimeで推測しない。
 
 共用Cut Geometryは表示／Stencil／Closed Componentの唯一のGeometry正本であり、役割別のUnity Mesh、基底、派生物、適否、Cacheを作らない。製品Asset Schema、Preprocess Cache、Build、Runtime FallbackはStrict Solid用の参照や生成物も持たない。
 
@@ -970,7 +983,7 @@ Blender側の共通変換工程として、Transform適用、原点・単位統�
 
 Poly Pro Universe実AssetのBlender人力調査から、典型的な建物を装飾付きの厚い壁板4枚以上で外周構成する近似は、Boolean Unionや建築構造解析を要求せず自動化しやすい候補とする。各`StructuralSlabComponent`は独立して閉鎖・切断・CapできるRender／Stencil Componentと、原則1個の直方体Physics Convexを持ち、建物1周分を同じ固定FragmentGroup／Compound Rigidbodyへまとめる。入口や通行可能な開口を1箱で塞ぐ場合だけ、左右と上部等の少数箱へ分割する。窓枠、柱、モールド、看板等は通常の共用Geometry Componentとして必要なAttachment LinkでSlabへ接続し、装飾Geometryを構造Convexへ忠実に反映しない。
 
-各Slabの下端両側を初期`FixedSupportAnchor`候補とし、外周角や意図した構造接続だけを少数Attachment Linkで結ぶ。同じSlabを完全横断する2切断によって両Ground Anchorおよび外周Linkから切り離された中間成分はDetachedとなり、Collider Bake後に動的大型Fragmentへ移行できる。1回の切断で必ず落下する、または任意の2平面で必ず分離するとは保証せず、実際のCutConnectivityGraph到達性を正本とする。
+各Slabの下端両側をfiniteな点`FixedSupportAnchor`候補とし、製品Recipeでは各点の初期Slab Convex Cell、local位置、既存Graph Node対応を明示する。外周角や意図した構造接続だけを少数Attachment Linkで結ぶ。同じSlabを完全横断する2切断によって両Ground Anchorおよび外周Linkから切り離された中間成分はDetachedとなり、Collider Bake後に動的大型Fragmentへ移行できる。1回の切断で必ず落下する、または任意の2平面で必ず分離するとは保証せず、実際のCutConnectivityGraph到達性を正本とする。
 
 Phase 0.2では個別建物の最終Recipeを作らず、Poly Pro Universeの`Building`カテゴリから10.2.2の`phase02-building-v2`による元Sourceの自動screening合格だけを処理対象へ選ぶ。人間による個別membership分類は行わず、矩形footprint候補としての偽陽性・偽陰性を許容する。窓枠、柱、モールド、看板、入口の張り出し、複数Object／Componentを人間判断だけで除外・救済せず、固定adapterと測定規則を適用する。対象内のGeneric Geometryから大きな平面Component、保守的OBB、building-local Transform、canonical外周順を抽出し、10.2.2の薄い`StructuralSlabFixture` sidecarとしてT-087へ渡す。Selectedには4 Slab以上を要求する。製品用のGround Anchor、入口保持、角Link、装飾分類、Safety Tether MetadataはPhase 5.5のAsset Recipeで確定し、早期成功を全Buildingまたは全Assetへ一般化しない。
 
@@ -1423,6 +1436,7 @@ Recipeは少なくとも以下を記述する。
 - 窓、ドア、底面などの封鎖面または封鎖規則。
 - タイヤ、窓、看板、装飾などの別部品指定。
 - 建物のチャンク境界。
+- 製品用FixedSupportAnchorを持つ対象では、各finite点の初期Logical Convex Cell、Fragment Physics Frame内local位置、対応する既存FixedSupportGraph Node。未指定の支持または対応をRuntimeで推測しない。
 - Voxel Size、Adaptivity、簡略化上限。
 - 期待Bounds、体積範囲、最大面数。
 
@@ -1456,6 +1470,8 @@ Source Asset Hash
 ```
 
 Cache Keyが変化したAssetだけを再生成する。大量処理の並列化はBlender内のPython Threadではなく、メモリ予算を設定した複数のヘッドレスBlender Processで行う。
+
+製品用点Anchorの初期所属Cell、local位置、既存Graph Node対応はRecipe Hashへ含め、別のAnchor Cache、Runtime再探索結果または頂点配列indexをCache Keyへ追加しない。Phase 0.2成果物はこの入力を持たず、同PhaseのCacheとSchemaを遡及変更しない。
 
 ### 10.8 公開リポジトリとライセンス境界
 
@@ -1571,11 +1587,11 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-087 | Voxel後Surface Projection | 製品前処理としての採用を取り消し、制約付きSurface ProjectionはT-071の`Future Research: Global Solid Reconstruction`へ隔離する。Phase 5.5以前の依存、完了条件、製品Fallbackにしない | 廃止／研究隔離 |
 | D-088 | 閉Topologyの自己交差契約 | Topological Watertightと自己交差のないGeometrically Valid Solidを区別する。自己交差はD-117の共用Geometryで許容する。個々のPhysics Convexには自己交差を許可しないが、Compoundを構成する別Convex同士のIntersection／Overlapは許容する。Geometrically Valid Solidは合成試験と将来研究だけの用語とする | 確定 |
 | D-090 | ライセンスAsset保管 | Synty購入原本と派生物は、公開Unity Repoの兄弟に置く非公開Git LFS Repo`C:\Users\%USERNAME%\src\zantetsuken-assets-private`で管理し、許可されたチーム以外へ共有しない | 確定 |
-| D-091 | 固定物体の切断 | 分離運動／Impulse前にFixedSupportAnchorの半空間分類と必要最小限の接続判定を完了し、固定側を動かさない。完全Convex切断とcookは非同期で後追いする | 確定 |
+| D-091 | 固定物体の切断 | FixedSupportAnchorはfiniteな点の集合だけとし、固定支持を設定する入力は各点の初期所属Logical Convex Cell、Fragment Physics Frame内のfiniteなlocal位置、既存Graph Node対応を明示する。現在所属はCellのAnchor集合を正本とし、採用面とanchorEpsilonで配分する。OnPlaneでは同じAnchor値を各子集合へ1回ずつ継承する。所属は確定子と同時に公開し、Graph未解決時のSupportは4.2に従う。旧Cooked Geometry共有、同Sideの別Convex、頂点Bufferまたは共用Geometryの物理所属からAnchorを複製・再発見しない。Graph到達性を完了して固定側を動かさず、完全Convex切断とcookは非同期で後追いする | 確定 |
 | D-092 | ゼロ幅・休眠切断 | Kerfを0とし、両側FragmentがFixedの連結境界をDormantとする。LogicalCutOperationの直接子Supportを`Incomplete／FullyFixed／HasDetached`へ集約し、失効していないFullyFixedの場合だけ全clip、Stencil Volume、仮Cap、分離を丸ごと省略する。HasDetachedまたはCull失効済みならFixed同士の補助Dormant Capを含む全非Suppressed Capを実描画集合へ入れ、Incompleteなら既知Active Capだけを描く。後続切断による直接子置換と過去境界Active化は祖先OperationのCullを先に不可逆失効させる | 確定 |
 | D-093 | 潜在切断痕 | Dormantな実Fragment Mesh境界と、Detached直接子を含む操作の通常Batchへ残したFixed Capの細い亀裂、輪郭線、線状Z-fighting、軽微なチラツキを切断演出として許容する。通常Capは片面描画とし、正常な正向き閉Shellでは5.2の明示的品質例外を除いて画面規模の面状Z-fighting、可視Cap欠落、非互換対象へのStencil混入を不具合とする | 確定 |
 | D-094 | 支持状態の粒度 | Dormant／Active／SuppressedはObjectの排他的状態ではなく連結な`CutBoundaryRecord`ごとの`ExposureState`とする。LogicalCutOperationの三値`OperationSupportState`と不可逆な`FullyFixedCullInvalidated`はExposureStateを置き換えず、意味上のActive境界集合と実描画Cap集合を別々に導出する。物理分裂、Fragment支持、境界露出、切断操作Cull、Geometry完成度、Work Result採否を独立した状態軸で管理する | 確定 |
-| D-095 | 支持モデルの実装順 | 描画側のDormant判定に必要な純粋データモデル、LogicalCutOperation、OperationSupportState三値集約、Cull失効、Anchor到達性、世代検証、単体テスト、Trace契約をPhase 2より前に実装する。Collider切断、Rigidbody生成、cookはPhase 4に維持する | 確定 |
+| D-095 | 支持モデルの実装順 | 描画側のDormant判定に必要な純粋データモデル、点Anchorの所属Cell／local位置／既存Node対応と半空間継承、LogicalCutOperation、OperationSupportState三値集約、Cull失効、Anchor到達性、世代検証、単体テスト、Trace契約をPhase 2より前に実装する。Collider切断、Rigidbody生成、cookはPhase 4に維持する | 確定 |
 | D-096 | 分類不能時の物理 | 境界の一方でもSupportStateがUnknownならその境界をSuppressedとする。評価が進行可能でFragmentGroup内にUnknownなLogicalFragmentが1つでもあれば物理をPendingSupportClassificationとし、旧物理状態を完全維持する。必要な支持・接続・所属を確定できない場合は既存物理を正式採用した`Stable Unsplit`へ終端する | 確定 |
 | D-097 | 複数切断の物理集約 | 評価中のFragmentGroup物理状態は全LogicalFragmentから`Unknownあり`、`全既知かつAnchoredあり`、`全Detached`の優先順位で集約する。PendingSupportClassification中も既知のActive境界のclip／Stencil／仮Capは許可するが、Group全体の運動は禁止する。正式採用済みの`Stable Unsplit`をUnknownだけでPendingへ戻さない | 確定 |
 | D-098 | Pending Cutと描画集合 | 受付時はCutOperationId、親／基底世代、採用面を持つPending Cutだけを公開し、確定した子・境界のValidator合格後に初めてLogicalCutOperationを原子的に公開する。Operation未公開のPending Cutが置換予定の親と仮表示領域への後続切断は受付けず、要求を保存・再実行しない。制限はOperation公開時に解除し、Geometry Commit／cook／Physics待ちへ延長しない。Operation公開前の表示可能なPending Cut由来Recordと、公開後にOperationSupportState／Cull失効から導出したRecordを`TemporaryRenderCapRecordSet`へ入れ、`ActiveTemporaryBoundarySet`は実在するActiveかつGeometry未Commit境界だけとする。描画コストと2～4枚上限は前者で数え、実Mesh適用とGeometry Commitの同時成功後だけ対応Recordを外す。Operation未公開のまま既存規則で終端失敗した場合だけ当該Pending Cutと仮表示を退役し、親の現在有効な共用Geometry、先行Pending制約、履歴、既存物理を維持する。CutBoundaryRecord、Cut Plane、論理Fragment、LogicalCutOperation、支持・Cull失効履歴はStable側へ保持し、物理Pendingとは独立管理する | 確定 |
@@ -1796,6 +1812,8 @@ T-093の「再切断Reject」は、Operation公開後に新世代の切断を受
 
 T-091では共用Geometryを先行CommitしてTemporary描画対象を回収した後も、対応するPending Cutの受付情報が残り、世代、採用面、対象、所有権および`CutOperationId`が一致する有効な後着Physics成果物を通常どおりCommitできることを確認する。Operation未公開の終端失敗後の後着成果物RejectはT-007のまま維持する。
 
+T-074では単一箱の複数の点Anchorを正側、負側、`anchorEpsilon`境界とその内外へ置き、OnPlaneでは同じ不変Anchor値が正負の各子集合へ1回ずつ継承され、一方の子の再切断が他方の集合を変更しないこと、非identityなConvex local pose、frame写像および頂点並べ替えで位置と分類が変わらないことを確認する。同じT-074のFixtureで、Graph解決を遅らせてもAnchor集合と子を同時に公開でき、`Unknown`／`Incomplete`と`PendingSupportClassification`を経て、Graph解決後は所属を変えずにSupportを更新できることを確認する。T-086では同じSideの無関係なConvexへAnchorを直接配らず、AnchorのないNodeも生存Graph Edge経由なら間接支持され、到達不能なNodeだけがDetachedになることを確認する。T-091では正負Provisionalが同じ旧Cooked Geometryを共有しても分類側だけがAnchorを継承し、再切断で祖先Bufferから復活せず、Final Shape交換と同形状再cookで位置・所属・Node対応が変わらないことを確認する。これらは小さい既存Fixtureへ統合し、実cook、全Asset前処理または新しい試験IDを要求しない。
+
 T-090では入力`EvaluationWorkItem`にSequence fieldが存在しないこと、Descriptor不正／CapacityExceeded／NotAcceptingが次の成功受付のSequenceを進めないこと、受付成功だけが連続Sequenceを内部Recordへ割り当てることを検査する。不透明`WorkToken`からSequenceのbit layoutを推測せず、`TryGetState`の診断SnapshotとTask lifecycle Trace `Value1`が同じ内部値を返すこと、古いToken世代が再利用SlotのSequenceへアクセスできないことも確認する。
 
 T-091では`ProvisionalPhysicsCommitted`、`ProvisionalPhysicsFallbackActivated`、`ProvisionalPhysicsFinalized`、`ProvisionalPhysicsSafetyFrozen`の成功enqueueが各ゲーム結果につき1件、Trace enqueue失敗時は0件＋Run Incompleteで、状態rollback、Trace再試行、重複Eventがないことを検査する。全`FragmentGroupPhysicsState`固定値、公開前Fallback Reason 1～10、公開後Primary Fault Reason 1～4とTraceReasonの一対一対応、Containment Disposition 1～3、CutOperationId、ObjectGenerationをEventから復元し、Unknown state／Reason／Disposition、Generation不一致、同一結果二重消費を原子的にRejectする。公開前Fallback EventはFromStateとToStateが同じ実状態で、`Value1`だけが要求したProvisional状態になることを全開始状態で確認し、存在しないProvisional遷移をTimelineへ作らない。Resource LeaseはActor公開前の全件取得、構築失敗時の逆順rollback、Final交換／連続切断／Generation Reject／Timeout後のShape除去と物理ステップ完了、最後の参照後のGeometry破棄を試し、use-after-free、二重返却、Lease leakがないことを確認する。
@@ -1836,6 +1854,8 @@ T-081ではEarlyFixtureBatchAllocationProfile v1／EarlyFixtureResourceProfile v
 | Phase 7 | 実測後最適化 | 端末別品質、破片LOD、V1 Dispatcher Counter／T-076結果に基づく必要最小限のV2候補、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす。費用学習、aging、動的優先度、work stealing等は実測で必要性が示されたものだけを追加し、不要ならV1を維持する |
 
 Phase 1では同じ親にOperation未公開のPending Cutがある間、その親と仮表示領域への後続切断を受付けず、無関係な確定済み対象の受付は継続する。Phase 1.5で確定子と`LogicalCutOperation`を公開した後は、Geometry Commit／cook／Physics未完了でも公開済みの子を再切断できる。Operation公開前の終端失敗では4.2の限定退役を行い、新しい暫定Fragment ID、Side Path、専用Queue、再試行、代替GeometryをPhase完了条件へ追加しない。
+
+Phase 1の`NoFixedSupport`限定とPhase 0.2の成果物契約は変更しない。Phase 1.5は手書きの初期Logical Convex Cell参照、1個以上のfiniteな点Anchor、Fragment Physics Frame内local位置、既存Graph Node対応から、CellのAnchor集合への半空間継承と、Graph解決待ちを含む到達性更新を純粋データで確認する。Phase 4は同じ契約を実Convex系譜、旧Cooked Geometryを共有するProvisional、Final Shape引継ぎへ接続する。Phase 5.5は固定支持を設定する対象AssetのRecipeで同じ初期対応を生成する。未指定の支持をRuntimeで推測せず、Phase 0.2成果物の再生成または公開Schema変更を要求しない。
 
 Phase 4のcook待ち標準経路はD-132のProvisional Rigidbodyとし、支持分類後のActor／Shape／Constraint生成、旧Cooked Geometry共有、OBB質量近似、外界Collision、物理Actor pose／速度不変のFinal handoff、由来Convex half-space包含検証をT-091まで実装する。支持判定の未完了・実行待ちまたは受付済み処理の一時的な実行枠不足は7.1／7.7の既存Pendingで継続し、必要な支持・接続を確定できないか、要求構成・Backend共有・資源確保・原子的構築・Finalを既存の安全規則で成立させられない場合だけ7.6の既存物理の正式採用で終端できる。Provisionalを現時点で生成できないことだけで後続のFinal物理処理を打ち切らない。Provisional専用再cook、部分Actor公開、同期cook、Final Commit時の物理Actor pose／velocity補正はPhase 4完了条件に含めず、表示側の瞬間的な追従差は許容する。
 
@@ -1888,6 +1908,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 - 共用Cut Geometryはfiniteかつ参照有効で、各Topology Edgeに逆向きの2面、各Topology Vertexに一つの閉fanを持つことを入力準備時に一度検証する。Self-intersection、別Topologyの閉Component間のIntersection／Overlap、Internal／Nested／Coincident、全体反転を許容し、表示とStencilが同じGeometry、winding、Topologyを使用する。不合格入力は切断対象へ登録せず、不正出力は両用途ともCommitしない。用途別Geometry、Runtime修復、符号証明、正規化、Winding上界、Count容量分割を持たない。仮Capは専用Stencil Byteの全8bitを排他利用できる構成だけで`S=(128+W) mod 256`と`S>128`を使用し、成立しない構成ではゲームを開始しない。各Physics Convexは別契約の閉凸形状として自己交差、面反転、退化のない検証に合格するが、Compound内の別Convex同士のIntersection／Overlapは許容する。全成果物は同一入力・Recipe・Blender版から再現可能に生成される。
 
 - 相互に食い込む部品と凹形状を含む代表Assetで、1切断から3個以上のComponent Fragmentが生じても、SurfaceAdjacencyとTopology Anchor付きAttachmentLinkの完全決定表からLogicalFragment、Fixed Support、共用Geometryの物理所有者を再現できる。Endpointが同じ厳密SideのLinkだけをその側へ残し、正負不一致／OnPlane Linkを切断する。Anchor、接続または所属を評価できる間だけPendingとし、確定不能なら利用可能な既存支持・物理・運動・Constraintを正式採用した`Stable Unsplit`へ終端する。Graph確定前は旧物理を維持し、親子履歴だけで接続を決めない。同じCut条件を共有する共通契約済みComponent CapはGeometry Unionなしで同一Stencil互換Groupへ符号を保存して入り、`sum(W_i) > 0`として描画される。正逆相殺による欠落は5.2の品質例外とする。
+
+- 固定支持を設定する入力は、必要な1個以上のFixedSupportAnchorについて初期Logical Convex Cell、Fragment Physics Frame内のfiniteなlocal位置、対応する既存Graph Nodeを明示する。現在所属をCellのAnchor集合で表し、切断ごとにその集合だけを正側／負側／OnPlane両側へ継承する。所属の同時公開とGraph解決待ちは4.2に従い、同じ旧Cooked Geometryを共有する別子、同Sideの無関係なConvex、頂点Bufferまたは共用Geometryの物理所属からAnchorを新設・復活させない。固定支持を設定しない対象には点Anchorを要求せず、直接AnchorがないNodeの間接支持は既存Graph到達性で決める。未指定の支持をRuntimeで推測しない。
 
 - 切断対象として採用するGeometryが6章の共通入力契約に合格する。修正を行う場合は採用した前処理Recipeの範囲で確認し、修正しない不合格入力は切断対象外にできる。未採用の修復方式の実装を完了条件にしない。
 
@@ -1987,8 +2009,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | ProvisionalPhysicsFallbackReason | Provisional公開前の構築失敗専用。固定値`None=0`、`ActorCapacityExceeded=1`、`ShapeCapacityExceeded=2`、`ConstraintCapacityExceeded=3`、`GeometryShareUnsupported=4`、`ShapeClassificationInvalid=5`、`MassApproximationInvalid=6`、`ActorCreationFailed=7`、`ConstraintCreationFailed=8`、`GenerationMismatch=9`、`AtomicCommitFailed=10`。Fallback EventではNoneを禁止し、公開後異常へ流用しない |
 | ProvisionalRuntimeFaultReason | 公開後FaultのPrimary原因専用。固定値`None=0`、`NonFiniteActorState=1`、`ConstraintRuntimeFailed=2`、`LinearVelocityLimitExceeded=3`、`AngularVelocityLimitExceeded=4`。複数原因はこの順を優先し、同順位は最小LogicalFragmentLocalIdを選ぶ。Safety Frozen EventではNoneを禁止する |
 | ProvisionalFaultContainmentDisposition | Primary Fault後の封じ込め結果。固定値`Invalid=0`、`RestoredAtomicGroupSnapshotAndFrozen=1`、`RemovedFromPhysicsSceneSnapshotUnavailable=2`、`RemovedFromPhysicsSceneContainmentValidationFailed=3`。Faultを検出した現Step値は使用しない。Safety Frozen EventではInvalidを禁止し、Primary Fault Reasonと独立に記録する |
-| FixedSupportAnchor | 地面、壁、基礎、固定Constraintなど、切断後も動かしてはいけない支持位置を表す点または小領域 |
-| FixedSupportGraph | CutConnectivityGraphへ構造接続とFixedSupportAnchor Rootを付加した軽量View。切断後に生存SurfaceAdjacency／AttachmentLinkを通って固定Anchorから到達可能なGraph成分を判定する |
+| FixedSupportAnchor | 地面、壁、基礎、固定Constraintなど、切断後も動かしてはいけない支持位置を表すfiniteな点。初期Logical Convex Cell、そのFragment Physics Frame内local位置、初期の既存FixedSupportGraph Node対応を不変入力とする。現在所属は各CellのAnchor集合で表す。同一Cellに複数の点Anchorを持て、OnPlaneでは同じAnchor値を正負の各子集合へ1回ずつ継承する |
+| FixedSupportGraph | CutConnectivityGraphへ構造接続と、現在Logical Convex Cellが継承するFixedSupportAnchorを入力時に明示した既存NodeのRootとして付加する軽量View。切断後に生存SurfaceAdjacency／AttachmentLinkを通って固定Anchorから到達可能なGraph成分を判定する。共用Geometryの物理所属からRootを補わない |
 | LargeStructuralProp | 完全倒壊を許すとレベル、安全性、物理予算を破綻させやすいため、Structural Slab近似、Safety Tether Tree、World回転制限、SafetyFrozen Fallbackを適用する大型固定プロップ分類 |
 | StructuralSlabComponent | 建物外周等を構成する独立閉鎖可能な厚い壁板Component。装飾付き共用Cut Geometryと原則1個、入口等では少数の直方体Physics Convexを対応させ、下端Ground Anchorと外周Attachment Linkを持てる |
 | Synthetic Ground Root | Safety Tether Treeだけが持つ非物理・非Fragmentの論理Root。LogicalFragmentLocalIdを持たず、Tree構造とTraceの親Node IDでは予約値0で表す。直下にはGround Anchorへ到達する固定Fragmentだけを接続する |
