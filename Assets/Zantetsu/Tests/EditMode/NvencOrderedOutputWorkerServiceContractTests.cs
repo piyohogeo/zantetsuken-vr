@@ -724,6 +724,49 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Teardown_PoisonDuringTeardown_NoNormalStopEvidence()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                // Park the teardown inside TearDown() so the main thread can
+                // poison deterministically while the teardown is still running.
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.Teardown.Entered = entered;
+                h.Teardown.Release = release;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
+
+                // Poison while the teardown is still executing.
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // The teardown returns normally, but the process is already
+                // Poisoned: no normal-stop evidence may be published.
+                release.Set();
+
+                WaitSettled(h.SettledEvent, "worker did not stop after the poison");
+                h.WaitForPhysicalStop("worker did not physically exit");
+
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.True);
+            }
+        }
+
+        [Test]
         public void Teardown_AfterStop_TerminalAndTeardownRejected()
         {
             using (Harness h = Harness.Create())

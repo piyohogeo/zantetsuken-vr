@@ -303,13 +303,17 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Normal-stop evidence: true only after the worker completed the
-        /// injected teardown exactly once and verified the success receipt.
-        /// False for an external Poison stop and for a fatal stop, which are
-        /// never reported as normal teardown completion, and false until the
-        /// teardown has actually completed.
+        /// Normal-stop evidence: true only while the worker has completed the
+        /// injected teardown exactly once, verified the success receipt, and
+        /// the process is neither Poisoned nor carrying a fatal failure. An
+        /// external Poison or fatal stop — even one that linearized during
+        /// the teardown call — is never reported as normal completion, and
+        /// the property is false until the teardown has actually completed.
         /// </summary>
-        internal bool TeardownCompleted => Volatile.Read(ref _teardownCompleted);
+        internal bool TeardownCompleted =>
+            Volatile.Read(ref _teardownCompleted)
+            && Volatile.Read(ref _fatalFailure) == null
+            && !_processState.IsPoisoned;
 
         /// <summary>
         /// Non-waiting physical stop confirmation: true only once the worker
@@ -534,11 +538,37 @@ namespace Zantetsu.Observability
                 return false;
             }
 
+            // Run the injected teardown exactly once on the worker thread,
+            // outside the gate, so a slow teardown never blocks a concurrent
+            // Poison transition.
+            NvencOutputWorkerTeardownReceipt receipt;
             try
             {
-                // Runs exactly once on the worker thread, after the collected
-                // terminal has converged and all records are exhausted.
-                NvencOutputWorkerTeardownReceipt receipt = _teardown.TearDown();
+                receipt = _teardown.TearDown();
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return false;
+            }
+
+            // Order the post-teardown Receipt verification and the normal-stop
+            // evidence publication with the Poison transition on the shared
+            // process-state gate. A Poison that linearized during TearDown()
+            // either fails this acquisition (poisoned) or is observed by the
+            // re-check below, so no normal evidence is published.
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
 
                 // Verify immediately: a null, foreign, or invalid receipt is
                 // the first exact failure; it poisons and publishes no
@@ -550,7 +580,8 @@ namespace Zantetsu.Observability
                 }
 
                 // Publish the normal-stop evidence with release semantics only
-                // after the receipt is verified.
+                // after the receipt is verified and the non-poisoned state is
+                // confirmed under the gate.
                 Volatile.Write(ref _teardownCompleted, true);
                 return true;
             }
@@ -559,6 +590,10 @@ namespace Zantetsu.Observability
                 RecordFatalFailure(ex);
                 _processState.TryPoison();
                 return false;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
             }
         }
 
