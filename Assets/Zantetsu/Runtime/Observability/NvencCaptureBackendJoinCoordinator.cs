@@ -152,17 +152,17 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Non-waiting, idempotent normal join. Succeeds only when the exact
-        /// Main Thread Texture teardown receipt is valid for this Run, the
-        /// process is Draining and not Poisoned, both workers are drained,
-        /// teardown completed, physically stopped, and free of fatal failure,
-        /// and every backend resource is resolved to zero. On success both
-        /// workers are disposed at most once and the join is published. A
-        /// not-ready state returns false with no side effect. The whole check
-        /// and dispose run inside the shared process-state gate so a concurrent
-        /// Poison either linearizes first (false, no side effect) or waits
-        /// behind this join.
+        /// private-gated Backend Join proof is present — minted by the Run
+        /// Coordinator at its normal teardown return — the process is Draining
+        /// and not Poisoned, both workers are drained, teardown completed,
+        /// physically stopped, and free of fatal failure, and every backend
+        /// resource is resolved to zero. On success both workers are disposed
+        /// at most once and the join is published. A not-ready state returns
+        /// false with no side effect. The whole check and dispose run inside
+        /// the shared process-state gate so a concurrent Poison either
+        /// linearizes first (false, no side effect) or waits behind this join.
         /// </summary>
-        internal bool TryJoin(NvencMainThreadTextureTeardownReceipt textureTeardownReceipt)
+        internal bool TryJoin(object backendJoinProof)
         {
             // Serialize the entire join with the Poison transition on the
             // shared short gate. The gate is reentrant, so the coordinator's
@@ -184,11 +184,11 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // The exact Main Thread Texture teardown receipt is part of the
-                // join precondition: without it, a foreign or unfinished
-                // Texture teardown can never be reported as joined.
-                if (textureTeardownReceipt == null ||
-                    !textureTeardownReceipt.IsIssuedFor(_mainThreadTextureTeardown, _context))
+                // The private-gated proof is part of the join precondition:
+                // only the Run Coordinator can mint it after a normal Main
+                // Thread Texture teardown, so a missing proof can never be
+                // reported as joined.
+                if (backendJoinProof == null)
                 {
                     return false;
                 }

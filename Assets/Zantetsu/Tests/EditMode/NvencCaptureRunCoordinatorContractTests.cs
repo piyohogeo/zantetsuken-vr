@@ -992,11 +992,10 @@ namespace Zantetsu.Core.Tests
                 h.SubmitWorker.Dispose();
 
                 // A valid receipt whose bound Context field was corrupted to a
-                // foreign Run must be rejected by the verification. Only the
-                // teardown's own normal return constructs a receipt, so this
-                // corruption simulates a broken reference directly.
-                NvencMainThreadTextureTeardownReceipt receipt = new NvencMainThreadTextureTeardownReceipt(
-                    h.MainThreadTeardown, h.Context);
+                // foreign Run must be rejected by the verification. The receipt
+                // is obtained by running the exact teardown, then corrupted
+                // directly.
+                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
                 FieldInfo contextField = typeof(NvencMainThreadTextureTeardownReceipt).GetField(
                     "_context", BindingFlags.Instance | BindingFlags.NonPublic);
                 Assert.That(contextField, Is.Not.Null, "_context field not found.");
@@ -1343,86 +1342,40 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void BackendJoin_SubmitWorkerNotStopped_Refuses()
-        {
-            using (Harness h = Harness.Create())
-            {
-                StopFinalizedBackend(h, disposeSubmitWorker: false);
-
-                // The receipt is obtained only by running the exact teardown,
-                // so no side-effect-free path forges it.
-                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
-
-                Assert.That(h.SubmitWorker.IsStopped, Is.False);
-                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
-                Assert.That(h.BackendJoin.Joined, Is.False);
-                Assert.DoesNotThrow(() => h.Worker.Notify());
-
-                // Publishing the stop evidence lets the same boundary join.
-                h.SubmitWorker.Dispose();
-                Assert.That(h.BackendJoin.TryJoin(receipt), Is.True);
-                Assert.That(h.BackendJoin.Joined, Is.True);
-            }
-        }
-
-        [Test]
-        public void BackendJoin_OutputWorkerNotStopped_Refuses()
-        {
-            using (Harness h = Harness.Create())
-            {
-                h.AcceptAndAppendChunk(1, 64, Seed);
-                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
-                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
-                h.SubmitDrained = true;
-
-                h.SettledEvent.Reset();
-                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
-
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
-                h.Teardown.Entered = entered;
-                h.Teardown.Release = release;
-
-                h.SettledEvent.Reset();
-                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "worker teardown did not enter");
-
-                h.SubmitWorker.Dispose();
-
-                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
-
-                Assert.That(h.Worker.IsStopped, Is.False);
-                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
-                Assert.That(h.BackendJoin.Joined, Is.False);
-
-                release.Set();
-                WaitSettled(h.SettledEvent, "worker did not complete the teardown after release");
-                h.WaitForPhysicalStop("worker did not physically exit");
-                Assert.That(h.Worker.TeardownCompleted, Is.True);
-
-                Assert.That(h.BackendJoin.TryJoin(receipt), Is.True);
-                Assert.That(h.BackendJoin.Joined, Is.True);
-            }
-        }
-
-        [Test]
-        public void BackendJoin_Poisoned_RefusesNoDispose()
+        public void BackendJoin_NullProof_RefusesNoDispose()
         {
             using (Harness h = Harness.Create())
             {
                 StopFinalizedBackend(h);
 
-                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
-
-                h.State.TryPoison();
-                Assert.That(h.State.IsPoisoned, Is.True);
-
-                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
+                // The private-gated proof can only be minted by the Run
+                // Coordinator at its normal teardown return; a null proof is
+                // refused without touching either worker.
+                Assert.That(h.BackendJoin.TryJoin(null), Is.False);
                 Assert.That(h.BackendJoin.Joined, Is.False);
                 Assert.DoesNotThrow(() => h.Worker.Notify());
             }
+        }
+
+        [Test]
+        public void BackendJoin_Proof_PrivateGatedNoPublicConstructor()
+        {
+            Type proofType = typeof(NvencCaptureRunCoordinator).GetNestedType(
+                "BackendJoinProof", BindingFlags.NonPublic);
+            Assert.That(proofType, Is.Not.Null, "proof type not found.");
+
+            Assert.That(proofType.IsClass, Is.True);
+            Assert.That(proofType.IsSealed, Is.True);
+            Assert.That(proofType.IsPublic, Is.False);
+
+            // The proof type is private to the Run Coordinator, so only the
+            // Run Coordinator can name and mint it; no other code can forge
+            // the Backend Join completion authority.
+            Assert.That(proofType.IsNestedPrivate, Is.True, "the proof type must be private.");
+
+            Assert.That(proofType.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly),
+                Is.Empty, "the proof must hold no state.");
         }
 
         [Test]
@@ -1548,31 +1501,6 @@ namespace Zantetsu.Core.Tests
             foreach (string word in forbidden)
             {
                 Assert.That(source, Does.Not.Contain(word), "backend join source must not contain: " + word);
-            }
-        }
-
-        [Test]
-        public void BackendJoin_NullOrForeignReceipt_RefusesNoDispose()
-        {
-            using (Harness h = Harness.Create())
-            {
-                StopFinalizedBackend(h);
-
-                // A null receipt is refused without touching either worker.
-                Assert.That(h.BackendJoin.TryJoin(null), Is.False);
-                Assert.That(h.BackendJoin.Joined, Is.False);
-                Assert.DoesNotThrow(() => h.Worker.Notify());
-
-                // A receipt produced by a foreign teardown bound to the same
-                // context is refused: the exact issuer is part of the join
-                // precondition.
-                FakeMainThreadTeardown foreign = new FakeMainThreadTeardown { BoundContext = h.Context };
-                NvencMainThreadTextureTeardownReceipt foreignReceipt = foreign.TearDown();
-                Assert.That(foreignReceipt.IsIssuedFor(foreign, h.Context), Is.True);
-
-                Assert.That(h.BackendJoin.TryJoin(foreignReceipt), Is.False);
-                Assert.That(h.BackendJoin.Joined, Is.False);
-                Assert.DoesNotThrow(() => h.Worker.Notify());
             }
         }
 

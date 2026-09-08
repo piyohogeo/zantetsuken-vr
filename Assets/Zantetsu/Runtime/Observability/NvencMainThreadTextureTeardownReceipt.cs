@@ -11,11 +11,12 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A receipt can be constructed only by the exact teardown implementation
-    /// as it returns normally from <see cref="INvencMainThreadTextureTeardown.TearDown"/>.
-    /// There is no side-effect-free factory: obtaining a receipt therefore
-    /// requires the teardown call itself to have completed, so a raw receipt
-    /// can never be forged into the Backend Join boundary without a teardown.
+    /// A receipt is produced by the exact teardown implementation as its
+    /// normal <see cref="INvencMainThreadTextureTeardown.TearDown"/> return and
+    /// is used only to verify that return value. It is <em>not</em> the
+    /// Backend Join completion authority: the join requires a private-gated
+    /// proof that only the Run Coordinator can mint after it has verified a
+    /// valid receipt, so forging a receipt alone can never publish a join.
     /// </para>
     /// <para>
     /// <see cref="IsIssuedFor"/> recomputes the exact-reference correlation of
@@ -32,11 +33,11 @@ namespace Zantetsu.Observability
         private readonly NvencRunChunkContext _context;
 
         /// <summary>
-        /// Constructed only from the exact teardown implementation at its
-        /// normal return: null-checks the exact teardown implementation and
-        /// the exact bound Run chunk context, and requires the implementation
-        /// to be actually bound to that context, so a semantically invalid
-        /// receipt can never be produced. Holds only those two references.
+        /// Called by the exact teardown implementation as its normal return:
+        /// null-checks the exact teardown implementation and the exact bound
+        /// Run chunk context, and requires the implementation to be actually
+        /// bound to that context, so a semantically invalid receipt can never
+        /// be produced. Holds only those two references.
         /// </summary>
         internal NvencMainThreadTextureTeardownReceipt(
             INvencMainThreadTextureTeardown issuedBy,

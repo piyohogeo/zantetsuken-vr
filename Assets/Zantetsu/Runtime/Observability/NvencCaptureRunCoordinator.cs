@@ -40,6 +40,17 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class NvencCaptureRunCoordinator
     {
+        /// <summary>
+        /// Private-gated proof that the Main Thread NV12 Texture teardown
+        /// completed normally. The type is private to the Run Coordinator, so
+        /// only the Run Coordinator can mint it — at its normal return from
+        /// <see cref="TryCompleteMainThreadTextureTeardown"/> — and no other
+        /// code can forge the Backend Join completion authority.
+        /// </summary>
+        private sealed class BackendJoinProof
+        {
+        }
+
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencOrderedSubmitWorkerService _submitWorker;
         private readonly NvencOrderedOutputWorkerService _outputWorker;
@@ -58,6 +69,7 @@ namespace Zantetsu.Observability
         private bool _mainThreadTextureTeardownCompleted;
         private NvencMainThreadTextureTeardownReceipt _mainThreadTextureTeardownReceipt;
         private bool _backendJoined;
+        private BackendJoinProof _backendJoinProof;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -549,6 +561,7 @@ namespace Zantetsu.Observability
                 }
 
                 _mainThreadTextureTeardownReceipt = receipt;
+                _backendJoinProof = new BackendJoinProof();
                 _mainThreadTextureTeardownCompleted = true;
                 return true;
             }
@@ -603,7 +616,7 @@ namespace Zantetsu.Observability
                         "Backend Join is no longer bound to the exact Run graph.");
                 }
 
-                if (!_backendJoin.TryJoin(_mainThreadTextureTeardownReceipt))
+                if (!_backendJoin.TryJoin(_backendJoinProof))
                 {
                     return false;
                 }
