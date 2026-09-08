@@ -55,26 +55,6 @@ namespace Zantetsu.Core.Tests
                     h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
                     Is.True);
 
-                // Queued: freeze the slot state before the worker takes it, then
-                // reset and stop the one-shot worker cleanly without poisoning.
-                {
-                    FakeCommitter committer = new FakeCommitter();
-                    ManualResetEventSlim settled = new ManualResetEventSlim(false);
-                    NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
-
-                    SetField(service, "_state", (int)NvencRunPublicationPlanCommitServiceState.Queued);
-                    Assert.That(service.TrySubmit(operation), Is.False);
-                    Assert.That(committer.CallCount, Is.EqualTo(0));
-
-                    SetField(service, "_state", (int)NvencRunPublicationPlanCommitServiceState.Accepting);
-                    service.Notify();
-                    WaitForServiceStop(service, "queued-slot worker did not stop");
-                    Assert.That(committer.CallCount, Is.EqualTo(0));
-
-                    service.Dispose();
-                    settled.Dispose();
-                }
-
                 // Executing: hold the worker inside Execute.
                 {
                     ManualResetEventSlim entered = new ManualResetEventSlim(false);
@@ -112,6 +92,27 @@ namespace Zantetsu.Core.Tests
                     Assert.That(service.TrySubmit(operation), Is.False);
 
                     Assert.That(service.TryCollect(out _), Is.True);
+                    service.Dispose();
+                    settled.Dispose();
+                }
+
+                // Queued: freeze the slot state before the worker takes it, then
+                // poison to stop the one-shot worker cleanly (run last because it
+                // poisons the shared process state).
+                {
+                    FakeCommitter committer = new FakeCommitter();
+                    ManualResetEventSlim settled = new ManualResetEventSlim(false);
+                    NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
+
+                    SetField(service, "_state", (int)NvencRunPublicationPlanCommitServiceState.Queued);
+                    Assert.That(service.TrySubmit(operation), Is.False);
+                    Assert.That(committer.CallCount, Is.EqualTo(0));
+
+                    Assert.That(h.State.TryPoison(), Is.True);
+                    service.Notify();
+                    WaitForServiceStop(service, "queued-slot worker did not stop");
+                    Assert.That(committer.CallCount, Is.EqualTo(0));
+
                     service.Dispose();
                     settled.Dispose();
                 }
@@ -378,6 +379,166 @@ namespace Zantetsu.Core.Tests
                 // A second collection is false with a null result.
                 Assert.That(service.TryCollect(out NvencRunPublicationPlanCommitExecutionResult second), Is.False);
                 Assert.That(second, Is.Null);
+
+                service.Dispose();
+                settled.Dispose();
+            }
+        }
+
+        [Test]
+        public void EarlyNotify_ThenSubmit_StillConverges()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+
+                FakeCommitter committer = new FakeCommitter();
+                ManualResetEventSlim settled = new ManualResetEventSlim(false);
+                NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
+
+                // An early notification while Accepting must not terminate the
+                // Worker; a later submission must still converge.
+                service.Notify();
+
+                Assert.That(service.TrySubmit(operation), Is.True);
+                WaitSettled(settled, "service did not converge after early notify + submit");
+                WaitForServiceStop(service, "worker did not stop after early notify + submit");
+
+                Assert.That(committer.CallCount, Is.EqualTo(1));
+                Assert.That(service.TryCollect(out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
+                Assert.That(result, Is.Not.Null);
+                Assert.That(result.Status, Is.EqualTo(NvencRunPublicationPlanCommitStatus.Committed));
+
+                service.Dispose();
+                settled.Dispose();
+            }
+        }
+
+        [Test]
+        public void Claim_LinearizedWithPoison_NoCoordinatorContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+
+                FakeCommitter committer = new FakeCommitter();
+                ManualResetEventSlim settled = new ManualResetEventSlim(false);
+                NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
+
+                // Freeze the slot to Queued so the Worker attempts to claim it.
+                SetField(service, "_state", (int)NvencRunPublicationPlanCommitServiceState.Queued);
+                SetField(service, "_operation", operation);
+
+                // Hold the shared process-state gate, then poison and release:
+                // the Worker's Queued -> Executing claim is serialized with the
+                // Poison on the same gate, so the Poison that linearized first
+                // means the coordinator is never contacted.
+                Assert.That(h.State.TryBeginSubmitStep(), Is.True);
+                service.Notify();
+                Assert.That(h.State.TryPoison(), Is.True);
+                h.State.EndSubmitStep();
+
+                WaitSettled(settled, "worker did not stop after the claim/poison race");
+                WaitForServiceStop(service, "worker did not stop after the claim/poison race");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(committer.CallCount, Is.EqualTo(0));
+                Assert.That(service.TryCollect(out NvencRunPublicationPlanCommitExecutionResult result), Is.False);
+                Assert.That(result, Is.Null);
+
+                service.Dispose();
+                settled.Dispose();
+            }
+        }
+
+        [Test]
+        public void TryCollect_ConcurrentCallers_ExactlyOneSucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+
+                FakeCommitter committer = new FakeCommitter();
+                ManualResetEventSlim settled = new ManualResetEventSlim(false);
+                NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
+
+                Assert.That(service.TrySubmit(operation), Is.True);
+                WaitSettled(settled, "service did not settle");
+                WaitForServiceStop(service, "worker did not stop");
+
+                int successes = 0;
+                int nullResults = 0;
+                ManualResetEventSlim start = new ManualResetEventSlim(false);
+                Thread[] threads = new Thread[2];
+                for (int i = 0; i < threads.Length; i++)
+                {
+                    threads[i] = new Thread(() =>
+                    {
+                        start.Wait(WatchdogTimeoutMs);
+                        if (service.TryCollect(out NvencRunPublicationPlanCommitExecutionResult r))
+                        {
+                            Interlocked.Increment(ref successes);
+                            if (r == null)
+                            {
+                                Interlocked.Increment(ref nullResults);
+                            }
+                        }
+                    })
+                    {
+                        IsBackground = true,
+                    };
+                    threads[i].Start();
+                }
+
+                start.Set();
+                foreach (Thread t in threads)
+                {
+                    Assert.That(t.Join(WatchdogTimeoutMs), Is.True, "collector thread did not exit");
+                }
+
+                Assert.That(Volatile.Read(ref successes), Is.EqualTo(1));
+                Assert.That(Volatile.Read(ref nullResults), Is.EqualTo(0));
+                Assert.That(service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Collected));
+
+                service.Dispose();
+                settled.Dispose();
+                start.Dispose();
+            }
+        }
+
+        [Test]
+        public void TryCollect_AfterExternalPoison_NoResult()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+
+                FakeCommitter committer = new FakeCommitter();
+                ManualResetEventSlim settled = new ManualResetEventSlim(false);
+                NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
+
+                Assert.That(service.TrySubmit(operation), Is.True);
+                WaitSettled(settled, "service did not settle");
+                WaitForServiceStop(service, "worker did not stop");
+                Assert.That(service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Completed));
+
+                // An external Poison after publication still prevents a normal
+                // result from being collected.
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(service.TryCollect(out NvencRunPublicationPlanCommitExecutionResult result), Is.False);
+                Assert.That(result, Is.Null);
 
                 service.Dispose();
                 settled.Dispose();

@@ -56,7 +56,11 @@ namespace Zantetsu.Observability
     /// and the exact process-state correlation on the shared process-state gate,
     /// and notifies the Worker only after the slot is claimed; a foreign
     /// process, an invalid operation, or a second submission is rejected with
-    /// no side effect and never contacts the coordinator. This type owns only
+    /// no side effect and never contacts the coordinator. An early or spurious
+    /// notification while Accepting only re-parks the Worker, so a later
+    /// submission still converges, and the Queued-to-Executing claim is
+    /// linearized with the Poison transition on the same gate so a Poison that
+    /// linearized first never contacts the coordinator. This type owns only
     /// its own thread and signal and never touches a Session Lease, the
     /// Run's local registry slot, or any evidence disposition.
     /// </para>
@@ -145,26 +149,56 @@ namespace Zantetsu.Observability
         /// Non-waiting, at-most-once collection of the exact Execution Result.
         /// Returns the result only while the Service is
         /// <see cref="NvencRunPublicationPlanCommitServiceState.Completed"/>;
-        /// a fatal or Poisoned Service never yields a result. On success the
-        /// internal operation and result references are cleared before
-        /// <see cref="NvencRunPublicationPlanCommitServiceState.Collected"/> is
-        /// published, so the request slot is empty before the terminal becomes
-        /// observable and a second collection returns false with a null result.
+        /// a fatal or Poisoned Service never yields a result. Collection is
+        /// linearized with the Poison transition on the shared process-state
+        /// gate, and the <see cref="NvencRunPublicationPlanCommitServiceState.Completed"/>
+        /// to <see cref="NvencRunPublicationPlanCommitServiceState.Collected"/>
+        /// transition is an atomic claim, so exactly one caller succeeds even
+        /// under concurrency. On success the internal operation and result
+        /// references are cleared before the terminal becomes observable, and a
+        /// second collection returns false with a null result.
         /// </summary>
         internal bool TryCollect(out NvencRunPublicationPlanCommitExecutionResult result)
         {
             result = null;
 
-            if (Volatile.Read(ref _state) != (int)NvencRunPublicationPlanCommitServiceState.Completed)
+            // Linearize collection with the Poison transition: a Poison that
+            // linearized first yields no normal result.
+            if (!_processState.TryBeginSubmitStep())
             {
                 return false;
             }
 
-            result = _result;
-            _operation = null;
-            _result = null;
-            Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Collected);
-            return true;
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                // At-most-once atomic claim: exactly one caller transitions
+                // Completed -> Collected, even under concurrency.
+                if (Interlocked.CompareExchange(
+                        ref _state,
+                        (int)NvencRunPublicationPlanCommitServiceState.Collected,
+                        (int)NvencRunPublicationPlanCommitServiceState.Completed)
+                    != (int)NvencRunPublicationPlanCommitServiceState.Completed)
+                {
+                    return false;
+                }
+
+                // The Worker published the result before Completed, so the exact
+                // result is visible here; clear the slot before it becomes
+                // observable.
+                result = _result;
+                _operation = null;
+                _result = null;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
         }
 
         /// <summary>
@@ -275,86 +309,132 @@ namespace Zantetsu.Observability
         {
             try
             {
-                // Park until a submission (or a cleanup notification) arrives.
-                _signal.Wait();
-
-                // Step 1: check Poison first. A Poison that linearized before
-                // the Worker ran yields no execution and no terminal.
-                if (_processState.IsPoisoned)
+                while (true)
                 {
-                    EnterFailedWithoutResult();
-                    return;
-                }
+                    // Park until a submission (or an early/cleanup notification)
+                    // arrives.
+                    _signal.Wait();
 
-                if (Volatile.Read(ref _state) != (int)NvencRunPublicationPlanCommitServiceState.Queued)
-                {
-                    // A cleanup notification with no queued request: stop cleanly.
-                    return;
-                }
-
-                // Step 2: confirm Queued -> Executing.
-                Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Executing);
-
-                // Step 3: run the Execution Coordinator exactly once, outside
-                // any gate, so a slow commit never blocks a concurrent Poison
-                // transition.
-                NvencRunPublicationPlanCommitExecutionResult result;
-                try
-                {
-                    result = _coordinator.Execute(_operation);
-                }
-                catch (Exception ex)
-                {
-                    RecordFatalFailure(ex);
-                    _processState.TryPoison();
-                    return;
-                }
-
-                // Step 4: settle on the shared process-state gate so the result
-                // verification and Completed publication are serialized with a
-                // concurrent Poison transition. A Poison that linearized during
-                // Execute fails this entry without publishing a normal terminal.
-                if (!_processState.TryBeginSettlement())
-                {
-                    EnterFailedWithoutResult();
-                    return;
-                }
-
-                try
-                {
+                    // Fast-path Poison check: an external Poison never contacts
+                    // the coordinator.
                     if (_processState.IsPoisoned)
                     {
                         EnterFailedWithoutResult();
                         return;
                     }
 
-                    // Step 5: verify the result is non-null, valid, and bound to
-                    // the exact Execution Coordinator and the exact operation.
-                    if (result == null
-                        || !result.IsValid
-                        || !ReferenceEquals(result.IssuedBy, _coordinator)
-                        || !ReferenceEquals(result.Attempt.Operation, _operation))
+                    int state = Volatile.Read(ref _state);
+                    if (state == (int)NvencRunPublicationPlanCommitServiceState.Accepting)
                     {
-                        throw new InvalidOperationException(
-                            "The Publication Plan commit Execution Coordinator returned a null, foreign, or corrupt result.");
+                        // An early or spurious notification with no queued
+                        // request: re-park instead of terminating, so a later
+                        // submission still converges.
+                        continue;
                     }
 
-                    // Step 6: hold the result first, then publish Completed.
-                    _result = result;
-                    Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Completed);
-                }
-                catch (Exception ex)
-                {
-                    RecordFatalFailure(ex);
-                    _processState.TryPoison();
+                    if (state != (int)NvencRunPublicationPlanCommitServiceState.Queued)
+                    {
+                        return;
+                    }
+
+                    // Claim Queued -> Executing inside the shared process-state
+                    // gate, blocking only until the short gate is free, so the
+                    // claim is ordered with a concurrent Poison: a Poison that
+                    // linearized first fails this entry without contacting the
+                    // coordinator, while a successful claim makes this attempt
+                    // in-flight.
+                    if (!_processState.TryBeginSettlement())
+                    {
+                        EnterFailedWithoutResult();
+                        return;
+                    }
+
+                    try
+                    {
+                        if (_processState.IsPoisoned)
+                        {
+                            EnterFailedWithoutResult();
+                            return;
+                        }
+
+                        if (Volatile.Read(ref _state) != (int)NvencRunPublicationPlanCommitServiceState.Queued)
+                        {
+                            return;
+                        }
+
+                        Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Executing);
+                    }
+                    finally
+                    {
+                        _processState.EndSettlement();
+                    }
+
+                    // Step 3: run the Execution Coordinator exactly once, outside
+                    // any gate, so a slow commit never blocks a concurrent Poison
+                    // transition. Once claimed, this is an in-flight attempt; a
+                    // Poison that lands during Execute is settled below.
+                    NvencRunPublicationPlanCommitExecutionResult result;
+                    try
+                    {
+                        result = _coordinator.Execute(_operation);
+                    }
+                    catch (Exception ex)
+                    {
+                        RecordFatalFailure(ex);
+                        _processState.TryPoison();
+                        return;
+                    }
+
+                    // Step 4: settle on the shared process-state gate so the
+                    // result verification and Completed publication are
+                    // serialized with a concurrent Poison transition. A Poison
+                    // that linearized during Execute fails this entry without
+                    // publishing a normal terminal.
+                    if (!_processState.TryBeginSettlement())
+                    {
+                        EnterFailedWithoutResult();
+                        return;
+                    }
+
+                    try
+                    {
+                        if (_processState.IsPoisoned)
+                        {
+                            EnterFailedWithoutResult();
+                            return;
+                        }
+
+                        // Step 5: verify the result is non-null, valid, and bound
+                        // to the exact Execution Coordinator and the exact
+                        // operation.
+                        if (result == null
+                            || !result.IsValid
+                            || !ReferenceEquals(result.IssuedBy, _coordinator)
+                            || !ReferenceEquals(result.Attempt.Operation, _operation))
+                        {
+                            throw new InvalidOperationException(
+                                "The Publication Plan commit Execution Coordinator returned a null, foreign, or corrupt result.");
+                        }
+
+                        // Step 6: hold the result first, then publish Completed.
+                        _result = result;
+                        Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Completed);
+                    }
+                    catch (Exception ex)
+                    {
+                        RecordFatalFailure(ex);
+                        _processState.TryPoison();
+                        return;
+                    }
+                    finally
+                    {
+                        _processState.EndSettlement();
+                    }
+
+                    // Step 7: one-shot — the Worker physically stops after
+                    // publishing.
                     return;
                 }
-                finally
-                {
-                    _processState.EndSettlement();
-                }
-
-                // Step 7: the Worker physically stops after publishing.
             }
             catch (Exception ex)
             {
