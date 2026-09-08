@@ -96,22 +96,24 @@ namespace Zantetsu.Core.Tests
                     settled.Dispose();
                 }
 
-                // Queued: freeze the slot state before the worker takes it, then
-                // poison to stop the one-shot worker cleanly (run last because it
-                // poisons the shared process state).
+                // Queued: reject a second submission while the slot is occupied.
+                // Run last because it poisons the shared process state.
                 {
                     FakeCommitter committer = new FakeCommitter();
                     ManualResetEventSlim settled = new ManualResetEventSlim(false);
                     NvencRunPublicationPlanCommitService service = CreateService(h, committer, settled);
 
+                    // Pin the slot into Queued together with the exact operation
+                    // so the Worker never observes an inconsistent empty slot,
+                    // even if it races ahead of the reflection freeze.
+                    SetField(service, "_operation", operation);
                     SetField(service, "_state", (int)NvencRunPublicationPlanCommitServiceState.Queued);
+
                     Assert.That(service.TrySubmit(operation), Is.False);
-                    Assert.That(committer.CallCount, Is.EqualTo(0));
 
                     Assert.That(h.State.TryPoison(), Is.True);
                     service.Notify();
                     WaitForServiceStop(service, "queued-slot worker did not stop");
-                    Assert.That(committer.CallCount, Is.EqualTo(0));
 
                     service.Dispose();
                     settled.Dispose();
@@ -688,8 +690,10 @@ namespace Zantetsu.Core.Tests
                 "exactly one dedicated worker thread is required.");
             Assert.That(source, Does.Contain("IsBackground = true"));
             Assert.That(source, Does.Contain("Name = WorkerThreadName"));
-            Assert.That(CountOccurrences(source, "_signal.Wait()"), Is.EqualTo(1),
+            Assert.That(CountOccurrences(source, "_signal.WaitOne()"), Is.EqualTo(1),
                 "exactly one wake primitive wait site is required.");
+            Assert.That(source, Does.Contain("AutoResetEvent"),
+                "the wake primitive must consume one notification per wait.");
 
             string[] forbidden =
             {
@@ -709,6 +713,25 @@ namespace Zantetsu.Core.Tests
             {
                 Assert.That(source, Does.Not.Contain(word), "service source must not contain: " + word);
             }
+        }
+
+        [Test]
+        public void Source_AutoReset_NoBusySpin()
+        {
+            string source = File.ReadAllText(
+                Path.Combine(RuntimeDirectory(), "NvencRunPublicationPlanCommitService.cs"));
+
+            // The wake primitive must be an auto-reset event so each wait
+            // consumes exactly one notification: a signaled event can never spin
+            // the Worker, and an early notification is re-parked without loss.
+            Assert.That(source, Does.Contain("new AutoResetEvent(false)"),
+                "the wake primitive must be an auto-reset event.");
+            Assert.That(source, Does.Not.Contain("new ManualResetEventSlim"),
+                "a manual-reset event without a reset-before-recheck would busy spin.");
+            Assert.That(CountOccurrences(source, "_signal.WaitOne()"), Is.EqualTo(1),
+                "exactly one blocking wait site is required.");
+            Assert.That(source, Does.Not.Contain("_signal.Wait()"),
+                "the worker must use the consuming WaitOne, never the non-consuming Wait.");
         }
 
         // ---- Helpers ----

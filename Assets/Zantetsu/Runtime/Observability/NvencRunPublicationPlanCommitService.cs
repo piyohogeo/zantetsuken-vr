@@ -71,7 +71,7 @@ namespace Zantetsu.Observability
 
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencRunPublicationPlanCommitExecutionCoordinator _coordinator;
-        private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
+        private readonly AutoResetEvent _signal = new AutoResetEvent(false);
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -151,19 +151,20 @@ namespace Zantetsu.Observability
         /// <see cref="NvencRunPublicationPlanCommitServiceState.Completed"/>;
         /// a fatal or Poisoned Service never yields a result. Collection is
         /// linearized with the Poison transition on the shared process-state
-        /// gate, and the <see cref="NvencRunPublicationPlanCommitServiceState.Completed"/>
-        /// to <see cref="NvencRunPublicationPlanCommitServiceState.Collected"/>
-        /// transition is an atomic claim, so exactly one caller succeeds even
-        /// under concurrency. On success the internal operation and result
-        /// references are cleared before the terminal becomes observable, and a
-        /// second collection returns false with a null result.
+        /// gate, which also serializes concurrent collectors, so exactly one
+        /// caller succeeds. On success the internal operation and result
+        /// references are cleared before
+        /// <see cref="NvencRunPublicationPlanCommitServiceState.Collected"/> is
+        /// published, so the request slot is empty before the terminal becomes
+        /// observable and a second collection returns false with a null result.
         /// </summary>
         internal bool TryCollect(out NvencRunPublicationPlanCommitExecutionResult result)
         {
             result = null;
 
-            // Linearize collection with the Poison transition: a Poison that
-            // linearized first yields no normal result.
+            // Linearize collection with the Poison transition and serialize
+            // concurrent collectors on the shared non-waiting gate: a Poison
+            // that linearized first yields no normal result.
             if (!_processState.TryBeginSubmitStep())
             {
                 return false;
@@ -171,28 +172,20 @@ namespace Zantetsu.Observability
 
             try
             {
-                if (_processState.IsPoisoned)
+                if (_processState.IsPoisoned
+                    || Volatile.Read(ref _state) != (int)NvencRunPublicationPlanCommitServiceState.Completed)
                 {
                     return false;
                 }
 
-                // At-most-once atomic claim: exactly one caller transitions
-                // Completed -> Collected, even under concurrency.
-                if (Interlocked.CompareExchange(
-                        ref _state,
-                        (int)NvencRunPublicationPlanCommitServiceState.Collected,
-                        (int)NvencRunPublicationPlanCommitServiceState.Completed)
-                    != (int)NvencRunPublicationPlanCommitServiceState.Completed)
-                {
-                    return false;
-                }
-
-                // The Worker published the result before Completed, so the exact
-                // result is visible here; clear the slot before it becomes
-                // observable.
+                // Empty the slot before the terminal becomes observable: the
+                // exact result is published by the Worker before Completed, so
+                // it is visible here; both references are cleared and only then
+                // is Collected released.
                 result = _result;
                 _operation = null;
                 _result = null;
+                Volatile.Write(ref _state, (int)NvencRunPublicationPlanCommitServiceState.Collected);
                 return true;
             }
             finally
@@ -311,9 +304,11 @@ namespace Zantetsu.Observability
             {
                 while (true)
                 {
-                    // Park until a submission (or an early/cleanup notification)
-                    // arrives.
-                    _signal.Wait();
+                    // Park until a notification arrives. The auto-reset event
+                    // consumes exactly one notification per wait, so a signaled
+                    // event never causes a busy spin and an early notification
+                    // is simply re-parked.
+                    _signal.WaitOne();
 
                     // Fast-path Poison check: an external Poison never contacts
                     // the coordinator.
