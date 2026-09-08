@@ -1750,6 +1750,38 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void TraceFreeze_SealRetainedAcrossFailedAppend()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+
+                // First call: an invalid checkpoint fails after the seal.
+                FreezeTerminalCheckpoint badCheckpoint = new FreezeTerminalCheckpoint(1000, 1, 1, 1, 999);
+                Assert.Throws<ArgumentException>(
+                    () => h.RunCoordinator.TryCompleteTraceFreeze(forced, badCheckpoint, out _));
+
+                // The seal was issued exactly once and retained.
+                TraceRunSealReceipt sealedOnce = h.TraceLogger.IssuedSealReceipt;
+                Assert.That(sealedOnce, Is.Not.Null);
+
+                // A normal retry converges to Frozen reusing the retained seal;
+                // the seal is never re-issued.
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, MakeCheckpoint(h), out NvencTraceFreezeReceipt receipt), Is.True);
+                Assert.That(h.TraceRecorder.State, Is.EqualTo(TraceFlightRecorderState.Frozen));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+
+                Assert.That(ReferenceEquals(h.TraceLogger.IssuedSealReceipt, sealedOnce), Is.True);
+                Assert.That(ReferenceEquals(receipt.SealReceipt, sealedOnce), Is.True);
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]

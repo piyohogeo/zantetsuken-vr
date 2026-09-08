@@ -101,21 +101,20 @@ namespace Zantetsu.Observability
         internal TraceFlightRecorder Recorder => _recorder;
 
         /// <summary>
-        /// O(1) exact-issuance check: true only for the exact seal receipt this
-        /// coordinator issued by sealing the run trace, without exposing it.
+        /// O(1) exact-issuance check: true only for the exact seal receipt and
+        /// the exact terminal buffer this coordinator issued and appended, and
+        /// only while the recorder is actually Frozen. This single predicate
+        /// re-confirms the actual seal and Frozen transition without exposing
+        /// the logger, recorder, seal receipt, or terminal buffer.
         /// </summary>
-        internal bool IsIssuedSealReceipt(TraceRunSealReceipt sealReceipt)
+        internal bool IsIssuedFreeze(
+            TraceRunSealReceipt sealReceipt,
+            FreezeTerminalTraceBuffer terminalBuffer)
         {
-            return sealReceipt != null && ReferenceEquals(_issuedSealReceipt, sealReceipt);
-        }
-
-        /// <summary>
-        /// O(1) exact-issuance check: true only for the exact terminal buffer
-        /// this coordinator appended to the recorder, without exposing it.
-        /// </summary>
-        internal bool IsIssuedTerminalBuffer(FreezeTerminalTraceBuffer terminalBuffer)
-        {
-            return terminalBuffer != null && ReferenceEquals(_issuedTerminalBuffer, terminalBuffer);
+            return sealReceipt != null && terminalBuffer != null
+                && ReferenceEquals(_issuedSealReceipt, sealReceipt)
+                && ReferenceEquals(_issuedTerminalBuffer, terminalBuffer)
+                && _recorder.State == TraceFlightRecorderState.Frozen;
         }
 
         /// <summary>
@@ -123,7 +122,8 @@ namespace Zantetsu.Observability
         /// append, verifies <see cref="TraceFlightRecorderState.Frozen"/>, and
         /// issues the exact-correlated receipt. Idempotent after success: a
         /// later call returns the same receipt without re-sealing or
-        /// re-appending. The seal is issued at most once and retained; a failed
+        /// re-appending, but only while the retained receipt's full correlation
+        /// still holds. The seal is issued at most once and retained; a failed
         /// append retries through the recorder's <c>AwaitingFreezeTerminal</c>
         /// path with the retained seal receipt, never re-sealing. A seal or
         /// append exception is propagated unchanged.
@@ -135,6 +135,13 @@ namespace Zantetsu.Observability
         {
             if (_issuedReceipt != null)
             {
+                if (!_issuedReceipt.IsValid
+                    || !_issuedReceipt.IsIssuedFor(this, _context, _sessionIssue))
+                {
+                    throw new InvalidOperationException(
+                        "The retained Trace freeze receipt is no longer valid.");
+                }
+
                 receipt = _issuedReceipt;
                 return true;
             }

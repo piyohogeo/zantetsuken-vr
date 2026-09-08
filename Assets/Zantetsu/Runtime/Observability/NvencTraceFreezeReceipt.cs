@@ -115,16 +115,11 @@ namespace Zantetsu.Observability
             }
 
             // Exact binding to the actual seal and Frozen transition: the seal
-            // receipt must be the exact one the issuing logger published, the
-            // terminal buffer must be the exact one the coordinator appended,
-            // and the recorder must actually be Frozen. A foreign seal receipt
-            // or same-Run buffer that was never appended therefore fails.
-            if (_issuedBy.Logger == null
-                || !ReferenceEquals(_sealReceipt, _issuedBy.Logger.IssuedSealReceipt)
-                || !_issuedBy.IsIssuedSealReceipt(_sealReceipt)
-                || !_issuedBy.IsIssuedTerminalBuffer(_terminalBuffer)
-                || _issuedBy.Recorder == null
-                || _issuedBy.Recorder.State != TraceFlightRecorderState.Frozen)
+            // receipt must be the exact one the coordinator issued and the
+            // terminal buffer the exact one it appended, with the recorder
+            // actually Frozen. A foreign seal receipt or same-Run buffer that
+            // was never appended therefore fails.
+            if (!_issuedBy.IsIssuedFreeze(_sealReceipt, _terminalBuffer))
             {
                 return false;
             }
