@@ -9,8 +9,12 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A normal return issues a success receipt for this exact implementation.
-    /// The implementation performs no internal retry, regeneration, fallback
+    /// The implementation is bound to the exact Run chunk whose Textures it
+    /// owns, and exposes that binding through the O(1)
+    /// <see cref="IsBoundTo"/> predicate, so a teardown built for a foreign
+    /// Run is rejected before any side effect. A normal return issues a
+    /// success receipt for this exact implementation and context. The
+    /// implementation performs no internal retry, regeneration, fallback
     /// Texture, second thread, <c>Task</c>, or ThreadPool use, and never
     /// touches the native resources owned by the Output Worker (native
     /// unregister, Encoder Session, Output Buffer, Events), the OS lock, the
@@ -29,9 +33,17 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Destroys the eight Unity-managed NV12 Textures of the exact Run
         /// exactly once, on the Main Thread, and returns the success receipt
-        /// for this exact implementation. A mid-way exception propagates
-        /// unchanged with no receipt.
+        /// for this exact implementation and its bound Run chunk context. A
+        /// mid-way exception propagates unchanged with no receipt.
         /// </summary>
         NvencMainThreadTextureTeardownReceipt TearDown();
+
+        /// <summary>
+        /// O(1) exact-reference binding predicate: true only when this
+        /// teardown owns the Textures of the exact Run chunk context passed
+        /// in. Used by the coordinator to reject a foreign-Run teardown
+        /// before any side effect, without exposing the held context.
+        /// </summary>
+        bool IsBoundTo(NvencRunChunkContext context);
     }
 }

@@ -95,6 +95,12 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "The Registry Slot must be bound to the exact Run chunk context.", nameof(registrySlot));
             }
+
+            if (!_mainThreadTextureTeardown.IsBoundTo(_context))
+            {
+                throw new ArgumentException(
+                    "The Main Thread texture teardown must be bound to the exact Run chunk context.", nameof(mainThreadTextureTeardown));
+            }
         }
 
         /// <summary>
@@ -511,7 +517,7 @@ namespace Zantetsu.Observability
                     throw;
                 }
 
-                if (receipt == null || !receipt.IsIssuedFor(_mainThreadTextureTeardown))
+                if (receipt == null || !receipt.IsIssuedFor(_mainThreadTextureTeardown, _context))
                 {
                     _processState.TryPoison();
                     throw new InvalidOperationException(

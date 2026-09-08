@@ -991,7 +991,10 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
-                h.MainThreadTeardown.ReceiptToReturn = NvencMainThreadTextureTeardownReceipt.Issue(new FakeMainThreadTeardown());
+                // A receipt issued by the same teardown but for a foreign Run
+                // chunk context must be rejected.
+                h.MainThreadTeardown.ReceiptToReturn = NvencMainThreadTextureTeardownReceipt.Issue(
+                    h.MainThreadTeardown, MakeContext(h.State));
 
                 Assert.Throws<InvalidOperationException>(() => h.RunCoordinator.TryCompleteMainThreadTextureTeardown());
                 Assert.That(h.State.IsPoisoned, Is.True);
@@ -1090,8 +1093,9 @@ namespace Zantetsu.Core.Tests
 
             FieldInfo[] fields = type.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-            Assert.That(fields, Has.Length.EqualTo(1));
+            Assert.That(fields, Has.Length.EqualTo(2));
             Assert.That(fields[0].FieldType, Is.EqualTo(typeof(INvencMainThreadTextureTeardown)));
+            Assert.That(fields[1].FieldType, Is.EqualTo(typeof(NvencRunChunkContext)));
 
             string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencMainThreadTextureTeardownReceipt.cs"));
             string[] forbidden =
@@ -1108,12 +1112,24 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MainThreadTeardown_Receipt_IsIssuedFor_RejectsNullAndForeign()
         {
-            FakeMainThreadTeardown issued = new FakeMainThreadTeardown();
-            NvencMainThreadTextureTeardownReceipt receipt = issued.TearDown();
+            using (Harness h = Harness.Create())
+            {
+                FakeMainThreadTeardown issued = h.MainThreadTeardown;
+                NvencMainThreadTextureTeardownReceipt receipt = issued.TearDown();
 
-            Assert.That(receipt.IsIssuedFor(issued), Is.True);
-            Assert.That(receipt.IsIssuedFor(null), Is.False);
-            Assert.That(receipt.IsIssuedFor(new FakeMainThreadTeardown()), Is.False);
+                Assert.That(receipt.IsIssuedFor(issued, h.Context), Is.True);
+
+                // Null issuer or null context are rejected without throwing.
+                Assert.That(receipt.IsIssuedFor(null, h.Context), Is.False);
+                Assert.That(receipt.IsIssuedFor(issued, null), Is.False);
+
+                // A foreign issuer bound to the same context is rejected.
+                FakeMainThreadTeardown foreignIssuer = new FakeMainThreadTeardown { BoundContext = h.Context };
+                Assert.That(receipt.IsIssuedFor(foreignIssuer, h.Context), Is.False);
+
+                // The same issuer bound to a foreign context is rejected.
+                Assert.That(receipt.IsIssuedFor(issued, MakeContext(h.State)), Is.False);
+            }
         }
 
         [Test]
@@ -1199,6 +1215,25 @@ namespace Zantetsu.Core.Tests
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
                     h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown));
+            }
+        }
+
+        [Test]
+        public void Constructor_ForeignContextTextureTeardown_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // A teardown bound to a foreign Run chunk context, even with
+                // the same process state, must be rejected before any side
+                // effect: otherwise Run A could destroy Run B's Textures and
+                // still validate its own receipt.
+                FakeMainThreadTeardown foreignTeardown = new FakeMainThreadTeardown
+                {
+                    BoundContext = MakeContext(h.State),
+                };
+
+                Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown));
             }
         }
 
@@ -1542,6 +1577,7 @@ namespace Zantetsu.Core.Tests
         private sealed class FakeMainThreadTeardown : INvencMainThreadTextureTeardown
         {
             private int _callCount;
+            internal NvencRunChunkContext BoundContext;
             internal Exception ExceptionToThrow;
             internal bool ReturnNull;
             internal NvencMainThreadTextureTeardownReceipt ReceiptToReturn;
@@ -1552,6 +1588,11 @@ namespace Zantetsu.Core.Tests
 
             internal int ExecutingThreadId;
             internal string ExecutingThreadName;
+
+            public bool IsBoundTo(NvencRunChunkContext context)
+            {
+                return BoundContext != null && context != null && ReferenceEquals(BoundContext, context);
+            }
 
             public NvencMainThreadTextureTeardownReceipt TearDown()
             {
@@ -1584,7 +1625,7 @@ namespace Zantetsu.Core.Tests
                     return ReceiptToReturn;
                 }
 
-                return NvencMainThreadTextureTeardownReceipt.Issue(this);
+                return NvencMainThreadTextureTeardownReceipt.Issue(this, BoundContext);
             }
         }
 
@@ -1681,7 +1722,7 @@ namespace Zantetsu.Core.Tests
                 Teardown = new FakeTeardown();
                 Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker, Teardown);
 
-                MainThreadTeardown = new FakeMainThreadTeardown();
+                MainThreadTeardown = new FakeMainThreadTeardown { BoundContext = Context };
                 RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown);
 
                 SettledEvent = new ManualResetEventSlim(false);
