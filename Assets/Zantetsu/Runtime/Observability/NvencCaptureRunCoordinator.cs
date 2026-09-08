@@ -1112,6 +1112,24 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only when the supplied operation is the exact retained
+        /// publication plan commit operation and this Run Coordinator is bound
+        /// to the exact supplied process state. ReferenceEquals only, no side
+        /// effect, and neither the process state nor the retained operation is
+        /// exposed as a property.
+        /// </summary>
+        internal bool IsPublicationPlanCommitOperationBoundTo(
+            NvencRunPublicationPlanCommitOperation operation,
+            NvencCaptureProcessState processState)
+        {
+            return operation != null
+                && processState != null
+                && ReferenceEquals(_publicationPlanCommitOperation, operation)
+                && ReferenceEquals(_processState, processState);
+        }
+
+        /// <summary>
         /// Exception-safe post-commit issuance binding predicate: the exact
         /// retained operation identity plus the exact Trace freeze receipt,
         /// the exact finalization result, the exact one-artifact full-frame
