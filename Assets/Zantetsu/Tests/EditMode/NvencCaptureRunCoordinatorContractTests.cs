@@ -1700,6 +1700,30 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void TraceFreeze_LeaseLostAfterFreeze_LowerCoordinatorFailsClosed()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out _), Is.True);
+
+                // Release the Ownership Lease: the lower freeze coordinator's
+                // retained receipt no longer correlates, so directly re-running
+                // TryCompleteFreeze must fail closed rather than return true.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.TraceFreeze.TryCompleteFreeze(forced, checkpoint, out _));
+            }
+        }
+
+        [Test]
         public void TraceFreezeReceipt_ForeignSealReceipt_Rejected()
         {
             using (Harness h = Harness.Create())
@@ -1751,7 +1775,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void TraceFreeze_SealRetainedAcrossFailedAppend()
+        public void TraceFreeze_PostSealValidationFailure_SealRetained()
         {
             using (Harness h = Harness.Create())
             {
@@ -1762,7 +1786,9 @@ namespace Zantetsu.Core.Tests
 
                 ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
 
-                // First call: an invalid checkpoint fails after the seal.
+                // First call: an invalid checkpoint fails the freeze terminal
+                // coordinator's post-seal pre-validation, so the terminal
+                // append and the AwaitingFreezeTerminal transition never occur.
                 FreezeTerminalCheckpoint badCheckpoint = new FreezeTerminalCheckpoint(1000, 1, 1, 1, 999);
                 Assert.Throws<ArgumentException>(
                     () => h.RunCoordinator.TryCompleteTraceFreeze(forced, badCheckpoint, out _));

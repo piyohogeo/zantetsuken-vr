@@ -96,10 +96,6 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(_sessionIssue, sessionIssue);
         }
 
-        internal TraceLogger Logger => _logger;
-
-        internal TraceFlightRecorder Recorder => _recorder;
-
         /// <summary>
         /// O(1) exact-issuance check: true only for the exact seal receipt and
         /// the exact terminal buffer this coordinator issued and appended, and
