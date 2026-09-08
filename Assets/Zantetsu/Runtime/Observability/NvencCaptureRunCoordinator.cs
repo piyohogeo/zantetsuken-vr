@@ -42,12 +42,31 @@ namespace Zantetsu.Observability
     {
         /// <summary>
         /// Private-gated proof that the Main Thread NV12 Texture teardown
-        /// completed normally. The type is private to the Run Coordinator, so
-        /// only the Run Coordinator can mint it — at its normal return from
-        /// <see cref="TryCompleteMainThreadTextureTeardown"/> — and no other
-        /// code can forge the Backend Join completion authority.
+        /// completed normally. The type is visible to the Backend Join for
+        /// exact-type checking, but it can only be minted by the Run
+        /// Coordinator — at its normal return from
+        /// <see cref="TryCompleteMainThreadTextureTeardown"/> — because the
+        /// constructor demands a mint token whose type is private to the Run
+        /// Coordinator.
         /// </summary>
-        private sealed class BackendJoinProof
+        internal sealed class BackendJoinProof
+        {
+            internal BackendJoinProof(object token)
+            {
+                if (token == null || token.GetType() != typeof(TextureTeardownMintToken))
+                {
+                    throw new ArgumentException(
+                        "The Backend Join proof can only be minted by the Run Coordinator.", nameof(token));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Mint capability held only by the Run Coordinator: the type is
+        /// private, so only the Run Coordinator can construct it and thereby
+        /// mint a <see cref="BackendJoinProof"/>.
+        /// </summary>
+        private sealed class TextureTeardownMintToken
         {
         }
 
@@ -561,7 +580,7 @@ namespace Zantetsu.Observability
                 }
 
                 _mainThreadTextureTeardownReceipt = receipt;
-                _backendJoinProof = new BackendJoinProof();
+                _backendJoinProof = new BackendJoinProof(new TextureTeardownMintToken());
                 _mainThreadTextureTeardownCompleted = true;
                 return true;
             }
@@ -580,11 +599,11 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Non-waiting, idempotent Backend Join entry. It is admitted only
         /// after the Main Thread NV12 Texture teardown completed, and then
-        /// passes the retained teardown receipt to the exact Backend Join
-        /// boundary; on its success the join is latched. A not-ready condition
-        /// or a gate contention returns false with no side effect, and the
-        /// Main Thread Texture teardown boundary is never contacted before it
-        /// has completed.
+        /// passes the minted private-gated Backend Join proof to the exact
+        /// Backend Join boundary; on its success the join is latched. A
+        /// not-ready condition or a gate contention returns false with no side
+        /// effect, and the Main Thread Texture teardown boundary is never
+        /// contacted before it has completed.
         /// </summary>
         internal bool TryCompleteBackendJoin()
         {

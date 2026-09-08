@@ -162,7 +162,7 @@ namespace Zantetsu.Observability
         /// the shared process-state gate so a concurrent Poison either
         /// linearizes first (false, no side effect) or waits behind this join.
         /// </summary>
-        internal bool TryJoin(object backendJoinProof)
+        internal bool TryJoin(NvencCaptureRunCoordinator.BackendJoinProof backendJoinProof)
         {
             // Serialize the entire join with the Poison transition on the
             // shared short gate. The gate is reentrant, so the coordinator's

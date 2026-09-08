@@ -1342,15 +1342,19 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void BackendJoin_NullProof_RefusesNoDispose()
+        public void BackendJoin_NullOrForeignObjectProof_RefusesNoDispose()
         {
             using (Harness h = Harness.Create())
             {
                 StopFinalizedBackend(h);
 
-                // The private-gated proof can only be minted by the Run
-                // Coordinator at its normal teardown return; a null proof is
-                // refused without touching either worker.
+                // The proof can only be minted by the Run Coordinator: a null
+                // token or a plain object is refused at construction, so it can
+                // never reach the join boundary.
+                Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator.BackendJoinProof(null));
+                Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator.BackendJoinProof(new object()));
+
+                // A null proof is refused without touching either worker.
                 Assert.That(h.BackendJoin.TryJoin(null), Is.False);
                 Assert.That(h.BackendJoin.Joined, Is.False);
                 Assert.DoesNotThrow(() => h.Worker.Notify());
@@ -1361,17 +1365,29 @@ namespace Zantetsu.Core.Tests
         public void BackendJoin_Proof_PrivateGatedNoPublicConstructor()
         {
             Type proofType = typeof(NvencCaptureRunCoordinator).GetNestedType(
-                "BackendJoinProof", BindingFlags.NonPublic);
+                "BackendJoinProof", BindingFlags.Public | BindingFlags.NonPublic);
             Assert.That(proofType, Is.Not.Null, "proof type not found.");
 
             Assert.That(proofType.IsClass, Is.True);
             Assert.That(proofType.IsSealed, Is.True);
             Assert.That(proofType.IsPublic, Is.False);
 
-            // The proof type is private to the Run Coordinator, so only the
-            // Run Coordinator can name and mint it; no other code can forge
-            // the Backend Join completion authority.
-            Assert.That(proofType.IsNestedPrivate, Is.True, "the proof type must be private.");
+            // The single constructor demands the private mint token, so only
+            // the Run Coordinator can construct the proof and no other code can
+            // forge the join authority.
+            ConstructorInfo[] constructors = proofType.GetConstructors(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(constructors, Has.Length.EqualTo(1));
+
+            ParameterInfo[] parameters = constructors[0].GetParameters();
+            Assert.That(parameters, Has.Length.EqualTo(1));
+            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(object)),
+                "the proof constructor must take an opaque token object.");
+
+            Type tokenType = typeof(NvencCaptureRunCoordinator).GetNestedType(
+                "TextureTeardownMintToken", BindingFlags.NonPublic);
+            Assert.That(tokenType, Is.Not.Null, "mint token type not found.");
+            Assert.That(tokenType.IsNestedPrivate, Is.True, "the mint token must be private.");
 
             Assert.That(proofType.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly),
