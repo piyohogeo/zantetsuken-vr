@@ -28,10 +28,11 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor, h.Context, h.SubmitWorker));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null, h.Context, h.SubmitWorker));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, null, h.SubmitWorker));
-                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, null));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(null, h.Processor, h.Context, h.SubmitWorker, h.Teardown));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, null, h.Context, h.SubmitWorker, h.Teardown));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, null, h.SubmitWorker, h.Teardown));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, null, h.Teardown));
+                Assert.Throws<ArgumentNullException>(() => new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, h.SubmitWorker, null));
             }
         }
 
@@ -535,6 +536,249 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Normal teardown ----
+
+        [Test]
+        public void Teardown_AfterCollectedAbandon_ExecutesOnceOnWorkerThread_StopsNormally()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+
+                Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                Assert.That(outcome.IsAbandoned, Is.True);
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Worker.TryGetFailure(out _), Is.False);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.Teardown.ExecutingThreadName, Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+
+                // At-most-once: no second request, receipt, or stop.
+                Assert.That(h.Worker.TryRequestTeardown(), Is.False);
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void Teardown_PendingProcessorWork_NotStartedThenRetries()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // Rent the record while Running, before the drain, so the
+                // pools are still open; it is enqueued only after collection.
+                NvencSubmitToOutputRecord pending = h.CreateFailedBeforeSubmit(
+                    1, NvencFailedBeforeSubmitReason.GpuConversionFailed);
+
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                // A failed-before-submit record enqueued without a
+                // notification leaves the processor with pending work
+                // deterministically, which must block the teardown request.
+                h.Enqueue(pending);
+                Assert.That(h.Processor.HasPendingWork, Is.True);
+
+                Assert.That(h.Worker.TryRequestTeardown(), Is.False);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(0));
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.False);
+
+                // Drain the pending record and park again; the retry is then
+                // admitted and completes the normal teardown.
+                h.SettledEvent.Reset();
+                h.Worker.Notify();
+                WaitSettled(h.SettledEvent, "worker did not drain the pending record");
+                Assert.That(h.Processor.HasPendingWork, Is.False);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after teardown");
+
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+                Assert.That(h.Worker.IsStopped, Is.True);
+            }
+        }
+
+        [Test]
+        public void Teardown_Exception_ExactFailurePoisonsNoStopEvidence()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                InvalidOperationException boom = new InvalidOperationException("teardown boom");
+                h.Teardown.ExceptionToThrow = boom;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not stop after the teardown exception");
+                h.WaitForPhysicalStop("worker did not physically exit");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Worker.TryGetFailure(out Exception captured), Is.True);
+                Assert.That(ReferenceEquals(captured, boom), Is.True);
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Teardown_NullReceipt_PoisonsNoStopEvidence()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                h.Teardown.ReturnNull = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not stop after the null receipt");
+                h.WaitForPhysicalStop("worker did not physically exit");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Worker.TryGetFailure(out _), Is.True);
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Teardown_ForeignReceipt_PoisonsNoStopEvidence()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                // A receipt issued by a different teardown implementation.
+                h.Teardown.ReceiptToReturn = NvencOutputWorkerTeardownReceipt.Issue(new FakeTeardown());
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not stop after the foreign receipt");
+                h.WaitForPhysicalStop("worker did not physically exit");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Worker.TryGetFailure(out _), Is.True);
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Teardown_ExternalPoisonFirst_NoTeardownContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.Worker.TryRequestTeardown(), Is.False);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(0));
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+            }
+        }
+
+        [Test]
+        public void Teardown_AfterStop_TerminalAndTeardownRejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit");
+                Assert.That(h.Worker.IsStopped, Is.True);
+
+                // After the physical stop no further terminal or teardown
+                // request is admitted.
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+                Assert.That(h.Worker.TryRequestTeardown(), Is.False);
+            }
+        }
+
+        [Test]
+        public void TeardownReceipt_TypeShape_ExactIssuerOnly()
+        {
+            Type type = typeof(NvencOutputWorkerTeardownReceipt);
+
+            Assert.That(type.IsClass, Is.True);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+
+            FieldInfo[] fields = type.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields, Has.Length.EqualTo(1));
+            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(INvencOutputWorkerTeardown)));
+            Assert.That(fields[0].FieldType, Is.Not.EqualTo(typeof(IntPtr)));
+            Assert.That(fields[0].FieldType, Is.Not.EqualTo(typeof(byte[])));
+        }
+
+        [Test]
+        public void TeardownReceipt_IsIssuedFor_RejectsNullAndForeign()
+        {
+            FakeTeardown issued = new FakeTeardown();
+            NvencOutputWorkerTeardownReceipt receipt = issued.TearDown();
+
+            Assert.That(receipt.IsIssuedFor(issued), Is.True);
+            Assert.That(receipt.IsIssuedFor(null), Is.False);
+            Assert.That(receipt.IsIssuedFor(new FakeTeardown()), Is.False);
+        }
+
         [Test]
         public void Source_ExactlyOneThread_NoPollingNoExtraQueue()
         {
@@ -592,6 +836,29 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(source, Does.Contain(".IsAlive"));
             Assert.That(source, Does.Not.Contain("_workerStopped"));
+        }
+
+        [Test]
+        public void Source_Teardown_NoTextureDestroyJoinTracePlanPublicationRegistry()
+        {
+            string worker = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOrderedOutputWorkerService.cs"));
+            string teardown = File.ReadAllText(Path.Combine(RuntimeDirectory(), "INvencOutputWorkerTeardown.cs"));
+            string receipt = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencOutputWorkerTeardownReceipt.cs"));
+
+            // The teardown path performs no Unity Texture destroy, backend
+            // TryJoin, Trace, Registry commit, Plan, or Publication work.
+            Assert.That(worker, Does.Not.Contain("Destroy"));
+            Assert.That(worker, Does.Not.Contain("Texture"));
+            Assert.That(worker, Does.Not.Contain("TryJoin"));
+            Assert.That(worker, Does.Not.Contain("Trace"));
+            Assert.That(worker, Does.Not.Contain("Plan"));
+            Assert.That(worker, Does.Not.Contain("Publication"));
+            Assert.That(worker, Does.Not.Contain("Registry"));
+
+            // The boundary and receipt hold no native handle or byte array.
+            Assert.That(teardown, Does.Not.Contain("IntPtr"));
+            Assert.That(receipt, Does.Not.Contain("IntPtr"));
+            Assert.That(receipt, Does.Not.Contain("byte["));
         }
 
         // -------------------------------------------------------------------
@@ -809,6 +1076,53 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeTeardown : INvencOutputWorkerTeardown
+        {
+            private int _callCount;
+            internal Exception ExceptionToThrow;
+            internal bool ReturnNull;
+            internal NvencOutputWorkerTeardownReceipt ReceiptToReturn;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            internal string ExecutingThreadName;
+
+            public NvencOutputWorkerTeardownReceipt TearDown()
+            {
+                Interlocked.Increment(ref _callCount);
+                ExecutingThreadName = Thread.CurrentThread.Name;
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (Entered != null)
+                {
+                    Entered.Set();
+                }
+
+                if (Release != null)
+                {
+                    Release.Wait(WatchdogTimeoutMs);
+                }
+
+                if (ReturnNull)
+                {
+                    return null;
+                }
+
+                if (ReceiptToReturn != null)
+                {
+                    return ReceiptToReturn;
+                }
+
+                return NvencOutputWorkerTeardownReceipt.Issue(this);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -827,6 +1141,7 @@ namespace Zantetsu.Core.Tests
             internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue;
             internal NvencOrderedOutputProcessor Processor;
             internal NvencOrderedOutputWorkerService Worker;
+            internal FakeTeardown Teardown;
             internal ManualResetEventSlim SettledEvent;
 
             internal NvencRunChunkFinalizationCoordinator Coordinator;
@@ -890,7 +1205,8 @@ namespace Zantetsu.Core.Tests
                     SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
                 SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
 
-                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker);
+                Teardown = new FakeTeardown();
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker, Teardown);
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
                 Worker.Settled += _settledHandler;
@@ -908,6 +1224,14 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.SettledEvent.Wait(WatchdogTimeoutMs), Is.True, "worker did not settle initially");
 
                 return h;
+            }
+
+            // Write-only convenience: publishes the Submit Worker's monotonic
+            // drain completion evidence deterministically so a terminal
+            // request can be admitted.
+            internal bool SubmitDrained
+            {
+                set => SetField(SubmitWorker, "_drainCompleted", value);
             }
 
             internal NvencSubmitToOutputRecord CreateSubmitted(long frameId)

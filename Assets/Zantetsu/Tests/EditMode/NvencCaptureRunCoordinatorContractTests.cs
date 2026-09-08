@@ -524,6 +524,122 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Output Worker teardown request ----
+
+        [Test]
+        public void Teardown_Finalized_ExecutesOnceThenStopsNormally()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                Assert.That(outcome.IsFinalized, Is.True);
+                Assert.That(h.Slot.HasRegisteredEntry, Is.True);
+
+                // The teardown is admitted only after collection + registration.
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.Teardown.ExecutingThreadName, Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+
+                // At-most-once: no second request, collection, or registration.
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.False);
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void Teardown_Abandoned_ExecutesOnceThenStops_NoRegistryEntry()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
+
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                Assert.That(outcome.IsAbandoned, Is.True);
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+                Assert.That(h.Worker.TeardownCompleted, Is.True);
+                Assert.That(h.Worker.IsStopped, Is.True);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(h.Slot.HasRegisteredEntry, Is.False);
+            }
+        }
+
+        [Test]
+        public void Teardown_BeforeTerminalCollected_RefusesNoContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                // Terminal requested but not yet collected: teardown refused.
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.False);
+                Assert.That(h.Teardown.CallCount, Is.EqualTo(0));
+                Assert.That(h.Worker.TeardownCompleted, Is.False);
+                Assert.That(h.Worker.IsStopped, Is.False);
+            }
+        }
+
+        [Test]
+        public void Teardown_AfterStop_TerminalAndTeardownRejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+                Assert.That(h.Worker.IsStopped, Is.True);
+
+                // After the physical stop no further terminal or teardown
+                // request is admitted.
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.False);
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]
@@ -884,6 +1000,35 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeTeardown : INvencOutputWorkerTeardown
+        {
+            private int _callCount;
+            internal Exception ExceptionToThrow;
+            internal NvencOutputWorkerTeardownReceipt ReceiptToReturn;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            internal string ExecutingThreadName;
+
+            public NvencOutputWorkerTeardownReceipt TearDown()
+            {
+                Interlocked.Increment(ref _callCount);
+                ExecutingThreadName = Thread.CurrentThread.Name;
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (ReceiptToReturn != null)
+                {
+                    return ReceiptToReturn;
+                }
+
+                return NvencOutputWorkerTeardownReceipt.Issue(this);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -906,6 +1051,7 @@ namespace Zantetsu.Core.Tests
             internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue;
             internal NvencOrderedOutputProcessor Processor;
             internal NvencOrderedOutputWorkerService Worker;
+            internal FakeTeardown Teardown;
 
             internal NvencCaptureWorkSlotPool SubmitWorkSlots;
             internal NvencEncodeSampleSlotPool SubmitSampleSlots;
@@ -972,7 +1118,8 @@ namespace Zantetsu.Core.Tests
                     SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
                 SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
 
-                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker);
+                Teardown = new FakeTeardown();
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker, Teardown);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot);
 

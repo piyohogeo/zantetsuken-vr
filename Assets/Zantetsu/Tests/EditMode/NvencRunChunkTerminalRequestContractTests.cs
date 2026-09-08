@@ -285,31 +285,31 @@ namespace Zantetsu.Core.Tests
                     MakeIssue(), otherSink, new NvencRunChunkFinalizationCoordinator(otherWriter), "chunk/other");
 
                 Assert.Throws<ArgumentException>(() =>
-                    new NvencOrderedOutputWorkerService(h.State, h.Processor, otherContext, h.SubmitWorker));
+                    new NvencOrderedOutputWorkerService(h.State, h.Processor, otherContext, h.SubmitWorker, h.Teardown));
 
                 // A Submit Worker bound to a different process state.
                 NvencCaptureProcessState foreignState = new NvencCaptureProcessState();
                 NvencOrderedSubmitWorkerService foreignStateSubmitWorker = BuildSubmitWorker(foreignState);
                 Assert.Throws<ArgumentException>(() =>
-                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, foreignStateSubmitWorker));
+                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, foreignStateSubmitWorker, h.Teardown));
 
                 // A Submit Worker bound to the same process state but a
                 // different Submit-to-Output Queue.
                 NvencOrderedSubmitWorkerService foreignQueueSubmitWorker = BuildSubmitWorker(h.State);
                 Assert.Throws<ArgumentException>(() =>
-                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, foreignQueueSubmitWorker));
+                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, foreignQueueSubmitWorker, h.Teardown));
 
                 // A Submit Worker whose internal Submit Processor is bound to a
                 // different process state.
                 NvencOrderedSubmitWorkerService splitSubmitWorker = BuildSplitSubmitWorker(h.State, foreignState);
                 Assert.Throws<ArgumentException>(() =>
-                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, splitSubmitWorker));
+                    new NvencOrderedOutputWorkerService(h.State, h.Processor, h.Context, splitSubmitWorker, h.Teardown));
 
                 // An Output Processor bound to a different process state.
                 NvencOrderedOutputProcessor foreignProcessor = new NvencOrderedOutputProcessor(
                     foreignState, h.OutputQueue, h.Collector, h.Sink, h.ReleaseCoordinator, h.RecoveryCoordinator, h.Boundary);
                 Assert.Throws<ArgumentException>(() =>
-                    new NvencOrderedOutputWorkerService(h.State, foreignProcessor, h.Context, h.SubmitWorker));
+                    new NvencOrderedOutputWorkerService(h.State, foreignProcessor, h.Context, h.SubmitWorker, h.Teardown));
             }
         }
 
@@ -788,6 +788,14 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeTeardown : INvencOutputWorkerTeardown
+        {
+            public NvencOutputWorkerTeardownReceipt TearDown()
+            {
+                return NvencOutputWorkerTeardownReceipt.Issue(this);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -806,6 +814,7 @@ namespace Zantetsu.Core.Tests
             internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue;
             internal NvencOrderedOutputProcessor Processor;
             internal NvencOrderedOutputWorkerService Worker;
+            internal FakeTeardown Teardown;
             internal ManualResetEventSlim SettledEvent;
 
             internal NvencRunChunkFinalizationCoordinator Coordinator;
@@ -893,7 +902,8 @@ namespace Zantetsu.Core.Tests
                     SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
                 SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
 
-                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker);
+                Teardown = new FakeTeardown();
+                Worker = new NvencOrderedOutputWorkerService(State, Processor, Context, SubmitWorker, Teardown);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

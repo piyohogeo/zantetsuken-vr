@@ -30,10 +30,12 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// This type holds no thread, queue, filesystem, native call, Plan,
-    /// Publication, Trace, or ownership lease duty. It stops neither worker,
-    /// advances no <c>NvencRunEvidenceDisposition</c>, and never seals or
-    /// freezes a Trace. Worker stop, resource zero, backend-wide
-    /// <c>TryJoin</c>, and Trace seal remain later units.
+    /// Publication, Trace, or ownership lease duty. It does not physically
+    /// stop the Output Worker itself: after the terminal is collected and
+    /// registered once, it requests the Output Worker's normal teardown at
+    /// most once and leaves the worker to complete the teardown and stop on
+    /// its own thread. Resource zero, backend-wide <c>TryJoin</c>, and Trace
+    /// seal remain later units.
     /// </para>
     /// </remarks>
     internal sealed class NvencCaptureRunCoordinator
@@ -49,6 +51,8 @@ namespace Zantetsu.Observability
         private bool _allSucceeded = true;
         private bool _terminalRequested;
         private bool _requestedFinalize;
+        private bool _terminalCollected;
+        private bool _teardownRequested;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -324,6 +328,11 @@ namespace Zantetsu.Observability
 
             try
             {
+                if (_terminalCollected)
+                {
+                    return false;
+                }
+
                 if (!_outputWorker.TryCollectTerminal(out outcome))
                 {
                     return false;
@@ -368,6 +377,7 @@ namespace Zantetsu.Observability
                             "Run chunk terminal result registration failed.");
                     }
 
+                    _terminalCollected = true;
                     return true;
                 }
 
@@ -378,6 +388,44 @@ namespace Zantetsu.Observability
                         "Run chunk abandoned outcome does not correlate to an abandoned context.");
                 }
 
+                _terminalCollected = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, at-most-once Output Worker teardown request. Admitted
+        /// only after the terminal has been collected and registered exactly
+        /// once (Finalized) or the Abandoned correlation has been confirmed,
+        /// never while the terminal is uncollected, the process is Poisoned,
+        /// or a teardown request was already accepted. A transient rejection
+        /// by the Output Worker (for example a still-pending record) returns
+        /// false for retry; once accepted the request is never re-issued.
+        /// </summary>
+        internal bool TryRequestTeardown()
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!_terminalCollected || _teardownRequested)
+                {
+                    return false;
+                }
+
+                if (!_outputWorker.TryRequestTeardown())
+                {
+                    return false;
+                }
+
+                _teardownRequested = true;
                 return true;
             }
             finally

@@ -27,9 +27,12 @@ namespace Zantetsu.Observability
     /// unapplied release or recovery, and a busy gate all simply park the
     /// worker until the next notification. The worker never peeks, skips,
     /// sorts, or reorders records, and it does not stop when the queue empties
-    /// while Running, Draining, or Run Abandoned: the Output Worker has no
-    /// normal drain stop in this unit, and only an external Poison or a fatal
-    /// processor exception stops it.
+    /// while Running, Draining, or Run Abandoned. The worker stops only from
+    /// an external Poison, a fatal processor exception, or a completed normal
+    /// teardown request: after the collected terminal has converged and a
+    /// teardown request has been accepted, the worker runs the injected
+    /// teardown exactly once on its own thread, verifies the receipt, publishes
+    /// the normal-stop evidence, and then physically exits.
     /// </para>
     /// <para>
     /// A processor exception is a fatal invariant violation: the exact
@@ -57,6 +60,7 @@ namespace Zantetsu.Observability
         private readonly NvencRunChunkTerminalRequest _terminalRequest;
         private readonly NvencOrderedSubmitWorkerService _submitWorker;
         private readonly NvencRunChunkContext _runChunkContext;
+        private readonly INvencOutputWorkerTeardown _teardown;
 
         private const int StateRunning = 0;
         private const int StateDisposed = 1;
@@ -64,17 +68,21 @@ namespace Zantetsu.Observability
         private Thread _workerThread;
         private int _lifecycleState = StateRunning;
         private volatile Exception _fatalFailure;
+        private volatile bool _teardownRequested;
+        private volatile bool _teardownCompleted;
         private Action _settled;
 
         internal NvencOrderedOutputWorkerService(
             NvencCaptureProcessState processState,
             NvencOrderedOutputProcessor processor,
             NvencRunChunkContext runChunkContext,
-            NvencOrderedSubmitWorkerService submitWorker)
+            NvencOrderedSubmitWorkerService submitWorker,
+            INvencOutputWorkerTeardown teardown)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _processor = processor ?? throw new ArgumentNullException(nameof(processor));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
+            _teardown = teardown ?? throw new ArgumentNullException(nameof(teardown));
 
             if (runChunkContext == null)
             {
@@ -243,6 +251,67 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Non-waiting, at-most-once normal teardown request for the exact
+        /// Run chunk context bound at construction. Accepted only while the
+        /// process is Draining, the exact Submit Worker's monotonic
+        /// DrainCompleted evidence is published, the Output Processor holds no
+        /// pending or current record, and the bound terminal request is
+        /// Collected; never while Running, Poisoned, before the terminal was
+        /// collected, already requested, or after the worker stopped. The
+        /// acceptance is serialized with the Poison transition on the shared
+        /// process-state gate. On success the worker is notified.
+        /// </summary>
+        internal bool TryRequestTeardown()
+        {
+            // Serialize the acceptance with the Poison transition on the
+            // shared short gate: a poison either linearizes first (false, no
+            // change) or waits behind this acceptance.
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!_processState.IsDraining || !_submitWorker.DrainCompleted)
+                {
+                    return false;
+                }
+
+                if (_processor.HasPendingWork)
+                {
+                    return false;
+                }
+
+                if (_terminalRequest.State != NvencRunChunkTerminalRequestState.Collected)
+                {
+                    return false;
+                }
+
+                if (!TryAcceptTeardownRequest())
+                {
+                    return false;
+                }
+
+                Notify();
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Normal-stop evidence: true only after the worker completed the
+        /// injected teardown exactly once and verified the success receipt.
+        /// False for an external Poison stop and for a fatal stop, which are
+        /// never reported as normal teardown completion, and false until the
+        /// teardown has actually completed.
+        /// </summary>
+        internal bool TeardownCompleted => Volatile.Read(ref _teardownCompleted);
+
+        /// <summary>
         /// Non-waiting physical stop confirmation: true only once the worker
         /// thread has physically exited (or after disposal). False while the
         /// worker is running, so a stop notification is never reported as
@@ -360,6 +429,11 @@ namespace Zantetsu.Observability
                         continue;
                     }
 
+                    if (TryExecuteTeardownSafely())
+                    {
+                        continue;
+                    }
+
                     if (TryStop())
                     {
                         return;
@@ -381,6 +455,11 @@ namespace Zantetsu.Observability
                     }
 
                     if (!_processor.HasPendingWork && TryProcessTerminalSafely())
+                    {
+                        continue;
+                    }
+
+                    if (TryExecuteTeardownSafely())
                     {
                         continue;
                     }
@@ -441,6 +520,63 @@ namespace Zantetsu.Observability
             }
         }
 
+        private bool TryExecuteTeardownSafely()
+        {
+            if (!Volatile.Read(ref _teardownRequested) || Volatile.Read(ref _teardownCompleted))
+            {
+                return false;
+            }
+
+            // A Poison that linearized first wins: the worker must never
+            // contact the teardown after an external Poison or a fatal stop.
+            if (_processState.IsPoisoned)
+            {
+                return false;
+            }
+
+            try
+            {
+                // Runs exactly once on the worker thread, after the collected
+                // terminal has converged and all records are exhausted.
+                NvencOutputWorkerTeardownReceipt receipt = _teardown.TearDown();
+
+                // Verify immediately: a null, foreign, or invalid receipt is
+                // the first exact failure; it poisons and publishes no
+                // normal-stop evidence.
+                if (receipt == null || !receipt.IsIssuedFor(_teardown))
+                {
+                    throw new InvalidOperationException(
+                        "Output Worker teardown returned a null, foreign, or invalid receipt.");
+                }
+
+                // Publish the normal-stop evidence with release semantics only
+                // after the receipt is verified.
+                Volatile.Write(ref _teardownCompleted, true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return false;
+            }
+        }
+
+        private bool TryAcceptTeardownRequest()
+        {
+            // The acceptance is serialized with the Poison transition on the
+            // shared process-state gate held by the caller, so a plain
+            // check-and-set is atomic here; the volatile write publishes it to
+            // the worker thread.
+            if (Volatile.Read(ref _teardownRequested))
+            {
+                return false;
+            }
+
+            Volatile.Write(ref _teardownRequested, true);
+            return true;
+        }
+
         private void RecordFatalFailure(Exception failure)
         {
             Interlocked.CompareExchange(ref _fatalFailure, failure, null);
@@ -472,7 +608,15 @@ namespace Zantetsu.Observability
                 return true;
             }
 
-            return _processState.IsPoisoned;
+            if (_processState.IsPoisoned)
+            {
+                return true;
+            }
+
+            // Normal teardown completion is the only non-poison, non-fatal
+            // stop: the worker exits after the normal-stop evidence is
+            // published.
+            return Volatile.Read(ref _teardownCompleted);
         }
     }
 }
