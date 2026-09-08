@@ -93,6 +93,7 @@ namespace Zantetsu.Observability
         private BackendJoinProof _backendJoinProof;
         private NvencRunEvidenceDisposition _disposition;
         private NvencTraceFreezeReceipt _traceFreezeReceipt;
+        private NvencRunPublicationPlanCommitOperation _publicationPlanCommitOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -810,6 +811,273 @@ namespace Zantetsu.Observability
             finally
             {
                 _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent Publication Plan commit preparation. It is
+        /// admitted only after the Trace freeze published
+        /// <see cref="NvencRunEvidenceDisposition.Finalized"/>, the Backend
+        /// Join and Main Thread Texture teardown completed, the Ownership
+        /// Lease is still live, the context is Finalized, the Registry Slot is
+        /// Registered with an intact entry that exactly correlates to the
+        /// context's held finalization result, and the retained Trace freeze
+        /// receipt is still valid and exact. Only then is the plan built and
+        /// the operation minted and retained.
+        /// </summary>
+        /// <remarks>
+        /// A same manifest hash re-call returns the exact retained operation
+        /// reference; a different hash is rejected before any side effect. The
+        /// disposition, Registry Slot, Ownership Lease, Trace, chunk file, and
+        /// context terminal state are never changed here. An unexpected
+        /// corruption in the retained receipt, entry, plan, or operation
+        /// poisons and throws; a mere not-ready shape or a gate contention
+        /// returns false without change.
+        /// </remarks>
+        internal bool TryPreparePublicationPlanCommit(
+            string runManifestContentHash,
+            out NvencRunPublicationPlanCommitOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_publicationPlanCommitOperation != null)
+                {
+                    if (!string.Equals(
+                            _publicationPlanCommitOperation.RunManifestContentHash,
+                            runManifestContentHash,
+                            StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    if (!_publicationPlanCommitOperation.IsValid
+                        || !_publicationPlanCommitOperation.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained publication plan commit operation is no longer valid.");
+                    }
+
+                    operation = _publicationPlanCommitOperation;
+                    return true;
+                }
+
+                if (!_processState.IsDraining || _processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Finalized)
+                {
+                    return false;
+                }
+
+                if (!_terminalCollected || !_mainThreadTextureTeardownCompleted || !_backendJoined)
+                {
+                    return false;
+                }
+
+                // A released Ownership Lease is a not-ready shape, not a
+                // corruption: refuse without poison before inspecting the
+                // Trace freeze receipt, whose validity also depends on the
+                // still-live lease.
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (_traceFreezeReceipt == null || !_traceFreezeReceipt.IsValid
+                    || !_traceFreezeReceipt.IsIssuedFor(_traceFreeze, _context, _sessionIssue))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Trace freeze receipt is null, foreign, or corrupted.");
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                {
+                    return false;
+                }
+
+                if (!_registrySlot.TryGetEntry(out NvencChunkFinalizationResult entryResult, out _, out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Registry Slot registered entry no longer correlates.");
+                }
+
+                if (!_context.TryGetFinalizationResult(out NvencChunkFinalizationResult held)
+                    || !ReferenceEquals(held, entryResult))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Registry Slot entry does not correlate to the context's held finalization result.");
+                }
+
+                CapturePublicationPlan plan;
+                try
+                {
+                    plan = NvencRunPublicationPlanBuilder.Build(
+                        entryResult, _sessionIssue, runManifestContentHash);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                NvencRunPublicationPlanCommitOperation minted;
+                try
+                {
+                    minted = new NvencRunPublicationPlanCommitOperation(
+                        this, _traceFreezeReceipt, entryResult, plan);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                if (minted == null || !minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication plan commit operation does not correlate after construction.");
+                }
+
+                _publicationPlanCommitOperation = minted;
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe exact-issuance re-verification used by the retained
+        /// <see cref="NvencRunPublicationPlanCommitOperation"/>: the exact
+        /// retained Trace freeze receipt, a still-<see cref="NvencRunEvidenceDisposition.Finalized"/>
+        /// disposition, a Finalized context, a Registered Registry Slot whose
+        /// exact entry result, descriptor, and relation match the supplied
+        /// values, the context's held finalization result correlation, a live
+        /// Session Ownership Lease, and the exact one-artifact, full-frame
+        /// plan reduction. It performs no side effect and never throws.
+        /// </summary>
+        internal bool IsPublicationPlanCommitIssued(
+            NvencTraceFreezeReceipt traceFreezeReceipt,
+            NvencChunkFinalizationResult finalizationResult,
+            CapturePublicationPlan plan)
+        {
+            try
+            {
+                if (traceFreezeReceipt == null || finalizationResult == null || plan == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(_traceFreezeReceipt, traceFreezeReceipt))
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Finalized)
+                {
+                    return false;
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                {
+                    return false;
+                }
+
+                if (!_registrySlot.TryGetEntry(
+                        out NvencChunkFinalizationResult entryResult,
+                        out CaptureArtifactDescriptor entryDescriptor,
+                        out CaptureArtifactFrameRelation entryRelation))
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(entryResult, finalizationResult)
+                    || !ReferenceEquals(entryDescriptor, finalizationResult.Descriptor)
+                    || !ReferenceEquals(entryRelation, finalizationResult.FrameRelation))
+                {
+                    return false;
+                }
+
+                if (!_context.TryGetFinalizationResult(out NvencChunkFinalizationResult held)
+                    || !ReferenceEquals(held, entryResult))
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (!traceFreezeReceipt.IsValid
+                    || !traceFreezeReceipt.IsIssuedFor(_traceFreeze, _context, _sessionIssue))
+                {
+                    return false;
+                }
+
+                if (plan.TestRunId != _context.TestRunId
+                    || !string.Equals(
+                        plan.RunInitializationId,
+                        _sessionIssue.Session.RunInitializationId,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (plan.ArtifactCount != 1
+                    || !ReferenceEquals(plan.GetArtifact(0), entryDescriptor))
+                {
+                    return false;
+                }
+
+                if (plan.CaptureFrameEvidenceCount != entryRelation.Count)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < entryRelation.Count; i++)
+                {
+                    CaptureFrameEvidenceEntry entry = plan.GetCaptureFrameEvidence(i);
+                    if (entry == null
+                        || entry.CaptureFrameId != entryRelation.GetCaptureFrameId(i)
+                        || entry.ArtifactCount != 1
+                        || !string.Equals(entry.GetArtifactId(0), entryDescriptor.ArtifactId, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
     }
