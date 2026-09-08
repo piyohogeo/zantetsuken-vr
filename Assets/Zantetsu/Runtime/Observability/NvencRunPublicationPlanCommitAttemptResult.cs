@@ -3,7 +3,7 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Allocation-free result of one NVENC Run publication plan commit
+    /// Readonly value result of one NVENC Run publication plan commit
     /// attempt: the exact committer, the exact operation, and a status with a
     /// receipt held only for the <see cref="NvencRunPublicationPlanCommitStatus.Committed"/>
     /// shape. The three terminal shapes are mutually exclusive;
@@ -50,12 +50,14 @@ namespace Zantetsu.Observability
             _status == NvencRunPublicationPlanCommitStatus.FailedBeforeRename
             && _committer != null
             && _operation != null
+            && _operation.IsBindingIntact
             && _receipt == null;
 
         internal bool IsCommitOutcomeUnknown =>
             _status == NvencRunPublicationPlanCommitStatus.CommitOutcomeUnknown
             && _committer != null
             && _operation != null
+            && _operation.IsBindingIntact
             && _receipt == null;
 
         internal bool IsValid => IsCommitted || IsFailedBeforeRename || IsCommitOutcomeUnknown;
@@ -106,6 +108,12 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(operation));
             }
 
+            if (!operation.IsBindingIntact)
+            {
+                throw new ArgumentException(
+                    "The operation's issuance binding is no longer intact.", nameof(operation));
+            }
+
             return new NvencRunPublicationPlanCommitAttemptResult(
                 committer, operation, null, NvencRunPublicationPlanCommitStatus.FailedBeforeRename);
         }
@@ -122,6 +130,12 @@ namespace Zantetsu.Observability
             if (operation == null)
             {
                 throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (!operation.IsBindingIntact)
+            {
+                throw new ArgumentException(
+                    "The operation's issuance binding is no longer intact.", nameof(operation));
             }
 
             return new NvencRunPublicationPlanCommitAttemptResult(

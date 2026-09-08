@@ -301,6 +301,73 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void AttemptResult_FailedAndUnknown_RequireBindingIntact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                Assert.That(
+                    h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
+                    Is.True);
+
+                FakeCommitter committer = new FakeCommitter();
+
+                NvencRunPublicationPlanCommitAttemptResult failed =
+                    NvencRunPublicationPlanCommitAttemptResult.FailedBeforeRename(committer, operation);
+                NvencRunPublicationPlanCommitAttemptResult unknown =
+                    NvencRunPublicationPlanCommitAttemptResult.CommitOutcomeUnknown(committer, operation);
+                Assert.That(failed.IsFailedBeforeRename, Is.True);
+                Assert.That(unknown.IsCommitOutcomeUnknown, Is.True);
+
+                // A directly reconstructed operation has no intact binding and
+                // must be rejected by both factories.
+                NvencRunPublicationPlanCommitOperation reconstructed =
+                    new NvencRunPublicationPlanCommitOperation(
+                        h.RunCoordinator, operation.TraceFreezeReceipt, operation.FinalizationResult, operation.Plan);
+
+                Assert.Throws<ArgumentException>(() =>
+                    NvencRunPublicationPlanCommitAttemptResult.FailedBeforeRename(committer, reconstructed));
+                Assert.Throws<ArgumentException>(() =>
+                    NvencRunPublicationPlanCommitAttemptResult.CommitOutcomeUnknown(committer, reconstructed));
+
+                // Releasing the lease invalidates the already-issued Failed and
+                // Unknown results.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.That(failed.IsFailedBeforeRename, Is.False);
+                Assert.That(unknown.IsCommitOutcomeUnknown, Is.False);
+                Assert.That(failed.IsValid, Is.False);
+                Assert.That(unknown.IsValid, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReceiptAndCommittedResult_InvalidatedByForeignResultGraphSwap()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndFreeze(h, 1);
+                NvencRunPublicationPlanCommitReceipt receipt = IssueCommitted(h, out NvencRunPublicationPlanCommitOperation operation);
+                NvencRunPublicationPlanCommitAttemptResult committed =
+                    NvencRunPublicationPlanCommitAttemptResult.Committed(new FakeCommitter(), operation);
+                Assert.That(receipt.IsValid, Is.True);
+
+                // Swap the operation's finalization result and plan to a
+                // different, valid same-Run sink/result graph: the post-commit
+                // binding must fail closed.
+                NvencChunkFinalizationResult foreignResult = MakeForeignResult("chunk/foreign");
+                CapturePublicationPlan foreignPlan = NvencRunPublicationPlanBuilder.Build(
+                    foreignResult, h.SessionIssue, Hash64);
+
+                SetField(operation, "_finalizationResult", foreignResult);
+                SetField(operation, "_plan", foreignPlan);
+
+                Assert.That(receipt.IsValid, Is.False);
+                Assert.That(committed.IsCommitted, Is.False);
+            }
+        }
+
         // ---- Shape ----
 
         [Test]
@@ -450,6 +517,25 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
             Assert.That(h.Context.TryGetFinalizationResult(out NvencChunkFinalizationResult result), Is.True);
             return result;
+        }
+
+        private static NvencChunkFinalizationResult MakeForeignResult(string artifactId)
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            NvencOwnedAccessUnitBuffer buffer = new NvencOwnedAccessUnitBuffer(state);
+            FakeWriter writer = new FakeWriter();
+            NvencRunChunkSink sink = new NvencRunChunkSink(state, buffer, writer);
+            NvencRunChunkFinalizationCoordinator coordinator = new NvencRunChunkFinalizationCoordinator(writer);
+
+            CaptureFrameWorkToken token = MakeToken(1);
+            Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
+            Assert.That(buffer.TryCopyCompletedOutput(write, default, new PatternSource(64, Seed), out _),
+                Is.EqualTo(NvencAccessUnitCopyStatus.Committed));
+            Assert.That(buffer.TryTransferToSink(write, out NvencOwnedAccessUnitLease lease), Is.True);
+            Assert.That(sink.TryAppend(token, lease, out _), Is.True);
+            Assert.That(sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.True);
+            NvencRunChunkFinalizationOperation operation = NvencRunChunkFinalizationOperation.Create(sink, evidence, artifactId);
+            return coordinator.Execute(operation);
         }
 
         private static CaptureFrameCompletion MakeCompletion(

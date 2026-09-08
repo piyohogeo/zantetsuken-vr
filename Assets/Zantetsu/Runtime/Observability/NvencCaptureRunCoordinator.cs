@@ -1170,6 +1170,20 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // Bind the finalization result to the exact Run chunk context:
+                // the result's sink must be the context's sink, and the context
+                // must hold the exact result reference.
+                if (result.Sink == null || !ReferenceEquals(result.Sink, _context.Sink))
+                {
+                    return false;
+                }
+
+                if (!_context.TryGetFinalizationResult(out NvencChunkFinalizationResult held)
+                    || !ReferenceEquals(held, result))
+                {
+                    return false;
+                }
+
                 CaptureArtifactDescriptor descriptor = result.Descriptor;
                 if (descriptor == null || !descriptor.IsValid
                     || descriptor.ArtifactKind != CaptureArtifactKind.FrameSequence)
