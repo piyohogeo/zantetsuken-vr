@@ -45,6 +45,7 @@ namespace Zantetsu.Observability
         private readonly NvencOrderedOutputWorkerService _outputWorker;
         private readonly NvencRunChunkContext _context;
         private readonly NvencRunLocalRegistrySlot _registrySlot;
+        private readonly INvencMainThreadTextureTeardown _mainThreadTextureTeardown;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -53,19 +54,22 @@ namespace Zantetsu.Observability
         private bool _requestedFinalize;
         private bool _terminalCollected;
         private bool _teardownRequested;
+        private bool _mainThreadTextureTeardownCompleted;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
             NvencOrderedSubmitWorkerService submitWorker,
             NvencOrderedOutputWorkerService outputWorker,
             NvencRunChunkContext context,
-            NvencRunLocalRegistrySlot registrySlot)
+            NvencRunLocalRegistrySlot registrySlot,
+            INvencMainThreadTextureTeardown mainThreadTextureTeardown)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
             _outputWorker = outputWorker ?? throw new ArgumentNullException(nameof(outputWorker));
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _registrySlot = registrySlot ?? throw new ArgumentNullException(nameof(registrySlot));
+            _mainThreadTextureTeardown = mainThreadTextureTeardown ?? throw new ArgumentNullException(nameof(mainThreadTextureTeardown));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -426,6 +430,95 @@ namespace Zantetsu.Observability
                 }
 
                 _teardownRequested = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Normal Main Thread NV12 Texture teardown completion: true only
+        /// after <see cref="TryCompleteMainThreadTextureTeardown"/> has
+        /// verified the exact receipt and published the completion.
+        /// </summary>
+        internal bool MainThreadTextureTeardownCompleted => _mainThreadTextureTeardownCompleted;
+
+        /// <summary>
+        /// Non-waiting, exactly-once Main Thread NV12 Texture teardown. It is
+        /// admitted only while the process is Draining (not Poisoned), the
+        /// terminal outcome is collected, the Output Worker teardown request
+        /// is accepted, the exact Submit Worker reports
+        /// <c>DrainCompleted &amp;&amp; IsStopped</c>, the exact Output Worker
+        /// reports <c>TeardownCompleted &amp;&amp; IsStopped</c>, and the Main
+        /// Thread teardown has not run yet. A not-ready condition returns
+        /// false with no side effect, for retry on the next explicit progress
+        /// call; a completed teardown returns true idempotently without
+        /// re-running the destroy.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The Main Thread teardown runs while the shared process-state gate
+        /// is held, so a concurrent Poison either linearizes first (the
+        /// non-waiting gate acquisition above fails, returning false with no
+        /// side effect) or waits behind this completion and linearizes only
+        /// after the completion is published and the gate is released.
+        /// </para>
+        /// </remarks>
+        internal bool TryCompleteMainThreadTextureTeardown()
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-completed teardown returns the same
+                // result with no second destroy.
+                if (_mainThreadTextureTeardownCompleted)
+                {
+                    return true;
+                }
+
+                if (!_processState.IsDraining || !_terminalCollected || !_teardownRequested)
+                {
+                    return false;
+                }
+
+                if (!_submitWorker.DrainCompleted || !_submitWorker.IsStopped)
+                {
+                    return false;
+                }
+
+                if (!_outputWorker.TeardownCompleted || !_outputWorker.IsStopped)
+                {
+                    return false;
+                }
+
+                // Run the exact Main Thread teardown inside the gate: a
+                // concurrent Poison blocks until this completion is published
+                // and the gate is released.
+                NvencMainThreadTextureTeardownReceipt receipt;
+                try
+                {
+                    receipt = _mainThreadTextureTeardown.TearDown();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                if (receipt == null || !receipt.IsIssuedFor(_mainThreadTextureTeardown))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Main Thread texture teardown returned a null or foreign receipt.");
+                }
+
+                _mainThreadTextureTeardownCompleted = true;
                 return true;
             }
             finally
