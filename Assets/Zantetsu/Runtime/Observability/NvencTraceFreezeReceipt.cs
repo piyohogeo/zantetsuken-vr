@@ -67,7 +67,10 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Exception-safe exact-issuance check: true only for the exact freeze
         /// coordinator, the exact Run chunk context, and the exact session
-        /// issue this receipt was issued for, and only while each is intact.
+        /// issue this receipt was issued for, and only while the full
+        /// correlation — including the exact issued seal receipt, the exact
+        /// appended terminal buffer, and the recorder's Frozen state — still
+        /// holds.
         /// </summary>
         internal bool IsIssuedFor(
             NvencTraceFreezeCoordinator issuedBy,
@@ -79,7 +82,8 @@ namespace Zantetsu.Observability
                 && _sessionIssue != null && sessionIssue != null
                 && ReferenceEquals(_issuedBy, issuedBy)
                 && ReferenceEquals(_context, context)
-                && ReferenceEquals(_sessionIssue, sessionIssue);
+                && ReferenceEquals(_sessionIssue, sessionIssue)
+                && CorrelationsHold();
         }
 
         private bool CorrelationsHold()
@@ -106,6 +110,21 @@ namespace Zantetsu.Observability
             }
 
             if (_terminalBuffer.TestRunId != _context.TestRunId)
+            {
+                return false;
+            }
+
+            // Exact binding to the actual seal and Frozen transition: the seal
+            // receipt must be the exact one the issuing logger published, the
+            // terminal buffer must be the exact one the coordinator appended,
+            // and the recorder must actually be Frozen. A foreign seal receipt
+            // or same-Run buffer that was never appended therefore fails.
+            if (_issuedBy.Logger == null
+                || !ReferenceEquals(_sealReceipt, _issuedBy.Logger.IssuedSealReceipt)
+                || !_issuedBy.IsIssuedSealReceipt(_sealReceipt)
+                || !_issuedBy.IsIssuedTerminalBuffer(_terminalBuffer)
+                || _issuedBy.Recorder == null
+                || _issuedBy.Recorder.State != TraceFlightRecorderState.Frozen)
             {
                 return false;
             }

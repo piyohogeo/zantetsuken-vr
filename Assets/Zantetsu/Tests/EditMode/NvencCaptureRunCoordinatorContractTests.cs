@@ -1673,6 +1673,83 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void TraceFreeze_LeaseLostAfterFreeze_IdempotentPathFailsClosed()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out _), Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+
+                // Release the Ownership Lease: the retained receipt's full
+                // correlation no longer holds, so the idempotent path fails
+                // closed instead of re-reporting success.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void TraceFreezeReceipt_ForeignSealReceipt_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out NvencTraceFreezeReceipt ok), Is.True);
+
+                // A seal receipt issued by a foreign logger for the same run ID
+                // must be rejected: it is not the exact seal this coordinator
+                // issued.
+                TraceLogger foreignLogger = new TraceLogger(16, h.Context.TestRunId);
+                TraceFlightRecorder foreignRecorder = new TraceFlightRecorder(foreignLogger, 16, 2);
+                TraceRunSealReceipt foreignSeal = new TraceRunSealReceipt(
+                    foreignLogger, foreignRecorder, h.Context.TestRunId, 0, 0, 0, 0);
+
+                Assert.Throws<ArgumentException>(() => new NvencTraceFreezeReceipt(
+                    h.TraceFreeze, h.Context, h.SessionIssue, foreignSeal, ok.TerminalBuffer));
+            }
+        }
+
+        [Test]
+        public void TraceFreezeReceipt_ForeignTerminalBuffer_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out NvencTraceFreezeReceipt ok), Is.True);
+
+                // A same-run buffer built independently is not the exact buffer
+                // this coordinator appended, and must be rejected.
+                FreezeTerminalTraceBufferBuilder foreignBuilder = new FreezeTerminalTraceBufferBuilder(h.DraftRegistry);
+                FreezeTerminalTraceBuffer foreignBuffer = foreignBuilder.Build(forced, checkpoint);
+
+                Assert.Throws<ArgumentException>(() => new NvencTraceFreezeReceipt(
+                    h.TraceFreeze, h.Context, h.SessionIssue, ok.SealReceipt, foreignBuffer));
+            }
+        }
+
         // ---- Constructor correlation ----
 
         [Test]

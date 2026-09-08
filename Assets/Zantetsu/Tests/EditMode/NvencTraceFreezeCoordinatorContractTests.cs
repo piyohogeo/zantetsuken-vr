@@ -50,15 +50,19 @@ namespace Zantetsu.Core.Tests
 
             FieldInfo[] fields = type.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-            Assert.That(fields, Has.Length.EqualTo(6));
+            Assert.That(fields, Has.Length.EqualTo(8));
             foreach (FieldInfo field in fields)
             {
                 Assert.That(Array.IndexOf(forbiddenFieldTypes, field.FieldType), Is.LessThan(0),
                     field.Name + " must not hold a forbidden type.");
                 // Every collaborator reference is readonly; only the issued
-                // receipt latch is a mutable reference.
-                Assert.That(field.IsInitOnly || field.FieldType == typeof(NvencTraceFreezeReceipt), Is.True,
-                    field.Name + " must be readonly or the receipt latch.");
+                // receipt, seal receipt, and terminal buffer latches are
+                // mutable references.
+                Assert.That(field.IsInitOnly
+                    || field.FieldType == typeof(NvencTraceFreezeReceipt)
+                    || field.FieldType == typeof(TraceRunSealReceipt)
+                    || field.FieldType == typeof(FreezeTerminalTraceBuffer), Is.True,
+                    field.Name + " must be readonly or an issued-proof latch.");
             }
         }
 

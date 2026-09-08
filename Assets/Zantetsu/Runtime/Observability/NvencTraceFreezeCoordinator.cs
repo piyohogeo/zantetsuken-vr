@@ -21,9 +21,13 @@ namespace Zantetsu.Observability
     /// <para>
     /// A successful freeze is idempotent: the issued receipt is retained and a
     /// later call returns the same receipt without re-sealing or re-appending.
-    /// A seal or append exception is propagated unchanged and no disposition is
-    /// published. This type owns, mutates, and disposes nothing and is not an
-    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
+    /// A seal is issued at most once and retained; a later terminal-append
+    /// retry reuses the retained seal receipt through the recorder's existing
+    /// <c>AwaitingFreezeTerminal</c> retry path, so a failed append never
+    /// re-seals the logger. A seal or append exception is propagated unchanged
+    /// and no disposition is published. This type owns, mutates, and disposes
+    /// nothing and is not an <see cref="IDisposable"/>, MonoBehaviour, or
+    /// ScriptableObject.
     /// </para>
     /// </remarks>
     internal sealed class NvencTraceFreezeCoordinator
@@ -35,6 +39,8 @@ namespace Zantetsu.Observability
         private readonly CaptureRunInitializationSessionIssue _sessionIssue;
 
         private NvencTraceFreezeReceipt _issuedReceipt;
+        private TraceRunSealReceipt _issuedSealReceipt;
+        private FreezeTerminalTraceBuffer _issuedTerminalBuffer;
 
         internal NvencTraceFreezeCoordinator(
             TraceLogger logger,
@@ -90,12 +96,37 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(_sessionIssue, sessionIssue);
         }
 
+        internal TraceLogger Logger => _logger;
+
+        internal TraceFlightRecorder Recorder => _recorder;
+
+        /// <summary>
+        /// O(1) exact-issuance check: true only for the exact seal receipt this
+        /// coordinator issued by sealing the run trace, without exposing it.
+        /// </summary>
+        internal bool IsIssuedSealReceipt(TraceRunSealReceipt sealReceipt)
+        {
+            return sealReceipt != null && ReferenceEquals(_issuedSealReceipt, sealReceipt);
+        }
+
+        /// <summary>
+        /// O(1) exact-issuance check: true only for the exact terminal buffer
+        /// this coordinator appended to the recorder, without exposing it.
+        /// </summary>
+        internal bool IsIssuedTerminalBuffer(FreezeTerminalTraceBuffer terminalBuffer)
+        {
+            return terminalBuffer != null && ReferenceEquals(_issuedTerminalBuffer, terminalBuffer);
+        }
+
         /// <summary>
         /// Seals and drains the run trace, completes the freeze terminal
         /// append, verifies <see cref="TraceFlightRecorderState.Frozen"/>, and
         /// issues the exact-correlated receipt. Idempotent after success: a
         /// later call returns the same receipt without re-sealing or
-        /// re-appending. A seal or append exception is propagated unchanged.
+        /// re-appending. The seal is issued at most once and retained; a failed
+        /// append retries through the recorder's <c>AwaitingFreezeTerminal</c>
+        /// path with the retained seal receipt, never re-sealing. A seal or
+        /// append exception is propagated unchanged.
         /// </summary>
         internal bool TryCompleteFreeze(
             ForcedDropFrameIdSet forcedDropFrameIds,
@@ -110,9 +141,14 @@ namespace Zantetsu.Observability
 
             receipt = null;
 
-            TraceRunSealReceipt sealReceipt = _logger.SealAndDrainRunForFreeze(_logger.TestRunId, _recorder);
+            if (_issuedSealReceipt == null)
+            {
+                _issuedSealReceipt = _logger.SealAndDrainRunForFreeze(_logger.TestRunId, _recorder);
+            }
+
             FreezeTerminalTraceBuffer terminalBuffer = _freezeTerminalCoordinator.Complete(
-                sealReceipt, forcedDropFrameIds, checkpoint, true);
+                _issuedSealReceipt, forcedDropFrameIds, checkpoint, true);
+            _issuedTerminalBuffer = terminalBuffer;
 
             if (_recorder.State != TraceFlightRecorderState.Frozen)
             {
@@ -120,7 +156,7 @@ namespace Zantetsu.Observability
             }
 
             NvencTraceFreezeReceipt issued = new NvencTraceFreezeReceipt(
-                this, _context, _sessionIssue, sealReceipt, terminalBuffer);
+                this, _context, _sessionIssue, _issuedSealReceipt, _issuedTerminalBuffer);
             _issuedReceipt = issued;
             receipt = issued;
             return true;

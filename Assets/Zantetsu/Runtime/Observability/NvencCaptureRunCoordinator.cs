@@ -695,7 +695,10 @@ namespace Zantetsu.Observability
         /// an Abandoned empty slot publishes
         /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>. The Registry
         /// slot is not advanced to Committed and the Ownership Lease is not
-        /// released here.
+        /// released here. A seal or terminal-append exception propagates
+        /// unchanged without poisoning and without publishing a disposition, so
+        /// the caller can retry through the retained seal or abort explicitly;
+        /// only a broken correlation or a corrupted freeze receipt poisons.
         /// </summary>
         internal bool TryCompleteTraceFreeze(
             ForcedDropFrameIdSet forcedDropFrameIds,
@@ -711,9 +714,20 @@ namespace Zantetsu.Observability
             try
             {
                 // Idempotent: an already-published disposition returns the same
-                // receipt without re-sealing or re-appending the trace.
+                // receipt without re-sealing or re-appending the trace, but
+                // only while the retained receipt's full correlation still
+                // holds. A nulled, corrupted, or lease-released retained
+                // receipt fails closed instead of re-reporting success.
                 if (_disposition != NvencRunEvidenceDisposition.None)
                 {
+                    if (_traceFreezeReceipt == null || !_traceFreezeReceipt.IsValid
+                        || !_traceFreezeReceipt.IsIssuedFor(_traceFreeze, _context, _sessionIssue))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained Trace freeze receipt is null, foreign, or corrupted.");
+                    }
+
                     receipt = _traceFreezeReceipt;
                     return true;
                 }
@@ -773,19 +787,9 @@ namespace Zantetsu.Observability
                 }
 
                 NvencTraceFreezeReceipt freezeReceipt;
-                try
+                if (!_traceFreeze.TryCompleteFreeze(forcedDropFrameIds, checkpoint, out freezeReceipt))
                 {
-                    if (!_traceFreeze.TryCompleteFreeze(forcedDropFrameIds, checkpoint, out freezeReceipt))
-                    {
-                        return false;
-                    }
-                }
-                catch (Exception)
-                {
-                    // A seal or append exception poisons without replacing the
-                    // original exception; no disposition is published.
-                    _processState.TryPoison();
-                    throw;
+                    return false;
                 }
 
                 if (freezeReceipt == null || !freezeReceipt.IsValid
