@@ -74,6 +74,26 @@ namespace Zantetsu.Observability
             _queue = new NvencFixedSpscQueue<NvencFrameCompletionRecord>();
         }
 
+        /// <summary>
+        /// O(1) resource correlation predicate: true only when this boundary is
+        /// bound to the exact Work, Sample, Submit-to-Output credit, Frame
+        /// Completion credit pools and the exact Owned Access Unit buffer,
+        /// without exposing them.
+        /// </summary>
+        internal bool IsCorrelatedWithResources(
+            NvencCaptureWorkSlotPool workSlots,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits,
+            NvencOwnedAccessUnitBuffer buffer)
+        {
+            return ReferenceEquals(_workSlots, workSlots)
+                && ReferenceEquals(_sampleSlots, sampleSlots)
+                && ReferenceEquals(_submitToOutputCredits, submitToOutputCredits)
+                && ReferenceEquals(_frameCompletionCredits, frameCompletionCredits)
+                && ReferenceEquals(_buffer, buffer);
+        }
+
         internal bool TryPublishSubmitted(
             in NvencSubmitToOutputRecord record,
             in NvencRunChunkSinkResult sinkResult,

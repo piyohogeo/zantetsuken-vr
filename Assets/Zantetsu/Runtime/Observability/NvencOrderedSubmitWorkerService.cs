@@ -316,6 +316,23 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// O(1) resource correlation predicate: true only when this worker's
+        /// internal Submit Processor and source release coordinator are bound
+        /// to the exact Work, Sample, GPU Conversion Sync, Submit-to-Output
+        /// credit, and Frame Completion credit pools, without exposing them.
+        /// </summary>
+        internal bool IsCorrelatedWithResources(
+            NvencCaptureWorkSlotPool workSlots,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencGpuConversionSyncPool syncSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits)
+        {
+            return _processor.IsCorrelatedWithResources(
+                workSlots, sampleSlots, syncSlots, submitToOutputCredits, frameCompletionCredits);
+        }
+
+        /// <summary>
         /// Non-throwing diagnostic for the first fatal processor exception, if
         /// any. Returns false when the worker stopped without a fatal failure.
         /// </summary>

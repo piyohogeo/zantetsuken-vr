@@ -1348,14 +1348,17 @@ namespace Zantetsu.Core.Tests
             {
                 StopFinalizedBackend(h, disposeSubmitWorker: false);
 
+                NvencMainThreadTextureTeardownReceipt receipt =
+                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+
                 Assert.That(h.SubmitWorker.IsStopped, Is.False);
-                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
                 Assert.That(h.BackendJoin.Joined, Is.False);
                 Assert.DoesNotThrow(() => h.Worker.Notify());
 
                 // Publishing the stop evidence lets the same boundary join.
                 h.SubmitWorker.Dispose();
-                Assert.That(h.BackendJoin.TryJoin(), Is.True);
+                Assert.That(h.BackendJoin.TryJoin(receipt), Is.True);
                 Assert.That(h.BackendJoin.Joined, Is.True);
             }
         }
@@ -1386,8 +1389,11 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
+                NvencMainThreadTextureTeardownReceipt receipt =
+                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+
                 Assert.That(h.Worker.IsStopped, Is.False);
-                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
                 Assert.That(h.BackendJoin.Joined, Is.False);
 
                 release.Set();
@@ -1395,7 +1401,7 @@ namespace Zantetsu.Core.Tests
                 h.WaitForPhysicalStop("worker did not physically exit");
                 Assert.That(h.Worker.TeardownCompleted, Is.True);
 
-                Assert.That(h.BackendJoin.TryJoin(), Is.True);
+                Assert.That(h.BackendJoin.TryJoin(receipt), Is.True);
                 Assert.That(h.BackendJoin.Joined, Is.True);
             }
         }
@@ -1407,10 +1413,13 @@ namespace Zantetsu.Core.Tests
             {
                 StopFinalizedBackend(h);
 
+                NvencMainThreadTextureTeardownReceipt receipt =
+                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+
                 h.State.TryPoison();
                 Assert.That(h.State.IsPoisoned, Is.True);
 
-                Assert.That(h.BackendJoin.TryJoin(), Is.False);
+                Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
                 Assert.That(h.BackendJoin.Joined, Is.False);
                 Assert.DoesNotThrow(() => h.Worker.Notify());
             }
@@ -1489,7 +1498,7 @@ namespace Zantetsu.Core.Tests
 
             FieldInfo[] fields = type.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-            Assert.That(fields, Has.Length.EqualTo(12));
+            Assert.That(fields, Has.Length.EqualTo(13));
             foreach (FieldInfo field in fields)
             {
                 Assert.That(Array.IndexOf(forbiddenFieldTypes, field.FieldType), Is.LessThan(0),
@@ -1519,6 +1528,79 @@ namespace Zantetsu.Core.Tests
             foreach (string word in forbidden)
             {
                 Assert.That(source, Does.Not.Contain(word), "backend join source must not contain: " + word);
+            }
+        }
+
+        [Test]
+        public void BackendJoin_NullOrForeignReceipt_RefusesNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopFinalizedBackend(h);
+
+                // A null receipt is refused without touching either worker.
+                Assert.That(h.BackendJoin.TryJoin(null), Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+
+                // A receipt issued by a foreign teardown bound to the same
+                // context is refused: the exact issuer is part of the join
+                // precondition.
+                FakeMainThreadTeardown foreign = new FakeMainThreadTeardown { BoundContext = h.Context };
+                NvencMainThreadTextureTeardownReceipt foreignReceipt =
+                    NvencMainThreadTextureTeardownReceipt.Issue(foreign, h.Context);
+                Assert.That(foreignReceipt.IsIssuedFor(foreign, h.Context), Is.True);
+
+                Assert.That(h.BackendJoin.TryJoin(foreignReceipt), Is.False);
+                Assert.That(h.BackendJoin.Joined, Is.False);
+                Assert.DoesNotThrow(() => h.Worker.Notify());
+            }
+        }
+
+        [Test]
+        public void BackendJoinConstructor_ForeignSubmitResources_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // A foreign empty Work Slot pool passed as the Submit
+                // pipeline's pool must be rejected at construction: an empty
+                // stand-in can never mask a reservation in the real pipeline.
+                NvencCaptureWorkSlotPool foreignWork = new NvencCaptureWorkSlotPool(h.State);
+                Assert.Throws<ArgumentException>(() => new NvencCaptureBackendJoinCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context,
+                    foreignWork, h.SampleSlots, h.SubmitSyncSlots, h.SubmitToOutputCredits, h.FrameCompletionCredits,
+                    h.Buffer, h.Processor, h.MainThreadTeardown));
+
+                // A foreign empty Frame Completion credit pool is equally
+                // rejected on the Submit pipeline.
+                NvencFrameCompletionCreditPool foreignCredits = new NvencFrameCompletionCreditPool(h.State);
+                Assert.Throws<ArgumentException>(() => new NvencCaptureBackendJoinCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context,
+                    h.WorkSlots, h.SampleSlots, h.SubmitSyncSlots, h.SubmitToOutputCredits, foreignCredits,
+                    h.Buffer, h.Processor, h.MainThreadTeardown));
+            }
+        }
+
+        [Test]
+        public void BackendJoinConstructor_ForeignOutputResources_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // A foreign Owned Access Unit buffer passed as the Output
+                // pipeline's buffer must be rejected at construction.
+                NvencOwnedAccessUnitBuffer foreignBuffer = new NvencOwnedAccessUnitBuffer(h.State);
+                Assert.Throws<ArgumentException>(() => new NvencCaptureBackendJoinCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context,
+                    h.WorkSlots, h.SampleSlots, h.SubmitSyncSlots, h.SubmitToOutputCredits, h.FrameCompletionCredits,
+                    foreignBuffer, h.Processor, h.MainThreadTeardown));
+
+                // A foreign Encode Sample Slot pool is equally rejected on the
+                // Output pipeline.
+                NvencEncodeSampleSlotPool foreignSamples = new NvencEncodeSampleSlotPool(h.State);
+                Assert.Throws<ArgumentException>(() => new NvencCaptureBackendJoinCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context,
+                    h.WorkSlots, foreignSamples, h.SubmitSyncSlots, h.SubmitToOutputCredits, h.FrameCompletionCredits,
+                    h.Buffer, h.Processor, h.MainThreadTeardown));
             }
         }
 
@@ -2074,11 +2156,7 @@ namespace Zantetsu.Core.Tests
             internal FakeTeardown Teardown;
             internal FakeMainThreadTeardown MainThreadTeardown;
 
-            internal NvencCaptureWorkSlotPool SubmitWorkSlots;
-            internal NvencEncodeSampleSlotPool SubmitSampleSlots;
             internal NvencGpuConversionSyncPool SubmitSyncSlots;
-            internal NvencSubmitToOutputCreditPool SubmitToOutputCreditPool;
-            internal NvencFrameCompletionCreditPool SubmitFrameCompletionCredits;
             internal NvencFixedSpscQueue<NvencSubmissionRecord> SubmitSubmissionQueue;
             internal NvencSourceResourceReleaseCoordinator SubmitReleaseCoordinator;
             internal NvencOrderedSubmitProcessor SubmitProcessor;
@@ -2125,19 +2203,15 @@ namespace Zantetsu.Core.Tests
                 Processor = new NvencOrderedOutputProcessor(
                     State, OutputQueue, Collector, Sink, ReleaseCoordinator, RecoveryCoordinator, Boundary);
 
-                SubmitWorkSlots = new NvencCaptureWorkSlotPool(State);
-                SubmitSampleSlots = new NvencEncodeSampleSlotPool(State);
                 SubmitSyncSlots = new NvencGpuConversionSyncPool(State);
-                SubmitToOutputCreditPool = new NvencSubmitToOutputCreditPool(State);
-                SubmitFrameCompletionCredits = new NvencFrameCompletionCreditPool(State);
                 SubmitSubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
                 SubmitReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
-                    State, SubmitWorkSlots, SubmitSampleSlots, SubmitSyncSlots,
-                    SubmitToOutputCreditPool, SubmitFrameCompletionCredits,
+                    State, WorkSlots, SampleSlots, SubmitSyncSlots,
+                    SubmitToOutputCredits, FrameCompletionCredits,
                     new FakeSourceReadCompletedSource(), new NvencSourceSurfaceReturnBoundary(), Guid.NewGuid());
                 SubmitProcessor = new NvencOrderedSubmitProcessor(
                     State, SubmitSubmissionQueue, OutputQueue,
-                    SubmitWorkSlots, SubmitSampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
+                    WorkSlots, SampleSlots, SubmitReleaseCoordinator, new FakeSubmitter());
                 SubmitWorker = new NvencOrderedSubmitWorkerService(State, SubmitProcessor);
 
                 Teardown = new FakeTeardown();
@@ -2147,7 +2221,7 @@ namespace Zantetsu.Core.Tests
                 BackendJoin = new NvencCaptureBackendJoinCoordinator(
                     State, SubmitWorker, Worker, Context,
                     WorkSlots, SampleSlots, SubmitSyncSlots, SubmitToOutputCredits, FrameCompletionCredits,
-                    Buffer, Processor);
+                    Buffer, Processor, MainThreadTeardown);
                 RunCoordinator = new NvencCaptureRunCoordinator(State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin);
 
                 SettledEvent = new ManualResetEventSlim(false);

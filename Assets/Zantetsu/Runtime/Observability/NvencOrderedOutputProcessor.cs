@@ -122,6 +122,25 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// O(1) resource correlation predicate: true only when this processor's
+        /// Collector and Completion Boundary are bound to the exact Work,
+        /// Sample, Submit-to-Output credit, Frame Completion credit pools and
+        /// the exact Owned Access Unit buffer, without exposing them.
+        /// </summary>
+        internal bool IsCorrelatedWithResources(
+            NvencCaptureWorkSlotPool workSlots,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits,
+            NvencOwnedAccessUnitBuffer buffer)
+        {
+            return _collector.IsCorrelatedWithResources(
+                    workSlots, sampleSlots, submitToOutputCredits, frameCompletionCredits, buffer)
+                && _completionBoundary.IsCorrelatedWithResources(
+                    workSlots, sampleSlots, submitToOutputCredits, frameCompletionCredits, buffer);
+        }
+
+        /// <summary>
         /// Advances exactly one current record toward its terminal Completion.
         /// Returns false while the queue is empty, a downstream gate is busy,
         /// or the process is poisoned, holding the current record, owned lease,

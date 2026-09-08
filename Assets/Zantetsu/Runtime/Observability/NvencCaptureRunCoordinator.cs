@@ -56,6 +56,7 @@ namespace Zantetsu.Observability
         private bool _terminalCollected;
         private bool _teardownRequested;
         private bool _mainThreadTextureTeardownCompleted;
+        private NvencMainThreadTextureTeardownReceipt _mainThreadTextureTeardownReceipt;
         private bool _backendJoined;
 
         internal NvencCaptureRunCoordinator(
@@ -547,6 +548,7 @@ namespace Zantetsu.Observability
                         "Main Thread texture teardown returned a null or foreign receipt.");
                 }
 
+                _mainThreadTextureTeardownReceipt = receipt;
                 _mainThreadTextureTeardownCompleted = true;
                 return true;
             }
@@ -565,10 +567,11 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Non-waiting, idempotent Backend Join entry. It is admitted only
         /// after the Main Thread NV12 Texture teardown completed, and then
-        /// delegates to the exact Backend Join boundary; on its success the
-        /// join is latched. A not-ready condition or a gate contention returns
-        /// false with no side effect, and the Main Thread Texture teardown
-        /// boundary is never contacted before it has completed.
+        /// passes the retained teardown receipt to the exact Backend Join
+        /// boundary; on its success the join is latched. A not-ready condition
+        /// or a gate contention returns false with no side effect, and the
+        /// Main Thread Texture teardown boundary is never contacted before it
+        /// has completed.
         /// </summary>
         internal bool TryCompleteBackendJoin()
         {
@@ -600,7 +603,7 @@ namespace Zantetsu.Observability
                         "Backend Join is no longer bound to the exact Run graph.");
                 }
 
-                if (!_backendJoin.TryJoin())
+                if (!_backendJoin.TryJoin(_mainThreadTextureTeardownReceipt))
                 {
                     return false;
                 }

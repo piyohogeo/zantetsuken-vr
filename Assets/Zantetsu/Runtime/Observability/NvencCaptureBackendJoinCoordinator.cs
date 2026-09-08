@@ -5,15 +5,16 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Phase 0.11 Backend Join boundary for one Run chunk. It is bound at
     /// construction to the exact process state, Submit Worker, Output Worker,
-    /// Run chunk context, and the backend's resource pools, Access Unit
-    /// buffer, and Output Processor, and publishes a normal join exactly once
-    /// only after every normal resource is resolved and both workers have been
-    /// physically stopped and disposed.
+    /// Run chunk context, Main Thread Texture teardown, and the backend's
+    /// resource pools, Access Unit buffer, and Output Processor, and publishes
+    /// a normal join exactly once only after every normal resource is resolved
+    /// and both workers have been physically stopped and disposed.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <see cref="TryJoin"/> is non-waiting and idempotent. It succeeds only
-    /// while the process is Draining and not Poisoned, the exact Submit Worker
+    /// while the process is Draining and not Poisoned, the exact Main Thread
+    /// Texture teardown receipt is valid for this Run, the exact Submit Worker
     /// reports <c>DrainCompleted &amp;&amp; IsStopped</c> with no fatal
     /// failure, the exact Output Worker reports
     /// <c>TeardownCompleted &amp;&amp; IsStopped</c> with no fatal failure,
@@ -49,6 +50,7 @@ namespace Zantetsu.Observability
         private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
         private readonly NvencOwnedAccessUnitBuffer _buffer;
         private readonly NvencOrderedOutputProcessor _outputProcessor;
+        private readonly INvencMainThreadTextureTeardown _mainThreadTextureTeardown;
 
         private bool _joined;
 
@@ -63,7 +65,8 @@ namespace Zantetsu.Observability
             NvencSubmitToOutputCreditPool submitToOutputCredits,
             NvencFrameCompletionCreditPool frameCompletionCredits,
             NvencOwnedAccessUnitBuffer buffer,
-            NvencOrderedOutputProcessor outputProcessor)
+            NvencOrderedOutputProcessor outputProcessor,
+            INvencMainThreadTextureTeardown mainThreadTextureTeardown)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -76,6 +79,7 @@ namespace Zantetsu.Observability
             _frameCompletionCredits = frameCompletionCredits ?? throw new ArgumentNullException(nameof(frameCompletionCredits));
             _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
             _outputProcessor = outputProcessor ?? throw new ArgumentNullException(nameof(outputProcessor));
+            _mainThreadTextureTeardown = mainThreadTextureTeardown ?? throw new ArgumentNullException(nameof(mainThreadTextureTeardown));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -102,6 +106,29 @@ namespace Zantetsu.Observability
                     "The Output Processor must be bound to the exact process state, Submit Worker, and Run chunk context.",
                     nameof(outputProcessor));
             }
+
+            if (!_mainThreadTextureTeardown.IsBoundTo(_context))
+            {
+                throw new ArgumentException(
+                    "The Main Thread texture teardown must be bound to the exact Run chunk context.", nameof(mainThreadTextureTeardown));
+            }
+
+            // The inspected pools and buffer must be the exact resources used
+            // by the real Submit and Output pipelines, so a foreign empty pool
+            // can never mask a reservation in the real pipeline.
+            if (!_submitWorker.IsCorrelatedWithResources(
+                    workSlots, sampleSlots, gpuConversionSyncSlots, submitToOutputCredits, frameCompletionCredits))
+            {
+                throw new ArgumentException(
+                    "The Submit Worker must be bound to the exact Work, Sample, GPU Conversion Sync, Submit-to-Output credit, and Frame Completion credit pools.");
+            }
+
+            if (!_outputProcessor.IsCorrelatedWithResources(
+                    workSlots, sampleSlots, submitToOutputCredits, frameCompletionCredits, buffer))
+            {
+                throw new ArgumentException(
+                    "The Output Processor must be bound to the exact Work, Sample, Submit-to-Output credit, Frame Completion credit pools, and Owned Access Unit buffer.");
+            }
         }
 
         /// <summary>
@@ -122,79 +149,108 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting, idempotent normal join. Succeeds only when the process
-        /// is Draining and not Poisoned, both workers are drained, teardown
-        /// completed, physically stopped, and free of fatal failure, and every
-        /// backend resource is resolved to zero. On success both workers are
-        /// disposed at most once and the join is published. A not-ready state
-        /// returns false with no side effect.
+        /// Non-waiting, idempotent normal join. Succeeds only when the exact
+        /// Main Thread Texture teardown receipt is valid for this Run, the
+        /// process is Draining and not Poisoned, both workers are drained,
+        /// teardown completed, physically stopped, and free of fatal failure,
+        /// and every backend resource is resolved to zero. On success both
+        /// workers are disposed at most once and the join is published. A
+        /// not-ready state returns false with no side effect. The whole check
+        /// and dispose run inside the shared process-state gate so a concurrent
+        /// Poison either linearizes first (false, no side effect) or waits
+        /// behind this join.
         /// </summary>
-        internal bool TryJoin()
+        internal bool TryJoin(NvencMainThreadTextureTeardownReceipt textureTeardownReceipt)
         {
-            if (_joined)
+            // Serialize the entire join with the Poison transition on the
+            // shared short gate. The gate is reentrant, so the coordinator's
+            // outer acquisition remains safe under this inner acquisition.
+            if (!_processState.TryBeginResourceResolution())
             {
+                return false;
+            }
+
+            try
+            {
+                if (_joined)
+                {
+                    return true;
+                }
+
+                if (!_processState.IsDraining || _processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                // The exact Main Thread Texture teardown receipt is part of the
+                // join precondition: without it, a foreign or unfinished
+                // Texture teardown can never be reported as joined.
+                if (textureTeardownReceipt == null ||
+                    !textureTeardownReceipt.IsIssuedFor(_mainThreadTextureTeardown, _context))
+                {
+                    return false;
+                }
+
+                if (!_submitWorker.DrainCompleted || !_submitWorker.IsStopped || _submitWorker.TryGetFailure(out _))
+                {
+                    return false;
+                }
+
+                if (!_outputWorker.TeardownCompleted || !_outputWorker.IsStopped || _outputWorker.TryGetFailure(out _))
+                {
+                    return false;
+                }
+
+                if (_workSlots.OccupiedCount != 0 ||
+                    _sampleSlots.OccupiedCount != 0 ||
+                    _gpuConversionSyncSlots.OccupiedCount != 0 ||
+                    _submitToOutputCredits.OccupiedCount != 0 ||
+                    _frameCompletionCredits.OccupiedCount != 0)
+                {
+                    return false;
+                }
+
+                if (_buffer.Phase != NvencAccessUnitPhase.Free)
+                {
+                    return false;
+                }
+
+                if (_outputProcessor.HasPendingWork)
+                {
+                    return false;
+                }
+
+                // Dispose the Output Worker first and the Submit Worker second,
+                // each exactly once. A dispose failure poisons and propagates
+                // the original exception; the join is never published
+                // afterwards.
+                try
+                {
+                    _outputWorker.Dispose();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                try
+                {
+                    _submitWorker.Dispose();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _joined = true;
                 return true;
             }
-
-            if (!_processState.IsDraining || _processState.IsPoisoned)
+            finally
             {
-                return false;
+                _processState.EndResourceResolution();
             }
-
-            if (!_submitWorker.DrainCompleted || !_submitWorker.IsStopped || _submitWorker.TryGetFailure(out _))
-            {
-                return false;
-            }
-
-            if (!_outputWorker.TeardownCompleted || !_outputWorker.IsStopped || _outputWorker.TryGetFailure(out _))
-            {
-                return false;
-            }
-
-            if (_workSlots.OccupiedCount != 0 ||
-                _sampleSlots.OccupiedCount != 0 ||
-                _gpuConversionSyncSlots.OccupiedCount != 0 ||
-                _submitToOutputCredits.OccupiedCount != 0 ||
-                _frameCompletionCredits.OccupiedCount != 0)
-            {
-                return false;
-            }
-
-            if (_buffer.Phase != NvencAccessUnitPhase.Free)
-            {
-                return false;
-            }
-
-            if (_outputProcessor.HasPendingWork)
-            {
-                return false;
-            }
-
-            // Dispose the Output Worker first and the Submit Worker second,
-            // each exactly once. A dispose failure poisons and propagates the
-            // original exception; the join is never published afterwards.
-            try
-            {
-                _outputWorker.Dispose();
-            }
-            catch (Exception)
-            {
-                _processState.TryPoison();
-                throw;
-            }
-
-            try
-            {
-                _submitWorker.Dispose();
-            }
-            catch (Exception)
-            {
-                _processState.TryPoison();
-                throw;
-            }
-
-            _joined = true;
-            return true;
         }
 
         /// <summary>

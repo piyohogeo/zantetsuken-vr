@@ -112,6 +112,26 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// O(1) resource correlation predicate: true only when this coordinator
+        /// is bound to the exact Work, Sample, GPU Conversion Sync,
+        /// Submit-to-Output credit, and Frame Completion credit pools, without
+        /// exposing them.
+        /// </summary>
+        internal bool IsCorrelatedWithResources(
+            NvencCaptureWorkSlotPool workSlots,
+            NvencEncodeSampleSlotPool sampleSlots,
+            NvencGpuConversionSyncPool syncSlots,
+            NvencSubmitToOutputCreditPool submitToOutputCredits,
+            NvencFrameCompletionCreditPool frameCompletionCredits)
+        {
+            return ReferenceEquals(_workSlots, workSlots)
+                && ReferenceEquals(_sampleSlots, sampleSlots)
+                && ReferenceEquals(_syncSlots, syncSlots)
+                && ReferenceEquals(_submitToOutputCredits, submitToOutputCredits)
+                && ReferenceEquals(_frameCompletionCredits, frameCompletionCredits);
+        }
+
+        /// <summary>
         /// Submit Worker side: verify the record and evidence and hand off an
         /// evidenced release request without releasing the sync credit or the
         /// surface. Returns false without handing anything off when the record
