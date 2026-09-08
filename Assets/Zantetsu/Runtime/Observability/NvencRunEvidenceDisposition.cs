@@ -4,10 +4,11 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Append-only, process-local disposition of one Phase 0.11 NVENC Run.
-    /// Only <see cref="None"/> to <see cref="Finalized"/> or
-    /// <see cref="Incomplete"/> transitions are performed in this unit; the
-    /// later Plan commit unit moves <see cref="Finalized"/> to
-    /// <see cref="Committed"/> or <see cref="CommitOutcomeUnknown"/>.
+    /// <see cref="None"/> advances to <see cref="Finalized"/> or
+    /// <see cref="Incomplete"/> at the Trace freeze boundary, and the
+    /// Publication Plan commit boundary advances <see cref="Finalized"/> to
+    /// <see cref="Committed"/>, <see cref="Incomplete"/>, or
+    /// <see cref="CommitOutcomeUnknown"/>.
     /// </summary>
     /// <remarks>
     /// <see cref="None"/> is the uninitialized state and can never be used as

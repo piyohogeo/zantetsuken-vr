@@ -104,6 +104,18 @@ namespace Zantetsu.Observability
             (NvencRunPublicationPlanCommitServiceState)Volatile.Read(ref _state);
 
         /// <summary>
+        /// Minimal O(1) exact-process-state correlation for the Run Coordinator:
+        /// true only when this Service is bound to the exact supplied process
+        /// state. ReferenceEquals only; it never exposes the Execution
+        /// Coordinator or the Committer.
+        /// </summary>
+        internal bool IsBoundToProcessState(NvencCaptureProcessState processState)
+        {
+            return processState != null
+                && ReferenceEquals(_processState, processState);
+        }
+
+        /// <summary>
         /// Non-waiting, exclusive submission of exactly one valid publication
         /// plan commit operation. A null operation throws
         /// <see cref="ArgumentNullException"/>. A foreign process state, an

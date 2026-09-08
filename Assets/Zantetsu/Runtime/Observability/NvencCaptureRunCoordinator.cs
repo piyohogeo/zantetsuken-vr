@@ -79,6 +79,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureBackendJoinCoordinator _backendJoin;
         private readonly CaptureRunInitializationSessionIssue _sessionIssue;
         private readonly NvencTraceFreezeCoordinator _traceFreeze;
+        private readonly NvencRunPublicationPlanCommitService _publicationPlanCommitService;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -94,6 +95,9 @@ namespace Zantetsu.Observability
         private NvencRunEvidenceDisposition _disposition;
         private NvencTraceFreezeReceipt _traceFreezeReceipt;
         private NvencRunPublicationPlanCommitOperation _publicationPlanCommitOperation;
+        private bool _publicationPlanCommitSubmitted;
+        private bool _publicationPlanCommitCollected;
+        private NvencRunPublicationPlanCommitExecutionResult _publicationPlanCommitResult;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -104,7 +108,8 @@ namespace Zantetsu.Observability
             INvencMainThreadTextureTeardown mainThreadTextureTeardown,
             NvencCaptureBackendJoinCoordinator backendJoin,
             CaptureRunInitializationSessionIssue sessionIssue,
-            NvencTraceFreezeCoordinator traceFreeze)
+            NvencTraceFreezeCoordinator traceFreeze,
+            NvencRunPublicationPlanCommitService publicationPlanCommitService = null)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -115,6 +120,7 @@ namespace Zantetsu.Observability
             _backendJoin = backendJoin ?? throw new ArgumentNullException(nameof(backendJoin));
             _sessionIssue = sessionIssue ?? throw new ArgumentNullException(nameof(sessionIssue));
             _traceFreeze = traceFreeze ?? throw new ArgumentNullException(nameof(traceFreeze));
+            _publicationPlanCommitService = publicationPlanCommitService;
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -172,6 +178,17 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "The Trace freeze coordinator must be bound to the exact Run chunk context and session issue.",
                     nameof(traceFreeze));
+            }
+
+            // A supplied Publication Plan Commit Service must be bound to the
+            // exact process state; this is checked before any side effect so a
+            // foreign Service can never submit a Plan against this Run.
+            if (_publicationPlanCommitService != null
+                && !_publicationPlanCommitService.IsBoundToProcessState(_processState))
+            {
+                throw new ArgumentException(
+                    "The Publication Plan Commit Service must be bound to the exact process state.",
+                    nameof(publicationPlanCommitService));
             }
         }
 
@@ -1254,6 +1271,311 @@ namespace Zantetsu.Observability
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent submission of the retained publication plan
+        /// commit operation to the exact Publication Plan Commit Service. It is
+        /// admitted only when the process is not Poisoned, the disposition is
+        /// <see cref="NvencRunEvidenceDisposition.Finalized"/>, the retained
+        /// operation exists and is still valid, the context is Finalized, the
+        /// Registry Slot is Registered, the Trace Freeze, Session Issue, and
+        /// Backend Join correlations still hold, and the Service is still
+        /// accepting. The submission is linearized with the Poison transition
+        /// on the shared process-state gate; on acceptance the retained
+        /// operation is handed to the Service exactly once. A second submission,
+        /// a submission before preparation, a gate contention, or a poisoned
+        /// process returns false with no change.
+        /// </summary>
+        internal bool TrySubmitPublicationPlanCommit()
+        {
+            if (_publicationPlanCommitService == null)
+            {
+                return false;
+            }
+
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_publicationPlanCommitSubmitted)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Finalized)
+                {
+                    return false;
+                }
+
+                NvencRunPublicationPlanCommitOperation operation = _publicationPlanCommitOperation;
+                if (operation == null
+                    || !operation.IsValid
+                    || !operation.IsIssuedFor(this))
+                {
+                    return false;
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                {
+                    return false;
+                }
+
+                if (!IsPublicationPlanCommitIssued(
+                        operation.TraceFreezeReceipt,
+                        operation.FinalizationResult,
+                        operation.Plan))
+                {
+                    return false;
+                }
+
+                if (_publicationPlanCommitService.State
+                    != NvencRunPublicationPlanCommitServiceState.Accepting)
+                {
+                    return false;
+                }
+
+                // The Service re-checks its own state inside the same
+                // process-state gate (reentrant), so the retained operation is
+                // handed over exactly once.
+                if (!_publicationPlanCommitService.TrySubmit(operation))
+                {
+                    return false;
+                }
+
+                _publicationPlanCommitSubmitted = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent collection and reflection of the publication
+        /// plan commit outcome into the Run's authoritative state. The first
+        /// successful call collects the Execution Result from the Service
+        /// exactly once, verifies it against the retained operation and the Run
+        /// identity, releases the Service wait handle exactly once, advances the
+        /// Registry Slot per status, retains the result, and publishes the
+        /// disposition last. Re-calls return the same retained reference after
+        /// re-checking the current correlation without re-collecting,
+        /// re-transitioning, or re-disposing. A null, foreign, or corrupt
+        /// result, a Service fatal failure, or a failed Registry transition
+        /// poisons without guessing another disposition. An external Poison
+        /// that linearized first never reflects a normal result.
+        /// </summary>
+        internal bool TryCollectPublicationPlanCommit(
+            out NvencRunPublicationPlanCommitExecutionResult result)
+        {
+            result = null;
+
+            if (_publicationPlanCommitService == null)
+            {
+                return false;
+            }
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_publicationPlanCommitCollected)
+                {
+                    NvencRunPublicationPlanCommitExecutionResult retained = _publicationPlanCommitResult;
+                    if (retained != null && IsRetainedCommitResultCorrelated(retained))
+                    {
+                        result = retained;
+                        return true;
+                    }
+
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained publication plan commit result no longer correlates.");
+                }
+
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_publicationPlanCommitService.TryCollect(
+                        out NvencRunPublicationPlanCommitExecutionResult collected))
+                {
+                    return false;
+                }
+
+                if (collected == null
+                    || !collected.IsValid
+                    || !IsCollectedCommitResultCorrelated(collected))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication plan commit result is null, foreign, or corrupt.");
+                }
+
+                if (_publicationPlanCommitService.TryGetFailure(out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication plan commit service reported a fatal failure.");
+                }
+
+                if (!_publicationPlanCommitService.IsStopped)
+                {
+                    return false;
+                }
+
+                // Release the Service wait handle exactly once. A dispose
+                // failure poisons and propagates the original exception without
+                // faking a successful state.
+                try
+                {
+                    _publicationPlanCommitService.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                ReflectPublicationPlanCommit(collected);
+
+                _publicationPlanCommitCollected = true;
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        private bool IsCollectedCommitResultCorrelated(
+            NvencRunPublicationPlanCommitExecutionResult collected)
+        {
+            NvencRunPublicationPlanCommitOperation operation = _publicationPlanCommitOperation;
+
+            return operation != null
+                && ReferenceEquals(collected.Attempt.Operation, operation)
+                && ReferenceEquals(collected.Plan, operation.Plan)
+                && ReferenceEquals(collected.FinalizationResult, operation.FinalizationResult)
+                && ReferenceEquals(collected.TraceFreezeReceipt, operation.TraceFreezeReceipt)
+                && collected.TestRunId == _context.TestRunId
+                && string.Equals(
+                    collected.RunInitializationId,
+                    _sessionIssue.Session.RunInitializationId,
+                    StringComparison.Ordinal);
+        }
+
+        private bool IsRetainedCommitResultCorrelated(
+            NvencRunPublicationPlanCommitExecutionResult retained)
+        {
+            NvencRunPublicationPlanCommitOperation operation = _publicationPlanCommitOperation;
+
+            return retained.IsValid
+                && operation != null
+                && ReferenceEquals(retained.Attempt.Operation, operation)
+                && ReferenceEquals(retained.Plan, operation.Plan)
+                && ReferenceEquals(retained.FinalizationResult, operation.FinalizationResult);
+        }
+
+        /// <summary>
+        /// Advances the Run's authoritative state from the exact committed
+        /// status: the Registry transition and the retained result are fixed
+        /// first, and the disposition is published last. No Plan, chunk, or
+        /// dedicated tmp file is touched or inspected here, and a failed
+        /// Registry transition poisons without guessing another disposition.
+        /// </summary>
+        private void ReflectPublicationPlanCommit(
+            NvencRunPublicationPlanCommitExecutionResult collected)
+        {
+            NvencRunPublicationPlanCommitOperation operation = _publicationPlanCommitOperation;
+            NvencChunkFinalizationResult entryResult = operation.FinalizationResult;
+            NvencRunEvidenceDisposition next;
+
+            switch (collected.Status)
+            {
+                case NvencRunPublicationPlanCommitStatus.Committed:
+                {
+                    NvencRunPublicationPlanCommitReceipt receipt = collected.Receipt;
+                    if (receipt == null
+                        || !receipt.IsIssuedFor(collected.Attempt.Committer, operation))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The Committed result does not carry an exact valid receipt.");
+                    }
+
+                    if (!_registrySlot.TryCommit(_context, entryResult))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The Registry Slot could not advance to Committed.");
+                    }
+
+                    next = NvencRunEvidenceDisposition.Committed;
+                    break;
+                }
+
+                case NvencRunPublicationPlanCommitStatus.FailedBeforeRename:
+                {
+                    if (!_registrySlot.TryDiscardRegistered(_context, entryResult))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The Registry Slot could not discard the registered entry.");
+                    }
+
+                    next = NvencRunEvidenceDisposition.Incomplete;
+                    break;
+                }
+
+                case NvencRunPublicationPlanCommitStatus.CommitOutcomeUnknown:
+                {
+                    // The Registry Slot stays Registered; the commit outcome is
+                    // never re-inspected or guessed, and nothing is discarded or
+                    // cleaned up.
+                    if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The Registry Slot is no longer Registered for an unknown outcome.");
+                    }
+
+                    next = NvencRunEvidenceDisposition.CommitOutcomeUnknown;
+                    break;
+                }
+
+                default:
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication plan commit result has an unrecognized status.");
+                }
+            }
+
+            // Retain the result before the disposition becomes observable.
+            _publicationPlanCommitResult = collected;
+
+            // Publish the disposition last.
+            _disposition = next;
         }
 
         private static bool IsLowerHex(string value, int length)
