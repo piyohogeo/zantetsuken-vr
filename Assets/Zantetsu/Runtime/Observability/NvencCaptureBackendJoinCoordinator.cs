@@ -134,18 +134,20 @@ namespace Zantetsu.Observability
         /// <summary>
         /// O(1) exact-reference correlation predicate: true only when this
         /// join boundary is bound to the exact process state, Submit Worker,
-        /// Output Worker, and Run chunk context.
+        /// Output Worker, Run chunk context, and Main Thread Texture teardown.
         /// </summary>
         internal bool IsCorrelatedWith(
             NvencCaptureProcessState processState,
             NvencOrderedSubmitWorkerService submitWorker,
             NvencOrderedOutputWorkerService outputWorker,
-            NvencRunChunkContext context)
+            NvencRunChunkContext context,
+            INvencMainThreadTextureTeardown mainThreadTextureTeardown)
         {
             return ReferenceEquals(_processState, processState)
                 && ReferenceEquals(_submitWorker, submitWorker)
                 && ReferenceEquals(_outputWorker, outputWorker)
-                && ReferenceEquals(_context, context);
+                && ReferenceEquals(_context, context)
+                && ReferenceEquals(_mainThreadTextureTeardown, mainThreadTextureTeardown);
         }
 
         /// <summary>

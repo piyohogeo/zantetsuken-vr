@@ -11,6 +11,13 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
+    /// A receipt can be constructed only by the exact teardown implementation
+    /// as it returns normally from <see cref="INvencMainThreadTextureTeardown.TearDown"/>.
+    /// There is no side-effect-free factory: obtaining a receipt therefore
+    /// requires the teardown call itself to have completed, so a raw receipt
+    /// can never be forged into the Backend Join boundary without a teardown.
+    /// </para>
+    /// <para>
     /// <see cref="IsIssuedFor"/> recomputes the exact-reference correlation of
     /// both the issuer and the bound context, and this receipt's own
     /// structure, without throwing, so a null, foreign, or uninitialized
@@ -24,22 +31,14 @@ namespace Zantetsu.Observability
         private readonly INvencMainThreadTextureTeardown _issuedBy;
         private readonly NvencRunChunkContext _context;
 
-        private NvencMainThreadTextureTeardownReceipt(
-            INvencMainThreadTextureTeardown issuedBy,
-            NvencRunChunkContext context)
-        {
-            _issuedBy = issuedBy;
-            _context = context;
-        }
-
         /// <summary>
-        /// Atomic issuance factory: null-checks the exact teardown
-        /// implementation and the exact bound Run chunk context, and requires
-        /// the implementation to be actually bound to that context, so a
-        /// semantically invalid receipt can never be issued. Holds only those
-        /// two references. Issued only after a normal completion.
+        /// Constructed only from the exact teardown implementation at its
+        /// normal return: null-checks the exact teardown implementation and
+        /// the exact bound Run chunk context, and requires the implementation
+        /// to be actually bound to that context, so a semantically invalid
+        /// receipt can never be produced. Holds only those two references.
         /// </summary>
-        internal static NvencMainThreadTextureTeardownReceipt Issue(
+        internal NvencMainThreadTextureTeardownReceipt(
             INvencMainThreadTextureTeardown issuedBy,
             NvencRunChunkContext context)
         {
@@ -59,7 +58,8 @@ namespace Zantetsu.Observability
                     "The teardown implementation must be bound to the exact Run chunk context.", nameof(issuedBy));
             }
 
-            return new NvencMainThreadTextureTeardownReceipt(issuedBy, context);
+            _issuedBy = issuedBy;
+            _context = context;
         }
 
         /// <summary>

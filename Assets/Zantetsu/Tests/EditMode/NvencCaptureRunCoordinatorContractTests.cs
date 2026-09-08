@@ -992,9 +992,10 @@ namespace Zantetsu.Core.Tests
                 h.SubmitWorker.Dispose();
 
                 // A valid receipt whose bound Context field was corrupted to a
-                // foreign Run must be rejected by the verification. The normal
-                // factory can no longer produce such a receipt.
-                NvencMainThreadTextureTeardownReceipt receipt = NvencMainThreadTextureTeardownReceipt.Issue(
+                // foreign Run must be rejected by the verification. Only the
+                // teardown's own normal return constructs a receipt, so this
+                // corruption simulates a broken reference directly.
+                NvencMainThreadTextureTeardownReceipt receipt = new NvencMainThreadTextureTeardownReceipt(
                     h.MainThreadTeardown, h.Context);
                 FieldInfo contextField = typeof(NvencMainThreadTextureTeardownReceipt).GetField(
                     "_context", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1009,17 +1010,17 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void MainThreadTeardown_Receipt_Issue_RejectsForeignContextBinding()
+        public void MainThreadTeardown_Receipt_Construction_RejectsForeignContextBinding()
         {
             using (Harness h = Harness.Create())
             {
-                // The factory must require the implementation to actually be
-                // bound to the supplied context, not just non-null.
+                // The constructor must require the implementation to actually
+                // be bound to the supplied context, not just non-null.
                 FakeMainThreadTeardown foreign = new FakeMainThreadTeardown { BoundContext = MakeContext(h.State) };
-                Assert.Throws<ArgumentException>(() => NvencMainThreadTextureTeardownReceipt.Issue(foreign, h.Context));
+                Assert.Throws<ArgumentException>(() => new NvencMainThreadTextureTeardownReceipt(foreign, h.Context));
 
-                Assert.Throws<ArgumentNullException>(() => NvencMainThreadTextureTeardownReceipt.Issue(null, h.Context));
-                Assert.Throws<ArgumentNullException>(() => NvencMainThreadTextureTeardownReceipt.Issue(foreign, null));
+                Assert.Throws<ArgumentNullException>(() => new NvencMainThreadTextureTeardownReceipt(null, h.Context));
+                Assert.Throws<ArgumentNullException>(() => new NvencMainThreadTextureTeardownReceipt(foreign, null));
             }
         }
 
@@ -1348,8 +1349,9 @@ namespace Zantetsu.Core.Tests
             {
                 StopFinalizedBackend(h, disposeSubmitWorker: false);
 
-                NvencMainThreadTextureTeardownReceipt receipt =
-                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+                // The receipt is obtained only by running the exact teardown,
+                // so no side-effect-free path forges it.
+                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
 
                 Assert.That(h.SubmitWorker.IsStopped, Is.False);
                 Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
@@ -1389,8 +1391,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
-                NvencMainThreadTextureTeardownReceipt receipt =
-                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
 
                 Assert.That(h.Worker.IsStopped, Is.False);
                 Assert.That(h.BackendJoin.TryJoin(receipt), Is.False);
@@ -1413,8 +1414,7 @@ namespace Zantetsu.Core.Tests
             {
                 StopFinalizedBackend(h);
 
-                NvencMainThreadTextureTeardownReceipt receipt =
-                    NvencMainThreadTextureTeardownReceipt.Issue(h.MainThreadTeardown, h.Context);
+                NvencMainThreadTextureTeardownReceipt receipt = h.MainThreadTeardown.TearDown();
 
                 h.State.TryPoison();
                 Assert.That(h.State.IsPoisoned, Is.True);
@@ -1481,6 +1481,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Constructor_ForeignTeardownBackendJoin_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // A Backend Join bound to the exact same context but a
+                // different teardown implementation must be rejected at
+                // construction: otherwise teardown A's valid receipt is
+                // refused by teardown B and the Run becomes permanently
+                // unjoinable.
+                NvencCaptureBackendJoinCoordinator foreignTeardownJoin = new NvencCaptureBackendJoinCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context,
+                    h.WorkSlots, h.SampleSlots, h.SubmitSyncSlots, h.SubmitToOutputCredits, h.FrameCompletionCredits,
+                    h.Buffer, h.Processor, new FakeMainThreadTeardown { BoundContext = h.Context });
+
+                Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin));
+            }
+        }
+
+        [Test]
         public void BackendJoin_SealedNotDisposable_FieldShapeClean()
         {
             Type type = typeof(NvencCaptureBackendJoinCoordinator);
@@ -1543,12 +1563,11 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.BackendJoin.Joined, Is.False);
                 Assert.DoesNotThrow(() => h.Worker.Notify());
 
-                // A receipt issued by a foreign teardown bound to the same
+                // A receipt produced by a foreign teardown bound to the same
                 // context is refused: the exact issuer is part of the join
                 // precondition.
                 FakeMainThreadTeardown foreign = new FakeMainThreadTeardown { BoundContext = h.Context };
-                NvencMainThreadTextureTeardownReceipt foreignReceipt =
-                    NvencMainThreadTextureTeardownReceipt.Issue(foreign, h.Context);
+                NvencMainThreadTextureTeardownReceipt foreignReceipt = foreign.TearDown();
                 Assert.That(foreignReceipt.IsIssuedFor(foreign, h.Context), Is.True);
 
                 Assert.That(h.BackendJoin.TryJoin(foreignReceipt), Is.False);
@@ -2127,7 +2146,7 @@ namespace Zantetsu.Core.Tests
                     return ReceiptToReturn;
                 }
 
-                return NvencMainThreadTextureTeardownReceipt.Issue(this, BoundContext);
+                return new NvencMainThreadTextureTeardownReceipt(this, BoundContext);
             }
         }
 

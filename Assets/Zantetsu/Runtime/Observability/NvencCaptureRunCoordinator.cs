@@ -107,10 +107,10 @@ namespace Zantetsu.Observability
                     "The Main Thread texture teardown must be bound to the exact Run chunk context.", nameof(mainThreadTextureTeardown));
             }
 
-            if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context))
+            if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context, _mainThreadTextureTeardown))
             {
                 throw new ArgumentException(
-                    "The Backend Join must be bound to the exact process state, Submit Worker, Output Worker, and Run chunk context.",
+                    "The Backend Join must be bound to the exact process state, Submit Worker, Output Worker, Run chunk context, and Main Thread texture teardown.",
                     nameof(backendJoin));
             }
         }
@@ -596,7 +596,7 @@ namespace Zantetsu.Observability
                 // Re-verify the O(1) exact-graph correlation immediately before
                 // any side effect, so a backend join whose binding was swapped
                 // after construction never joins a foreign Run.
-                if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context))
+                if (!_backendJoin.IsCorrelatedWith(_processState, _submitWorker, _outputWorker, _context, _mainThreadTextureTeardown))
                 {
                     _processState.TryPoison();
                     throw new InvalidOperationException(
