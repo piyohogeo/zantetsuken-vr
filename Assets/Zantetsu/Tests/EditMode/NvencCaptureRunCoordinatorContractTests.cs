@@ -991,12 +991,67 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
-                // A receipt issued by the same teardown but for a foreign Run
-                // chunk context must be rejected.
-                h.MainThreadTeardown.ReceiptToReturn = NvencMainThreadTextureTeardownReceipt.Issue(
-                    h.MainThreadTeardown, MakeContext(h.State));
+                // A valid receipt whose bound Context field was corrupted to a
+                // foreign Run must be rejected by the verification. The normal
+                // factory can no longer produce such a receipt.
+                NvencMainThreadTextureTeardownReceipt receipt = NvencMainThreadTextureTeardownReceipt.Issue(
+                    h.MainThreadTeardown, h.Context);
+                FieldInfo contextField = typeof(NvencMainThreadTextureTeardownReceipt).GetField(
+                    "_context", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(contextField, Is.Not.Null, "_context field not found.");
+                contextField.SetValue(receipt, MakeContext(h.State));
+                h.MainThreadTeardown.ReceiptToReturn = receipt;
 
                 Assert.Throws<InvalidOperationException>(() => h.RunCoordinator.TryCompleteMainThreadTextureTeardown());
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.RunCoordinator.MainThreadTextureTeardownCompleted, Is.False);
+            }
+        }
+
+        [Test]
+        public void MainThreadTeardown_Receipt_Issue_RejectsForeignContextBinding()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // The factory must require the implementation to actually be
+                // bound to the supplied context, not just non-null.
+                FakeMainThreadTeardown foreign = new FakeMainThreadTeardown { BoundContext = MakeContext(h.State) };
+                Assert.Throws<ArgumentException>(() => NvencMainThreadTextureTeardownReceipt.Issue(foreign, h.Context));
+
+                Assert.Throws<ArgumentNullException>(() => NvencMainThreadTextureTeardownReceipt.Issue(null, h.Context));
+                Assert.Throws<ArgumentNullException>(() => NvencMainThreadTextureTeardownReceipt.Issue(foreign, null));
+            }
+        }
+
+        [Test]
+        public void MainThreadTeardown_BindingSwappedAfterConstruction_RefusesNoContact()
+        {
+            using (Harness h = Harness.Create())
+            {
+                h.AcceptAndAppendChunk(1, 64, Seed);
+                Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
+                h.SubmitDrained = true;
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+
+                h.SettledEvent.Reset();
+                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                WaitSettled(h.SettledEvent, "worker did not complete the teardown");
+                h.WaitForPhysicalStop("worker did not physically exit after the teardown");
+
+                h.SubmitWorker.Dispose();
+
+                // Swap the teardown's internal Context binding after
+                // construction: the side-effect-time re-check must refuse
+                // without contacting the teardown.
+                h.MainThreadTeardown.BoundContext = MakeContext(h.State);
+
+                Assert.Throws<InvalidOperationException>(() => h.RunCoordinator.TryCompleteMainThreadTextureTeardown());
+                Assert.That(h.MainThreadTeardown.CallCount, Is.EqualTo(0));
                 Assert.That(h.State.IsPoisoned, Is.True);
                 Assert.That(h.RunCoordinator.MainThreadTextureTeardownCompleted, Is.False);
             }

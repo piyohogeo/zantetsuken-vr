@@ -34,8 +34,10 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Atomic issuance factory: null-checks the exact teardown
-        /// implementation and the exact bound Run chunk context, and holds
-        /// only those two references. Issued only after a normal completion.
+        /// implementation and the exact bound Run chunk context, and requires
+        /// the implementation to be actually bound to that context, so a
+        /// semantically invalid receipt can never be issued. Holds only those
+        /// two references. Issued only after a normal completion.
         /// </summary>
         internal static NvencMainThreadTextureTeardownReceipt Issue(
             INvencMainThreadTextureTeardown issuedBy,
@@ -49,6 +51,12 @@ namespace Zantetsu.Observability
             if (context == null)
             {
                 throw new ArgumentNullException(nameof(context));
+            }
+
+            if (!issuedBy.IsBoundTo(context))
+            {
+                throw new ArgumentException(
+                    "The teardown implementation must be bound to the exact Run chunk context.", nameof(issuedBy));
             }
 
             return new NvencMainThreadTextureTeardownReceipt(issuedBy, context);

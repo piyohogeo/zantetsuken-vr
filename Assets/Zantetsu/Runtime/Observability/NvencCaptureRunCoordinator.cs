@@ -503,6 +503,18 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // Re-verify the O(1) exact-Run binding immediately before any
+                // side effect: a teardown whose Context binding was swapped
+                // after construction must never destroy a foreign Run's
+                // Textures. A lost binding poisons without contacting the
+                // teardown.
+                if (!_mainThreadTextureTeardown.IsBoundTo(_context))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "Main Thread texture teardown is no longer bound to the exact Run chunk context.");
+                }
+
                 // Run the exact Main Thread teardown inside the gate: a
                 // concurrent Poison blocks until this completion is published
                 // and the gate is released.
