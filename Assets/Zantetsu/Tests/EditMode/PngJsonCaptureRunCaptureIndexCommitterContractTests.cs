@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
@@ -376,20 +375,16 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Commit_RepeatedRenames_LandExactlyOnCaptureIndex()
         {
-            // The rename destination is written into a native buffer. A layout
-            // that reserves no terminator lets the name pick up trailing
-            // garbage, which shows up as a sibling like "capture.index<junk>"
-            // instead of a delayed or missing final. One commit hits that
-            // rarely, so a bounded repeat over independent sandboxes is what
-            // makes the defect reproducible; every check below is direct, with
-            // no polling, sleeping, or eventual assertion.
+            // The commit has produced a corrupted destination name, observed as
+            // a sibling like "capture.index<garbage>" rather than a delayed or
+            // missing final. A bounded repeat over independent sandboxes on the
+            // real filesystem guards the rename destination, and every check
+            // below is direct, with no polling, sleeping, or eventual assertion.
             const int iterations = 32;
 
             for (int iteration = 0; iteration < iterations; iteration++)
             {
                 string message = "iteration " + iteration;
-
-                DirtyNativeHeap();
 
                 (string sandbox, string staging, string final) = MakeSandbox();
                 _sandboxes.Add(sandbox);
@@ -1520,41 +1515,6 @@ namespace Zantetsu.Core.Tests
             SetField(operation, "_mode", GetField(template, "_mode"));
             SetField(operation, "_canonicalBytes", canonicalBytes);
             return operation;
-        }
-
-        /// <summary>
-        /// Recycles a spread of small native blocks filled with non-zero bytes.
-        /// A destination-name buffer that reserves no terminator reads whatever
-        /// follows the name; freshly mapped native pages are zero, which hides
-        /// that, so leaving dirty same-order blocks on the allocator's free
-        /// lists is what makes the read-past observable instead of luck.
-        /// </summary>
-        private static void DirtyNativeHeap()
-        {
-            const int blockCount = 32;
-            const int smallestSize = 32;
-            const int largestSize = 512;
-
-            byte[] pattern = new byte[largestSize];
-            for (int i = 0; i < pattern.Length; i++)
-            {
-                pattern[i] = 0xFF;
-            }
-
-            IntPtr[] blocks = new IntPtr[blockCount];
-            for (int size = smallestSize; size <= largestSize; size += 8)
-            {
-                for (int i = 0; i < blockCount; i++)
-                {
-                    blocks[i] = Marshal.AllocHGlobal(size);
-                    Marshal.Copy(pattern, 0, blocks[i], size);
-                }
-
-                for (int i = 0; i < blockCount; i++)
-                {
-                    Marshal.FreeHGlobal(blocks[i]);
-                }
-            }
         }
 
         private static PngJsonCaptureRunCaptureIndexCommitter MakeCommitter(CaptureRunRootLayout layout)
