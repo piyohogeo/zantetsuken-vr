@@ -112,6 +112,7 @@ namespace Zantetsu.Observability
         private bool _captureCompleteSubmitted;
         private bool _captureCompleteCollected;
         private NvencRunCaptureCompleteAttemptResult _captureCompleteResult;
+        private NvencRunCaptureCompleteCleanupOperation _captureCompleteCleanupOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -2974,6 +2975,206 @@ namespace Zantetsu.Observability
                         throw new InvalidOperationException(
                             "The CaptureComplete result has an unrecognized status.");
                     }
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent NVENC CaptureComplete cleanup preparation.
+        /// It is admitted only after the Run reached its successful terminal:
+        /// the process must be Draining and not Poisoned, the disposition must
+        /// be <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>,
+        /// CaptureComplete must have been prepared, submitted, and collected,
+        /// the retained Attempt Result must be the exact, still-valid Completed
+        /// result of the exact retained CaptureComplete operation whose receipt
+        /// is valid for the exact completer, the Registry Slot must be
+        /// Committed, the context Finalized, the Session Ownership Lease still
+        /// live, and the Publication Service must be both released and
+        /// physically stopped. On the first success the operation is minted and
+        /// retained exactly once; re-calls return the same reference after
+        /// re-checking its exact correlation.
+        /// </summary>
+        /// <remarks>
+        /// A CaptureComplete that has not been prepared, submitted, or
+        /// collected, a Failed CaptureComplete, a PublicationRecoveryRequired
+        /// or any earlier disposition, a Service that is not yet released or
+        /// still running, a poisoned process, or a gate contention returns
+        /// false with no change and never inspects any file. Poison is checked
+        /// before the retained operation. Only a published CaptureComplete
+        /// whose retained result, receipt, operation, or Registry correlation
+        /// is broken is corruption and poisons. Preparation changes nothing but
+        /// the retained cleanup operation: the disposition, Registry, plan,
+        /// chunk, capture index, publication and CaptureComplete results and
+        /// receipts, context, lease, Service, and filesystem are all untouched,
+        /// and nothing is deleted or released here.
+        /// </remarks>
+        internal bool TryPrepareCaptureCompleteCleanup(
+            out NvencRunCaptureCompleteCleanupOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A process-wide Poison outranks every retained shape, so a Run
+                // poisoned after a successful preparation refuses rather than
+                // reporting corruption.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                // Idempotent: an already-minted operation returns the same
+                // reference after re-checking its exact correlation.
+                if (_captureCompleteCleanupOperation != null)
+                {
+                    if (!_captureCompleteCleanupOperation.IsValid
+                        || !_captureCompleteCleanupOperation.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained CaptureComplete cleanup operation no longer correlates.");
+                    }
+
+                    operation = _captureCompleteCleanupOperation;
+                    return true;
+                }
+
+                if (!_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.CaptureComplete)
+                {
+                    // PublicationRecoveryRequired, Committed, or any earlier
+                    // disposition: cleanup belongs only to the successful
+                    // terminal. Refuse with no change and without inspecting
+                    // any file.
+                    return false;
+                }
+
+                if (!_captureCompleteSubmitted || !_captureCompleteCollected)
+                {
+                    // Not prepared, not submitted, or not collected yet: a
+                    // normal not-ready shape, never corruption.
+                    return false;
+                }
+
+                NvencRunCaptureCompleteAttemptResult retained = _captureCompleteResult;
+                if (retained.IsNone
+                    || retained.Status != NvencRunCaptureCompleteStatus.Completed)
+                {
+                    // A Failed CaptureComplete is handed to Recovery, not to
+                    // cleanup; refuse with no change.
+                    return false;
+                }
+
+                if (!_publicationServiceReleased || !_publicationService.IsStopped)
+                {
+                    // The Service must already be released and physically
+                    // stopped before any cleanup is prepared; until then this
+                    // is a normal not-ready shape.
+                    return false;
+                }
+
+                // A published CaptureComplete must still carry an intact
+                // retained result, receipt, operation, and Registry
+                // correlation. A break here is corruption, not a not-ready
+                // shape: every normal shape was already refused above.
+                NvencRunCaptureCompleteReceipt receipt = retained.Receipt;
+                if (!IsCaptureCompleteCleanupReceiptCorrelated(receipt))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Completed CaptureComplete result or its correlation is broken.");
+                }
+
+                NvencRunCaptureCompleteCleanupOperation minted;
+                try
+                {
+                    minted = new NvencRunCaptureCompleteCleanupOperation(this, receipt);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _captureCompleteCleanupOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _captureCompleteCleanupOperation = null;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The CaptureComplete cleanup operation does not correlate after construction.");
+                }
+
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe post-CaptureComplete correlation reused by the
+        /// cleanup operation: on an unpoisoned Run whose disposition is
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> and whose
+        /// Publication Service is released and stopped, the supplied receipt
+        /// must be the exact receipt of the exact retained, submitted,
+        /// collected, Completed CaptureComplete Attempt Result of the exact
+        /// retained CaptureComplete operation, issued for that Result's exact
+        /// completer, and that operation's own binding correlation must still
+        /// hold. ReferenceEquals and existing predicates only; no file is
+        /// inspected, nothing is deleted or released, and nothing is changed.
+        /// </summary>
+        internal bool IsCaptureCompleteCleanupReceiptCorrelated(
+            NvencRunCaptureCompleteReceipt receipt)
+        {
+            try
+            {
+                if (receipt == null
+                    || _processState.IsPoisoned
+                    || _disposition != NvencRunEvidenceDisposition.CaptureComplete
+                    || !_captureCompleteSubmitted
+                    || !_captureCompleteCollected
+                    || !_publicationServiceReleased
+                    || !_publicationService.IsStopped)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteAttemptResult retained = _captureCompleteResult;
+                NvencRunCaptureCompleteOperation completeOperation = _captureCompleteOperation;
+
+                if (retained.IsNone
+                    || retained.Status != NvencRunCaptureCompleteStatus.Completed
+                    || !retained.IsValid
+                    || completeOperation == null
+                    || !ReferenceEquals(retained.Receipt, receipt)
+                    || !ReferenceEquals(retained.Operation, completeOperation)
+                    || !receipt.IsIssuedFor(retained.Completer, completeOperation))
+                {
+                    return false;
+                }
+
+                // The CaptureComplete operation's own binding correlation
+                // carries the capture index commit, the Published artifact
+                // publication, the committed plan commit, the Committed
+                // Registry entry, the Finalized context, and the live lease. It
+                // is reused rather than re-derived.
+                return completeOperation.IsBindingIntact;
+            }
+            catch
+            {
+                return false;
             }
         }
 

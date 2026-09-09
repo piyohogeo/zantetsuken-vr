@@ -3214,6 +3214,386 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- CaptureComplete cleanup preparation ----
+
+        /// <summary>
+        /// Drives the Run to a collected CaptureComplete of the given status.
+        /// </summary>
+        private static NvencRunCaptureCompleteAttemptResult CompleteCaptureAndCollect(
+            Harness h,
+            NvencRunCaptureCompleteStatus status)
+        {
+            PrepareCaptureCompleteSubmission(h);
+            h.RunCompleter.Status = status;
+            Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+            WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
+            Assert.That(h.RunCoordinator.TryCollectCaptureComplete(
+                out NvencRunCaptureCompleteAttemptResult result), Is.True);
+            return result;
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_CompletedCollected_ForwardsExactReferences()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteAttemptResult captureComplete =
+                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(captureComplete.IsCompleted, Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                Assert.That(operation, Is.Not.Null);
+                Assert.That(operation.IsValid, Is.True);
+                Assert.That(operation.IsIssuedFor(h.RunCoordinator), Is.True);
+                Assert.That(operation.IsIssuedFor(null), Is.False);
+
+                // Every forwarded value is the existing graph's exact
+                // reference.
+                Assert.That(ReferenceEquals(
+                    operation.CaptureCompleteReceipt, captureComplete.Receipt), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.CaptureCompleteOperation, captureComplete.Operation), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.CaptureIndexCommitReceipt,
+                    captureComplete.Operation.CaptureIndexCommitReceipt), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.ArtifactPublicationReceipt,
+                    captureComplete.Operation.ArtifactPublicationReceipt), Is.True);
+                Assert.That(ReferenceEquals(operation.Plan, captureComplete.Plan), Is.True);
+                Assert.That(ReferenceEquals(operation.RootLayout, captureComplete.RootLayout), Is.True);
+                Assert.That(operation.TestRunId, Is.EqualTo(captureComplete.TestRunId));
+                Assert.That(operation.TestRunId, Is.EqualTo(h.Context.TestRunId));
+                Assert.That(ReferenceEquals(
+                    operation.RunInitializationId, captureComplete.RunInitializationId), Is.True);
+
+                // The artifact publication receipt is still the one publication
+                // issued, never re-issued for cleanup.
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult publication), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.ArtifactPublicationReceipt, publication.Receipt), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_Idempotent_ReturnsSameReference()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation first), Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation again), Is.True);
+
+                Assert.That(ReferenceEquals(first, again), Is.True);
+                Assert.That(first.IsValid, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_BeforeSubmitOrCollect_ReturnsFalse()
+        {
+            // Prepared but not submitted.
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureCompleteSubmission(h);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // Submitted with a terminal published, but not collected: the
+            // Service is stopped yet still unreleased.
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureCompleteSubmission(h);
+                Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+                WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
+
+                Assert.That(h.Service.IsStopped, Is.True);
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // Collecting the Completed result is what admits the
+                // preparation.
+                Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.True);
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_MidExecutionBeforeServiceStop_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureCompleteSubmission(h);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.RunCompleter.Entered = entered;
+                h.RunCompleter.Release = release;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+
+                // The Worker is still running and nothing is released.
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                release.Set();
+                WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
+                Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_FailedOrEarlierDisposition_ReturnsFalseWithoutPoison()
+        {
+            // A Failed CaptureComplete publishes PublicationRecoveryRequired.
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteAttemptResult failed =
+                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Failed);
+                Assert.That(failed.IsFailed, Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+            }
+
+            // A Failed capture index commit also stops short of CaptureComplete.
+            using (Harness h = Harness.Create())
+            {
+                CommitCaptureIndexAndCollect(h, NvencRunCaptureIndexCommitStatus.Failed);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // A still-Committed Run has not reached the successful terminal.
+            using (Harness h = Harness.Create())
+            {
+                CommitCaptureIndexAndCollect(h, NvencRunCaptureIndexCommitStatus.Committed);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // A Finalized Run, long before any publication.
+            using (Harness h = Harness.Create())
+            {
+                FinalizeOnly(h);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_ExternalPoisonFirst_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_GateContention_ReturnsFalseNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation contended), Is.False);
+                    Assert.That(contended, Is.Null);
+                    Assert.That(h.RunCoordinator.Disposition,
+                        Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                // The refusal left nothing behind.
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation prepared), Is.True);
+                Assert.That(prepared, Is.Not.Null);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_BrokenPublishedCorrelation_Poisons()
+        {
+            // Broken before any cleanup operation is minted.
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                // Releasing the Session Ownership Lease breaks the published
+                // graph through the ordinary ownership API.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+
+            // Broken after the cleanup operation was minted.
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation prepared), Is.True);
+                Assert.That(prepared.IsValid, Is.True);
+
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(prepared.IsValid, Is.False);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_ChangesNoRunOrServiceState()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteAttemptResult captureComplete =
+                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+                bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
+                NvencRunChunkContextState contextState = h.Context.State;
+                NvencRunPublicationServiceState serviceState = h.Service.State;
+                bool serviceReleased = h.RunCoordinator.PublicationServiceReleased;
+                bool serviceStopped = h.Service.IsStopped;
+                bool leaseCreated = h.SessionIssue.OwnershipLease.IsCreated;
+                bool leaseValid = h.SessionIssue.IsValid;
+                int publisherCalls = h.Publisher.CallCount;
+                int committerCalls = h.Committer.CallCount;
+                int indexCommitterCalls = h.IndexCommitter.CallCount;
+                int completerCalls = h.RunCompleter.CallCount;
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+                Assert.That(h.Slot.State, Is.EqualTo(slotState));
+                Assert.That(h.Slot.HasRegisteredEntry, Is.EqualTo(hasRegisteredEntry));
+                Assert.That(h.Context.State, Is.EqualTo(contextState));
+                Assert.That(h.Service.State, Is.EqualTo(serviceState));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.EqualTo(serviceReleased));
+                Assert.That(h.Service.IsStopped, Is.EqualTo(serviceStopped));
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.EqualTo(leaseCreated));
+                Assert.That(h.SessionIssue.IsValid, Is.EqualTo(leaseValid));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+                Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(completerCalls));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The retained CaptureComplete result and receipt are reused,
+                // never replaced.
+                Assert.That(h.RunCoordinator.TryCollectCaptureComplete(
+                    out NvencRunCaptureCompleteAttemptResult again), Is.True);
+                Assert.That(ReferenceEquals(again.Operation, captureComplete.Operation), Is.True);
+                Assert.That(ReferenceEquals(again.Receipt, captureComplete.Receipt), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.CaptureCompleteReceipt, again.Receipt), Is.True);
+            }
+        }
+
+        [Test]
+        public void CaptureCompleteCleanupOperation_TwoReadonlyFields_SealedInternal()
+        {
+            Type type = typeof(NvencRunCaptureCompleteCleanupOperation);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields, Has.Length.EqualTo(2));
+
+            // Verify by field-type set, never by reflection return order or
+            // private field names: a harmless rename must not break this test.
+            Assert.That(
+                fields.Select(field => field.FieldType),
+                Is.EquivalentTo(new[]
+                {
+                    typeof(NvencCaptureRunCoordinator),
+                    typeof(NvencRunCaptureCompleteReceipt),
+                }));
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+            }
+        }
+
         // ---- CaptureComplete preparation ----
 
         /// <summary>
