@@ -71,8 +71,8 @@ Submit worker entry above, which is a different test and a different
 assertion. Until the cause is known, do not merge this entry into either of
 them.
 
-The victim test is not fixed. Every observation so far is the same helper and
-the same assertion, in whichever fixture happened to run it:
+Every observation so far is that same helper and that same assertion, in
+several different fixtures and tests:
 
 - `20260910-080619-481d11`:
   `NvencRunPublicationPlanCommitterContractTests.Commit_UnsupportedFileSystem_ThrowsBeforeContact`
@@ -85,16 +85,17 @@ the same assertion, in whichever fixture happened to run it:
   and
   `NvencRunPublicationPlanCommitContractTests.Builder_TamperedDescriptorKind_Throws`
 
-So it is not tied to one test, one fixture, or one change. It did not fire in
-the runs `20260910-080413-410905`, `20260910-080900-96c8f2`,
-`20260910-081054-4f81ca`, `20260910-082855-d24b85`, or
-`20260910-083111-287faf`, and fired twice in each of the two runs that did
-show it, so at the current suite size it is intermittent per run rather than
-per test.
+Two of those runs showed two such failures each, in different fixtures, so a
+single run can produce more than one. The runs `20260910-080413-410905`,
+`20260910-080900-96c8f2`, `20260910-081054-4f81ca`, `20260910-082855-d24b85`,
+and `20260910-083111-287faf` showed none. That is the extent of what has been
+observed: how the failure is distributed across runs, tests, and fixtures is
+not established, and whether the implementation changes or the added suite load
+in these runs acted as a trigger has not been evaluated and is not excluded.
 
-There is now a concrete cause hypothesis, not yet demonstrated by a targeted
-reproduction: the fixtures' convergence protocol cannot distinguish a stale
-settle from the post-request one. `NvencOrderedOutputWorkerService` documents
+There is a cause hypothesis, not demonstrated by any reproduction: the
+fixtures' convergence protocol may not be able to distinguish a stale settle
+from the post-request one. `NvencOrderedOutputWorkerService` documents
 `Settled` as a best-effort observation raised when the worker is about to park,
 with production correctness never depending on subscribers. The worker reaches
 `RaiseSettled()` only after it has already called `_signal.Reset()` and
@@ -105,14 +106,15 @@ satisfies the freshly reset event before it has advanced the terminal. The
 fixture's `WaitSettled` then returns on the stale settle and
 `TryCollectTerminal` correctly reports that nothing is collectable yet.
 
-If that is the cause, it is a test-side race in the helper rather than a
-product defect, and the fix belongs in the fixtures' settle-observation
-protocol, not in the worker. It would also cover the Submit worker entry above,
-which has the same `Reset()`-request-`WaitSettled` shape. That is a hypothesis
-read off the code, however, and no reproduction has confirmed it, so this entry
-stays under "Under investigation", stays separate from the Submit worker entry
-and from the Active teardown-timing entry, and is still not permission to
-re-run any of these tests.
+If that were the cause it would be a test-side race in the helper rather than a
+product defect, and the fix would belong in the fixtures' settle-observation
+protocol rather than in the worker; the Submit worker entry above has the same
+`Reset()`-request-`WaitSettled` shape. All of that is read off the code and
+unproven: no reproduction has confirmed it, so it does not establish the cause
+and does not rule out a product defect. This entry therefore stays under "Under
+investigation", stays separate from the Submit worker entry and from the Active
+teardown-timing entry, and is still not permission to re-run any of these
+tests.
 
 ## Resolved
 
