@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
@@ -27,6 +29,53 @@ namespace Zantetsu.Core.Tests
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
         private const string Hash64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        private readonly System.Collections.Generic.List<string> _sandboxes =
+            new System.Collections.Generic.List<string>();
+        private readonly System.Collections.Generic.List<string> _junctions =
+            new System.Collections.Generic.List<string>();
+
+        [TearDown]
+        public void TearDown()
+        {
+            foreach (string junction in _junctions)
+            {
+                try
+                {
+                    if (Directory.Exists(junction))
+                    {
+                        Directory.Delete(junction, false);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            _junctions.Clear();
+
+            foreach (string sandbox in _sandboxes)
+            {
+                try
+                {
+                    if (Directory.Exists(sandbox))
+                    {
+                        Directory.Delete(sandbox, true);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            _sandboxes.Clear();
+        }
 
         // ---- Validation before filesystem contact ----
 
@@ -374,7 +423,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void FileSystemBackendSource_Audit_NoDurabilityNoLegacyBasename()
+        public void FileSystemBackendSource_Audit_NoDurabilityNoDeleteNoLegacyBasename()
         {
             string source = File.ReadAllText(Path.Combine(RuntimeDirectory(), "NvencPublicationPlanCommitFileSystem.cs"));
 
@@ -382,6 +431,7 @@ namespace Zantetsu.Core.Tests
             {
                 "FlushFileBuffers", "publication.plan.tmp",
                 "File.Move", "File.Delete", "Directory.Delete", "WritePlan",
+                "DeleteByHandle", "FileDispositionInfo", "DeleteFile",
             };
 
             foreach (string word in forbidden)
@@ -389,9 +439,86 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain(word), "backend source must not contain: " + word);
             }
 
-            Assert.That(source, Does.Contain("SetFileInformationByHandle"));
+            // The rename destination is handle-relative and the directory open
+            // is a true no-follow open.
+            Assert.That(source, Does.Contain("NtSetInformationFile"));
+            Assert.That(source, Does.Contain("WriteIntPtr"));
+            Assert.That(source, Does.Contain("DangerousGetHandle"));
+            Assert.That(source, Does.Contain("FileFlagOpenReparsePoint"));
             Assert.That(source, Does.Contain("ReplaceIfExists"));
             Assert.That(source, Does.Contain("NtCreateFile"));
+        }
+
+        // ---- Windows backend integration ----
+
+        [Test]
+        public void Backend_Rename_SucceedsAndPublishesFinal()
+        {
+            RequireWindows();
+            string root = MakeSandbox();
+
+            byte[] bytes = { 1, 2, 3, 4, 5 };
+            NvencPublicationPlanCommitFileSystem fileSystem = NvencPublicationPlanCommitFileSystem.Create();
+            using (NvencPublicationPlanCommitDirectory directory = fileSystem.OpenDirectory(root))
+            using (NvencPublicationPlanCommitFile file = fileSystem.CreateNew(
+                directory, NvencRunPublicationPlanCommitOperation.PreCommitBasename))
+            {
+                file.Stream.Write(bytes, 0, bytes.Length);
+                file.Stream.Flush();
+                fileSystem.Rename(file, directory, NvencRunPublicationPlanCommitOperation.FinalBasename);
+            }
+
+            Assert.That(
+                File.ReadAllBytes(Path.Combine(root, NvencRunPublicationPlanCommitOperation.FinalBasename)),
+                Is.EqualTo(bytes));
+            Assert.That(
+                File.Exists(Path.Combine(root, NvencRunPublicationPlanCommitOperation.PreCommitBasename)),
+                Is.False);
+        }
+
+        [Test]
+        public void Backend_ExistingFinal_NonOverwritingRenameFails()
+        {
+            RequireWindows();
+            string root = MakeSandbox();
+
+            byte[] existing = { 9, 9, 9 };
+            File.WriteAllBytes(Path.Combine(root, NvencRunPublicationPlanCommitOperation.FinalBasename), existing);
+
+            NvencPublicationPlanCommitFileSystem fileSystem = NvencPublicationPlanCommitFileSystem.Create();
+            using (NvencPublicationPlanCommitDirectory directory = fileSystem.OpenDirectory(root))
+            using (NvencPublicationPlanCommitFile file = fileSystem.CreateNew(
+                directory, NvencRunPublicationPlanCommitOperation.PreCommitBasename))
+            {
+                byte[] bytes = { 1, 2, 3 };
+                file.Stream.Write(bytes, 0, bytes.Length);
+                file.Stream.Flush();
+                Assert.Throws<IOException>(() => fileSystem.Rename(
+                    file, directory, NvencRunPublicationPlanCommitOperation.FinalBasename));
+            }
+
+            // The existing final is untouched and the temporary remains.
+            Assert.That(
+                File.ReadAllBytes(Path.Combine(root, NvencRunPublicationPlanCommitOperation.FinalBasename)),
+                Is.EqualTo(existing));
+            Assert.That(
+                File.Exists(Path.Combine(root, NvencRunPublicationPlanCommitOperation.PreCommitBasename)),
+                Is.True);
+        }
+
+        [Test]
+        public void Backend_LeafReparseDirectory_Rejected()
+        {
+            RequireWindows();
+            string sandbox = MakeSandbox();
+            string target = Path.Combine(sandbox, "target");
+            string link = Path.Combine(sandbox, "link");
+            Directory.CreateDirectory(target);
+            CreateJunction(link, target);
+            _junctions.Add(link);
+
+            NvencPublicationPlanCommitFileSystem fileSystem = NvencPublicationPlanCommitFileSystem.Create();
+            Assert.Throws<IOException>(() => fileSystem.OpenDirectory(link));
         }
 
         // ---- Helpers ----
@@ -511,6 +638,45 @@ namespace Zantetsu.Core.Tests
         private static string RuntimeDirectory()
         {
             return Path.Combine(Path.Combine(Application.dataPath, ".."), "Assets/Zantetsu/Runtime/Observability");
+        }
+
+        private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        private static void RequireWindows()
+        {
+            if (!IsWindows)
+            {
+                Assert.Ignore("The NVENC publication plan committer filesystem backend requires Windows file handles.");
+            }
+        }
+
+        private string MakeSandbox()
+        {
+            string sandbox = Path.Combine(Path.GetTempPath(), "zantetsuken-plancommitter-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(sandbox);
+            _sandboxes.Add(sandbox);
+            return sandbox;
+        }
+
+        private static void CreateJunction(string linkPath, string targetPath)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo(
+                "cmd.exe", "/c mklink /J \"" + linkPath + "\" \"" + targetPath + "\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using (Process process = Process.Start(startInfo))
+            {
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException("mklink /J failed: " + process.StandardError.ReadToEnd());
+                }
+            }
         }
 
         private static ForcedDropFrameIdSet MakeForcedDropSet(Harness h)
