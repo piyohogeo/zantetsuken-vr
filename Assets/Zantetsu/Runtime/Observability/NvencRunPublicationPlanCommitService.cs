@@ -14,7 +14,9 @@ namespace Zantetsu.Observability
     /// <see cref="Completed"/> advances to <see cref="Collected"/> on a
     /// successful <see cref="NvencRunPublicationPlanCommitService.TryCollect"/>.
     /// <see cref="Collected"/> is the normal terminal: re-submission and
-    /// re-collection are rejected. A coordinator/committer exception, a
+    /// re-collection are rejected. A never-submitted Service advances from
+    /// <see cref="Accepting"/> to <see cref="StoppedWithoutRequest"/> on a
+    /// normal, non-poisoning stop. A coordinator/committer exception, a
     /// null/foreign/corrupt Execution Result, or a preceding external Poison
     /// advances directly to <see cref="Poisoned"/> without publishing a normal
     /// terminal.
@@ -27,6 +29,7 @@ namespace Zantetsu.Observability
         Completed = 3,
         Collected = 4,
         Poisoned = 5,
+        StoppedWithoutRequest = 6,
     }
 
     /// <summary>
@@ -155,6 +158,51 @@ namespace Zantetsu.Observability
 
             Notify();
             return true;
+        }
+
+        /// <summary>
+        /// Non-waiting, one-time normal stop of a never-submitted Service: the
+        /// Accepting state advances to
+        /// <see cref="NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest"/>
+        /// without poisoning the process, linearized with submission on the
+        /// shared process-state gate. The Worker is then notified and exits, so
+        /// an unused Service for an Incomplete Run releases its Worker and wait
+        /// handle while the process stays Draining. A Service that already
+        /// accepted a submission, is already stopped, or observes a Poison is
+        /// not changed and returns false.
+        /// </summary>
+        internal bool TryStopWithoutRequest()
+        {
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            bool stopped;
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                stopped = Interlocked.CompareExchange(
+                    ref _state,
+                    (int)NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest,
+                    (int)NvencRunPublicationPlanCommitServiceState.Accepting)
+                    == (int)NvencRunPublicationPlanCommitServiceState.Accepting;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+
+            if (stopped)
+            {
+                Notify();
+            }
+
+            return stopped;
         }
 
         /// <summary>

@@ -1356,8 +1356,11 @@ namespace Zantetsu.Core.Tests
 
                 if (!Service.IsStopped)
                 {
-                    State.TryPoison();
-                    Service.Notify();
+                    if (!Service.TryStopWithoutRequest())
+                    {
+                        State.TryPoison();
+                        Service.Notify();
+                    }
                 }
 
                 FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(

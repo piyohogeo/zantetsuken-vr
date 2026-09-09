@@ -1460,6 +1460,20 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Non-waiting, one-time normal stop of the exact Publication Plan
+        /// Commit Service for a Run that never prepared or submitted a Plan
+        /// commit (an Incomplete Run). It advances the Service from Accepting
+        /// to a non-poisoning stop so the unused Worker and wait handle can be
+        /// released while the process stays Draining. A Service that already
+        /// accepted a submission is never stopped here. The caller then waits
+        /// for the Worker's physical stop and disposes the Service.
+        /// </summary>
+        internal bool TryStopPublicationPlanCommitService()
+        {
+            return _publicationPlanCommitService.TryStopWithoutRequest();
+        }
+
         private bool IsCollectedCommitResultCorrelated(
             NvencRunPublicationPlanCommitExecutionResult collected)
         {

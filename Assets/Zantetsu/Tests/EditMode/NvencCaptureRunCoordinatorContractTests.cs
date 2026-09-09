@@ -1622,6 +1622,42 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Incomplete_NoPlanSubmitted_ServiceStopsNormally_ProcessStaysDraining()
+        {
+            using (Harness h = Harness.Create())
+            {
+                StopAbandonedBackend(h);
+                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
+                Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
+
+                ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
+                FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
+
+                Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out _), Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Incomplete));
+
+                // No Plan was ever prepared or submitted: the unused Service
+                // stops normally without poisoning while the process stays
+                // Draining.
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.True);
+
+                WaitForServiceStop(h, "service worker did not stop normally");
+
+                Assert.That(h.State.IsDraining, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest));
+
+                // The worker is physically stopped and the wait handle is
+                // released exactly once (dispose is idempotent).
+                Assert.DoesNotThrow(() => h.Service.Dispose());
+                Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(1));
+                Assert.DoesNotThrow(() => h.Service.Dispose());
+            }
+        }
+
+        [Test]
         public void TraceFreeze_BeforeBackendJoin_RefusesNoTraceContact()
         {
             using (Harness h = Harness.Create())
@@ -2987,8 +3023,11 @@ namespace Zantetsu.Core.Tests
                 // parked (a test that never submitted a commit).
                 if (!Service.IsStopped)
                 {
-                    State.TryPoison();
-                    Service.Notify();
+                    if (!Service.TryStopWithoutRequest())
+                    {
+                        State.TryPoison();
+                        Service.Notify();
+                    }
                 }
 
                 FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(
