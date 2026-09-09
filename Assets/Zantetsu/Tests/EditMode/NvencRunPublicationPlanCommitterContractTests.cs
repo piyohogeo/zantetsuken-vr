@@ -671,10 +671,37 @@ namespace Zantetsu.Core.Tests
 
             using (Process process = Process.Start(startInfo))
             {
-                process.WaitForExit();
+                // Bounded wait: a hung cmd.exe must never stall the suite.
+                if (!process.WaitForExit(WatchdogTimeoutMs))
+                {
+                    try
+                    {
+                        process.Kill();
+                        process.WaitForExit(WatchdogTimeoutMs);
+                    }
+                    catch (Exception killFailure)
+                    {
+                        throw new InvalidOperationException(
+                            "mklink /J did not terminate within the watchdog and could not be killed.", killFailure);
+                    }
+
+                    throw new InvalidOperationException(
+                        "mklink /J did not terminate within the watchdog.");
+                }
+
+                string output;
+                try
+                {
+                    output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+                }
+                catch (Exception readFailure)
+                {
+                    output = "(output unavailable: " + readFailure.Message + ")";
+                }
+
                 if (process.ExitCode != 0)
                 {
-                    throw new InvalidOperationException("mklink /J failed: " + process.StandardError.ReadToEnd());
+                    throw new InvalidOperationException("mklink /J failed: " + output);
                 }
             }
         }
