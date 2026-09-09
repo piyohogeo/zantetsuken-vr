@@ -3,8 +3,9 @@
 Only the tests under "Active flakes" below may be re-run before a failure is
 treated as a regression: they pass deterministically in isolation and on
 re-run, but can fail intermittently in a full EditMode suite run under
-batchmode load. Every other failure, including any entry under "Resolved", is a
-normal failure and must be investigated rather than re-run.
+batchmode load. Every other failure, including anything under "Under
+investigation" or "Resolved", is a normal failure and must be investigated
+rather than re-run.
 
 ## Active flakes
 
@@ -21,17 +22,28 @@ False`). Observed on `TraceFreeze_BeforeBackendJoin_RefusesNoTraceContact`,
 `StopService_CommitOutcomeUnknown_Rejected`, and
 `ExecutionResult_InvalidatedByLeaseRelease`.
 
-### Unclassified: submit worker settle-before-enqueue
+## Under investigation
+
+Failures here are open questions, not permission to re-run. Nothing below is
+known to be a test-side race rather than a product defect, so a failure stays a
+regression candidate until the cause is established. Move an entry to "Active
+flakes" only once its reproduction conditions or a test-side race are
+confirmed, or to "Resolved" once it is fixed.
+
+### Submit worker: settle observed before the output queue was filled
 
 `NvencOrderedSubmitWorkerServiceContractTests.BeginDrain_WhileRunning_IsRejected_WorkerContinues`
-can fail at
-`Assert.That(h.OutputQueue.Count, Is.EqualTo(1))` (`Expected: 1 But was: 0`)
-right after the fixture's `WaitSettled(h.SettledEvent, "worker did not process
-the accepted work")`. This test does not use `StopFinalizedBackend` and is not
-part of the teardown-timing entry above; the settle signal appears to be
-observable before the processed record reaches the output queue. Cause not yet
-established and not yet fixed. Observed once, in the full suite run
-`20260909-190835-7250d9`.
+failed at `Assert.That(h.OutputQueue.Count, Is.EqualTo(1))`
+(`Expected: 1 But was: 0`) right after the fixture's
+`WaitSettled(h.SettledEvent, "worker did not process the accepted work")`. So
+the settle signal had been observed while the queue was still empty. This test
+does not call `StopFinalizedBackend` and does not belong to the teardown-timing
+entry above.
+
+Cause not established, and it is not known whether this is a test-side race or
+a worker defect. Observed once, in the full suite run `20260909-190835-7250d9`;
+later full suite runs passed, but the test has not been shown to be
+deterministic in isolation.
 
 ## Resolved
 
