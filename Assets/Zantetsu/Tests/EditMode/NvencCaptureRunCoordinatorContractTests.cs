@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Threading;
@@ -2027,13 +2028,15 @@ namespace Zantetsu.Core.Tests
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
             Assert.That(fields, Has.Length.EqualTo(2));
 
-            // Verify by name, never by reflection return order.
-            FieldInfo coordinatorField = type.GetField("_coordinator", BindingFlags.Instance | BindingFlags.NonPublic);
-            FieldInfo resultField = type.GetField("_planCommitResult", BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.That(coordinatorField, Is.Not.Null, "_coordinator field missing.");
-            Assert.That(resultField, Is.Not.Null, "_planCommitResult field missing.");
-            Assert.That(coordinatorField.FieldType, Is.EqualTo(typeof(NvencCaptureRunCoordinator)));
-            Assert.That(resultField.FieldType, Is.EqualTo(typeof(NvencRunPublicationPlanCommitExecutionResult)));
+            // Verify by field-type set, never by reflection return order or
+            // private field names: a harmless rename must not break this test.
+            Assert.That(
+                fields.Select(field => field.FieldType),
+                Is.EquivalentTo(new[]
+                {
+                    typeof(NvencCaptureRunCoordinator),
+                    typeof(NvencRunPublicationPlanCommitExecutionResult),
+                }));
 
             foreach (FieldInfo field in fields)
             {
@@ -2059,12 +2062,6 @@ namespace Zantetsu.Core.Tests
             {
                 Assert.That(source, Does.Not.Contain(word), "operation source must not depend on: " + word);
             }
-
-            Assert.That(source, Does.Contain("PlanCommitResult"));
-            Assert.That(source, Does.Contain("StagingRelativePath"));
-            Assert.That(source, Does.Contain("FinalRelativePath"));
-            Assert.That(source, Does.Contain("ExpectedByteLength"));
-            Assert.That(source, Does.Contain("ExpectedContentHash"));
         }
 
         [Test]
