@@ -3044,6 +3044,30 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PrepareCaptureComplete_FirstPrepareWithBrokenCommittedIndex_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitAttemptResult index =
+                    CommitCaptureIndexAndCollect(h, NvencRunCaptureIndexCommitStatus.Committed);
+                Assert.That(index.IsCommitted, Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                // Break the published Committed graph through the ordinary
+                // ownership API before any CaptureComplete operation is minted.
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                // The Run is not merely not-ready here: a published Committed
+                // capture index whose correlation is broken can never progress,
+                // so the first preparation must poison rather than look like a
+                // normal poll.
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareCaptureComplete(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
         public void PrepareCaptureComplete_BrokenRetainedOperation_Poisons()
         {
             using (Harness h = Harness.Create())

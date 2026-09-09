@@ -2550,8 +2550,13 @@ namespace Zantetsu.Observability
         /// process, or a gate contention returns false with no change and never
         /// inspects any file. Poison is checked before the retained operation,
         /// so a Run poisoned after a successful preparation refuses with false
-        /// and without an exception. Only a retained operation whose exact
-        /// correlation is broken is corruption and poisons. Preparation changes
+        /// and without an exception. Corruption poisons in two places: a
+        /// retained operation whose exact correlation is broken, and a
+        /// published Committed capture index result whose receipt, operation,
+        /// or downstream publication correlation is broken on the first
+        /// preparation. The Failed and non-Committed shapes are refused before
+        /// that check, so a normal not-ready Run never poisons. Preparation
+        /// changes
         /// nothing but the retained CaptureComplete operation: the disposition,
         /// Registry, plan, capture index, chunk, publication and capture index
         /// results and receipts, context, lease, Service state, and filesystem
@@ -2624,10 +2629,17 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // A published Committed capture index result must still carry
+                // an intact receipt, operation, and downstream publication
+                // correlation. A break here is corruption, not a not-ready
+                // shape: the Failed and non-Committed shapes were already
+                // refused above, so nothing normal reaches this point.
                 NvencRunCaptureIndexCommitReceipt receipt = retained.Receipt;
                 if (!IsCaptureCompleteReceiptCorrelated(receipt))
                 {
-                    return false;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Committed capture index result or its publication correlation is broken.");
                 }
 
                 if (_publicationService.State
