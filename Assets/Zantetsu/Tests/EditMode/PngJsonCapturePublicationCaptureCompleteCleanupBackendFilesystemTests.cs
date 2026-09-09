@@ -285,6 +285,9 @@ namespace Zantetsu.Core.Tests
 
         private sealed class FakeCleanupFileSystem : ICaptureCompleteCleanupFileSystem
         {
+            private readonly Dictionary<CaptureIndexCommitDirectory, string> _directoryPaths =
+                new Dictionary<CaptureIndexCommitDirectory, string>();
+
             public bool Supported = true;
 
             public bool DirectoryFlushSupported = true;
@@ -307,6 +310,10 @@ namespace Zantetsu.Core.Tests
 
             public readonly Queue<CaptureIndexFileOpen> OpenResults = new Queue<CaptureIndexFileOpen>();
 
+            public readonly List<string> OpenedDirectoryPaths = new List<string>();
+
+            public readonly List<string> FlushedDirectoryPaths = new List<string>();
+
             public int FlushDirectoryCalls;
 
             public bool IsSupported => Supported;
@@ -320,10 +327,13 @@ namespace Zantetsu.Core.Tests
                     throw new IOException("open failed");
                 }
 
-                return new CaptureIndexCommitDirectory(
+                OpenedDirectoryPaths.Add(absolutePath);
+                CaptureIndexCommitDirectory directory = new CaptureIndexCommitDirectory(
                     new SafeFileHandle(IntPtr.Zero, true),
                     absolutePath,
                     "\\\\?\\" + absolutePath);
+                _directoryPaths[directory] = absolutePath;
+                return directory;
             }
 
             public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
@@ -354,6 +364,8 @@ namespace Zantetsu.Core.Tests
             public void FlushDirectory(CaptureIndexCommitDirectory directory)
             {
                 FlushDirectoryCalls++;
+                FlushedDirectoryPaths.Add(
+                    _directoryPaths.TryGetValue(directory, out string path) ? path : "<unknown>");
                 if (ThrowOnFlushDirectory)
                 {
                     throw new IOException("flush failed");
@@ -961,7 +973,51 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt, Is.Not.Null);
             Assert.That(Directory.Exists(layout.StagingRunRoot), Is.False);
+
+            // The run root's real parent - the directory that held its entry -
+            // survives, and so does the trusted base root above it.
+            Assert.That(Directory.Exists(Path.GetDirectoryName(layout.StagingRunRoot)), Is.True);
             Assert.That(Directory.Exists(layout.StagingTrustedBaseRoot), Is.True);
+
+            // The final side is untouched: nothing was created there and
+            // nothing was removed.
+            Assert.That(Directory.Exists(layout.FinalTrustedBaseRoot), Is.True);
+            Assert.That(Directory.Exists(layout.FinalRunRoot), Is.False);
+        }
+
+        [Test]
+        public void Execute_RemoveStagingRunRoot_FlushesRealParentDirectory_NotTheTrustedBaseRoot()
+        {
+            CaptureRunRootLayout layout = MakeLayout("C:\\staging", "D:\\final", 1);
+            string realParent = Path.GetDirectoryName(layout.StagingRunRoot);
+            Assert.That(realParent, Is.Not.EqualTo(layout.StagingTrustedBaseRoot));
+
+            PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan = BuildPlan(layout, commitRoute: true);
+            Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
+            PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
+                BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
+
+            FakeCleanupFileSystem fileSystem = new FakeCleanupFileSystem
+            {
+                OpenStatus = CaptureIndexFileOpenStatus.Absent,
+                DirectoryEmpty = true,
+            };
+            PngJsonCapturePublicationCaptureCompleteCleanupBackend backend =
+                new PngJsonCapturePublicationCaptureCompleteCleanupBackend(layout, fileSystem);
+
+            Assert.That(backend.Execute(operation, token), Is.Not.Null);
+
+            // The real parent is opened first - before the run root is deleted -
+            // and it is the only directory flushed. The trusted base root is a
+            // grandparent and does not hold the deleted entry.
+            Assert.That(fileSystem.OpenedDirectoryPaths,
+                Is.EqualTo(new[] { realParent, layout.StagingRunRoot }));
+            Assert.That(fileSystem.FlushedDirectoryPaths, Is.EqualTo(new[] { realParent }));
+            Assert.That(fileSystem.FlushedDirectoryPaths, Has.No.Member(layout.StagingTrustedBaseRoot));
+
+            // Exactly one directory deletion, and it is the run root.
+            Assert.That(fileSystem.DeletedDirectories, Has.Count.EqualTo(1));
+            Assert.That(fileSystem.DeletedFiles, Is.Empty);
         }
 
         // ---- Pre-side-effect rejection ----
@@ -1381,7 +1437,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Execute_RemoveStagingRunRoot_BaseProbeFailure_NoDelete()
+        public void Execute_RemoveStagingRunRoot_ParentOpenFailure_NoDelete()
         {
             CaptureRunRootLayout layout = MakeLayout("C:\\staging", "D:\\final", 1);
 
@@ -1390,7 +1446,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot));
 
-            // The trusted base directory open (and its flush probe) fails before
+            // The real parent directory open (and its flush probe) fails before
             // the staging run root is deleted.
             FakeCleanupFileSystem fileSystem = new FakeCleanupFileSystem { ThrowOnOpenDirectory = true };
             PngJsonCapturePublicationCaptureCompleteCleanupBackend backend =

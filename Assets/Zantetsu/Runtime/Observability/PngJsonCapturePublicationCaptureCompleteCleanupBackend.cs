@@ -389,10 +389,12 @@ namespace Zantetsu.Observability
         private void RemoveStagingRunRoot(
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation)
         {
-            // Open (and probe flush capability on) the trusted staging base
-            // directory BEFORE the staging run root is deleted, so a flush
-            // capability failure rejects before any side effect.
-            using (CaptureIndexCommitDirectory baseDirectory = _fileSystem.OpenDirectory(_rootLayout.StagingTrustedBaseRoot))
+            // Open (and probe flush capability on) the real parent directory
+            // that holds the staging run root's own entry BEFORE the run root
+            // is deleted, so a flush capability or open failure rejects before
+            // any side effect. Flushing the trusted staging base root would
+            // flush a grandparent that does not hold the deleted entry.
+            using (CaptureIndexCommitDirectory parent = _fileSystem.OpenDirectory(StagingRunRootParent()))
             {
                 using (CaptureIndexCommitDirectory staging = _fileSystem.OpenDirectory(_rootLayout.StagingRunRoot))
                 {
@@ -409,8 +411,29 @@ namespace Zantetsu.Observability
                     _fileSystem.DeleteDirectory(staging);
                 }
 
-                _fileSystem.FlushDirectory(baseDirectory);
+                // The staging handle is released by the inner using before the
+                // parent metadata is flushed.
+                _fileSystem.FlushDirectory(parent);
             }
+        }
+
+        /// <summary>
+        /// The directory that holds the staging run root's own entry. The run
+        /// root sits at a fixed relative path under the already-validated
+        /// trusted base root, so this derives no new containment authority: it
+        /// only names the parent of a path the layout already verified.
+        /// </summary>
+        private string StagingRunRootParent()
+        {
+            string parent = Path.GetDirectoryName(_rootLayout.StagingRunRoot);
+            if (string.IsNullOrEmpty(parent)
+                || parent.Length <= _rootLayout.StagingTrustedBaseRoot.Length
+                || !parent.StartsWith(_rootLayout.StagingTrustedBaseRoot, StringComparison.Ordinal))
+            {
+                throw new IOException("Staging run root has no parent inside the staging trusted base root.");
+            }
+
+            return parent;
         }
 
         private void RequireInitMarkerCorrelates(
