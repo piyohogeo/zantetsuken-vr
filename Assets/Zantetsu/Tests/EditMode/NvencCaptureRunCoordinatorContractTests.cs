@@ -2644,6 +2644,70 @@ namespace Zantetsu.Core.Tests
             return field.GetValue(target);
         }
 
+        [Test]
+        public void PrepareCaptureIndexCommit_AfterFailedCommitCollected_RefusesWithoutPoison()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitOperation operation = PrepareCaptureIndexSubmission(h);
+                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                int committerCalls = h.IndexCommitter.CallCount;
+
+                // The operation stays retained while its Committed-only
+                // validity is false, which is the normal Recovery terminal and
+                // not corruption: refuse with no change and no exception.
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsBindingIntact, Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitOperation again), Is.False);
+                Assert.That(again, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(committerCalls));
+
+                // The retained result is still collectible and unchanged.
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult retained), Is.True);
+                Assert.That(ReferenceEquals(retained.Operation, operation), Is.True);
+                Assert.That(retained.Status, Is.EqualTo(NvencRunCaptureIndexCommitStatus.Failed));
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureIndexCommit_CommittedWithBrokenRetainedOperation_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitOperation operation = PrepareCaptureIndexSubmission(h);
+                Assert.That(operation.IsValid, Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                // Releasing the Session Ownership Lease breaks the retained
+                // graph while the published disposition is still Committed.
+                // That is corruption, so the normal-terminal refusal above must
+                // not swallow it.
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsBindingIntact, Is.False);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareCaptureIndexCommit(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
         // ---- Capture index commit preparation ----
 
         private static NvencRunArtifactPublicationAttemptResult PublishAndCollectArtifact(

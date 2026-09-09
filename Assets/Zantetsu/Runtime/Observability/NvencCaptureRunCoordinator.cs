@@ -2021,10 +2021,15 @@ namespace Zantetsu.Observability
         /// final name. Poison outranks the retained operation: it is checked
         /// before the idempotent branch, so a Run poisoned after a successful
         /// preparation refuses with false, without an exception, and the
-        /// already-issued operation reports itself invalid. Only a published
-        /// Committed disposition whose collected
-        /// Published result, receipt, or Registry correlation is broken is
-        /// corruption and poisons. Preparation never changes the disposition,
+        /// already-issued operation reports itself invalid. A
+        /// PublicationRecoveryRequired disposition published by a Failed
+        /// capture index commit likewise refuses with false while its retained
+        /// operation is still bound, because that is a normal terminal rather
+        /// than corruption. Only a published Committed disposition whose
+        /// collected Published result, receipt, or Registry correlation is
+        /// broken, or a retained operation whose issuance binding is broken in
+        /// either disposition, is corruption and poisons. Preparation never
+        /// changes the disposition,
         /// Registry, plan, chunk, lease, or the retained publication result,
         /// performs no serialization, and introduces no new proof or state
         /// marker. It is deliberately not conditioned on whether the
@@ -2057,16 +2062,32 @@ namespace Zantetsu.Observability
                 // reference after re-checking its exact correlation.
                 if (_captureIndexCommitOperation != null)
                 {
-                    if (!_captureIndexCommitOperation.IsValid
-                        || !_captureIndexCommitOperation.IsIssuedFor(this))
+                    if (_captureIndexCommitOperation.IsValid
+                        && _captureIndexCommitOperation.IsIssuedFor(this))
                     {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The retained capture index commit operation no longer correlates.");
+                        operation = _captureIndexCommitOperation;
+                        return true;
                     }
 
-                    operation = _captureIndexCommitOperation;
-                    return true;
+                    // A Failed capture index commit publishes
+                    // PublicationRecoveryRequired while its operation stays
+                    // retained, so the operation's Committed-only validity is
+                    // false by design. That is a normal terminal, not
+                    // corruption: refuse with no change, exactly as a
+                    // PublicationRecoveryRequired disposition does before any
+                    // operation is minted. The issuance binding must still hold.
+                    if (_disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                        && _captureIndexCommitOperation.IsBindingIntact)
+                    {
+                        return false;
+                    }
+
+                    // A published Committed disposition whose retained
+                    // operation no longer correlates, or a binding that is
+                    // broken in either disposition, is corruption.
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained capture index commit operation no longer correlates.");
                 }
 
                 if (!_processState.IsDraining)
