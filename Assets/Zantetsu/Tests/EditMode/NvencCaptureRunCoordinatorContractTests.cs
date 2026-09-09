@@ -2032,7 +2032,7 @@ namespace Zantetsu.Core.Tests
                 NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
@@ -2074,7 +2074,7 @@ namespace Zantetsu.Core.Tests
                 PrepareArtifactSubmission(h);
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
                 Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
             }
 
@@ -2120,7 +2120,7 @@ namespace Zantetsu.Core.Tests
                 }
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
                 Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
             }
         }
@@ -2134,7 +2134,7 @@ namespace Zantetsu.Core.Tests
                 h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
                     out NvencRunArtifactPublicationAttemptResult result), Is.True);
@@ -2146,9 +2146,16 @@ namespace Zantetsu.Core.Tests
                 // never touched.
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
-                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
                 Assert.That(h.SessionIssue.IsValid, Is.True);
                 Assert.That(h.State.IsPoisoned, Is.False);
+
+                // A Published artifact hands the same Service and the same
+                // Worker to the Capture Index phase: nothing is released and
+                // the Worker is still alive.
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.AcceptingCaptureIndexCommit));
             }
         }
 
@@ -2161,7 +2168,7 @@ namespace Zantetsu.Core.Tests
                 h.Publisher.Status = NvencRunArtifactPublicationStatus.Failed;
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the failed artifact");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the failed artifact");
 
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
                     out NvencRunArtifactPublicationAttemptResult result), Is.True);
@@ -2209,7 +2216,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.False);
 
                 release.Set();
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
                     out NvencRunArtifactPublicationAttemptResult result), Is.True);
@@ -2229,7 +2236,7 @@ namespace Zantetsu.Core.Tests
                 h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.State.TryPoison(), Is.True);
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
@@ -2312,6 +2319,331 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Capture index commit submission and reflection ----
+
+        /// <summary>
+        /// Drives the Run to a Published, collected artifact publication and
+        /// mints the capture index commit operation. The same Service and the
+        /// same Worker stay alive throughout.
+        /// </summary>
+        private static NvencRunCaptureIndexCommitOperation PrepareCaptureIndexSubmission(Harness h)
+        {
+            PrepareArtifactSubmission(h);
+            h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
+            Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+            WaitForArtifactTerminal(h, "publication worker did not reach the artifact terminal");
+            Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.True);
+            Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
+                out NvencRunCaptureIndexCommitOperation operation), Is.True);
+            return operation;
+        }
+
+        private static void WaitForCaptureIndexTerminal(Harness h, string message)
+        {
+            SpinWait.SpinUntil(
+                () => h.Service.State == NvencRunPublicationServiceState.CaptureIndexCommitCompleted,
+                WatchdogTimeoutMs);
+            Assert.That(h.Service.State,
+                Is.EqualTo(NvencRunPublicationServiceState.CaptureIndexCommitCompleted), message);
+
+            if (h.IndexCommitter.Status != NvencRunCaptureIndexCommitStatus.Committed)
+            {
+                WaitForServiceStop(h, message);
+            }
+        }
+
+        [Test]
+        public void SubmitCaptureIndexCommit_Committed_ForwardsExactOperationOnce()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitOperation operation = PrepareCaptureIndexSubmission(h);
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
+                Assert.That(result.IsCommitted, Is.True);
+                Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
+                Assert.That(result.Receipt.IsIssuedFor(h.IndexCommitter, operation), Is.True);
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void SubmitCaptureIndexCommit_BeforePrepare_ArtifactUncollected_Double_Poisoned_GateBusy_NoCommitterContact()
+        {
+            // No retained capture index operation: refused before the committer
+            // is contacted.
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForArtifactTerminal(h, "publication worker did not reach the artifact terminal");
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.True);
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(0));
+            }
+
+            // Artifact publication not yet collected: refused.
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForArtifactTerminal(h, "publication worker did not reach the artifact terminal");
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(0));
+            }
+
+            // Double submission: the retained operation is handed over exactly
+            // once.
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+            }
+
+            // Poisoned: the process-state gate refuses before any Service
+            // contact.
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(0));
+            }
+
+            // Gate contention: a background holder keeps the shared gate busy.
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginSubmitStep())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndSubmitStep();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
+                    Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(0));
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void CollectCaptureIndexCommit_Committed_KeepsCommittedReceiptAndService()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitOperation operation = PrepareCaptureIndexSubmission(h);
+                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Committed;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
+                Assert.That(result.IsCommitted, Is.True);
+                Assert.That(result.Receipt, Is.Not.Null);
+                Assert.That(result.Receipt.IsIssuedFor(h.IndexCommitter, operation), Is.True);
+
+                // Registry and disposition stay Committed, and the same Service
+                // and Worker are kept for the later CaptureComplete phase.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.AcceptingCaptureComplete));
+                Assert.That(h.SessionIssue.IsValid, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // Re-collection returns the same retained result without
+                // re-collecting or re-transitioning.
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult again), Is.True);
+                Assert.That(ReferenceEquals(again.Operation, operation), Is.True);
+                Assert.That(ReferenceEquals(again.Receipt, result.Receipt), Is.True);
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.AcceptingCaptureComplete));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void CollectCaptureIndexCommit_Failed_AdvancesDispositionAndReleasesService()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureIndexCommitOperation operation = PrepareCaptureIndexSubmission(h);
+                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(result.Receipt, Is.Null);
+
+                // Registry, Plan, and chunk stay unchanged; only the
+                // disposition advances, and the Service is released.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The issued result stays valid after the Recovery reflection.
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(operation.IsBindingIntact, Is.True);
+
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult again), Is.True);
+                Assert.That(ReferenceEquals(again.Operation, operation), Is.True);
+                Assert.That(again.Status, Is.EqualTo(NvencRunCaptureIndexCommitStatus.Failed));
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+            }
+        }
+
+        [Test]
+        public void CollectCaptureIndexCommit_FailedPollBeforeStop_RetrySucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.IndexCommitter.Entered = entered;
+                h.IndexCommitter.Release = release;
+                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+
+                // A poll while the Worker is still executing must not collect
+                // and must not clear the slot.
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(out _), Is.False);
+
+                release.Set();
+                WaitForServiceStop(h, "publication worker did not stop after the failed capture index commit");
+
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
+                Assert.That(result.IsFailed, Is.True);
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
+        [Test]
+        public void CollectCaptureIndexCommit_ExternalPoisonFirst_NoReflection()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Committed;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+
+                // The uncollected result is never reflected.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+            }
+        }
+
+        [Test]
+        public void CollectCaptureIndexCommit_CorruptCommitterResult_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareCaptureIndexSubmission(h);
+
+                // A default (None) attempt result is corrupt: the Service
+                // Worker rejects it and poisons the process.
+                h.IndexCommitter.UseOverride = true;
+                h.IndexCommitter.OverrideResult = default;
+
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the corrupt capture index result");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Service.TryGetFailure(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+            }
+        }
+
+        [Test]
+        public void CaptureIndexCommit_ThreePhasesShareOneServiceAndWorker()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Thread workerBefore = (Thread)GetPrivateField(h.Service, "_workerThread");
+
+                PrepareCaptureIndexSubmission(h);
+                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
+                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(out _), Is.True);
+
+                Thread workerAfter = (Thread)GetPrivateField(h.Service, "_workerThread");
+                Assert.That(ReferenceEquals(workerBefore, workerAfter), Is.True);
+                Assert.That(h.Committer.CallCount, Is.EqualTo(1));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        private static object GetPrivateField(object target, string fieldName)
+        {
+            FieldInfo field = target.GetType().GetField(
+                fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
+            return field.GetValue(target);
+        }
+
         // ---- Capture index commit preparation ----
 
         private static NvencRunArtifactPublicationAttemptResult PublishAndCollectArtifact(
@@ -2322,7 +2654,7 @@ namespace Zantetsu.Core.Tests
             h.Publisher.Status = status;
 
             Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-            WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+            WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
             Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
                 out NvencRunArtifactPublicationAttemptResult result), Is.True);
             return result;
@@ -2407,7 +2739,7 @@ namespace Zantetsu.Core.Tests
             {
                 PrepareArtifactSubmission(h);
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(out _), Is.False);
                 Assert.That(h.State.IsPoisoned, Is.False);
@@ -2851,7 +3183,8 @@ namespace Zantetsu.Core.Tests
                 NvencRunPublicationService foreignService = new NvencRunPublicationService(
                     foreign,
                     new NvencRunPublicationPlanCommitExecutionCoordinator(new FakeCommitter()),
-                    new NvencRunArtifactPublicationExecutionCoordinator(new FakePublisher()));
+                    new NvencRunArtifactPublicationExecutionCoordinator(new FakePublisher()),
+                    new NvencRunCaptureIndexCommitExecutionCoordinator(new FakeIndexCommitter()));
 
                 try
                 {
@@ -3565,6 +3898,26 @@ namespace Zantetsu.Core.Tests
             return result;
         }
 
+        /// <summary>
+        /// Waits for the artifact terminal. A Published result keeps the same
+        /// Worker parked for the Capture Index phase, so only a Failed result
+        /// also stops it, and the Service refuses to collect a Failed terminal
+        /// until the Worker has physically stopped.
+        /// </summary>
+        private static void WaitForArtifactTerminal(Harness h, string message)
+        {
+            SpinWait.SpinUntil(
+                () => h.Service.State == NvencRunPublicationServiceState.ArtifactPublicationCompleted,
+                WatchdogTimeoutMs);
+            Assert.That(h.Service.State,
+                Is.EqualTo(NvencRunPublicationServiceState.ArtifactPublicationCompleted), message);
+
+            if (h.Publisher.Status != NvencRunArtifactPublicationStatus.Published)
+            {
+                WaitForServiceStop(h, message);
+            }
+        }
+
         private static void WaitForServiceStop(Harness h, string message)
         {
             FieldInfo field = typeof(NvencRunPublicationService).GetField(
@@ -3927,6 +4280,45 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeIndexCommitter : INvencRunCaptureIndexCommitter
+        {
+            private int _callCount;
+            internal NvencRunCaptureIndexCommitStatus Status = NvencRunCaptureIndexCommitStatus.Committed;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunCaptureIndexCommitAttemptResult OverrideResult;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunCaptureIndexCommitAttemptResult Commit(
+                NvencRunCaptureIndexCommitOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                Entered?.Set();
+                Release?.Wait(WatchdogTimeoutMs);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunCaptureIndexCommitStatus.Failed)
+                {
+                    return NvencRunCaptureIndexCommitAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunCaptureIndexCommitAttemptResult.Committed(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -3964,6 +4356,7 @@ namespace Zantetsu.Core.Tests
 
             internal FakeCommitter Committer;
             internal FakePublisher Publisher;
+            internal FakeIndexCommitter IndexCommitter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -4052,7 +4445,11 @@ namespace Zantetsu.Core.Tests
                 Publisher = new FakePublisher();
                 NvencRunArtifactPublicationExecutionCoordinator artifactCoordinator =
                     new NvencRunArtifactPublicationExecutionCoordinator(Publisher);
-                Service = new NvencRunPublicationService(State, commitCoordinator, artifactCoordinator);
+                IndexCommitter = new FakeIndexCommitter();
+                NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
+                    new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                Service = new NvencRunPublicationService(
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);

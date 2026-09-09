@@ -5,9 +5,9 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Monotonic state of the Phase 0.11 Publication Service: a fixed
-    /// single-request-slot, two-phase boundary that commits the publication
-    /// plan and then publishes the Fresh NVENC chunk on the same dedicated
-    /// Worker thread. The Plan phase advances
+    /// single-request-slot, three-phase boundary that commits the publication
+    /// plan, publishes the Fresh NVENC chunk, and commits the capture index on
+    /// the same dedicated Worker thread. The Plan phase advances
     /// <see cref="AcceptingPlanCommit"/> to <see cref="PlanCommitQueued"/> on a
     /// successful plan submission, <see cref="PlanCommitQueued"/> to
     /// <see cref="PlanCommitExecuting"/> when the Worker takes the exact
@@ -22,13 +22,32 @@ namespace Zantetsu.Observability
     /// <see cref="ArtifactPublicationQueued"/> to
     /// <see cref="ArtifactPublicationExecuting"/> on the Worker claim,
     /// <see cref="ArtifactPublicationExecuting"/> to
-    /// <see cref="ArtifactPublicationCompleted"/> on a verified normal return,
-    /// and <see cref="ArtifactPublicationCompleted"/> to
-    /// <see cref="ArtifactPublicationCollected"/> on collection.
+    /// <see cref="ArtifactPublicationCompleted"/> on a verified normal return.
+    /// A Published artifact result is collected into
+    /// <see cref="AcceptingCaptureIndexCommit"/> while the Worker re-parks; a
+    /// Failed artifact result is collected into
+    /// <see cref="ArtifactPublicationCollected"/> after the Worker physically
+    /// stops. The Capture Index phase advances
+    /// <see cref="AcceptingCaptureIndexCommit"/> to
+    /// <see cref="CaptureIndexCommitQueued"/> on submission,
+    /// <see cref="CaptureIndexCommitQueued"/> to
+    /// <see cref="CaptureIndexCommitExecuting"/> on the Worker claim, and
+    /// <see cref="CaptureIndexCommitExecuting"/> to
+    /// <see cref="CaptureIndexCommitCompleted"/> on a verified normal return. A
+    /// Committed capture index result is collected into
+    /// <see cref="AcceptingCaptureComplete"/> while the Worker re-parks; a
+    /// Failed one is collected into <see cref="CaptureIndexCommitCollected"/>
+    /// after the Worker physically stops.
     /// <see cref="StoppedWithoutRequest"/> is the normal terminal for a
     /// never-submitted Service, and <see cref="Poisoned"/> is the fail-closed
     /// terminal for any fatal failure or preceding external Poison.
     /// </summary>
+    /// <remarks>
+    /// <see cref="AcceptingCaptureComplete"/> is the parked state that keeps
+    /// the same Service and the same Worker alive after a Committed capture
+    /// index commit, so a later CaptureComplete phase can reuse them. No
+    /// CaptureComplete submission entry point exists yet.
+    /// </remarks>
     internal enum NvencRunPublicationServiceState
     {
         AcceptingPlanCommit = 0,
@@ -43,15 +62,22 @@ namespace Zantetsu.Observability
         ArtifactPublicationExecuting = 9,
         ArtifactPublicationCompleted = 10,
         ArtifactPublicationCollected = 11,
+        AcceptingCaptureIndexCommit = 12,
+        CaptureIndexCommitQueued = 13,
+        CaptureIndexCommitExecuting = 14,
+        CaptureIndexCommitCompleted = 15,
+        CaptureIndexCommitCollected = 16,
+        AcceptingCaptureComplete = 17,
     }
 
     /// <summary>
-    /// Phase 0.11 Publication Service: a fixed single-request-slot, two-phase
-    /// boundary that separates the publication plan commit and the Fresh NVENC
-    /// chunk publication from the Main/Render threads. It owns exactly one
-    /// dedicated Worker thread with a fixed name, exactly one wake primitive,
-    /// and one request slot per phase; it holds no queue, list, dictionary,
-    /// task, thread pool, timer, periodic poll, busy spin, or second worker.
+    /// Phase 0.11 Publication Service: a fixed single-request-slot, three-phase
+    /// boundary that separates the publication plan commit, the Fresh NVENC
+    /// chunk publication, and the capture index commit from the Main/Render
+    /// threads. It owns exactly one dedicated Worker thread with a fixed name,
+    /// exactly one wake primitive, and one request slot per phase; it holds no
+    /// queue, list, dictionary, task, thread pool, timer, periodic poll, busy
+    /// spin, or second worker.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -62,8 +88,19 @@ namespace Zantetsu.Observability
     /// Worker thread later run the injected Artifact Publication Execution
     /// Coordinator exactly once. A FailedBeforeRename or CommitOutcomeUnknown
     /// plan result is published and the Worker physically stops; the Artifact
-    /// phase is never entered. The Artifact phase always physically stops the
-    /// Worker after publishing its result.
+    /// phase is never entered.
+    /// </para>
+    /// <para>
+    /// A Published artifact result keeps that same Worker parked so it can then
+    /// run the injected Capture Index Commit Execution Coordinator exactly
+    /// once; a Failed artifact result physically stops it and the Capture Index
+    /// phase is never entered. A Committed capture index result likewise keeps
+    /// the Worker parked, in
+    /// <see cref="NvencRunPublicationServiceState.AcceptingCaptureComplete"/>,
+    /// for the later CaptureComplete phase; a Failed one stops it. Every parked
+    /// state re-parks on a stray notification instead of terminating, so a
+    /// notification delivered while one phase executes can never stop the
+    /// Worker that the next phase needs.
     /// </para>
     /// <para>
     /// A coordinator/publisher exception, a null/foreign/corrupt result, or a
@@ -88,6 +125,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureProcessState _processState;
         private readonly NvencRunPublicationPlanCommitExecutionCoordinator _planCommitCoordinator;
         private readonly NvencRunArtifactPublicationExecutionCoordinator _artifactPublicationCoordinator;
+        private readonly NvencRunCaptureIndexCommitExecutionCoordinator _captureIndexCommitCoordinator;
         private readonly AutoResetEvent _signal = new AutoResetEvent(false);
 
         private const int StateRunning = 0;
@@ -103,17 +141,22 @@ namespace Zantetsu.Observability
         private NvencRunArtifactPublicationOperation _artifactPublicationOperation;
         private NvencRunArtifactPublicationAttemptResult _artifactPublicationResult;
 
+        private NvencRunCaptureIndexCommitOperation _captureIndexCommitOperation;
+        private NvencRunCaptureIndexCommitAttemptResult _captureIndexCommitResult;
+
         private volatile Exception _fatalFailure;
         private Action _settled;
 
         internal NvencRunPublicationService(
             NvencCaptureProcessState processState,
             NvencRunPublicationPlanCommitExecutionCoordinator planCommitCoordinator,
-            NvencRunArtifactPublicationExecutionCoordinator artifactPublicationCoordinator)
+            NvencRunArtifactPublicationExecutionCoordinator artifactPublicationCoordinator,
+            NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCommitCoordinator)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _planCommitCoordinator = planCommitCoordinator ?? throw new ArgumentNullException(nameof(planCommitCoordinator));
             _artifactPublicationCoordinator = artifactPublicationCoordinator ?? throw new ArgumentNullException(nameof(artifactPublicationCoordinator));
+            _captureIndexCommitCoordinator = captureIndexCommitCoordinator ?? throw new ArgumentNullException(nameof(captureIndexCommitCoordinator));
 
             Thread thread = new Thread(Run)
             {
@@ -289,11 +332,16 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Non-waiting, at-most-once collection of the exact artifact
-        /// publication Attempt Result. A fatal or Poisoned Service never yields
-        /// a result. Collection is linearized with the Poison transition on the
-        /// shared process-state gate, so exactly one caller succeeds. On success
-        /// the internal operation and result are cleared before
-        /// <see cref="ArtifactPublicationCollected"/> is published.
+        /// publication Attempt Result. A Published result is collected while the
+        /// Worker stays parked and the Service advances to
+        /// <see cref="NvencRunPublicationServiceState.AcceptingCaptureIndexCommit"/>;
+        /// a Failed result is collected only after the Worker has physically
+        /// stopped and the Service advances to
+        /// <see cref="NvencRunPublicationServiceState.ArtifactPublicationCollected"/>.
+        /// A fatal or Poisoned Service never yields a result. Collection is
+        /// linearized with the Poison transition on the shared process-state
+        /// gate, so exactly one caller succeeds. On success the internal
+        /// operation and result are cleared before the next state is published.
         /// </summary>
         internal bool TryCollectArtifactPublication(
             out NvencRunArtifactPublicationAttemptResult result)
@@ -319,9 +367,23 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // A Failed terminal requires the Worker to have physically
+                // stopped before the slot is cleared; a Published result keeps
+                // the Worker parked for the Capture Index phase so no stop is
+                // required.
+                if (collected.Status != NvencRunArtifactPublicationStatus.Published
+                    && !IsStopped)
+                {
+                    return false;
+                }
+
                 _artifactPublicationOperation = null;
                 _artifactPublicationResult = default;
-                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.ArtifactPublicationCollected);
+
+                int next = collected.Status == NvencRunArtifactPublicationStatus.Published
+                    ? (int)NvencRunPublicationServiceState.AcceptingCaptureIndexCommit
+                    : (int)NvencRunPublicationServiceState.ArtifactPublicationCollected;
+                Volatile.Write(ref _state, next);
 
                 result = collected;
                 return true;
@@ -329,6 +391,134 @@ namespace Zantetsu.Observability
             finally
             {
                 _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, exclusive submission of exactly one valid capture index
+        /// commit operation. A null operation throws
+        /// <see cref="ArgumentNullException"/>. A foreign process state, an
+        /// invalid operation, or any second submission is rejected with no side
+        /// effect and without contacting the committer. Acceptance is linearized
+        /// with the Poison transition on the shared process-state gate, and the
+        /// Worker is notified only after the slot is claimed.
+        /// </summary>
+        internal bool TrySubmitCaptureIndexCommit(NvencRunCaptureIndexCommitOperation operation)
+        {
+            if (operation == null)
+            {
+                throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.AcceptingCaptureIndexCommit
+                    || !operation.IsValid
+                    || !operation.IsBoundToProcessState(_processState))
+                {
+                    return false;
+                }
+
+                _captureIndexCommitOperation = operation;
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureIndexCommitQueued);
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+
+            Notify();
+            return true;
+        }
+
+        /// <summary>
+        /// Non-waiting, at-most-once collection of the exact capture index
+        /// commit Attempt Result. A Committed result is collected while the
+        /// Worker stays parked and the Service advances to
+        /// <see cref="NvencRunPublicationServiceState.AcceptingCaptureComplete"/>;
+        /// a Failed result is collected only after the Worker has physically
+        /// stopped and the Service advances to
+        /// <see cref="NvencRunPublicationServiceState.CaptureIndexCommitCollected"/>.
+        /// A fatal or Poisoned Service never yields a result. Collection is
+        /// linearized with the Poison transition on the shared process-state
+        /// gate, so exactly one caller succeeds. On success the internal
+        /// operation and result are cleared before the next state is published.
+        /// </summary>
+        internal bool TryCollectCaptureIndexCommit(
+            out NvencRunCaptureIndexCommitAttemptResult result)
+        {
+            result = default;
+
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned
+                    || Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.CaptureIndexCommitCompleted)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitAttemptResult collected = _captureIndexCommitResult;
+                if (collected.IsNone)
+                {
+                    return false;
+                }
+
+                if (collected.Status != NvencRunCaptureIndexCommitStatus.Committed
+                    && !IsStopped)
+                {
+                    return false;
+                }
+
+                _captureIndexCommitOperation = null;
+                _captureIndexCommitResult = default;
+
+                int next = collected.Status == NvencRunCaptureIndexCommitStatus.Committed
+                    ? (int)NvencRunPublicationServiceState.AcceptingCaptureComplete
+                    : (int)NvencRunPublicationServiceState.CaptureIndexCommitCollected;
+                Volatile.Write(ref _state, next);
+
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe exact-issuance re-verification for the Run
+        /// Coordinator: true only when the attempt result is valid and was
+        /// issued by the exact retained Capture Index Commit Execution
+        /// Coordinator for the exact supplied operation. ReferenceEquals only;
+        /// it deliberately compares against the supplied operation rather than
+        /// the Service slot, which is cleared before the terminal is published.
+        /// </summary>
+        internal bool IsCaptureIndexCommitAttemptIssued(
+            NvencRunCaptureIndexCommitAttemptResult attempt,
+            NvencRunCaptureIndexCommitOperation operation)
+        {
+            try
+            {
+                return !attempt.IsNone
+                    && attempt.IsValid
+                    && operation != null
+                    && ReferenceEquals(attempt.Committer, _captureIndexCommitCoordinator.Committer)
+                    && ReferenceEquals(attempt.Operation, operation);
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -529,16 +719,14 @@ namespace Zantetsu.Observability
 
                     int state = Volatile.Read(ref _state);
 
-                    if (state == (int)NvencRunPublicationServiceState.AcceptingPlanCommit
-                        || state == (int)NvencRunPublicationServiceState.PlanCommitCompleted
-                        || state == (int)NvencRunPublicationServiceState.AcceptingArtifactPublication)
+                    if (IsParkedState(state))
                     {
                         // An early or spurious notification with no queued
                         // request: re-park instead of terminating, so a later
-                        // submission still converges. PlanCommitCompleted is a
-                        // parked state after a Committed plan: a stray
-                        // notification delivered during plan execution must not
-                        // stop the Worker before the Artifact phase.
+                        // submission still converges. The post-phase parked
+                        // states are included, so a stray notification delivered
+                        // while one phase executes can never stop the Worker
+                        // that the next phase needs.
                         continue;
                     }
 
@@ -558,13 +746,33 @@ namespace Zantetsu.Observability
                     if (state == (int)NvencRunPublicationServiceState.ArtifactPublicationQueued)
                     {
                         // Run the Artifact Publication Execution Coordinator
-                        // exactly once, then always stop the Worker.
-                        TryExecuteArtifactPublication();
-                        return;
+                        // exactly once. A Published result re-parks the same
+                        // thread for the Capture Index phase; a Failed result
+                        // stops it.
+                        if (!TryExecuteArtifactPublication())
+                        {
+                            return;
+                        }
+
+                        continue;
                     }
 
-                    // Any other state (Poisoned, StoppedWithoutRequest,
-                    // PlanCommitCollected, or a mid-phase spurious read) has no
+                    if (state == (int)NvencRunPublicationServiceState.CaptureIndexCommitQueued)
+                    {
+                        // Run the Capture Index Commit Execution Coordinator
+                        // exactly once. A Committed result re-parks the same
+                        // thread for the later CaptureComplete phase; a Failed
+                        // result stops it.
+                        if (!TryExecuteCaptureIndexCommit())
+                        {
+                            return;
+                        }
+
+                        continue;
+                    }
+
+                    // Any other state (Poisoned, StoppedWithoutRequest, a
+                    // collected terminal, or a mid-phase spurious read) has no
                     // further work: stop.
                     return;
                 }
@@ -674,16 +882,17 @@ namespace Zantetsu.Observability
         /// Claims the Queued artifact operation, runs the Artifact Publication
         /// Execution Coordinator exactly once outside any gate, and publishes
         /// the verified result as <see cref="ArtifactPublicationCompleted"/>.
-        /// The Worker always stops after the Artifact phase. A Poison that
-        /// linearizes during execution fails closed without publishing a normal
-        /// terminal.
+        /// Returns true for a Published result so the Worker re-parks for the
+        /// Capture Index phase, and false otherwise so the Worker stops. A
+        /// Poison that linearizes during execution fails closed without
+        /// publishing a normal terminal.
         /// </summary>
-        private void TryExecuteArtifactPublication()
+        private bool TryExecuteArtifactPublication()
         {
             if (!_processState.TryBeginSettlement())
             {
                 EnterFailedWithoutResult();
-                return;
+                return false;
             }
 
             try
@@ -691,12 +900,12 @@ namespace Zantetsu.Observability
                 if (_processState.IsPoisoned)
                 {
                     EnterFailedWithoutResult();
-                    return;
+                    return false;
                 }
 
                 if (Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.ArtifactPublicationQueued)
                 {
-                    return;
+                    return false;
                 }
 
                 Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.ArtifactPublicationExecuting);
@@ -715,13 +924,13 @@ namespace Zantetsu.Observability
             {
                 RecordFatalFailure(ex);
                 _processState.TryPoison();
-                return;
+                return false;
             }
 
             if (!_processState.TryBeginSettlement())
             {
                 EnterFailedWithoutResult();
-                return;
+                return false;
             }
 
             try
@@ -729,7 +938,7 @@ namespace Zantetsu.Observability
                 if (_processState.IsPoisoned)
                 {
                     EnterFailedWithoutResult();
-                    return;
+                    return false;
                 }
 
                 if (result.IsNone
@@ -748,12 +957,125 @@ namespace Zantetsu.Observability
             {
                 RecordFatalFailure(ex);
                 _processState.TryPoison();
-                return;
+                return false;
             }
             finally
             {
                 _processState.EndSettlement();
             }
+
+            // Published keeps the Worker parked for the Capture Index phase;
+            // Failed stops it.
+            return result.Status == NvencRunArtifactPublicationStatus.Published;
+        }
+
+        /// <summary>
+        /// Claims the Queued capture index operation, runs the Capture Index
+        /// Commit Execution Coordinator exactly once outside any gate, and
+        /// publishes the verified result as
+        /// <see cref="NvencRunPublicationServiceState.CaptureIndexCommitCompleted"/>.
+        /// Returns true for a Committed result so the Worker re-parks for the
+        /// later CaptureComplete phase, and false otherwise so the Worker stops.
+        /// A Poison that linearizes during execution fails closed without
+        /// publishing a normal terminal.
+        /// </summary>
+        private bool TryExecuteCaptureIndexCommit()
+        {
+            if (!_processState.TryBeginSettlement())
+            {
+                EnterFailedWithoutResult();
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    EnterFailedWithoutResult();
+                    return false;
+                }
+
+                if (Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.CaptureIndexCommitQueued)
+                {
+                    return false;
+                }
+
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureIndexCommitExecuting);
+            }
+            finally
+            {
+                _processState.EndSettlement();
+            }
+
+            NvencRunCaptureIndexCommitAttemptResult result;
+            try
+            {
+                result = _captureIndexCommitCoordinator.Execute(_captureIndexCommitOperation);
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return false;
+            }
+
+            if (!_processState.TryBeginSettlement())
+            {
+                EnterFailedWithoutResult();
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    EnterFailedWithoutResult();
+                    return false;
+                }
+
+                if (result.IsNone
+                    || !result.IsValid
+                    || !ReferenceEquals(result.Committer, _captureIndexCommitCoordinator.Committer)
+                    || !ReferenceEquals(result.Operation, _captureIndexCommitOperation))
+                {
+                    throw new InvalidOperationException(
+                        "The Capture Index Commit Execution Coordinator returned a null, foreign, default, or corrupt result.");
+                }
+
+                _captureIndexCommitResult = result;
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureIndexCommitCompleted);
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return false;
+            }
+            finally
+            {
+                _processState.EndSettlement();
+            }
+
+            // Committed keeps the Worker parked for the later CaptureComplete
+            // phase; Failed stops it.
+            return result.Status == NvencRunCaptureIndexCommitStatus.Committed;
+        }
+
+        /// <summary>
+        /// The states in which a notification carries no queued work and the
+        /// Worker must re-park rather than terminate: the accepting states and
+        /// the post-phase parked terminals whose Worker a later phase still
+        /// needs.
+        /// </summary>
+        private static bool IsParkedState(int state)
+        {
+            return state == (int)NvencRunPublicationServiceState.AcceptingPlanCommit
+                || state == (int)NvencRunPublicationServiceState.PlanCommitCompleted
+                || state == (int)NvencRunPublicationServiceState.AcceptingArtifactPublication
+                || state == (int)NvencRunPublicationServiceState.ArtifactPublicationCompleted
+                || state == (int)NvencRunPublicationServiceState.AcceptingCaptureIndexCommit
+                || state == (int)NvencRunPublicationServiceState.CaptureIndexCommitCompleted
+                || state == (int)NvencRunPublicationServiceState.AcceptingCaptureComplete;
         }
 
         private void EnterFailedWithoutResult()

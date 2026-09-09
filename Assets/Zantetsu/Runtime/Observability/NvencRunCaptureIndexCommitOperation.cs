@@ -84,6 +84,21 @@ namespace Zantetsu.Observability
             && _publicationReceipt != null
             && _coordinator.IsCaptureIndexCommitBindingIntact(_publicationReceipt);
 
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only while this exact operation is the exact retained
+        /// capture index commit operation of its Run Coordinator and that Run
+        /// Coordinator is bound to the exact supplied process state. It
+        /// delegates only ReferenceEquals checks to the Run Coordinator and
+        /// never exposes the Coordinator or the process state as a property.
+        /// </summary>
+        internal bool IsBoundToProcessState(NvencCaptureProcessState processState)
+        {
+            return processState != null
+                && _coordinator != null
+                && _coordinator.IsCaptureIndexCommitOperationBoundTo(this, processState);
+        }
+
         internal bool IsIssuedFor(NvencCaptureRunCoordinator coordinator)
         {
             return coordinator != null

@@ -105,6 +105,9 @@ namespace Zantetsu.Observability
         private bool _artifactPublicationCollected;
         private NvencRunArtifactPublicationAttemptResult _artifactPublicationResult;
         private NvencRunCaptureIndexCommitOperation _captureIndexCommitOperation;
+        private bool _captureIndexCommitSubmitted;
+        private bool _captureIndexCommitCollected;
+        private NvencRunCaptureIndexCommitAttemptResult _captureIndexCommitResult;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -1803,13 +1806,16 @@ namespace Zantetsu.Observability
         /// Non-waiting, idempotent collection and reflection of the artifact
         /// publication outcome into the Run's authoritative state. The first
         /// successful call collects the Attempt Result from the Service at most
-        /// once only after the Worker has physically stopped, verifies the exact
-        /// publisher/operation/receipt correlation, disposes the Service exactly
-        /// once, retains the result and the collected latch, and publishes the
+        /// once, verifies the exact publisher/operation/receipt correlation,
+        /// retains the result and the collected latch, and publishes the
         /// disposition last. A Published result keeps the Registry Slot and the
-        /// disposition Committed and retains the receipt for CaptureComplete; a
-        /// Failed result keeps the Registry Slot and the Plan/chunk/tmp
-        /// unchanged and advances only the disposition to
+        /// disposition Committed, retains the receipt for the capture index
+        /// commit, and deliberately neither requires the Worker to stop nor
+        /// disposes the Service, because the same Service and Worker run the
+        /// Capture Index phase next; a Failed result is collected only after
+        /// the Worker has physically stopped, disposes the Service exactly
+        /// once, keeps the Registry Slot and the Plan/chunk/tmp unchanged, and
+        /// advances only the disposition to
         /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
         /// Re-calls return the same retained reference after re-checking the
         /// current correlation without re-collecting, re-disposing, or
@@ -1856,15 +1862,6 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // The Service publishes ArtifactPublicationCompleted while its
-                // Worker is still alive. Collect only after the Worker has
-                // physically stopped, so a poll inside that window never clears
-                // the Service slot before the result can be reflected.
-                if (!_publicationService.IsStopped)
-                {
-                    return false;
-                }
-
                 if (_publicationService.TryGetFailure(out _))
                 {
                     _processState.TryPoison();
@@ -1872,6 +1869,12 @@ namespace Zantetsu.Observability
                         "The publication service reported a fatal failure.");
                 }
 
+                // A Published artifact keeps the same Service and the same
+                // Worker alive for the Capture Index phase, so no physical stop
+                // is required or requested. The Service itself refuses to
+                // collect a Failed terminal until its Worker has physically
+                // stopped, so a poll inside that window never clears the slot
+                // before the result can be reflected.
                 if (!_publicationService.TryCollectArtifactPublication(
                         out NvencRunArtifactPublicationAttemptResult collected))
                 {
@@ -1891,26 +1894,37 @@ namespace Zantetsu.Observability
                 // determination.
                 NvencRunEvidenceDisposition next = ResolveArtifactPublicationDisposition(collected);
 
-                // Release the Service wait handle exactly once. A dispose
-                // failure poisons and propagates the original exception without
-                // any partial determination.
-                try
+                bool published = collected.Status == NvencRunArtifactPublicationStatus.Published;
+
+                // Release the Service wait handle exactly once, and only for a
+                // Failed publication: a Published one hands the same Service to
+                // the Capture Index phase. A dispose failure poisons and
+                // propagates the original exception without any partial
+                // determination.
+                if (!published)
                 {
-                    _publicationService.Dispose();
-                }
-                catch (Exception)
-                {
-                    _processState.TryPoison();
-                    throw;
+                    try
+                    {
+                        _publicationService.Dispose();
+                    }
+                    catch (Exception)
+                    {
+                        _processState.TryPoison();
+                        throw;
+                    }
                 }
 
                 // Retain the result, the collected latch, and the
                 // Service-release evidence first, then publish the disposition
                 // last. A Published result keeps the existing Committed
-                // disposition untouched.
+                // disposition untouched and leaves the Service unreleased.
                 _artifactPublicationResult = collected;
                 _artifactPublicationCollected = true;
-                _publicationServiceReleased = true;
+
+                if (!published)
+                {
+                    _publicationServiceReleased = true;
+                }
 
                 if (next != NvencRunEvidenceDisposition.Committed)
                 {
@@ -2126,6 +2140,315 @@ namespace Zantetsu.Observability
             {
                 _processState.EndResourceResolution();
             }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent submission of the retained capture index
+        /// commit operation to the exact Publication Service. It is admitted
+        /// only when the process is Draining and not Poisoned, the disposition
+        /// is <see cref="NvencRunEvidenceDisposition.Committed"/>, the artifact
+        /// publication has been collected and was Published, the retained
+        /// capture index operation exists, is valid, and was issued by this
+        /// exact coordinator, the Registry Slot is Committed, the context is
+        /// Finalized, the Session Ownership Lease is live, the Service is
+        /// accepting the Capture Index phase, and no submission has been made
+        /// yet. The submission is linearized with the Poison transition on the
+        /// shared process-state gate; on acceptance the retained operation is
+        /// handed to the Service exactly once. A second submission, a
+        /// submission before preparation, an uncollected or Failed artifact
+        /// publication, a non-Committed disposition, a gate contention, a phase
+        /// mismatch, or a poisoned process returns false with no change and
+        /// never contacts the committer.
+        /// </summary>
+        internal bool TrySubmitCaptureIndexCommit()
+        {
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned || !_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_captureIndexCommitSubmitted)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    return false;
+                }
+
+                if (!_artifactPublicationCollected)
+                {
+                    return false;
+                }
+
+                NvencRunArtifactPublicationAttemptResult publication = _artifactPublicationResult;
+                if (publication.IsNone
+                    || publication.Status != NvencRunArtifactPublicationStatus.Published)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitOperation operation = _captureIndexCommitOperation;
+                if (operation == null
+                    || !operation.IsValid
+                    || !operation.IsIssuedFor(this))
+                {
+                    return false;
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (_publicationService.State
+                    != NvencRunPublicationServiceState.AcceptingCaptureIndexCommit)
+                {
+                    return false;
+                }
+
+                // The Service re-checks its own state and the operation's exact
+                // process-state correlation inside the same gate (reentrant),
+                // so the retained operation is handed over exactly once.
+                if (!_publicationService.TrySubmitCaptureIndexCommit(operation))
+                {
+                    return false;
+                }
+
+                _captureIndexCommitSubmitted = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent collection and reflection of the capture
+        /// index commit outcome into the Run's authoritative state. The first
+        /// successful call collects the Attempt Result from the Service at most
+        /// once, verifies the exact committer/operation/receipt correlation and
+        /// that the Registry Slot is still Committed, handles the
+        /// result-specific Service lifecycle, retains the result and the
+        /// collected latch, and publishes any disposition last. A Committed
+        /// result keeps the Registry Slot and the disposition Committed, keeps
+        /// the receipt for the later CaptureComplete, and leaves the Service
+        /// undisposed in
+        /// <see cref="NvencRunPublicationServiceState.AcceptingCaptureComplete"/>;
+        /// a Failed result is collected only after the Worker has physically
+        /// stopped, disposes the Service exactly once, keeps the Registry Slot,
+        /// Plan, and chunk unchanged, and advances only the disposition to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
+        /// Re-calls return the same retained reference after re-checking the
+        /// current correlation without re-collecting, re-disposing, or
+        /// re-transitioning. A null, foreign, default, or corrupt result, a
+        /// Service fatal failure, or a failed dispose poisons without guessing
+        /// another disposition. An external Poison that linearized first never
+        /// reflects a normal result.
+        /// </summary>
+        internal bool TryCollectCaptureIndexCommit(
+            out NvencRunCaptureIndexCommitAttemptResult result)
+        {
+            result = default;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_captureIndexCommitCollected)
+                {
+                    NvencRunCaptureIndexCommitAttemptResult retained = _captureIndexCommitResult;
+                    if (!retained.IsNone
+                        && retained.IsValid
+                        && ReferenceEquals(retained.Operation, _captureIndexCommitOperation))
+                    {
+                        result = retained;
+                        return true;
+                    }
+
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained capture index commit result no longer correlates.");
+                }
+
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_captureIndexCommitSubmitted)
+                {
+                    return false;
+                }
+
+                if (_publicationService.TryGetFailure(out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication service reported a fatal failure.");
+                }
+
+                // A Committed capture index commit keeps the same Service and
+                // Worker alive for the later CaptureComplete phase, so no
+                // physical stop is required or requested. The Service itself
+                // refuses to collect a Failed terminal until its Worker has
+                // physically stopped.
+                if (!_publicationService.TryCollectCaptureIndexCommit(
+                        out NvencRunCaptureIndexCommitAttemptResult collected))
+                {
+                    return false;
+                }
+
+                if (!_publicationService.IsCaptureIndexCommitAttemptIssued(
+                        collected, _captureIndexCommitOperation))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The capture index commit result is null, foreign, default, or corrupt.");
+                }
+
+                // Resolve the next disposition first (side-effect-free
+                // validation). A validation failure poisons without any partial
+                // determination.
+                NvencRunEvidenceDisposition next = ResolveCaptureIndexCommitDisposition(collected);
+
+                bool committed = collected.Status == NvencRunCaptureIndexCommitStatus.Committed;
+
+                // Release the Service wait handle exactly once, and only for a
+                // Failed commit: a Committed one hands the same Service to the
+                // later CaptureComplete phase.
+                if (!committed)
+                {
+                    try
+                    {
+                        _publicationService.Dispose();
+                    }
+                    catch (Exception)
+                    {
+                        _processState.TryPoison();
+                        throw;
+                    }
+                }
+
+                // Retain the result, the collected latch, and the
+                // Service-release evidence first, then publish the disposition
+                // last. A Committed result keeps the existing Committed
+                // disposition untouched.
+                _captureIndexCommitResult = collected;
+                _captureIndexCommitCollected = true;
+
+                if (!committed)
+                {
+                    _publicationServiceReleased = true;
+                }
+
+                if (next != NvencRunEvidenceDisposition.Committed)
+                {
+                    _disposition = next;
+                }
+
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Resolution of the Run's next authoritative state from the exact
+        /// capture index commit status. It never changes the Registry Slot, the
+        /// disposition, the Plan, the chunk, the retained result, or the
+        /// dedicated tmp; a validation failure instead poisons the process. A
+        /// Committed result keeps the Registry Slot and the disposition
+        /// Committed; a Failed result keeps the Registry Slot, Plan, chunk, and
+        /// dedicated tmp unchanged and resolves only the disposition to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
+        /// The disposition itself is not written here; the caller publishes it
+        /// last after retaining the result and the collected latch. No retry,
+        /// re-inspection, or cleanup is performed.
+        /// </summary>
+        private NvencRunEvidenceDisposition ResolveCaptureIndexCommitDisposition(
+            NvencRunCaptureIndexCommitAttemptResult collected)
+        {
+            switch (collected.Status)
+            {
+                case NvencRunCaptureIndexCommitStatus.Committed:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Committed capture index.");
+                        }
+
+                        // The receipt is retained on the collected result for a
+                        // later CaptureComplete.
+                        return NvencRunEvidenceDisposition.Committed;
+                    }
+
+                case NvencRunCaptureIndexCommitStatus.Failed:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Failed capture index.");
+                        }
+
+                        // Plan, chunk, and dedicated tmp stay unchanged; only
+                        // the disposition advances to Recovery.
+                        return NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                    }
+
+                default:
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The capture index commit result has an unrecognized status.");
+                    }
+            }
+        }
+
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only when the supplied operation is the exact retained
+        /// capture index commit operation and this Run Coordinator is bound to
+        /// the exact supplied process state. ReferenceEquals only, no side
+        /// effect, and neither the process state nor the retained operation is
+        /// exposed as a property.
+        /// </summary>
+        internal bool IsCaptureIndexCommitOperationBoundTo(
+            NvencRunCaptureIndexCommitOperation operation,
+            NvencCaptureProcessState processState)
+        {
+            return operation != null
+                && processState != null
+                && ReferenceEquals(_captureIndexCommitOperation, operation)
+                && ReferenceEquals(_processState, processState);
         }
 
         /// <summary>

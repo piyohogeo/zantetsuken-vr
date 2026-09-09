@@ -571,12 +571,32 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(out _), Is.True);
             h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
             Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-            WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+            WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
             Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.True);
 
             Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
                 out NvencRunCaptureIndexCommitOperation operation), Is.True);
             return operation;
+        }
+
+        /// <summary>
+        /// Waits for the artifact terminal. A Published result keeps the same
+        /// Worker parked for the Capture Index phase, so only a Failed result
+        /// also stops it, and the Service refuses to collect a Failed terminal
+        /// until the Worker has physically stopped.
+        /// </summary>
+        private static void WaitForArtifactTerminal(Harness h, string message)
+        {
+            SpinWait.SpinUntil(
+                () => h.Service.State == NvencRunPublicationServiceState.ArtifactPublicationCompleted,
+                WatchdogTimeoutMs);
+            Assert.That(h.Service.State,
+                Is.EqualTo(NvencRunPublicationServiceState.ArtifactPublicationCompleted), message);
+
+            if (h.Publisher.Status != NvencRunArtifactPublicationStatus.Published)
+            {
+                WaitForServiceStop(h, message);
+            }
         }
 
         private static void WaitForServiceStop(Harness h, string message)
@@ -963,6 +983,7 @@ namespace Zantetsu.Core.Tests
 
             internal FakeCommitter Committer;
             internal FakePublisher Publisher;
+            internal FakeCaptureIndexCommitter IndexCommitter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -1049,7 +1070,11 @@ namespace Zantetsu.Core.Tests
                 Publisher = new FakePublisher();
                 NvencRunArtifactPublicationExecutionCoordinator artifactCoordinator =
                     new NvencRunArtifactPublicationExecutionCoordinator(Publisher);
-                Service = new NvencRunPublicationService(State, commitCoordinator, artifactCoordinator);
+                IndexCommitter = new FakeCaptureIndexCommitter();
+                NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
+                    new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                Service = new NvencRunPublicationService(
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,
