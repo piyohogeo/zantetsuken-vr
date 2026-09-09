@@ -1622,9 +1622,18 @@ namespace Zantetsu.Observability
         /// <remarks>
         /// A Finalized, Incomplete, CommitOutcomeUnknown, or None disposition,
         /// a poisoned process, or a gate contention returns false with no
-        /// change and never inspects any file. A published Committed
+        /// change and never inspects any file. Poison outranks the retained
+        /// operation: it is checked before the idempotent branch, so a Run
+        /// poisoned after a successful preparation refuses with false, without
+        /// an exception, and the already-issued operation reports itself
+        /// invalid. A PublicationRecoveryRequired disposition published by a
+        /// Failed publication likewise refuses with false while its retained
+        /// operation is still bound, because that is a normal terminal rather
+        /// than corruption. Only a published Committed
         /// disposition whose retained result, receipt, or Committed Registry
-        /// correlation is broken is corruption and poisons. Preparation never
+        /// correlation is broken, or a retained operation whose issuance
+        /// binding is broken in either disposition, is corruption and poisons.
+        /// Preparation never
         /// changes the disposition, Registry, plan, chunk, or lease, and no
         /// additional publication-ready proof or state marker is introduced.
         /// </remarks>
@@ -1640,23 +1649,49 @@ namespace Zantetsu.Observability
 
             try
             {
+                // A process-wide Poison outranks every retained shape. It is
+                // checked before the idempotent branch so a Run poisoned after
+                // a successful preparation can neither hand the retained
+                // operation out again nor raise a corruption failure for what
+                // is an ordinary fail-closed refusal.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
                 // Idempotent: an already-minted operation returns the same
                 // reference after re-checking its exact correlation.
                 if (_artifactPublicationOperation != null)
                 {
-                    if (!_artifactPublicationOperation.IsValid
-                        || !_artifactPublicationOperation.IsIssuedFor(this))
+                    if (_artifactPublicationOperation.IsValid
+                        && _artifactPublicationOperation.IsIssuedFor(this))
                     {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The retained artifact publication operation no longer correlates.");
+                        operation = _artifactPublicationOperation;
+                        return true;
                     }
 
-                    operation = _artifactPublicationOperation;
-                    return true;
+                    // A Failed publication publishes PublicationRecoveryRequired
+                    // while its operation stays retained, so the operation's
+                    // Committed-only validity is false by design. That is a
+                    // normal terminal, not corruption: refuse with no change,
+                    // exactly as a PublicationRecoveryRequired disposition does
+                    // before any operation is minted. The issuance binding must
+                    // still hold.
+                    if (_disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                        && _artifactPublicationOperation.IsBindingIntact)
+                    {
+                        return false;
+                    }
+
+                    // A published Committed disposition whose retained
+                    // operation no longer correlates, or a binding that is
+                    // broken in either disposition, is corruption.
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained artifact publication operation no longer correlates.");
                 }
 
-                if (!_processState.IsDraining || _processState.IsPoisoned)
+                if (!_processState.IsDraining)
                 {
                     return false;
                 }
@@ -2556,7 +2591,13 @@ namespace Zantetsu.Observability
         internal bool IsArtifactPublicationOperationCorrelated(
             NvencRunPublicationPlanCommitExecutionResult planCommitResult)
         {
-            return IsArtifactPublicationCorrelated(planCommitResult, requireCommittedDisposition: true);
+            // A poisoned process invalidates an already-issued operation: no
+            // later publication work may start from it. The issuance binding
+            // predicate below deliberately stays Poison-agnostic, so an
+            // already-collected attempt result and its receipt remain
+            // re-verifiable after a Poison and re-collection stays idempotent.
+            return !_processState.IsPoisoned
+                && IsArtifactPublicationCorrelated(planCommitResult, requireCommittedDisposition: true);
         }
 
         /// <summary>

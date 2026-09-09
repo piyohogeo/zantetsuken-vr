@@ -2014,6 +2014,101 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void PrepareArtifactPublication_AfterFailedPublicationCollected_RefusesWithoutPoison()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Failed;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForArtifactTerminal(h, "publication worker did not reach the artifact terminal");
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.True);
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                int publisherCalls = h.Publisher.CallCount;
+
+                // The operation stays retained while its Committed-only
+                // validity is false, which is the normal Recovery terminal and
+                // not corruption: refuse with no change and no exception.
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsBindingIntact, Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation again), Is.False);
+                Assert.That(again, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+
+                // The retained Failed result is still collectible, unchanged
+                // and still correlated.
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult retained), Is.True);
+                Assert.That(ReferenceEquals(retained.Operation, operation), Is.True);
+                Assert.That(retained.Status, Is.EqualTo(NvencRunArtifactPublicationStatus.Failed));
+                Assert.That(retained.Receipt, Is.Null);
+                Assert.That(retained.IsValid, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_PoisonAfterPrepare_InvalidatesOperationAndRefuses()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+                Assert.That(operation.IsValid, Is.True);
+
+                NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // Poison outranks the retained operation: the already-issued
+                // one stops being usable and the re-call refuses without an
+                // exception.
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsIssuedFor(h.RunCoordinator), Is.False);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation again), Is.False);
+                Assert.That(again, Is.Null);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+                Assert.That(h.Slot.State, Is.EqualTo(slotState));
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_CommittedWithBrokenRetainedOperation_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+                Assert.That(operation.IsValid, Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                // Releasing the Session Ownership Lease breaks the retained
+                // graph while the published disposition is still Committed.
+                // That is corruption, so the normal-terminal refusal above must
+                // not swallow it.
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsBindingIntact, Is.False);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareArtifactPublication(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
         // ---- Artifact publication submit and reflection ----
 
         private static NvencRunArtifactPublicationOperation PrepareArtifactSubmission(Harness h)
