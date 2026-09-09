@@ -1435,14 +1435,14 @@ namespace Zantetsu.Observability
                         "The publication plan commit result is null, foreign, or corrupt.");
                 }
 
-                ReflectPublicationPlanCommit(collected);
-
-                _publicationPlanCommitCollected = true;
-
-                // A Committed result keeps the Worker parked for the Artifact
-                // phase, so the Service is not disposed. Any non-Committed
-                // result has already physically stopped the Worker, so the
-                // Service wait handle is released exactly once here.
+                // A non-Committed result has already physically stopped the
+                // Worker. Release the Service before reflecting any
+                // authoritative state, so a dispose failure poisons without a
+                // partially-published disposition, and the Incomplete /
+                // CommitOutcomeUnknown disposition becomes observable only
+                // after PublicationServiceReleased is set. A Committed result
+                // keeps the Worker parked for the Artifact phase and is not
+                // disposed here.
                 if (collected.Status != NvencRunPublicationPlanCommitStatus.Committed)
                 {
                     try
@@ -1457,6 +1457,10 @@ namespace Zantetsu.Observability
 
                     _publicationServiceReleased = true;
                 }
+
+                ReflectPublicationPlanCommit(collected);
+
+                _publicationPlanCommitCollected = true;
 
                 result = collected;
                 return true;
@@ -1922,11 +1926,13 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Side-effect-free resolution of the Run's next authoritative state
-        /// from the exact artifact publication status. A Published result keeps
-        /// the Registry Slot and the disposition Committed and never changes the
-        /// Plan or chunk; a Failed result keeps the Registry Slot, Plan, chunk,
-        /// and dedicated tmp unchanged and resolves only the disposition to
+        /// Resolution of the Run's next authoritative state from the exact
+        /// artifact publication status. It never changes the Registry Slot, the
+        /// disposition, the Plan, the chunk, the retained result, or the
+        /// dedicated tmp; a validation failure instead poisons the process. A
+        /// Published result keeps the Registry Slot and the disposition
+        /// Committed; a Failed result keeps the Registry Slot, Plan, chunk, and
+        /// dedicated tmp unchanged and resolves only the disposition to
         /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
         /// The disposition itself is not written here; the caller publishes it
         /// last after retaining the result, the collected latch, and the
