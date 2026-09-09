@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
@@ -373,6 +374,61 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Commit_RepeatedRenames_LandExactlyOnCaptureIndex()
+        {
+            // The rename destination is written into a native buffer. A layout
+            // that reserves no terminator lets the name pick up trailing
+            // garbage, which shows up as a sibling like "capture.index<junk>"
+            // instead of a delayed or missing final. One commit hits that
+            // rarely, so a bounded repeat over independent sandboxes is what
+            // makes the defect reproducible; every check below is direct, with
+            // no polling, sleeping, or eventual assertion.
+            const int iterations = 32;
+
+            for (int iteration = 0; iteration < iterations; iteration++)
+            {
+                string message = "iteration " + iteration;
+
+                DirtyNativeHeap();
+
+                (string sandbox, string staging, string final) = MakeSandbox();
+                _sandboxes.Add(sandbox);
+
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 1);
+                Directory.CreateDirectory(layout.FinalRunRoot);
+                PngJsonCaptureRunCaptureIndexCommitter committer = MakeCommitter(layout);
+
+                PngJsonCaptureRunCaptureIndexCommitOperation operation = BuildCommitOperation(
+                    CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit,
+                    layout,
+                    out _,
+                    out PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token);
+                byte[] canonical = operation.GetCanonicalBytes();
+
+                PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(operation, token);
+
+                Assert.That(receipt, Is.Not.Null, message);
+                Assert.That(receipt.IsIssuedFor(committer, operation, token), Is.True, message);
+
+                string finalPath = Path.Combine(layout.FinalRunRoot, "capture.index");
+                string tmpPath = Path.Combine(layout.FinalRunRoot, "capture.index.tmp");
+
+                Assert.That(File.Exists(tmpPath), Is.False, message);
+                Assert.That(File.Exists(finalPath), Is.True, message);
+
+                // Enumerating the Run root catches a corrupted destination name
+                // that a plain existence check on the expected path would only
+                // report as an absent final.
+                string[] matches = Directory.GetFileSystemEntries(layout.FinalRunRoot, "capture.index*");
+                Assert.That(matches, Has.Length.EqualTo(1),
+                    message + ": " + string.Join(", ", matches));
+                Assert.That(Path.GetFileName(matches[0]), Is.EqualTo("capture.index"), message);
+
+                Assert.That(File.ReadAllBytes(finalPath), Is.EqualTo(canonical), message);
+            }
+        }
+
+        [Test]
         public void Commit_ReuseCanonical_RenamesTmpWithoutRewrite()
         {
             (string sandbox, string staging, string final) = MakeSandbox();
@@ -424,7 +480,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt, Is.Not.Null);
             Assert.That(receipt.IsIssuedFor(committer, operation, token), Is.True);
-            Assert.That(ReadFileEventually(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
+            Assert.That(File.ReadAllBytes(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
             Assert.That(File.Exists(tmpPath), Is.False);
         }
 
@@ -663,8 +719,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex.Message, Is.EqualTo("flush failed"));
 
             // The rename already ran; the final must not be rolled back or deleted.
-            Assert.That(FileEventuallyExists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.True);
-            Assert.That(ReadFileEventually(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
+            Assert.That(File.Exists(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.True);
+            Assert.That(File.ReadAllBytes(Path.Combine(layout.FinalRunRoot, "capture.index")), Is.EqualTo(canonical));
         }
 
         [Test]
@@ -1466,34 +1522,44 @@ namespace Zantetsu.Core.Tests
             return operation;
         }
 
-        private static PngJsonCaptureRunCaptureIndexCommitter MakeCommitter(CaptureRunRootLayout layout)
+        /// <summary>
+        /// Recycles a spread of small native blocks filled with non-zero bytes.
+        /// A destination-name buffer that reserves no terminator reads whatever
+        /// follows the name; freshly mapped native pages are zero, which hides
+        /// that, so leaving dirty same-order blocks on the allocator's free
+        /// lists is what makes the read-past observable instead of luck.
+        /// </summary>
+        private static void DirtyNativeHeap()
         {
-            return new PngJsonCaptureRunCaptureIndexCommitter(layout);
-        }
+            const int blockCount = 32;
+            const int smallestSize = 32;
+            const int largestSize = 512;
 
-        private static void WaitForFile(string path)
-        {
-            for (int attempt = 0; attempt < 40; attempt++)
+            byte[] pattern = new byte[largestSize];
+            for (int i = 0; i < pattern.Length; i++)
             {
-                if (File.Exists(path))
+                pattern[i] = 0xFF;
+            }
+
+            IntPtr[] blocks = new IntPtr[blockCount];
+            for (int size = smallestSize; size <= largestSize; size += 8)
+            {
+                for (int i = 0; i < blockCount; i++)
                 {
-                    return;
+                    blocks[i] = Marshal.AllocHGlobal(size);
+                    Marshal.Copy(pattern, 0, blocks[i], size);
                 }
 
-                System.Threading.Thread.Sleep(25);
+                for (int i = 0; i < blockCount; i++)
+                {
+                    Marshal.FreeHGlobal(blocks[i]);
+                }
             }
         }
 
-        private static byte[] ReadFileEventually(string path)
+        private static PngJsonCaptureRunCaptureIndexCommitter MakeCommitter(CaptureRunRootLayout layout)
         {
-            WaitForFile(path);
-            return File.ReadAllBytes(path);
-        }
-
-        private static bool FileEventuallyExists(string path)
-        {
-            WaitForFile(path);
-            return File.Exists(path);
+            return new PngJsonCaptureRunCaptureIndexCommitter(layout);
         }
 
         private static (string sandbox, string staging, string final) MakeSandbox()

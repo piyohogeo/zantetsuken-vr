@@ -10,9 +10,13 @@ namespace Zantetsu.Observability
     /// Immutable, per-committer filesystem collaborator for Capture Index
     /// commits. It pins the final run root directory to a no-follow-verified
     /// handle and performs every file operation — open, create, flush, rename,
-    /// and delete — through file identities or that stable directory handle
-    /// using <c>SetFileInformationByHandle</c>, so a path or parent-directory
-    /// swap cannot redirect an operation after verification.
+    /// and delete — through file identities or that stable directory handle, so
+    /// a path or parent-directory swap cannot redirect an operation after
+    /// verification. The rename is a single non-overwriting
+    /// <c>NtSetInformationFile(FileRenameInformation)</c> whose destination is
+    /// the verified directory handle plus a relative basename, never a
+    /// reconstructed absolute path; delete stays a handle-bound
+    /// <c>SetFileInformationByHandle</c> disposition.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -48,7 +52,7 @@ namespace Zantetsu.Observability
         private const uint FileNonDirectoryFile = 0x00000040u;
         private const uint FileSynchronousIoNonAlert = 0x00000020u;
         private const uint ObjCaseInsensitive = 0x00000040u;
-        private const int FileRenameInfoClass = 3;
+        private const int FileRenameInformationClass = 10;
         private const int FileDispositionInfoClass = 4;
         private const int StatusSuccess = 0;
         private const int ErrorFileNotFound = 2;
@@ -161,7 +165,7 @@ namespace Zantetsu.Observability
             // every other handle's write and delete, so the verified content
             // cannot be mutated or the file removed between verification and
             // the handle-bound rename/delete. The handle itself still carries
-            // GENERIC_WRITE and DELETE, so FlushFileBuffers, SetFileInformationByHandle
+            // GENERIC_WRITE and DELETE, so FlushFileBuffers, the handle-bound
             // rename, and delete all work through this same handle.
             SafeFileHandle handle = CreateFileW(
                 fullPath,
@@ -368,27 +372,25 @@ namespace Zantetsu.Observability
 
             // The source is the verified file identity (the handle), so a
             // swapped temporary path cannot make us rename a different file.
-            // The destination is derived from the verified directory's resolved
-            // canonical path (fixed at OpenDirectory time), not from a
-            // re-resolved file path, so a transient canonical-path resolution
-            // failure on a freshly created file cannot break the rename.
-            string fileCanonicalPath = GetCanonicalPath(file.Handle);
-            if (fileCanonicalPath == null
-                || !IsWithinDirectory(fileCanonicalPath, directory.CanonicalPath))
-            {
-                throw new IOException("The temporary file is not inside the verified run root.");
-            }
-
-            string fullDestination = directory.CanonicalPath + "\\" + newName;
-
-            // FILE_RENAME_INFO: union (4 bytes) + padding to HANDLE alignment,
-            // HANDLE RootDirectory, DWORD FileNameLength, then WCHAR
-            // FileName[] in bytes. RootDirectory stays NULL (zeroed) because a
-            // fully qualified destination path is used.
-            int nameBytes = checked(fullDestination.Length * sizeof(char));
-            int headerSize = IntPtr.Size == 8 ? 20 : 12;
+            // The destination is the verified directory handle plus the fixed
+            // relative basename, so no destination path string is built or
+            // re-resolved and a directory swapped after verification cannot
+            // redirect the rename.
+            //
+            // FILE_RENAME_INFORMATION: BOOLEAN ReplaceIfExists at offset 0,
+            // padded to HANDLE alignment, HANDLE RootDirectory, ULONG
+            // FileNameLength, then the WCHAR FileName[] characters.
+            // FileNameLength counts the name bytes only and excludes the
+            // terminator, but the buffer still reserves an explicit zero
+            // terminator plus native padding after the name so nothing beyond
+            // the allocation is ever read, and the whole allocation is zeroed
+            // before use.
+            int nameBytes = checked(newName.Length * sizeof(char));
+            int rootDirectoryOffset = IntPtr.Size == 8 ? 8 : 4;
             int fileNameLengthOffset = IntPtr.Size == 8 ? 16 : 8;
-            int totalSize = checked(headerSize + nameBytes);
+            int fileNameOffset = IntPtr.Size == 8 ? 20 : 12;
+            int minimumSize = checked(fileNameOffset + nameBytes + sizeof(char));
+            int totalSize = checked((minimumSize + IntPtr.Size - 1) / IntPtr.Size * IntPtr.Size);
 
             IntPtr buffer = Marshal.AllocHGlobal(totalSize);
             try
@@ -398,21 +400,27 @@ namespace Zantetsu.Observability
                     Marshal.WriteByte(buffer, i, 0);
                 }
 
-                // ReplaceIfExists = FALSE and RootDirectory = NULL (both zeroed).
+                // ReplaceIfExists stays FALSE (zeroed) so the rename never
+                // overwrites an existing final name.
+                Marshal.WriteIntPtr(buffer, rootDirectoryOffset, directory.Handle.DangerousGetHandle());
                 Marshal.WriteInt32(buffer, fileNameLengthOffset, nameBytes);
-                for (int i = 0; i < fullDestination.Length; i++)
+                for (int i = 0; i < newName.Length; i++)
                 {
-                    Marshal.WriteInt16(buffer, headerSize + i * 2, (short)fullDestination[i]);
+                    Marshal.WriteInt16(buffer, fileNameOffset + i * 2, (short)newName[i]);
                 }
 
-                if (!SetFileInformationByHandle(
+                int status = NtSetInformationFile(
                     file.Handle,
-                    FileRenameInfoClass,
+                    out IoStatusBlock ioStatusBlock,
                     buffer,
-                    (uint)totalSize))
+                    (uint)totalSize,
+                    FileRenameInformationClass);
+
+                if (status != StatusSuccess)
                 {
-                    int error = Marshal.GetLastWin32Error();
-                    throw new IOException("Atomic non-overwriting rename failed (win32 error " + error + ", name='" + newName + "').");
+                    throw new IOException(
+                        "Atomic non-overwriting rename failed (NTSTATUS 0x" + status.ToString("X8")
+                        + ", name='" + newName + "').");
                 }
             }
             finally
@@ -667,15 +675,16 @@ namespace Zantetsu.Observability
         private static extern bool SetFileInformationByHandle(
             SafeFileHandle hFile,
             int fileInformationClass,
-            IntPtr lpFileInformation,
-            uint dwBufferSize);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetFileInformationByHandle(
-            SafeFileHandle hFile,
-            int fileInformationClass,
             ref FileDispositionInfo lpFileInformation,
             uint dwBufferSize);
+
+        [DllImport("ntdll.dll", ExactSpelling = true)]
+        private static extern int NtSetInformationFile(
+            SafeFileHandle fileHandle,
+            out IoStatusBlock ioStatusBlock,
+            IntPtr fileInformation,
+            uint length,
+            int fileInformationClass);
 
         [DllImport("ntdll.dll", ExactSpelling = true)]
         private static extern int NtCreateFile(
