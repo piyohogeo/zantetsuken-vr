@@ -1757,6 +1757,32 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void CompleteServiceStop_SubmittedCompletedUncollected_Rejected_ResultCollectable()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceStop(h, "service worker did not stop");
+
+                // The Worker reached Completed with the commit Result still
+                // uncollected: this is a commit terminal, not a normal
+                // StoppedWithoutRequest release. The completion entry must not
+                // dispose the Service or publish release evidence.
+                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.False);
+                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.False);
+                Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(0));
+
+                // The commit Result is still normally collectable afterwards.
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
+                    out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
+                Assert.That(result, Is.Not.Null);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                Assert.That(h.Committer.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
         public void TraceFreeze_BeforeBackendJoin_RefusesNoTraceContact()
         {
             using (Harness h = Harness.Create())

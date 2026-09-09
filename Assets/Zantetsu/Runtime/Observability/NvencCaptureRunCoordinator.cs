@@ -99,6 +99,7 @@ namespace Zantetsu.Observability
         private bool _publicationPlanCommitCollected;
         private NvencRunPublicationPlanCommitExecutionResult _publicationPlanCommitResult;
         private bool _publicationPlanCommitServiceReleased;
+        private bool _publicationPlanCommitServiceStopRequested;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -1499,7 +1500,13 @@ namespace Zantetsu.Observability
                 // The Service re-checks its own state inside the same
                 // process-state gate (reentrant), so the stop is linearized
                 // with a concurrent submission and never races it.
-                return _publicationPlanCommitService.TryStopWithoutRequest();
+                if (!_publicationPlanCommitService.TryStopWithoutRequest())
+                {
+                    return false;
+                }
+
+                _publicationPlanCommitServiceStopRequested = true;
+                return true;
             }
             finally
             {
@@ -1516,13 +1523,21 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Non-waiting, idempotent completion of the Publication Plan Commit
-        /// Service stop: it bounded-polls
+        /// Service stop. It is admitted only for the exact stop-requested,
+        /// never-committed Incomplete Run: the stop request must have
+        /// succeeded, the disposition must still be
+        /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>, no Plan
+        /// commit may be prepared, submitted, or collected, and the Service
+        /// must be in
+        /// <see cref="NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest"/>.
+        /// It then bounded-polls
         /// <see cref="NvencRunPublicationPlanCommitService.IsStopped"/> (never
         /// joining the Worker on the Main Thread), and once the Worker has
         /// physically exited it disposes the Service exactly once, retaining the
-        /// release evidence. Before the Worker stops it returns false with no
-        /// side effect; after the Worker stops it disposes and returns true;
-        /// re-calls return true without a second dispose.
+        /// release evidence. A never-requested stop, an uncollected commit
+        /// terminal, a non-Incomplete disposition, or a still-running Worker
+        /// returns false with no side effect; after release re-calls return true
+        /// without a second dispose.
         /// </summary>
         internal bool TryCompletePublicationPlanCommitServiceStop()
         {
@@ -1538,6 +1553,21 @@ namespace Zantetsu.Observability
                 if (_publicationPlanCommitServiceReleased)
                 {
                     return true;
+                }
+
+                // Only the exact stop-requested, never-committed Incomplete Run
+                // may release the Service: an uncollected commit terminal or a
+                // never-requested stop is never mistaken for a normal
+                // StoppedWithoutRequest completion.
+                if (!_publicationPlanCommitServiceStopRequested
+                    || _disposition != NvencRunEvidenceDisposition.Incomplete
+                    || _publicationPlanCommitOperation != null
+                    || _publicationPlanCommitSubmitted
+                    || _publicationPlanCommitCollected
+                    || _publicationPlanCommitService.State
+                        != NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest)
+                {
+                    return false;
                 }
 
                 if (!_publicationPlanCommitService.IsStopped)
