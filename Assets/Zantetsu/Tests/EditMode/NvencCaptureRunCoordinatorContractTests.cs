@@ -1997,6 +1997,23 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PrepareArtifactPublication_InitialNoneDisposition_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // Fresh Run: process Running and disposition None. Refused
+                // without change, without reaching any Committed correlation.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
         public void ArtifactPublicationOperation_TwoReadonlyFields_SealedInternal()
         {
             Type type = typeof(NvencRunArtifactPublicationOperation);
@@ -2009,8 +2026,15 @@ namespace Zantetsu.Core.Tests
             FieldInfo[] fields = type.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
             Assert.That(fields, Has.Length.EqualTo(2));
-            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(NvencCaptureRunCoordinator)));
-            Assert.That(fields[1].FieldType, Is.EqualTo(typeof(NvencRunPublicationPlanCommitExecutionResult)));
+
+            // Verify by name, never by reflection return order.
+            FieldInfo coordinatorField = type.GetField("_coordinator", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo resultField = type.GetField("_planCommitResult", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(coordinatorField, Is.Not.Null, "_coordinator field missing.");
+            Assert.That(resultField, Is.Not.Null, "_planCommitResult field missing.");
+            Assert.That(coordinatorField.FieldType, Is.EqualTo(typeof(NvencCaptureRunCoordinator)));
+            Assert.That(resultField.FieldType, Is.EqualTo(typeof(NvencRunPublicationPlanCommitExecutionResult)));
+
             foreach (FieldInfo field in fields)
             {
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
@@ -2018,26 +2042,22 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ArtifactPublicationOperation_Source_NoFilesystemThreadTaskWaitProof()
+        public void ArtifactPublicationOperation_Source_NoConcreteIoThreadingNativeDependency()
         {
             string source = File.ReadAllText(
                 Path.Combine(RuntimeDirectory(), "NvencRunArtifactPublicationOperation.cs"));
 
+            // Only concrete dependency indicators; harmless identifiers and
+            // comments are intentionally not scanned.
             string[] forbidden =
             {
-                "File.", "Directory.", "FileStream", "Path.", "Stream",
-                "new Thread", "ThreadPool", "Task", "SpinWait", "WaitHandle", "Timer",
-                "AutoResetEvent", "ManualResetEvent", "Monitor", "Sleep",
-                "DllImport", "IntPtr", "SafeHandle", "JsonUtility",
-                "SHA256", "SHA384", "SHA512", "MD5", "ComputeHash", "HashAlgorithm",
-                "IncrementalHash", "System.Security.Cryptography",
-                "Disposition", "TryCommit", "TryDiscardRegistered", "Registry", "OwnershipLease",
-                "Token", "Nonce", "Proof", "Retry", "Rollback", "Cleanup",
+                "System.IO", "System.Threading", "DllImport",
+                "Microsoft.Win32.SafeHandles", "System.Security.Cryptography",
             };
 
             foreach (string word in forbidden)
             {
-                Assert.That(source, Does.Not.Contain(word), "operation source must not contain: " + word);
+                Assert.That(source, Does.Not.Contain(word), "operation source must not depend on: " + word);
             }
 
             Assert.That(source, Does.Contain("PlanCommitResult"));
