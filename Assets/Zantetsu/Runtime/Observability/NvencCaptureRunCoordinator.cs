@@ -98,6 +98,7 @@ namespace Zantetsu.Observability
         private bool _publicationPlanCommitSubmitted;
         private bool _publicationPlanCommitCollected;
         private NvencRunPublicationPlanCommitExecutionResult _publicationPlanCommitResult;
+        private bool _publicationPlanCommitServiceReleased;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -1461,17 +1462,106 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Non-waiting, one-time normal stop of the exact Publication Plan
-        /// Commit Service for a Run that never prepared or submitted a Plan
-        /// commit (an Incomplete Run). It advances the Service from Accepting
-        /// to a non-poisoning stop so the unused Worker and wait handle can be
-        /// released while the process stays Draining. A Service that already
-        /// accepted a submission is never stopped here. The caller then waits
-        /// for the Worker's physical stop and disposes the Service.
+        /// Non-waiting, one-time normal stop request for the exact Publication
+        /// Plan Commit Service. It is admitted only for a normal Incomplete Run
+        /// that never prepared, submitted, or collected a Plan commit: the
+        /// process must be Draining and not Poisoned, the disposition must be
+        /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>, no operation
+        /// may be prepared, and the Service must still be Accepting. The check
+        /// is linearized with submission and the Poison transition on the
+        /// shared process-state gate, and on admission the Service advances to
+        /// a non-poisoning stop. A Running, Finalized, Committed, or Unknown
+        /// disposition, a prepared operation, an already-stopped Service, or a
+        /// gate contention returns false with no change. The actual wait handle
+        /// release is a separate non-waiting completion entry.
         /// </summary>
         internal bool TryStopPublicationPlanCommitService()
         {
-            return _publicationPlanCommitService.TryStopWithoutRequest();
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned
+                    || !_processState.IsDraining
+                    || _disposition != NvencRunEvidenceDisposition.Incomplete
+                    || _publicationPlanCommitOperation != null
+                    || _publicationPlanCommitSubmitted
+                    || _publicationPlanCommitCollected
+                    || _publicationPlanCommitService.State
+                        != NvencRunPublicationPlanCommitServiceState.Accepting)
+                {
+                    return false;
+                }
+
+                // The Service re-checks its own state inside the same
+                // process-state gate (reentrant), so the stop is linearized
+                // with a concurrent submission and never races it.
+                return _publicationPlanCommitService.TryStopWithoutRequest();
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// True only after <see cref="TryCompletePublicationPlanCommitServiceStop"/>
+        /// has released the Service wait handle exactly once.
+        /// </summary>
+        internal bool PublicationPlanCommitServiceReleased =>
+            _publicationPlanCommitServiceReleased;
+
+        /// <summary>
+        /// Non-waiting, idempotent completion of the Publication Plan Commit
+        /// Service stop: it bounded-polls
+        /// <see cref="NvencRunPublicationPlanCommitService.IsStopped"/> (never
+        /// joining the Worker on the Main Thread), and once the Worker has
+        /// physically exited it disposes the Service exactly once, retaining the
+        /// release evidence. Before the Worker stops it returns false with no
+        /// side effect; after the Worker stops it disposes and returns true;
+        /// re-calls return true without a second dispose.
+        /// </summary>
+        internal bool TryCompletePublicationPlanCommitServiceStop()
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-released Service returns the same
+                // result with no second dispose.
+                if (_publicationPlanCommitServiceReleased)
+                {
+                    return true;
+                }
+
+                if (!_publicationPlanCommitService.IsStopped)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    _publicationPlanCommitService.Dispose();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _publicationPlanCommitServiceReleased = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
         }
 
         private bool IsCollectedCommitResultCorrelated(

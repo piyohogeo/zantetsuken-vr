@@ -1649,11 +1649,110 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Service.State,
                     Is.EqualTo(NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest));
 
-                // The worker is physically stopped and the wait handle is
-                // released exactly once (dispose is idempotent).
-                Assert.DoesNotThrow(() => h.Service.Dispose());
+                // The worker is physically stopped; the non-waiting completion
+                // entry releases the wait handle exactly once, and a re-call is
+                // idempotent.
+                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.True);
+                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.True);
                 Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(1));
-                Assert.DoesNotThrow(() => h.Service.Dispose());
+                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.True);
+            }
+        }
+
+        [Test]
+        public void StopService_Running_Rejected_ServiceUnchanged()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // Run start: not Draining, no disposition, no operation. The
+                // stop request must be rejected without locking the Service.
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+
+                Assert.That(h.State.IsAccepting, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+            }
+        }
+
+        [Test]
+        public void StopService_Finalized_NoPlan_Rejected_ServiceUnchanged()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeOnly(h);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+            }
+        }
+
+        [Test]
+        public void StopService_PreparedOperation_Rejected_ServiceStillSubmittable()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+
+                // The prepared operation is untouched: the Service is still
+                // usable and the submission still proceeds.
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceStop(h, "service worker did not stop after submission");
+                Assert.That(h.Committer.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void StopService_Committed_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceStop(h, "service worker did not stop");
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void StopService_CommitOutcomeUnknown_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                h.Committer.Status = NvencRunPublicationPlanCommitStatus.CommitOutcomeUnknown;
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceStop(h, "service worker did not stop");
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.CommitOutcomeUnknown));
+
+                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void CompleteServiceStop_BeforeWorkerStop_ReturnsFalseNoDispose()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // The Service is still parked Accepting: its Worker is alive,
+                // so the non-waiting completion entry must neither dispose nor
+                // publish release evidence.
+                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.False);
+                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.False);
+                Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(0));
             }
         }
 
