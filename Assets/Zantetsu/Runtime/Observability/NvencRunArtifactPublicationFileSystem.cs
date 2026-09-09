@@ -30,8 +30,19 @@ namespace Zantetsu.Observability
     /// access denial, a concurrent change, a refused rename, or a final length
     /// or hash mismatch. Nothing is retried, rolled back, deleted, renamed a
     /// second time, or re-inspected after a failure, and a placed but
-    /// unverified final file is deliberately left in place for Recovery.
-    /// Unexpected programming failures are never swallowed.
+    /// unverified final file is deliberately left in place for Recovery. The
+    /// final destination directory chain is created before the staging chunk
+    /// is inspected, so a failure can leave an empty destination directory
+    /// behind. Unexpected programming failures are never swallowed.
+    /// </para>
+    /// <para>
+    /// Every handle this backend opens refuses delete sharing, and the staging
+    /// chunk is opened with read sharing only, so no other handle can write
+    /// to, delete, or rename the chunk or move a verified directory while the
+    /// publication runs. A concurrent holder of such a handle makes the open
+    /// fail, which converges to <c>false</c> before the rename rather than
+    /// letting a same-handle verification pass over bytes the descriptor's
+    /// final path no longer holds.
     /// </para>
     /// <para>
     /// Phase 0.11 performs no durability flush: this backend never flushes
@@ -47,15 +58,12 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class NvencRunArtifactPublicationFileSystem : INvencRunArtifactPublicationFileSystem
     {
-        private const uint GenericRead = 0x80000000u;
-        private const uint GenericWrite = 0x40000000u;
         private const uint DeleteAccess = 0x00010000u;
         private const uint FileGenericRead = 0x00120089u;
         private const uint FileGenericWrite = 0x00120116u;
         private const uint FileTraverse = 0x00000020u;
         private const uint FileShareRead = 0x00000001u;
         private const uint FileShareWrite = 0x00000002u;
-        private const uint FileShareDelete = 0x00000004u;
         private const uint OpenExisting = 3u;
         private const uint FileOpenDisposition = 1u;
         private const uint FileOpenIfDisposition = 3u;
@@ -204,10 +212,15 @@ namespace Zantetsu.Observability
 
         private static NvencRunArtifactPublicationDirectoryHandle OpenRunRoot(string runRoot, string label)
         {
+            // Delete sharing is refused for the whole publication: a Run root
+            // that another handle can rename or delete could still be moved
+            // out from under the verified placement after this handle's
+            // identity check. The root is never deleted or renamed here, so no
+            // DELETE access is requested either.
             SafeFileHandle handle = CreateFileW(
                 runRoot,
-                GenericRead | GenericWrite | DeleteAccess,
-                FileShareRead | FileShareWrite | FileShareDelete,
+                FileGenericRead | FileGenericWrite | FileTraverse,
+                FileShareRead | FileShareWrite,
                 IntPtr.Zero,
                 OpenExisting,
                 FileFlagBackupSemantics | FileFlagOpenReparsePoint,
@@ -270,7 +283,7 @@ namespace Zantetsu.Observability
                         current.Handle,
                         name,
                         FileGenericRead | FileGenericWrite | FileTraverse,
-                        FileShareRead | FileShareWrite | FileShareDelete,
+                        FileShareRead | FileShareWrite,
                         disposition,
                         FileDirectoryFile | FileFlagOpenReparsePoint | FileSynchronousIoNonAlert,
                         out SafeFileHandle handle);
@@ -322,11 +335,18 @@ namespace Zantetsu.Observability
             NvencRunArtifactPublicationDirectoryHandle directory,
             string name)
         {
+            // Read sharing only. Another handle that could write to, delete, or
+            // rename the chunk while this publication runs would let a
+            // concurrent change land after the post-placement verification has
+            // already read past it, so the same-handle hash could pass while
+            // the descriptor's final path no longer holds those bytes. DELETE
+            // access is requested for this handle's own single rename; it does
+            // not grant delete sharing to anyone else.
             int status = NtCreateFileRelative(
                 directory.Handle,
                 name,
                 FileGenericRead | DeleteAccess,
-                FileShareRead | FileShareWrite | FileShareDelete,
+                FileShareRead,
                 FileOpenDisposition,
                 FileNonDirectoryFile | FileFlagOpenReparsePoint | FileSynchronousIoNonAlert,
                 out SafeFileHandle handle);

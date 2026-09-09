@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
 using Zantetsu.Observability;
 
@@ -253,6 +254,110 @@ namespace Zantetsu.Core.Tests
             AssertExclusivelyOpenable(sandbox.FinalChunkPath);
         }
 
+        // ---- Sharing refused for the whole publication ----
+
+        [Test]
+        public void TryPublishFresh_ConcurrentWriterOnStagingChunk_RefusedBeforeRename()
+        {
+            RequireWindows();
+            Sandbox sandbox = CreateSandbox();
+            byte[] content = MakeContent(64, 0x40);
+            sandbox.WriteStagingChunk(content);
+            CaptureArtifactDescriptor descriptor = MakeDescriptor(content.Length, content);
+
+            // A writer that could still change the chunk mid-publication would
+            // let the same-handle verification pass over bytes the final path
+            // no longer holds, so the staging open must refuse write sharing.
+            using (new FileStream(
+                sandbox.StagingChunkPath,
+                FileMode.Open,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete))
+            {
+                Assert.That(Publish(sandbox, descriptor), Is.False);
+            }
+
+            Assert.That(File.Exists(sandbox.StagingChunkPath), Is.True);
+            Assert.That(File.ReadAllBytes(sandbox.StagingChunkPath), Is.EqualTo(content));
+            Assert.That(File.Exists(sandbox.FinalChunkPath), Is.False);
+        }
+
+        [Test]
+        public void TryPublishFresh_ConcurrentDeleteSharedStagingChunk_RefusedBeforeRename()
+        {
+            RequireWindows();
+            Sandbox sandbox = CreateSandbox();
+            byte[] content = MakeContent(64, 0x40);
+            sandbox.WriteStagingChunk(content);
+            CaptureArtifactDescriptor descriptor = MakeDescriptor(content.Length, content);
+
+            // A handle that can still delete or rename the chunk is refused for
+            // the same reason: the verified identity could be unlinked from the
+            // descriptor's final path after the check.
+            using (SafeFileHandle held = OpenFileWithDeleteAccess(sandbox.StagingChunkPath))
+            {
+                Assert.That(held.IsInvalid, Is.False, "the conflicting file handle could not be opened.");
+                Assert.That(Publish(sandbox, descriptor), Is.False);
+            }
+
+            Assert.That(File.Exists(sandbox.StagingChunkPath), Is.True);
+            Assert.That(File.Exists(sandbox.FinalChunkPath), Is.False);
+
+            Assert.That(Publish(sandbox, descriptor), Is.True);
+            Assert.That(File.ReadAllBytes(sandbox.FinalChunkPath), Is.EqualTo(content));
+        }
+
+        [Test]
+        public void TryPublishFresh_RunRootHeldWithDeleteAccess_RefusedBeforeRename()
+        {
+            RequireWindows();
+            Sandbox sandbox = CreateSandbox();
+            byte[] content = MakeContent(64, 0x40);
+            sandbox.WriteStagingChunk(content);
+            CaptureArtifactDescriptor descriptor = MakeDescriptor(content.Length, content);
+
+            // A Run root another handle can still rename or delete could be
+            // moved out from under the verified placement, so the root open
+            // refuses delete sharing and the conflicting holder makes the whole
+            // publication fail closed.
+            using (SafeFileHandle held = OpenDirectoryForDelete(sandbox.StagingRunRoot))
+            {
+                Assert.That(held.IsInvalid, Is.False, "the conflicting directory handle could not be opened.");
+                Assert.That(Publish(sandbox, descriptor), Is.False);
+            }
+
+            Assert.That(File.Exists(sandbox.StagingChunkPath), Is.True);
+            Assert.That(File.Exists(sandbox.FinalChunkPath), Is.False);
+
+            // With the conflicting handle released the same publication
+            // succeeds, so the refusal came from the sharing conflict alone.
+            Assert.That(Publish(sandbox, descriptor), Is.True);
+            Assert.That(File.ReadAllBytes(sandbox.FinalChunkPath), Is.EqualTo(content));
+        }
+
+        [Test]
+        public void TryPublishFresh_FinalChunksDirectoryHeldWithDeleteAccess_RefusedBeforeRename()
+        {
+            RequireWindows();
+            Sandbox sandbox = CreateSandbox();
+            byte[] content = MakeContent(64, 0x40);
+            sandbox.WriteStagingChunk(content);
+            Directory.CreateDirectory(sandbox.FinalChunksDirectory);
+            CaptureArtifactDescriptor descriptor = MakeDescriptor(content.Length, content);
+
+            using (SafeFileHandle held = OpenDirectoryForDelete(sandbox.FinalChunksDirectory))
+            {
+                Assert.That(held.IsInvalid, Is.False, "the conflicting directory handle could not be opened.");
+                Assert.That(Publish(sandbox, descriptor), Is.False);
+            }
+
+            Assert.That(File.Exists(sandbox.StagingChunkPath), Is.True);
+            Assert.That(File.Exists(sandbox.FinalChunkPath), Is.False);
+
+            Assert.That(Publish(sandbox, descriptor), Is.True);
+            Assert.That(File.ReadAllBytes(sandbox.FinalChunkPath), Is.EqualTo(content));
+        }
+
         // ---- No-follow ----
 
         [Test]
@@ -423,6 +528,48 @@ namespace Zantetsu.Core.Tests
             {
             }
         }
+
+        /// <summary>
+        /// Opens a directory with DELETE access and full sharing: a handle that
+        /// could still rename or delete the directory. Managed directory APIs
+        /// cannot express this, so the conflicting holder is opened directly.
+        /// </summary>
+        private static SafeFileHandle OpenDirectoryForDelete(string path)
+        {
+            return OpenWithDeleteAccess(path, BackupSemantics);
+        }
+
+        /// <summary>
+        /// Opens a file with DELETE access and full sharing: a handle that could
+        /// still delete or rename the chunk during the publication.
+        /// </summary>
+        private static SafeFileHandle OpenFileWithDeleteAccess(string path)
+        {
+            return OpenWithDeleteAccess(path, 0u);
+        }
+
+        private static SafeFileHandle OpenWithDeleteAccess(string path, uint flags)
+        {
+            const uint deleteAccess = 0x00010000u;
+            const uint fileGenericRead = 0x00120089u;
+            const uint shareAll = 0x00000001u | 0x00000002u | 0x00000004u;
+            const uint openExisting = 3u;
+
+            return CreateFileW(
+                path, fileGenericRead | deleteAccess, shareAll, IntPtr.Zero, openExisting, flags, IntPtr.Zero);
+        }
+
+        private const uint BackupSemantics = 0x02000000u;
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string lpFileName,
+            uint dwDesiredAccess,
+            uint dwShareMode,
+            IntPtr lpSecurityAttributes,
+            uint dwCreationDisposition,
+            uint dwFlagsAndAttributes,
+            IntPtr hTemplateFile);
 
         private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
