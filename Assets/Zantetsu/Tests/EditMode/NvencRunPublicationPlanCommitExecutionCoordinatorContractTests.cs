@@ -924,6 +924,9 @@ namespace Zantetsu.Core.Tests
             internal CaptureFrameDraftTerminalIntentQueue DraftQueue;
             internal NvencTraceFreezeCoordinator TraceFreeze;
 
+            internal FakeCommitter Committer;
+            internal NvencRunPublicationPlanCommitService Service;
+
             private readonly Action _settledHandler;
 
             internal bool SubmitDrained
@@ -994,8 +997,13 @@ namespace Zantetsu.Core.Tests
                 TraceFreeze = new NvencTraceFreezeCoordinator(
                     TraceLogger, TraceRecorder, FreezeTerminalCoordinator, Context, SessionIssue);
 
+                Committer = new FakeCommitter();
+                NvencRunPublicationPlanCommitExecutionCoordinator commitCoordinator =
+                    new NvencRunPublicationPlanCommitExecutionCoordinator(Committer);
+                Service = new NvencRunPublicationPlanCommitService(State, commitCoordinator);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
-                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze);
+                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
@@ -1053,6 +1061,23 @@ namespace Zantetsu.Core.Tests
                 Worker.Dispose();
                 Worker.Settled -= _settledHandler;
                 SettledEvent.Dispose();
+
+                if (!Service.IsStopped)
+                {
+                    State.TryPoison();
+                    Service.Notify();
+                }
+
+                FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(
+                    "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
+                Thread serviceThread = (Thread)serviceField?.GetValue(Service);
+                if (serviceThread != null)
+                {
+                    Assert.That(serviceThread.Join(WatchdogTimeoutMs), Is.True,
+                        "publication service worker did not physically exit during teardown");
+                }
+
+                Service.Dispose();
             }
         }
     }

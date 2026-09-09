@@ -109,7 +109,7 @@ namespace Zantetsu.Observability
             NvencCaptureBackendJoinCoordinator backendJoin,
             CaptureRunInitializationSessionIssue sessionIssue,
             NvencTraceFreezeCoordinator traceFreeze,
-            NvencRunPublicationPlanCommitService publicationPlanCommitService = null)
+            NvencRunPublicationPlanCommitService publicationPlanCommitService)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -120,7 +120,7 @@ namespace Zantetsu.Observability
             _backendJoin = backendJoin ?? throw new ArgumentNullException(nameof(backendJoin));
             _sessionIssue = sessionIssue ?? throw new ArgumentNullException(nameof(sessionIssue));
             _traceFreeze = traceFreeze ?? throw new ArgumentNullException(nameof(traceFreeze));
-            _publicationPlanCommitService = publicationPlanCommitService;
+            _publicationPlanCommitService = publicationPlanCommitService ?? throw new ArgumentNullException(nameof(publicationPlanCommitService));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -180,11 +180,10 @@ namespace Zantetsu.Observability
                     nameof(traceFreeze));
             }
 
-            // A supplied Publication Plan Commit Service must be bound to the
-            // exact process state; this is checked before any side effect so a
+            // The Publication Plan Commit Service must be bound to the exact
+            // process state; this is checked before any side effect so a
             // foreign Service can never submit a Plan against this Run.
-            if (_publicationPlanCommitService != null
-                && !_publicationPlanCommitService.IsBoundToProcessState(_processState))
+            if (!_publicationPlanCommitService.IsBoundToProcessState(_processState))
             {
                 throw new ArgumentException(
                     "The Publication Plan Commit Service must be bound to the exact process state.",
@@ -1289,11 +1288,6 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TrySubmitPublicationPlanCommit()
         {
-            if (_publicationPlanCommitService == null)
-            {
-                return false;
-            }
-
             if (!_processState.TryBeginSubmitStep())
             {
                 return false;
@@ -1384,11 +1378,6 @@ namespace Zantetsu.Observability
         {
             result = null;
 
-            if (_publicationPlanCommitService == null)
-            {
-                return false;
-            }
-
             if (!_processState.TryBeginResourceResolution())
             {
                 return false;
@@ -1415,6 +1404,22 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
+                // The Service publishes Completed while its Worker is still
+                // alive. Collect only after the Worker has physically stopped,
+                // so a poll inside that window never clears the Service slot
+                // before the result can be reflected.
+                if (!_publicationPlanCommitService.IsStopped)
+                {
+                    return false;
+                }
+
+                if (_publicationPlanCommitService.TryGetFailure(out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication plan commit service reported a fatal failure.");
+                }
+
                 if (!_publicationPlanCommitService.TryCollect(
                         out NvencRunPublicationPlanCommitExecutionResult collected))
                 {
@@ -1428,18 +1433,6 @@ namespace Zantetsu.Observability
                     _processState.TryPoison();
                     throw new InvalidOperationException(
                         "The publication plan commit result is null, foreign, or corrupt.");
-                }
-
-                if (_publicationPlanCommitService.TryGetFailure(out _))
-                {
-                    _processState.TryPoison();
-                    throw new InvalidOperationException(
-                        "The publication plan commit service reported a fatal failure.");
-                }
-
-                if (!_publicationPlanCommitService.IsStopped)
-                {
-                    return false;
                 }
 
                 // Release the Service wait handle exactly once. A dispose
@@ -1513,62 +1506,62 @@ namespace Zantetsu.Observability
             switch (collected.Status)
             {
                 case NvencRunPublicationPlanCommitStatus.Committed:
-                {
-                    NvencRunPublicationPlanCommitReceipt receipt = collected.Receipt;
-                    if (receipt == null
-                        || !receipt.IsIssuedFor(collected.Attempt.Committer, operation))
                     {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The Committed result does not carry an exact valid receipt.");
-                    }
+                        NvencRunPublicationPlanCommitReceipt receipt = collected.Receipt;
+                        if (receipt == null
+                            || !receipt.IsIssuedFor(collected.Attempt.Committer, operation))
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Committed result does not carry an exact valid receipt.");
+                        }
 
-                    if (!_registrySlot.TryCommit(_context, entryResult))
-                    {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The Registry Slot could not advance to Committed.");
-                    }
+                        if (!_registrySlot.TryCommit(_context, entryResult))
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot could not advance to Committed.");
+                        }
 
-                    next = NvencRunEvidenceDisposition.Committed;
-                    break;
-                }
+                        next = NvencRunEvidenceDisposition.Committed;
+                        break;
+                    }
 
                 case NvencRunPublicationPlanCommitStatus.FailedBeforeRename:
-                {
-                    if (!_registrySlot.TryDiscardRegistered(_context, entryResult))
                     {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The Registry Slot could not discard the registered entry.");
-                    }
+                        if (!_registrySlot.TryDiscardRegistered(_context, entryResult))
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot could not discard the registered entry.");
+                        }
 
-                    next = NvencRunEvidenceDisposition.Incomplete;
-                    break;
-                }
+                        next = NvencRunEvidenceDisposition.Incomplete;
+                        break;
+                    }
 
                 case NvencRunPublicationPlanCommitStatus.CommitOutcomeUnknown:
-                {
-                    // The Registry Slot stays Registered; the commit outcome is
-                    // never re-inspected or guessed, and nothing is discarded or
-                    // cleaned up.
-                    if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                    {
+                        // The Registry Slot stays Registered; the commit outcome is
+                        // never re-inspected or guessed, and nothing is discarded or
+                        // cleaned up.
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Registered)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Registered for an unknown outcome.");
+                        }
+
+                        next = NvencRunEvidenceDisposition.CommitOutcomeUnknown;
+                        break;
+                    }
+
+                default:
                     {
                         _processState.TryPoison();
                         throw new InvalidOperationException(
-                            "The Registry Slot is no longer Registered for an unknown outcome.");
+                            "The publication plan commit result has an unrecognized status.");
                     }
-
-                    next = NvencRunEvidenceDisposition.CommitOutcomeUnknown;
-                    break;
-                }
-
-                default:
-                {
-                    _processState.TryPoison();
-                    throw new InvalidOperationException(
-                        "The publication plan commit result has an unrecognized status.");
-                }
             }
 
             // Retain the result before the disposition becomes observable.

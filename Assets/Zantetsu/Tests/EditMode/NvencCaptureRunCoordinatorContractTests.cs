@@ -1445,7 +1445,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -1465,7 +1465,7 @@ namespace Zantetsu.Core.Tests
                     h.Buffer, h.Processor, new FakeMainThreadTeardown { BoundContext = h.Context });
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2009,6 +2009,48 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Collect_PollBeforeWorkerStop_RetrySucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
+
+                int callbackRan = 0;
+                int earlyCollected = 0;
+                ManualResetEventSlim settled = new ManualResetEventSlim(false);
+
+                // The Service publishes Completed while its Worker is still
+                // alive; a poll inside that window must not clear the slot.
+                h.Service.Settled += () =>
+                {
+                    Interlocked.Increment(ref callbackRan);
+                    if (h.RunCoordinator.TryCollectPublicationPlanCommit(out _))
+                    {
+                        Interlocked.Increment(ref earlyCollected);
+                    }
+
+                    settled.Set();
+                };
+
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitSettled(settled, "service did not settle");
+                WaitForServiceStop(h, "service worker did not stop");
+
+                Assert.That(Volatile.Read(ref callbackRan), Is.EqualTo(1));
+                Assert.That(Volatile.Read(ref earlyCollected), Is.EqualTo(0),
+                    "the pre-stop poll must not collect the result");
+
+                // After the Worker exited, the retry collects and reflects.
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
+                    out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
+                Assert.That(result, Is.Not.Null);
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+            }
+        }
+
+        [Test]
         public void Collect_ExternalPoisonFirst_NoNormalReflection()
         {
             using (Harness h = Harness.Create())
@@ -2142,7 +2184,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2152,7 +2194,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2164,7 +2206,7 @@ namespace Zantetsu.Core.Tests
                 // Same process state but a different Submit Worker instance
                 // than the one the Output Worker is bound to.
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2175,7 +2217,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2185,7 +2227,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2196,7 +2238,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2215,7 +2257,7 @@ namespace Zantetsu.Core.Tests
                 };
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
             }
         }
 
@@ -2225,23 +2267,25 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze, h.Service));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null, h.Service));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, null));
             }
         }
 
