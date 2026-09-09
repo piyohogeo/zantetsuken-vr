@@ -59,6 +59,30 @@ namespace Zantetsu.Observability
 
         internal NvencRunArtifactPublicationOperation Operation => _operation;
 
+        internal NvencRunPublicationPlanCommitExecutionResult PlanCommitResult => _operation.PlanCommitResult;
+
+        internal CapturePublicationPlan Plan => _operation.Plan;
+
+        internal NvencChunkFinalizationResult FinalizationResult => _operation.FinalizationResult;
+
+        internal CaptureArtifactDescriptor Descriptor => _operation.Descriptor;
+
+        internal CaptureArtifactFrameRelation FrameRelation => _operation.FrameRelation;
+
+        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
+
+        internal long TestRunId => _operation.TestRunId;
+
+        internal string RunInitializationId => _operation.RunInitializationId;
+
+        internal string StagingRelativePath => _operation.StagingRelativePath;
+
+        internal string FinalRelativePath => _operation.FinalRelativePath;
+
+        internal long ExpectedByteLength => _operation.ExpectedByteLength;
+
+        internal string ExpectedContentHash => _operation.ExpectedContentHash;
+
         internal bool IsValid =>
             _publisher != null
             && _operation != null

@@ -294,21 +294,39 @@ namespace Zantetsu.Core.Tests
 
                 // The attempt result and receipt hold only the exact publisher
                 // and exact operation; descriptor, plan, finalization result,
-                // paths, hash, and run identity stay on the operation.
+                // paths, hash, and run identity are forwarded on both surfaces
+                // from the operation without duplication.
                 Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
                 Assert.That(ReferenceEquals(result.Receipt.Operation, operation), Is.True);
-                Assert.That(result.Operation.PlanCommitResult, Is.SameAs(operation.PlanCommitResult));
-                Assert.That(result.Operation.Plan, Is.SameAs(operation.Plan));
-                Assert.That(result.Operation.FinalizationResult, Is.SameAs(operation.FinalizationResult));
-                Assert.That(result.Operation.Descriptor, Is.SameAs(operation.Descriptor));
-                Assert.That(result.Operation.FrameRelation, Is.SameAs(operation.FrameRelation));
-                Assert.That(result.Operation.RootLayout, Is.SameAs(operation.RootLayout));
-                Assert.That(result.Operation.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(result.Operation.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-                Assert.That(result.Operation.StagingRelativePath, Is.EqualTo(operation.StagingRelativePath));
-                Assert.That(result.Operation.FinalRelativePath, Is.EqualTo(operation.FinalRelativePath));
-                Assert.That(result.Operation.ExpectedByteLength, Is.EqualTo(operation.ExpectedByteLength));
-                Assert.That(result.Operation.ExpectedContentHash, Is.EqualTo(operation.ExpectedContentHash));
+
+                // Result forwarding: exact reference for the held graph, value
+                // for the scalar and string surface.
+                Assert.That(result.PlanCommitResult, Is.SameAs(operation.PlanCommitResult));
+                Assert.That(result.Plan, Is.SameAs(operation.Plan));
+                Assert.That(result.FinalizationResult, Is.SameAs(operation.FinalizationResult));
+                Assert.That(result.Descriptor, Is.SameAs(operation.Descriptor));
+                Assert.That(result.FrameRelation, Is.SameAs(operation.FrameRelation));
+                Assert.That(result.RootLayout, Is.SameAs(operation.RootLayout));
+                Assert.That(result.TestRunId, Is.EqualTo(operation.TestRunId));
+                Assert.That(result.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
+                Assert.That(result.StagingRelativePath, Is.EqualTo(operation.StagingRelativePath));
+                Assert.That(result.FinalRelativePath, Is.EqualTo(operation.FinalRelativePath));
+                Assert.That(result.ExpectedByteLength, Is.EqualTo(operation.ExpectedByteLength));
+                Assert.That(result.ExpectedContentHash, Is.EqualTo(operation.ExpectedContentHash));
+
+                // Receipt forwarding: the same exact references and values.
+                Assert.That(result.Receipt.PlanCommitResult, Is.SameAs(operation.PlanCommitResult));
+                Assert.That(result.Receipt.Plan, Is.SameAs(operation.Plan));
+                Assert.That(result.Receipt.FinalizationResult, Is.SameAs(operation.FinalizationResult));
+                Assert.That(result.Receipt.Descriptor, Is.SameAs(operation.Descriptor));
+                Assert.That(result.Receipt.FrameRelation, Is.SameAs(operation.FrameRelation));
+                Assert.That(result.Receipt.RootLayout, Is.SameAs(operation.RootLayout));
+                Assert.That(result.Receipt.TestRunId, Is.EqualTo(operation.TestRunId));
+                Assert.That(result.Receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
+                Assert.That(result.Receipt.StagingRelativePath, Is.EqualTo(operation.StagingRelativePath));
+                Assert.That(result.Receipt.FinalRelativePath, Is.EqualTo(operation.FinalRelativePath));
+                Assert.That(result.Receipt.ExpectedByteLength, Is.EqualTo(operation.ExpectedByteLength));
+                Assert.That(result.Receipt.ExpectedContentHash, Is.EqualTo(operation.ExpectedContentHash));
             }
         }
 
