@@ -68,6 +68,22 @@ namespace Zantetsu.Observability
             && _publicationReceipt != null
             && _coordinator.IsCaptureIndexCommitReceiptCorrelated(_publicationReceipt);
 
+        /// <summary>
+        /// Exception-safe post-commit issuance binding: the same exact
+        /// correlation as <see cref="IsValid"/> on an unpoisoned process,
+        /// except that the disposition may be either <c>Committed</c> (before
+        /// the commit is reflected) or
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// (after a Failed commit is reflected). Used by the issued attempt
+        /// result and receipt so that reflecting a Failed capture index commit
+        /// does not invalidate them. It re-inspects no file and introduces no
+        /// second authority.
+        /// </summary>
+        internal bool IsBindingIntact =>
+            _coordinator != null
+            && _publicationReceipt != null
+            && _coordinator.IsCaptureIndexCommitBindingIntact(_publicationReceipt);
+
         internal bool IsIssuedFor(NvencCaptureRunCoordinator coordinator)
         {
             return coordinator != null

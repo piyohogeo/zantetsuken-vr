@@ -2142,6 +2142,32 @@ namespace Zantetsu.Observability
         internal bool IsCaptureIndexCommitReceiptCorrelated(
             NvencRunArtifactPublicationReceipt receipt)
         {
+            return IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: true);
+        }
+
+        /// <summary>
+        /// Exception-safe post-commit binding predicate used by the issued
+        /// capture index commit attempt result and receipt: the same exact
+        /// correlation as
+        /// <see cref="IsCaptureIndexCommitReceiptCorrelated"/> on an unpoisoned
+        /// process, except that the disposition may be either <c>Committed</c>
+        /// (before the commit is reflected) or
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// (after a Failed commit is reflected), so reflecting a Failed capture
+        /// index commit does not invalidate an already-issued result or
+        /// receipt. It reuses the existing publication and Registry
+        /// correlations, inspects no file, and changes nothing.
+        /// </summary>
+        internal bool IsCaptureIndexCommitBindingIntact(
+            NvencRunArtifactPublicationReceipt receipt)
+        {
+            return IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: false);
+        }
+
+        private bool IsCaptureIndexCommitCorrelated(
+            NvencRunArtifactPublicationReceipt receipt,
+            bool requireCommittedDisposition)
+        {
             try
             {
                 // A poisoned process invalidates an already-issued operation
@@ -2165,7 +2191,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                return IsArtifactPublicationOperationCorrelated(publicationOperation.PlanCommitResult);
+                return IsArtifactPublicationCorrelated(
+                    publicationOperation.PlanCommitResult, requireCommittedDisposition);
             }
             catch
             {
