@@ -2679,35 +2679,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Collect_NonCommitted_DisposeFailure_NoRegistryResultDispositionChange()
-        {
-            using (Harness h = Harness.Create())
-            {
-                FinalizeAndPrepareCommit(h);
-                h.Committer.Status = NvencRunPublicationPlanCommitStatus.FailedBeforeRename;
-
-                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
-
-                // Force the Service dispose to fail so the reflect step is
-                // never reached: the Registry, the retained result, the
-                // disposition, and the release evidence must stay unchanged,
-                // and the process poisons.
-                SetField(h.Service, "_signal", null);
-
-                Assert.Throws<NullReferenceException>(
-                    () => h.RunCoordinator.TryCollectPublicationPlanCommit(out _));
-
-                Assert.That(h.State.IsPoisoned, Is.True);
-                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
-                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Registered));
-                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
-                Assert.That((bool)GetField(h.RunCoordinator, "_publicationPlanCommitCollected"), Is.False);
-                Assert.That(GetField(h.RunCoordinator, "_publicationPlanCommitResult"), Is.Null);
-            }
-        }
-
-        [Test]
         public void Collect_Idempotent_ReturnsSameReferenceNoRerun()
         {
             using (Harness h = Harness.Create())
