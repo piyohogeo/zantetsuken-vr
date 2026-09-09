@@ -113,6 +113,8 @@ namespace Zantetsu.Observability
         private bool _captureCompleteCollected;
         private NvencRunCaptureCompleteAttemptResult _captureCompleteResult;
         private NvencRunCaptureCompleteCleanupOperation _captureCompleteCleanupOperation;
+        private bool _captureCompleteCleanupReflected;
+        private NvencRunCaptureCompleteCleanupAttemptResult _captureCompleteCleanupResult;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -3027,10 +3029,31 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // Idempotent: an already-minted operation returns the same
-                // reference after re-checking its exact correlation.
                 if (_captureCompleteCleanupOperation != null)
                 {
+                    // The cleanup outcome is already reflected: one Run
+                    // prepares one cleanup, so both a Cleaned and a Failed
+                    // reflection refuse a re-prepare with no change. This is a
+                    // normal terminal shape, not corruption, as long as the
+                    // retained operation and result still correlate.
+                    if (_captureCompleteCleanupReflected)
+                    {
+                        NvencRunCaptureCompleteCleanupAttemptResult reflected = _captureCompleteCleanupResult;
+                        if (reflected.IsNone
+                            || !reflected.IsValid
+                            || !ReferenceEquals(reflected.Operation, _captureCompleteCleanupOperation)
+                            || !_captureCompleteCleanupOperation.IsBindingIntact)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The reflected CaptureComplete cleanup result or its binding is broken.");
+                        }
+
+                        return false;
+                    }
+
+                    // Idempotent: an already-minted operation returns the same
+                    // reference after re-checking its exact correlation.
                     if (!_captureCompleteCleanupOperation.IsValid
                         || !_captureCompleteCleanupOperation.IsIssuedFor(this))
                     {
@@ -3124,6 +3147,143 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Reflects the outcome of the one synchronous CaptureComplete cleanup
+        /// attempt into the Run, linearized with Poison inside the existing
+        /// resource-resolution gate. A Cleaned reflection keeps the disposition
+        /// at <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>; a
+        /// Failed reflection publishes
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// last, after the result is retained and the latch is set. Either way
+        /// the attempt result is retained exactly once.
+        /// </summary>
+        /// <remarks>
+        /// A poisoned process, a Run that is not Draining, a disposition other
+        /// than CaptureComplete, a cleanup operation that was never prepared, a
+        /// Publication Service that is not both released and physically
+        /// stopped, an already reflected outcome, or a gate contention returns
+        /// false with no change. From an otherwise normal prepared state a
+        /// default, foreign, or corrupt attempt result is corruption: it
+        /// poisons and throws <see cref="InvalidOperationException"/>. Nothing
+        /// else moves here - the Registry, the plan, the final chunk, the
+        /// capture index, the CaptureComplete result and receipt, the context,
+        /// the Service, and the Session Ownership Lease are untouched, no file
+        /// is re-inspected, no cleaner or execution coordinator is called, and
+        /// no cleanup is retried, rolled back, or re-run.
+        /// </remarks>
+        internal bool TryReflectCaptureCompleteCleanup(
+            NvencRunCaptureCompleteCleanupAttemptResult result)
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A process-wide Poison outranks every retained shape, so an
+                // externally poisoned Run refuses rather than reporting
+                // corruption.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_captureCompleteCleanupReflected)
+                {
+                    // One cleanup outcome per Run: a second reflection changes
+                    // nothing, whatever it carries.
+                    return false;
+                }
+
+                if (!_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.CaptureComplete)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteCleanupOperation operation = _captureCompleteCleanupOperation;
+                if (operation == null)
+                {
+                    // Never prepared: a normal not-ready shape.
+                    return false;
+                }
+
+                if (!_publicationServiceReleased || !_publicationService.IsStopped)
+                {
+                    return false;
+                }
+
+                // Every normal shape was refused above, so a result that is
+                // default, invalid, issued for another operation, or of a
+                // broken status shape is corruption of the retained state
+                // rather than a not-ready shape.
+                if (!IsReflectableCleanupResult(result, operation))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The CaptureComplete cleanup attempt result is default, foreign, or corrupt.");
+                }
+
+                _captureCompleteCleanupResult = result;
+                _captureCompleteCleanupReflected = true;
+
+                if (result.Status == NvencRunCaptureCompleteCleanupStatus.Failed)
+                {
+                    // Published last, so the retained result and the latch are
+                    // already in place when the disposition moves. The issued
+                    // result and receipt survive it through their binding
+                    // correlation.
+                    _disposition = NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                }
+
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// The exact shape one reflectable cleanup attempt result must have:
+        /// not default, self-consistent, issued for the exact retained cleanup
+        /// operation whose binding is still intact, with a Cleaned receipt
+        /// issued for that result's own exact cleaner and operation and no
+        /// receipt at all on Failed. ReferenceEquals and existing predicates
+        /// only; no file is inspected and nothing is changed.
+        /// </summary>
+        private bool IsReflectableCleanupResult(
+            NvencRunCaptureCompleteCleanupAttemptResult result,
+            NvencRunCaptureCompleteCleanupOperation operation)
+        {
+            if (result.IsNone
+                || !result.IsValid
+                || result.Cleaner == null
+                || !ReferenceEquals(result.Operation, operation)
+                || !operation.IsBindingIntact)
+            {
+                return false;
+            }
+
+            switch (result.Status)
+            {
+                case NvencRunCaptureCompleteCleanupStatus.Cleaned:
+                    return result.Receipt != null
+                        && result.Receipt.IsIssuedFor(result.Cleaner, operation);
+
+                case NvencRunCaptureCompleteCleanupStatus.Failed:
+                    return result.Receipt == null;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
         /// Exception-safe post-CaptureComplete correlation reused by the
         /// cleanup operation: on an unpoisoned Run whose disposition is
         /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> and whose
@@ -3138,11 +3298,44 @@ namespace Zantetsu.Observability
         internal bool IsCaptureCompleteCleanupReceiptCorrelated(
             NvencRunCaptureCompleteReceipt receipt)
         {
+            // Admission to run the cleanup: a poisoned process may not start
+            // it, and the disposition must still be the successful terminal.
+            return !_processState.IsPoisoned
+                && IsCaptureCompleteCleanupCorrelated(receipt, requireCaptureCompleteDisposition: true);
+        }
+
+        /// <summary>
+        /// Exception-safe post-cleanup binding predicate used by the issued
+        /// cleanup operation, attempt result, and receipt: the same exact
+        /// correlation as
+        /// <see cref="IsCaptureCompleteCleanupReceiptCorrelated"/>, except that
+        /// the disposition may be
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> or
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// and a Poison does not by itself revoke it. Reflecting a Failed
+        /// cleanup, or a later Poison, therefore keeps the already issued
+        /// result and receipt correlated and valid rather than reporting them
+        /// as retained-state corruption; a poisoned process still fails the
+        /// shared gates, so the reflection entry itself refuses. It reuses the
+        /// existing CaptureComplete correlation, inspects no file, and changes
+        /// nothing.
+        /// </summary>
+        internal bool IsCaptureCompleteCleanupBindingIntact(
+            NvencRunCaptureCompleteReceipt receipt)
+        {
+            return IsCaptureCompleteCleanupCorrelated(receipt, requireCaptureCompleteDisposition: false);
+        }
+
+        private bool IsCaptureCompleteCleanupCorrelated(
+            NvencRunCaptureCompleteReceipt receipt,
+            bool requireCaptureCompleteDisposition)
+        {
             try
             {
                 if (receipt == null
-                    || _processState.IsPoisoned
-                    || _disposition != NvencRunEvidenceDisposition.CaptureComplete
+                    || (requireCaptureCompleteDisposition
+                        ? _disposition != NvencRunEvidenceDisposition.CaptureComplete
+                        : !IsPublishedTerminalDisposition())
                     || !_captureCompleteSubmitted
                     || !_captureCompleteCollected
                     || !_publicationServiceReleased

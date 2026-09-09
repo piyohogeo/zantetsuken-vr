@@ -79,10 +79,16 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _operation.RunInitializationId;
 
+        /// <summary>
+        /// An issued receipt stays valid across the reflection of its own
+        /// outcome and across a later Poison, so it uses the operation's
+        /// history correlation rather than its admission validity. Issuance
+        /// itself still requires admission validity.
+        /// </summary>
         internal bool IsValid =>
             _cleaner != null
             && _operation != null
-            && _operation.IsValid;
+            && _operation.IsBindingIntact;
 
         internal bool IsIssuedFor(
             INvencRunCaptureCompleteCleaner cleaner,

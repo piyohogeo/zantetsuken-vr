@@ -19,8 +19,9 @@ namespace Zantetsu.Observability
     /// introduces no new issuance credential or state marker.
     /// </para>
     /// <para>
-    /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> reuse the Run
-    /// Coordinator's existing retained-state correlation for the collected
+    /// <see cref="IsValid"/>, <see cref="IsIssuedFor"/>, and
+    /// <see cref="IsBindingIntact"/> reuse the Run Coordinator's existing
+    /// retained-state correlation for the collected
     /// Completed CaptureComplete result, which in turn carries the capture
     /// index commit, the Published artifact publication, the committed plan
     /// commit, the Committed Registry entry, the Finalized context, and the
@@ -68,10 +69,30 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _captureCompleteReceipt.RunInitializationId;
 
+        /// <summary>
+        /// Admission validity, checked before a cleanup starts: the process
+        /// must not be poisoned, the disposition must still be
+        /// <c>CaptureComplete</c>, and the existing CaptureComplete correlation
+        /// must hold.
+        /// </summary>
         internal bool IsValid =>
             _coordinator != null
             && _captureCompleteReceipt != null
             && _coordinator.IsCaptureCompleteCleanupReceiptCorrelated(_captureCompleteReceipt);
+
+        /// <summary>
+        /// History correlation for an already issued cleanup result or receipt:
+        /// the same exact correlation as <see cref="IsValid"/>, except that a
+        /// Poison does not by itself revoke it and the disposition may be
+        /// <c>CaptureComplete</c> or <c>PublicationRecoveryRequired</c>. So
+        /// reflecting a Failed cleanup, or a later Poison, leaves the issued
+        /// result and receipt correlated rather than reporting them as
+        /// corruption; admission still goes through <see cref="IsValid"/>.
+        /// </summary>
+        internal bool IsBindingIntact =>
+            _coordinator != null
+            && _captureCompleteReceipt != null
+            && _coordinator.IsCaptureCompleteCleanupBindingIntact(_captureCompleteReceipt);
 
         internal bool IsIssuedFor(NvencCaptureRunCoordinator coordinator)
         {

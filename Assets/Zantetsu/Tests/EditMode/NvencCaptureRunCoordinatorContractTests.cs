@@ -3594,6 +3594,507 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- CaptureComplete cleanup result reflection ----
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_Cleaned_KeepsCaptureCompleteDisposition()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                FakeCleaner cleaner = new FakeCleaner();
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation);
+
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
+
+                // A successful cleanup leaves the Run on its successful
+                // terminal: no new disposition is introduced.
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The issued result and receipt stay correlated afterwards.
+                Assert.That(result.IsCleaned, Is.True);
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(result.Receipt.IsIssuedFor(cleaner, operation), Is.True);
+                Assert.That(operation.IsBindingIntact, Is.True);
+
+                // The reflection is not a cleanup: the cleaner is never called.
+                Assert.That(cleaner.CallCount, Is.EqualTo(0));
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_Failed_PublishesPublicationRecoveryRequired()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                FakeCleaner cleaner = new FakeCleaner();
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
+
+                // The failure hands the Run to Recovery through the existing
+                // disposition, published last.
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The issued Failed result survives the disposition it caused,
+                // and admission validity is correctly gone.
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(result.Receipt, Is.Null);
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(operation.IsValid, Is.False);
+
+                Assert.That(cleaner.CallCount, Is.EqualTo(0));
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_ReflectedResultAndReceipt_SurviveLaterPoison()
+        {
+            foreach (bool cleaned in new[] { true, false })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                    FakeCleaner cleaner = new FakeCleaner();
+                    NvencRunCaptureCompleteCleanupAttemptResult result = cleaned
+                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
+                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
+
+                    // A Poison closes every gate but never rewrites history: the
+                    // already issued result and receipt stay correlated, while
+                    // admission validity is gone.
+                    Assert.That(h.State.TryPoison(), Is.True);
+
+                    Assert.That(result.IsValid, Is.True);
+                    Assert.That(result.IsIssuedFor(cleaner, operation), Is.True);
+                    Assert.That(operation.IsBindingIntact, Is.True);
+                    Assert.That(operation.IsValid, Is.False);
+
+                    if (cleaned)
+                    {
+                        Assert.That(result.Receipt.IsValid, Is.True);
+                        Assert.That(result.Receipt.IsIssuedFor(cleaner, operation), Is.True);
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_NotPreparedOrEarlierDisposition_ReturnsFalse()
+        {
+            // Never prepared: a normal not-ready shape, not corruption. The
+            // result is minted against another Run's prepared operation so this
+            // Run has nothing retained at all.
+            using (Harness source = Harness.Create())
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(source, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(source.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation foreign), Is.True);
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), foreign);
+
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+
+                // The refusal left nothing behind: the cleanup can still be
+                // prepared and reflected.
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), operation)), Is.True);
+            }
+
+            // A Failed CaptureComplete never prepares a cleanup, so there is
+            // nothing to reflect either.
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Failed);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(default), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_ForeignOperation_Poisons()
+        {
+            using (Harness source = Harness.Create())
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(source, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(source.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation foreign), Is.True);
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), foreign);
+
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
+
+                // Another Run's cleanup result reaching a normally prepared Run
+                // is corruption, not a not-ready shape.
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(result));
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(source.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_DefaultForeignCleanerOrBrokenShape_Poisons()
+        {
+            AssertReflectionPoisons(
+                (operation, cleaner) => default,
+                "a default result must poison");
+
+            AssertReflectionPoisons(
+                (operation, cleaner) => MakeCleanupAttempt(
+                    cleaner, operation, null, NvencRunCaptureCompleteCleanupStatus.Cleaned),
+                "a Cleaned result without a receipt must poison");
+
+            AssertReflectionPoisons(
+                (operation, cleaner) => MakeCleanupAttempt(
+                    cleaner,
+                    operation,
+                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupStatus.Failed),
+                "a Failed result carrying a receipt must poison");
+
+            AssertReflectionPoisons(
+                (operation, cleaner) => MakeCleanupAttempt(
+                    cleaner,
+                    operation,
+                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupStatus.None),
+                "a receipt-carrying None result must poison");
+
+            // The named cleaner and the receipt's cleaner must be the same
+            // instance: a receipt issued to another cleaner is not this
+            // result's evidence.
+            AssertReflectionPoisons(
+                (operation, cleaner) => MakeCleanupAttempt(
+                    cleaner,
+                    operation,
+                    NvencRunCaptureCompleteCleanupReceipt.Create(new FakeCleaner(), operation),
+                    NvencRunCaptureCompleteCleanupStatus.Cleaned),
+                "a Cleaned receipt issued to a foreign cleaner must poison");
+
+            AssertReflectionPoisons(
+                (operation, cleaner) => MakeCleanupAttempt(
+                    null,
+                    operation,
+                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupStatus.Cleaned),
+                "a Cleaned result without a cleaner must poison");
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_ExternalPoisonFirst_ReturnsFalseNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(new FakeCleaner(), operation);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // Poison outranks the retained shape: a normal refusal with no
+                // change, never a corruption report.
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.False);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_GateContention_ReturnsFalseNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                FakeCleaner cleaner = new FakeCleaner();
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.False);
+                    Assert.That(h.RunCoordinator.Disposition,
+                        Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                // The refusal left nothing behind.
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_Twice_SecondReturnsFalseWithNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                FakeCleaner cleaner = new FakeCleaner();
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)), Is.True);
+
+                // One cleanup outcome per Run: neither the same result nor an
+                // opposite one is reflected a second time.
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)), Is.False);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.False);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(default), Is.False);
+
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_AfterReflection_ReturnsFalseWithoutPoison()
+        {
+            foreach (bool cleaned in new[] { true, false })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                    FakeCleaner cleaner = new FakeCleaner();
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned
+                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
+                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.True);
+
+                    // One Run prepares one cleanup: after either outcome a
+                    // re-prepare is an ordinary refusal, never corruption and
+                    // never a second operation.
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation again), Is.False);
+                    Assert.That(again, Is.Null);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+
+                    // Repeating it stays a refusal.
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.False);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+            }
+        }
+
+        [Test]
+        public void PrepareCaptureCompleteCleanup_AfterReflectionWithBrokenBinding_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(
+                        new FakeCleaner(), operation)), Is.True);
+
+                // Releasing the Session Ownership Lease breaks the published
+                // graph through the ordinary ownership API, so the reflected
+                // history no longer correlates.
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(operation.IsBindingIntact, Is.False);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_ChangesNoRunRegistryContextServiceOrLease()
+        {
+            foreach (bool cleaned in new[] { true, false })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    NvencRunCaptureCompleteAttemptResult captureComplete =
+                        CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                    NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+                    bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
+                    NvencRunChunkContextState contextState = h.Context.State;
+                    NvencRunPublicationServiceState serviceState = h.Service.State;
+                    bool serviceReleased = h.RunCoordinator.PublicationServiceReleased;
+                    bool serviceStopped = h.Service.IsStopped;
+                    bool leaseCreated = h.SessionIssue.OwnershipLease.IsCreated;
+                    bool leaseValid = h.SessionIssue.IsValid;
+                    int publisherCalls = h.Publisher.CallCount;
+                    int committerCalls = h.Committer.CallCount;
+                    int indexCommitterCalls = h.IndexCommitter.CallCount;
+                    int completerCalls = h.RunCompleter.CallCount;
+                    CapturePublicationPlan plan = operation.Plan;
+
+                    FakeCleaner cleaner = new FakeCleaner();
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned
+                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
+                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.True);
+
+                    // Only the disposition may move, and only on a failure.
+                    Assert.That(h.Slot.State, Is.EqualTo(slotState));
+                    Assert.That(h.Slot.HasRegisteredEntry, Is.EqualTo(hasRegisteredEntry));
+                    Assert.That(h.Context.State, Is.EqualTo(contextState));
+                    Assert.That(h.Service.State, Is.EqualTo(serviceState));
+                    Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.EqualTo(serviceReleased));
+                    Assert.That(h.Service.IsStopped, Is.EqualTo(serviceStopped));
+                    Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.EqualTo(leaseCreated));
+                    Assert.That(h.SessionIssue.IsValid, Is.EqualTo(leaseValid));
+                    Assert.That(h.State.IsPoisoned, Is.False);
+
+                    // No cleaner, committer, publisher, or completer is called
+                    // again: nothing is re-run, retried, or rolled back.
+                    Assert.That(cleaner.CallCount, Is.EqualTo(0));
+                    Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+                    Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
+                    Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
+                    Assert.That(h.RunCompleter.CallCount, Is.EqualTo(completerCalls));
+
+                    // The retained plan and the CaptureComplete result and
+                    // receipt are the same references as before.
+                    Assert.That(ReferenceEquals(operation.Plan, plan), Is.True);
+                    Assert.That(ReferenceEquals(
+                        operation.CaptureCompleteReceipt, captureComplete.Receipt), Is.True);
+                    Assert.That(ReferenceEquals(
+                        operation.CaptureCompleteOperation, captureComplete.Operation), Is.True);
+                    Assert.That(captureComplete.IsValid, Is.True);
+                }
+            }
+        }
+
+        // ---- CaptureComplete cleanup reflection helpers ----
+
+        /// <summary>
+        /// Reflects the forged result into a Run that is otherwise normally
+        /// prepared, so the corrupt part under test is the only thing that can
+        /// reject it, and requires the corruption report rather than a refusal.
+        /// </summary>
+        private static void AssertReflectionPoisons(
+            Func<NvencRunCaptureCompleteCleanupOperation, FakeCleaner,
+                NvencRunCaptureCompleteCleanupAttemptResult> forge,
+            string message)
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+
+                FakeCleaner cleaner = new FakeCleaner();
+                NvencRunCaptureCompleteCleanupAttemptResult forged = forge(operation, cleaner);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(forged), message);
+                Assert.That(h.State.IsPoisoned, Is.True, message);
+                Assert.That(cleaner.CallCount, Is.EqualTo(0), message);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete), message);
+            }
+        }
+
+        private static NvencRunCaptureCompleteCleanupAttemptResult MakeCleanupAttempt(
+            INvencRunCaptureCompleteCleaner cleaner,
+            NvencRunCaptureCompleteCleanupOperation operation,
+            NvencRunCaptureCompleteCleanupReceipt receipt,
+            NvencRunCaptureCompleteCleanupStatus status)
+        {
+            ConstructorInfo ctor = typeof(NvencRunCaptureCompleteCleanupAttemptResult).GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[]
+                {
+                    typeof(INvencRunCaptureCompleteCleaner),
+                    typeof(NvencRunCaptureCompleteCleanupOperation),
+                    typeof(NvencRunCaptureCompleteCleanupReceipt),
+                    typeof(NvencRunCaptureCompleteCleanupStatus),
+                },
+                null);
+            Assert.That(ctor, Is.Not.Null, "attempt result constructor not found.");
+            return (NvencRunCaptureCompleteCleanupAttemptResult)ctor.Invoke(
+                new object[] { cleaner, operation, receipt, status });
+        }
+
+        private sealed class FakeCleaner : INvencRunCaptureCompleteCleaner
+        {
+            private int _callCount;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunCaptureCompleteCleanupAttemptResult Clean(
+                NvencRunCaptureCompleteCleanupOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+                return NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(this, operation);
+            }
+        }
+
         // ---- CaptureComplete preparation ----
 
         /// <summary>

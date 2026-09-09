@@ -14,7 +14,10 @@ namespace Zantetsu.Observability
     /// The CaptureComplete, capture index, and artifact publication receipts
     /// and operations, the plan, the root layout, and the run identity are
     /// forwarded from the held operation and never duplicated as fields, and no
-    /// new proof, token, or nonce is introduced.
+    /// new proof, token, or nonce is introduced. An issued result stays valid
+    /// across the reflection of its own outcome and across a later Poison,
+    /// because both terminal shapes rest on the operation's history
+    /// correlation rather than its admission validity.
     /// </remarks>
     internal readonly struct NvencRunCaptureCompleteCleanupAttemptResult
     {
@@ -76,7 +79,7 @@ namespace Zantetsu.Observability
             _status == NvencRunCaptureCompleteCleanupStatus.Failed
             && _cleaner != null
             && _operation != null
-            && _operation.IsValid
+            && _operation.IsBindingIntact
             && _receipt == null;
 
         internal bool IsValid => IsCleaned || IsFailed;
