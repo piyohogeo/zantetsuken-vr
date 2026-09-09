@@ -76,7 +76,7 @@ namespace Zantetsu.Observability
             _status == NvencRunCaptureCompleteStatus.Failed
             && _completer != null
             && _operation != null
-            && _operation.IsValid
+            && _operation.IsBindingIntact
             && _receipt == null;
 
         internal bool IsValid => IsCompleted || IsFailed;

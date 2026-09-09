@@ -1013,6 +1013,7 @@ namespace Zantetsu.Core.Tests
             internal FakeCommitter Committer;
             internal FakePublisher Publisher;
             internal FakeCaptureIndexCommitter IndexCommitter;
+            internal FakeCompleter RunCompleter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -1102,8 +1103,12 @@ namespace Zantetsu.Core.Tests
                 IndexCommitter = new FakeCaptureIndexCommitter();
                 NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
                     new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                RunCompleter = new FakeCompleter();
+                NvencRunCaptureCompleteExecutionCoordinator captureCompleteCoordinator =
+                    new NvencRunCaptureCompleteExecutionCoordinator(RunCompleter);
                 Service = new NvencRunPublicationService(
-                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
+                    captureCompleteCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,

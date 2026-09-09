@@ -901,6 +901,45 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeRunCompleter : INvencRunCaptureCompleter
+        {
+            private int _callCount;
+            internal NvencRunCaptureCompleteStatus Status = NvencRunCaptureCompleteStatus.Completed;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunCaptureCompleteAttemptResult OverrideResult;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunCaptureCompleteAttemptResult Complete(
+                NvencRunCaptureCompleteOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                Entered?.Set();
+                Release?.Wait(WatchdogTimeoutMs);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunCaptureCompleteStatus.Failed)
+                {
+                    return NvencRunCaptureCompleteAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunCaptureCompleteAttemptResult.Completed(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -938,6 +977,7 @@ namespace Zantetsu.Core.Tests
 
             internal FakeCommitter Committer;
             internal FakeIndexCommitter IndexCommitter;
+            internal FakeRunCompleter RunCompleter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -1026,8 +1066,12 @@ namespace Zantetsu.Core.Tests
                 IndexCommitter = new FakeIndexCommitter();
                 NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
                     new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                RunCompleter = new FakeRunCompleter();
+                NvencRunCaptureCompleteExecutionCoordinator captureCompleteCoordinator =
+                    new NvencRunCaptureCompleteExecutionCoordinator(RunCompleter);
                 Service = new NvencRunPublicationService(
-                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
+                    captureCompleteCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,

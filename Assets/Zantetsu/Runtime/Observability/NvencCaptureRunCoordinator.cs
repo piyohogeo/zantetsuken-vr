@@ -109,6 +109,9 @@ namespace Zantetsu.Observability
         private bool _captureIndexCommitCollected;
         private NvencRunCaptureIndexCommitAttemptResult _captureIndexCommitResult;
         private NvencRunCaptureCompleteOperation _captureCompleteOperation;
+        private bool _captureCompleteSubmitted;
+        private bool _captureCompleteCollected;
+        private NvencRunCaptureCompleteAttemptResult _captureCompleteResult;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -2522,7 +2525,14 @@ namespace Zantetsu.Observability
         internal bool IsCaptureIndexCommitReceiptCorrelated(
             NvencRunArtifactPublicationReceipt receipt)
         {
-            return IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: true);
+            // A poisoned process invalidates an operation that has not started:
+            // no later capture index work may begin from it. The binding
+            // predicate below deliberately stays Poison-agnostic, exactly as
+            // the artifact publication pair does, so an already-collected
+            // result and its receipt remain re-verifiable after a Poison and
+            // re-collection stays idempotent.
+            return !_processState.IsPoisoned
+                && IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: true);
         }
 
         /// <summary>
@@ -2588,16 +2598,28 @@ namespace Zantetsu.Observability
                 // reference after re-checking its exact correlation.
                 if (_captureCompleteOperation != null)
                 {
-                    if (!_captureCompleteOperation.IsValid
-                        || !_captureCompleteOperation.IsIssuedFor(this))
+                    if (_captureCompleteOperation.IsValid
+                        && _captureCompleteOperation.IsIssuedFor(this))
                     {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The retained CaptureComplete operation no longer correlates.");
+                        operation = _captureCompleteOperation;
+                        return true;
                     }
 
-                    operation = _captureCompleteOperation;
-                    return true;
+                    // A reflected CaptureComplete keeps its operation retained
+                    // while the disposition advances past Committed, so the
+                    // operation's admission validity is false by design. Both
+                    // terminals are normal, not corruption: refuse with no
+                    // change while the issuance binding still holds.
+                    if ((_disposition == NvencRunEvidenceDisposition.CaptureComplete
+                            || _disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired)
+                        && _captureCompleteOperation.IsBindingIntact)
+                    {
+                        return false;
+                    }
+
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained CaptureComplete operation no longer correlates.");
                 }
 
                 if (!_processState.IsDraining)
@@ -2679,6 +2701,280 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Non-waiting, idempotent submission of the retained CaptureComplete
+        /// operation to the exact Publication Service. It is admitted only when
+        /// the process is Draining and not Poisoned, the disposition is
+        /// <see cref="NvencRunEvidenceDisposition.Committed"/>, the capture
+        /// index commit has been submitted and collected with an exact
+        /// Committed result, the retained CaptureComplete operation exists, is
+        /// valid, and was issued by this exact coordinator, the Registry Slot
+        /// is Committed, the context is Finalized, the Session Ownership Lease
+        /// is live, the Service is accepting the CaptureComplete phase, and no
+        /// submission has been made yet. The submission is linearized with the
+        /// Poison transition on the shared process-state gate; on acceptance
+        /// the retained operation is handed to the Service exactly once. A
+        /// second submission, a submission before preparation, an uncollected
+        /// or Failed capture index commit, a non-Committed disposition, a gate
+        /// contention, a phase mismatch, or a poisoned process returns false
+        /// with no change and never contacts the completer.
+        /// </summary>
+        internal bool TrySubmitCaptureComplete()
+        {
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned || !_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_captureCompleteSubmitted)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    return false;
+                }
+
+                if (!_captureIndexCommitSubmitted || !_captureIndexCommitCollected)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitAttemptResult index = _captureIndexCommitResult;
+                if (index.IsNone
+                    || index.Status != NvencRunCaptureIndexCommitStatus.Committed)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteOperation operation = _captureCompleteOperation;
+                if (operation == null
+                    || !operation.IsValid
+                    || !operation.IsIssuedFor(this))
+                {
+                    return false;
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (_publicationService.State
+                    != NvencRunPublicationServiceState.AcceptingCaptureComplete)
+                {
+                    return false;
+                }
+
+                // The Service re-checks its own state and the operation's exact
+                // process-state correlation inside the same gate (reentrant),
+                // so the retained operation is handed over exactly once.
+                if (!_publicationService.TrySubmitCaptureComplete(operation))
+                {
+                    return false;
+                }
+
+                _captureCompleteSubmitted = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent collection and reflection of the
+        /// CaptureComplete outcome into the Run's authoritative state.
+        /// CaptureComplete is the final phase, so the Service is collected only
+        /// after its Worker has physically stopped and is then disposed exactly
+        /// once whatever the outcome. The first successful call collects the
+        /// Attempt Result at most once, verifies the exact
+        /// completer/operation/receipt correlation and that the Registry Slot is
+        /// still Committed, disposes the Service, retains the result, the
+        /// collected latch, and the Service-release evidence, and publishes the
+        /// disposition last: a Completed result advances it to
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> and a
+        /// Failed one to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>,
+        /// while the Registry Slot, Plan, chunk, artifact, capture index, and
+        /// dedicated temporaries are all left unchanged. Re-calls return the
+        /// same retained reference after re-checking the current correlation
+        /// without re-collecting, re-disposing, or re-transitioning. A null,
+        /// foreign, default, or corrupt result, a Service fatal failure, a
+        /// broken Registry correlation, or a failed dispose poisons without
+        /// partially determining the retained result, the release evidence, or
+        /// the disposition. An external Poison that linearized before the first
+        /// collection never reflects a result.
+        /// </summary>
+        internal bool TryCollectCaptureComplete(
+            out NvencRunCaptureCompleteAttemptResult result)
+        {
+            result = default;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_captureCompleteCollected)
+                {
+                    NvencRunCaptureCompleteAttemptResult retained = _captureCompleteResult;
+                    if (!retained.IsNone
+                        && retained.IsValid
+                        && ReferenceEquals(retained.Operation, _captureCompleteOperation))
+                    {
+                        result = retained;
+                        return true;
+                    }
+
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained CaptureComplete result no longer correlates.");
+                }
+
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_captureCompleteSubmitted)
+                {
+                    return false;
+                }
+
+                if (_publicationService.TryGetFailure(out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication service reported a fatal failure.");
+                }
+
+                // The Service refuses to collect the final terminal until its
+                // Worker has physically stopped, so a poll inside that window
+                // never clears the slot before the result can be reflected.
+                if (!_publicationService.TryCollectCaptureComplete(
+                        out NvencRunCaptureCompleteAttemptResult collected))
+                {
+                    return false;
+                }
+
+                if (!_publicationService.IsCaptureCompleteAttemptIssued(
+                        collected, _captureCompleteOperation))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The CaptureComplete result is null, foreign, default, or corrupt.");
+                }
+
+                // Resolve the next disposition first (side-effect-free
+                // validation). A validation failure poisons without any partial
+                // determination.
+                NvencRunEvidenceDisposition next = ResolveCaptureCompleteDisposition(collected);
+
+                // Release the Service wait handle exactly once. CaptureComplete
+                // is the final phase, so this happens for both outcomes. A
+                // dispose failure poisons and propagates the original exception
+                // without any partial determination.
+                try
+                {
+                    _publicationService.Dispose();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                // Retain the result, the collected latch, and the
+                // Service-release evidence first, then publish the disposition
+                // last.
+                _captureCompleteResult = collected;
+                _captureCompleteCollected = true;
+                _publicationServiceReleased = true;
+                _disposition = next;
+
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Resolution of the Run's next authoritative state from the exact
+        /// CaptureComplete status. It never changes the Registry Slot, the
+        /// disposition, the Plan, the chunk, the artifact, the capture index,
+        /// the retained result, or any dedicated temporary; a validation
+        /// failure instead poisons the process. A Completed result keeps the
+        /// Registry Slot Committed and resolves the disposition to
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>; a Failed
+        /// result keeps everything unchanged and resolves only the disposition
+        /// to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
+        /// The disposition itself is not written here; the caller publishes it
+        /// last. No retry, re-inspection, or cleanup is performed.
+        /// </summary>
+        private NvencRunEvidenceDisposition ResolveCaptureCompleteDisposition(
+            NvencRunCaptureCompleteAttemptResult collected)
+        {
+            switch (collected.Status)
+            {
+                case NvencRunCaptureCompleteStatus.Completed:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Completed CaptureComplete.");
+                        }
+
+                        return NvencRunEvidenceDisposition.CaptureComplete;
+                    }
+
+                case NvencRunCaptureCompleteStatus.Failed:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Failed CaptureComplete.");
+                        }
+
+                        return NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                    }
+
+                default:
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The CaptureComplete result has an unrecognized status.");
+                    }
+            }
+        }
+
+        /// <summary>
         /// Exception-safe post-commit correlation reused by the CaptureComplete
         /// operation: on an unpoisoned process the supplied receipt must be the
         /// exact receipt of the exact retained, submitted, collected, Committed
@@ -2693,10 +2989,55 @@ namespace Zantetsu.Observability
         internal bool IsCaptureCompleteReceiptCorrelated(
             NvencRunCaptureIndexCommitReceipt receipt)
         {
+            // Admission to run CaptureComplete: a poisoned process may not
+            // start it, and the disposition must still be Committed.
+            return !_processState.IsPoisoned
+                && IsCaptureCompleteCorrelated(receipt, requireCommittedDisposition: true);
+        }
+
+        /// <summary>
+        /// Exception-safe post-CaptureComplete binding predicate used by the
+        /// issued CaptureComplete attempt result and receipt: the same exact
+        /// correlation as <see cref="IsCaptureCompleteReceiptCorrelated"/>,
+        /// except that the disposition may be <c>Committed</c>,
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>, or
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// and a Poison does not by itself revoke it, so reflecting the outcome
+        /// or a later Poison never stops the same result from being
+        /// re-collected. It reuses the existing capture index and publication
+        /// correlations, inspects no file, and changes nothing.
+        /// </summary>
+        internal bool IsCaptureCompleteBindingIntact(
+            NvencRunCaptureIndexCommitReceipt receipt)
+        {
+            return IsCaptureCompleteCorrelated(receipt, requireCommittedDisposition: false);
+        }
+
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only when the supplied operation is the exact retained
+        /// CaptureComplete operation and this Run Coordinator is bound to the
+        /// exact supplied process state. ReferenceEquals only, no side effect,
+        /// and neither the process state nor the retained operation is exposed
+        /// as a property.
+        /// </summary>
+        internal bool IsCaptureCompleteOperationBoundTo(
+            NvencRunCaptureCompleteOperation operation,
+            NvencCaptureProcessState processState)
+        {
+            return operation != null
+                && processState != null
+                && ReferenceEquals(_captureCompleteOperation, operation)
+                && ReferenceEquals(_processState, processState);
+        }
+
+        private bool IsCaptureCompleteCorrelated(
+            NvencRunCaptureIndexCommitReceipt receipt,
+            bool requireCommittedDisposition)
+        {
             try
             {
                 if (receipt == null
-                    || _processState.IsPoisoned
                     || !_captureIndexCommitSubmitted
                     || !_captureIndexCommitCollected)
                 {
@@ -2720,10 +3061,10 @@ namespace Zantetsu.Observability
                 // The capture index operation's own correlation carries the
                 // exact Published artifact result and receipt, the committed
                 // plan commit, the Committed Registry entry, the Finalized
-                // context, and the live lease, and requires a Committed
-                // disposition. It is reused rather than re-derived.
+                // context, and the live lease. It is reused rather than
+                // re-derived, with the same admission-versus-history split.
                 return IsCaptureIndexCommitCorrelated(
-                    commitOperation.ArtifactPublicationReceipt, requireCommittedDisposition: true);
+                    commitOperation.ArtifactPublicationReceipt, requireCommittedDisposition);
             }
             catch
             {
@@ -2756,9 +3097,7 @@ namespace Zantetsu.Observability
         {
             try
             {
-                // A poisoned process invalidates an already-issued operation
-                // too: no later capture index work may start from it.
-                if (receipt == null || _processState.IsPoisoned || !_artifactPublicationCollected)
+                if (receipt == null || !_artifactPublicationCollected)
                 {
                     return false;
                 }
@@ -2890,7 +3229,8 @@ namespace Zantetsu.Observability
                 else
                 {
                     if (_disposition != NvencRunEvidenceDisposition.Committed
-                        && _disposition != NvencRunEvidenceDisposition.PublicationRecoveryRequired)
+                        && _disposition != NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                        && _disposition != NvencRunEvidenceDisposition.CaptureComplete)
                     {
                         return false;
                     }

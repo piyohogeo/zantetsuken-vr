@@ -475,7 +475,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void IsBindingIntact_TrueForIssuedGraph_FalseAfterPoison()
+        public void IsBindingIntact_SurvivesPoisonWhileAdmissionValidityDoesNot()
         {
             using (Harness h = Harness.Create())
             {
@@ -486,9 +486,7 @@ namespace Zantetsu.Core.Tests
                     new NvencRunCaptureIndexCommitExecutionCoordinator(committer).Execute(operation);
 
                 // While the issued graph holds, the binding predicate and the
-                // start-of-execution validity agree. They diverge only for a
-                // PublicationRecoveryRequired disposition, which no entry point
-                // in this unit can publish yet.
+                // start-of-execution validity agree.
                 Assert.That(operation.IsValid, Is.True);
                 Assert.That(operation.IsBindingIntact, Is.True);
                 Assert.That(result.IsCommitted, Is.True);
@@ -496,13 +494,18 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(h.State.TryPoison(), Is.True);
 
-                // Poison invalidates the issued result and receipt too.
-                Assert.That(operation.IsBindingIntact, Is.False);
+                // Poison revokes admission to start any later capture index
+                // work, but it is not itself a break in the issued graph: an
+                // already-issued result and its receipt stay verifiable so a
+                // collected result can still be re-collected unchanged.
                 Assert.That(operation.IsValid, Is.False);
-                Assert.That(result.Receipt.IsValid, Is.False);
-                Assert.That(result.IsCommitted, Is.False);
-                Assert.That(result.IsValid, Is.False);
-                Assert.That(result.IsIssuedFor(committer, operation), Is.False);
+                Assert.That(operation.IsIssuedFor(h.RunCoordinator), Is.False);
+
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(result.Receipt.IsValid, Is.True);
+                Assert.That(result.IsCommitted, Is.True);
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(result.IsIssuedFor(committer, operation), Is.True);
             }
         }
 
@@ -946,6 +949,45 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeRunCompleter : INvencRunCaptureCompleter
+        {
+            private int _callCount;
+            internal NvencRunCaptureCompleteStatus Status = NvencRunCaptureCompleteStatus.Completed;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunCaptureCompleteAttemptResult OverrideResult;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunCaptureCompleteAttemptResult Complete(
+                NvencRunCaptureCompleteOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                Entered?.Set();
+                Release?.Wait(WatchdogTimeoutMs);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunCaptureCompleteStatus.Failed)
+                {
+                    return NvencRunCaptureCompleteAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunCaptureCompleteAttemptResult.Completed(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -984,6 +1026,7 @@ namespace Zantetsu.Core.Tests
             internal FakeCommitter Committer;
             internal FakePublisher Publisher;
             internal FakeCaptureIndexCommitter IndexCommitter;
+            internal FakeRunCompleter RunCompleter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -1073,8 +1116,12 @@ namespace Zantetsu.Core.Tests
                 IndexCommitter = new FakeCaptureIndexCommitter();
                 NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
                     new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                RunCompleter = new FakeRunCompleter();
+                NvencRunCaptureCompleteExecutionCoordinator captureCompleteCoordinator =
+                    new NvencRunCaptureCompleteExecutionCoordinator(RunCompleter);
                 Service = new NvencRunPublicationService(
-                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
+                    captureCompleteCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,

@@ -516,8 +516,25 @@ namespace Zantetsu.Core.Tests
                         h.State,
                         new NvencRunPublicationPlanCommitExecutionCoordinator(new FakeCommitter()),
                         new NvencRunArtifactPublicationExecutionCoordinator(new FakePublisher()),
-                        null));
+                        null,
+                        new NvencRunCaptureCompleteExecutionCoordinator(new FakeRunCompleter())));
                 Assert.That(ex.ParamName, Is.EqualTo("captureIndexCommitCoordinator"));
+            }
+        }
+
+        [Test]
+        public void Constructor_NullCaptureCompleteCoordinator_Rejected()
+        {
+            using (Harness h = Harness.Create())
+            {
+                ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
+                    () => new NvencRunPublicationService(
+                        h.State,
+                        new NvencRunPublicationPlanCommitExecutionCoordinator(new FakeCommitter()),
+                        new NvencRunArtifactPublicationExecutionCoordinator(new FakePublisher()),
+                        new NvencRunCaptureIndexCommitExecutionCoordinator(new FakeIndexCommitter()),
+                        null));
+                Assert.That(ex.ParamName, Is.EqualTo("captureCompleteCoordinator"));
             }
         }
 
@@ -814,6 +831,295 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- CaptureComplete phase ----
+
+        /// <summary>
+        /// Drives the Plan, Artifact, and Capture Index phases to a Committed,
+        /// collected capture index through the Run Coordinator, then mints the
+        /// CaptureComplete operation. The same Service and Worker stay alive.
+        /// </summary>
+        private static NvencRunCaptureCompleteOperation CommitCaptureIndexAndPrepareCaptureComplete(Harness h)
+        {
+            NvencRunCaptureIndexCommitOperation index = PublishArtifactAndPrepareCaptureIndex(h);
+            h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Committed;
+            Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+            WaitForServiceState(h.Service, NvencRunPublicationServiceState.CaptureIndexCommitCompleted,
+                "service did not publish the committed capture index terminal");
+            Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(out _), Is.True);
+            Assert.That(h.Service.State,
+                Is.EqualTo(NvencRunPublicationServiceState.AcceptingCaptureComplete));
+            Assert.That(index, Is.Not.Null);
+
+            Assert.That(h.RunCoordinator.TryPrepareCaptureComplete(
+                out NvencRunCaptureCompleteOperation operation), Is.True);
+            return operation;
+        }
+
+        [Test]
+        public void CaptureComplete_FourPhasesShareOneServiceAndWorker()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Thread workerBefore = (Thread)GetField(h.Service, "_workerThread");
+
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                Thread workerAfter = (Thread)GetField(h.Service, "_workerThread");
+                Assert.That(ReferenceEquals(workerBefore, workerAfter), Is.True);
+                Assert.That(h.Service.IsStopped, Is.False);
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                WaitForServiceStop(h.Service, "worker did not stop after CaptureComplete");
+
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteCompleted));
+                Assert.That(h.Committer.CallCount, Is.EqualTo(1));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
+                Assert.That(workerAfter.ManagedThreadId,
+                    Is.EqualTo(h.Publisher.ExecutingManagedThreadId));
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_CompletedAndFailed_BothStopTheWorker_CollectAfterStopOnly()
+        {
+            foreach (NvencRunCaptureCompleteStatus status in new[]
+            {
+                NvencRunCaptureCompleteStatus.Completed,
+                NvencRunCaptureCompleteStatus.Failed,
+            })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    NvencRunCaptureCompleteOperation operation =
+                        CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                    ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                    ManualResetEventSlim release = new ManualResetEventSlim(false);
+                    h.RunCompleter.Entered = entered;
+                    h.RunCompleter.Release = release;
+                    h.RunCompleter.Status = status;
+
+                    Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                    Assert.That(h.Service.State,
+                        Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteExecuting));
+
+                    // A poll while the Worker is still executing must not
+                    // collect.
+                    Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
+
+                    release.Set();
+                    WaitForServiceStop(h.Service, "worker did not stop after the final phase");
+
+                    Assert.That(h.Service.TryCollectCaptureComplete(
+                        out NvencRunCaptureCompleteAttemptResult result), Is.True);
+                    Assert.That(result.Status, Is.EqualTo(status));
+                    Assert.That(result.Receipt,
+                        status == NvencRunCaptureCompleteStatus.Completed ? Is.Not.Null : Is.Null);
+                    Assert.That(h.Service.State,
+                        Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteCollected));
+
+                    // At-most-once collection and execution.
+                    Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
+                    Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
+
+                    entered.Dispose();
+                    release.Dispose();
+                }
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_Submit_NullDoubleForeignOrBeforeAccepting_CompleterNotContacted()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // Before the capture index commit is collected the Service is
+                // not accepting the CaptureComplete phase.
+                PublishArtifactAndPrepareCaptureIndex(h);
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.AcceptingCaptureIndexCommit));
+                Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.False);
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(0));
+
+                ArgumentNullException nullEx = Assert.Throws<ArgumentNullException>(
+                    () => h.Service.TrySubmitCaptureComplete(null));
+                Assert.That(nullEx.ParamName, Is.EqualTo("operation"));
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(0));
+            }
+
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                // A foreign-process operation is rejected without contacting
+                // the completer.
+                using (Harness h2 = Harness.Create())
+                {
+                    NvencRunCaptureCompleteOperation foreign =
+                        CommitCaptureIndexAndPrepareCaptureComplete(h2);
+                    Assert.That(h.Service.TrySubmitCaptureComplete(foreign), Is.False);
+                    Assert.That(h.RunCompleter.CallCount, Is.EqualTo(0));
+                }
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.False);
+
+                WaitForServiceStop(h.Service, "worker did not stop after CaptureComplete");
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_PoisonBeforeSubmit_CompleterNotContacted()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.False);
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(0));
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_ExtraNotificationDuringExecution_DoesNotRunTwice()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.RunCompleter.Entered = entered;
+                h.RunCompleter.Release = release;
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+
+                // A stray notification delivered while CaptureComplete executes
+                // must not cause a second execution.
+                h.Service.Notify();
+
+                release.Set();
+                WaitForServiceStop(h.Service, "worker did not stop after CaptureComplete");
+
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
+                Assert.That(h.Service.State,
+                    Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteCompleted));
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_CompleterException_Poisons_NoResult()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                InvalidOperationException boom = new InvalidOperationException("boom");
+                h.RunCompleter.ExceptionToThrow = boom;
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                WaitForServiceStop(h.Service, "worker did not stop after the completer exception");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Service.TryGetFailure(out Exception failure), Is.True);
+                Assert.That(ReferenceEquals(failure, boom), Is.True);
+                Assert.That(h.Service.TryCollectCaptureComplete(
+                    out NvencRunCaptureCompleteAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_CorruptResult_Poisons_NoResult()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                // A default (None) attempt result is corrupt.
+                h.RunCompleter.UseOverride = true;
+                h.RunCompleter.OverrideResult = default;
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                WaitForServiceStop(h.Service, "worker did not stop after the corrupt CaptureComplete result");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Service.TryGetFailure(out _), Is.True);
+                Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_MidExecutionPoison_NoNormalTerminal()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.RunCompleter.Entered = entered;
+                h.RunCompleter.Release = release;
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+
+                Assert.That(h.State.TryPoison(), Is.True);
+                release.Set();
+                WaitForServiceStop(h.Service, "worker did not stop after the mid-execution poison");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Service.TryCollectCaptureComplete(
+                    out NvencRunCaptureCompleteAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
+        [Test]
+        public void CaptureComplete_IsAttemptIssued_RejectsForeignOrDefault()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteOperation operation =
+                    CommitCaptureIndexAndPrepareCaptureComplete(h);
+
+                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                WaitForServiceStop(h.Service, "worker did not stop after CaptureComplete");
+                Assert.That(h.Service.TryCollectCaptureComplete(
+                    out NvencRunCaptureCompleteAttemptResult result), Is.True);
+
+                Assert.That(h.Service.IsCaptureCompleteAttemptIssued(result, operation), Is.True);
+                Assert.That(h.Service.IsCaptureCompleteAttemptIssued(result, null), Is.False);
+                Assert.That(h.Service.IsCaptureCompleteAttemptIssued(default, operation), Is.False);
+
+                FakeRunCompleter foreignCompleter = new FakeRunCompleter();
+                NvencRunCaptureCompleteAttemptResult foreign =
+                    NvencRunCaptureCompleteAttemptResult.Completed(foreignCompleter, operation);
+                Assert.That(h.Service.IsCaptureCompleteAttemptIssued(foreign, operation), Is.False);
+            }
+        }
+
         // ---- Shape and source ----
 
         [Test]
@@ -881,9 +1187,6 @@ namespace Zantetsu.Core.Tests
                 "File.", "Directory.", "FileStream", "Stream", "Path.", "Flush(", "Move(", "Close(",
                 "Registry", "Disposition", "TryCommit", "TryDiscardRegistered", "OwnershipLease",
                 "Retry", "Rollback", "Cleanup", "re-read",
-                // AcceptingCaptureComplete is a parked state name; what must
-                // stay absent is any CaptureComplete entry point or operation.
-                "TrySubmitCaptureComplete", "TryCollectCaptureComplete", "CaptureCompleteOperation",
                 "Abort", "Recovery", "Scheduler", "journal", "nonce",
                 "JsonUtility", "ComputeHash", "HashAlgorithm", "IncrementalHash",
                 "SHA256", "SHA384", "SHA512", "MD5", "System.Security.Cryptography",
@@ -1434,6 +1737,45 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakeRunCompleter : INvencRunCaptureCompleter
+        {
+            private int _callCount;
+            internal NvencRunCaptureCompleteStatus Status = NvencRunCaptureCompleteStatus.Completed;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunCaptureCompleteAttemptResult OverrideResult;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunCaptureCompleteAttemptResult Complete(
+                NvencRunCaptureCompleteOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                Entered?.Set();
+                Release?.Wait(WatchdogTimeoutMs);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunCaptureCompleteStatus.Failed)
+                {
+                    return NvencRunCaptureCompleteAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunCaptureCompleteAttemptResult.Completed(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -1472,6 +1814,7 @@ namespace Zantetsu.Core.Tests
             internal FakeCommitter Committer;
             internal FakePublisher Publisher;
             internal FakeIndexCommitter IndexCommitter;
+            internal FakeRunCompleter RunCompleter;
             internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
@@ -1561,8 +1904,12 @@ namespace Zantetsu.Core.Tests
                 IndexCommitter = new FakeIndexCommitter();
                 NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCoordinator =
                     new NvencRunCaptureIndexCommitExecutionCoordinator(IndexCommitter);
+                RunCompleter = new FakeRunCompleter();
+                NvencRunCaptureCompleteExecutionCoordinator captureCompleteCoordinator =
+                    new NvencRunCaptureCompleteExecutionCoordinator(RunCompleter);
                 Service = new NvencRunPublicationService(
-                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator);
+                    State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
+                    captureCompleteCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);

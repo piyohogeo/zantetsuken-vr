@@ -8,7 +8,10 @@ namespace Zantetsu.Observability
     /// <see cref="Incomplete"/> at the Trace freeze boundary, and the
     /// Publication Plan commit boundary advances <see cref="Finalized"/> to
     /// <see cref="Committed"/>, <see cref="Incomplete"/>, or
-    /// <see cref="CommitOutcomeUnknown"/>.
+    /// <see cref="CommitOutcomeUnknown"/>. A Committed Run then advances to
+    /// <see cref="CaptureComplete"/> when CaptureComplete finishes, or to
+    /// <see cref="PublicationRecoveryRequired"/> when the artifact
+    /// publication, the capture index commit, or CaptureComplete does not.
     /// </summary>
     /// <remarks>
     /// <see cref="None"/> is the uninitialized state and can never be used as
@@ -25,5 +28,6 @@ namespace Zantetsu.Observability
         Committed = 3,
         CommitOutcomeUnknown = 4,
         PublicationRecoveryRequired = 5,
+        CaptureComplete = 6,
     }
 }

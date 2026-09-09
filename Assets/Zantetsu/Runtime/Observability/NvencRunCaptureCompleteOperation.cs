@@ -75,6 +75,39 @@ namespace Zantetsu.Observability
             && _captureIndexCommitReceipt != null
             && _coordinator.IsCaptureCompleteReceiptCorrelated(_captureIndexCommitReceipt);
 
+        /// <summary>
+        /// Exception-safe post-CaptureComplete issuance binding: the same exact
+        /// correlation as <see cref="IsValid"/>, except that the disposition
+        /// may be <c>Committed</c> (before the result is reflected),
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> (after a
+        /// Completed result), or
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// (after a Failed one), and a Poison does not by itself revoke it.
+        /// Used by the issued attempt result and receipt so that reflecting the
+        /// outcome, or a later Poison, does not stop the same result from being
+        /// re-collected. It re-inspects no file, never re-hashes the published
+        /// artifact, and introduces no second authority.
+        /// </summary>
+        internal bool IsBindingIntact =>
+            _coordinator != null
+            && _captureIndexCommitReceipt != null
+            && _coordinator.IsCaptureCompleteBindingIntact(_captureIndexCommitReceipt);
+
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only while this exact operation is the exact retained
+        /// CaptureComplete operation of its Run Coordinator and that Run
+        /// Coordinator is bound to the exact supplied process state. It
+        /// delegates only ReferenceEquals checks to the Run Coordinator and
+        /// never exposes the Coordinator or the process state as a property.
+        /// </summary>
+        internal bool IsBoundToProcessState(NvencCaptureProcessState processState)
+        {
+            return processState != null
+                && _coordinator != null
+                && _coordinator.IsCaptureCompleteOperationBoundTo(this, processState);
+        }
+
         internal bool IsIssuedFor(NvencCaptureRunCoordinator coordinator)
         {
             return coordinator != null

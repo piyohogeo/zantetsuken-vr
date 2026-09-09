@@ -82,7 +82,7 @@ namespace Zantetsu.Observability
         internal bool IsValid =>
             _completer != null
             && _operation != null
-            && _operation.IsValid;
+            && _operation.IsBindingIntact;
 
         internal bool IsIssuedFor(
             INvencRunCaptureCompleter completer,

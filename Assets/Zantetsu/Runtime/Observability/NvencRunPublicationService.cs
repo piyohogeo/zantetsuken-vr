@@ -5,9 +5,10 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Monotonic state of the Phase 0.11 Publication Service: a fixed
-    /// single-request-slot, three-phase boundary that commits the publication
-    /// plan, publishes the Fresh NVENC chunk, and commits the capture index on
-    /// the same dedicated Worker thread. The Plan phase advances
+    /// single-request-slot, four-phase boundary that commits the publication
+    /// plan, publishes the Fresh NVENC chunk, commits the capture index, and
+    /// runs CaptureComplete on the same dedicated Worker thread. The Plan phase
+    /// advances
     /// <see cref="AcceptingPlanCommit"/> to <see cref="PlanCommitQueued"/> on a
     /// successful plan submission, <see cref="PlanCommitQueued"/> to
     /// <see cref="PlanCommitExecuting"/> when the Worker takes the exact
@@ -45,8 +46,16 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <see cref="AcceptingCaptureComplete"/> is the parked state that keeps
     /// the same Service and the same Worker alive after a Committed capture
-    /// index commit, so a later CaptureComplete phase can reuse them. No
-    /// CaptureComplete submission entry point exists yet.
+    /// index commit, and it is where the CaptureComplete phase is accepted. It
+    /// advances to <see cref="CaptureCompleteQueued"/> on submission,
+    /// <see cref="CaptureCompleteQueued"/> to
+    /// <see cref="CaptureCompleteExecuting"/> on the Worker claim, and
+    /// <see cref="CaptureCompleteExecuting"/> to
+    /// <see cref="CaptureCompleteCompleted"/> on a verified normal return.
+    /// CaptureComplete is the final phase, so the Worker physically stops after
+    /// it whether the result is Completed or Failed, and the result is
+    /// collected into <see cref="CaptureCompleteCollected"/> only after that
+    /// stop.
     /// </remarks>
     internal enum NvencRunPublicationServiceState
     {
@@ -68,13 +77,17 @@ namespace Zantetsu.Observability
         CaptureIndexCommitCompleted = 15,
         CaptureIndexCommitCollected = 16,
         AcceptingCaptureComplete = 17,
+        CaptureCompleteQueued = 18,
+        CaptureCompleteExecuting = 19,
+        CaptureCompleteCompleted = 20,
+        CaptureCompleteCollected = 21,
     }
 
     /// <summary>
-    /// Phase 0.11 Publication Service: a fixed single-request-slot, three-phase
+    /// Phase 0.11 Publication Service: a fixed single-request-slot, four-phase
     /// boundary that separates the publication plan commit, the Fresh NVENC
-    /// chunk publication, and the capture index commit from the Main/Render
-    /// threads. It owns exactly one dedicated Worker thread with a fixed name,
+    /// chunk publication, the capture index commit, and CaptureComplete from
+    /// the Main/Render threads. It owns exactly one dedicated Worker thread with a fixed name,
     /// exactly one wake primitive, and one request slot per phase; it holds no
     /// queue, list, dictionary, task, thread pool, timer, periodic poll, busy
     /// spin, or second worker.
@@ -126,6 +139,7 @@ namespace Zantetsu.Observability
         private readonly NvencRunPublicationPlanCommitExecutionCoordinator _planCommitCoordinator;
         private readonly NvencRunArtifactPublicationExecutionCoordinator _artifactPublicationCoordinator;
         private readonly NvencRunCaptureIndexCommitExecutionCoordinator _captureIndexCommitCoordinator;
+        private readonly NvencRunCaptureCompleteExecutionCoordinator _captureCompleteCoordinator;
         private readonly AutoResetEvent _signal = new AutoResetEvent(false);
 
         private const int StateRunning = 0;
@@ -144,6 +158,9 @@ namespace Zantetsu.Observability
         private NvencRunCaptureIndexCommitOperation _captureIndexCommitOperation;
         private NvencRunCaptureIndexCommitAttemptResult _captureIndexCommitResult;
 
+        private NvencRunCaptureCompleteOperation _captureCompleteOperation;
+        private NvencRunCaptureCompleteAttemptResult _captureCompleteResult;
+
         private volatile Exception _fatalFailure;
         private Action _settled;
 
@@ -151,12 +168,14 @@ namespace Zantetsu.Observability
             NvencCaptureProcessState processState,
             NvencRunPublicationPlanCommitExecutionCoordinator planCommitCoordinator,
             NvencRunArtifactPublicationExecutionCoordinator artifactPublicationCoordinator,
-            NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCommitCoordinator)
+            NvencRunCaptureIndexCommitExecutionCoordinator captureIndexCommitCoordinator,
+            NvencRunCaptureCompleteExecutionCoordinator captureCompleteCoordinator)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _planCommitCoordinator = planCommitCoordinator ?? throw new ArgumentNullException(nameof(planCommitCoordinator));
             _artifactPublicationCoordinator = artifactPublicationCoordinator ?? throw new ArgumentNullException(nameof(artifactPublicationCoordinator));
             _captureIndexCommitCoordinator = captureIndexCommitCoordinator ?? throw new ArgumentNullException(nameof(captureIndexCommitCoordinator));
+            _captureCompleteCoordinator = captureCompleteCoordinator ?? throw new ArgumentNullException(nameof(captureCompleteCoordinator));
 
             Thread thread = new Thread(Run)
             {
@@ -523,6 +542,131 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Non-waiting, exclusive submission of exactly one valid
+        /// CaptureComplete operation. A null operation throws
+        /// <see cref="ArgumentNullException"/>. A foreign process state, an
+        /// invalid operation, or any second submission is rejected with no side
+        /// effect and without contacting the completer. Acceptance is
+        /// linearized with the Poison transition on the shared process-state
+        /// gate, and the Worker is notified only after the slot is claimed.
+        /// </summary>
+        internal bool TrySubmitCaptureComplete(NvencRunCaptureCompleteOperation operation)
+        {
+            if (operation == null)
+            {
+                throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned
+                    || Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.AcceptingCaptureComplete
+                    || _captureCompleteOperation != null
+                    || !operation.IsValid
+                    || !operation.IsBoundToProcessState(_processState))
+                {
+                    return false;
+                }
+
+                _captureCompleteOperation = operation;
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureCompleteQueued);
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+
+            Notify();
+            return true;
+        }
+
+        /// <summary>
+        /// Non-waiting, at-most-once collection of the exact CaptureComplete
+        /// Attempt Result. CaptureComplete is the final phase, so both a
+        /// Completed and a Failed result are collected only after the Worker has
+        /// physically stopped, and the Service advances to
+        /// <see cref="NvencRunPublicationServiceState.CaptureCompleteCollected"/>.
+        /// A fatal or Poisoned Service never yields a result. Collection is
+        /// linearized with the Poison transition on the shared process-state
+        /// gate, so exactly one caller succeeds. On success the internal
+        /// operation and result are cleared before the next state is published.
+        /// </summary>
+        internal bool TryCollectCaptureComplete(
+            out NvencRunCaptureCompleteAttemptResult result)
+        {
+            result = default;
+
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned
+                    || Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.CaptureCompleteCompleted)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteAttemptResult collected = _captureCompleteResult;
+                if (collected.IsNone)
+                {
+                    return false;
+                }
+
+                // The final phase always stops the Worker, so the slot is
+                // cleared only once it has physically exited.
+                if (!IsStopped)
+                {
+                    return false;
+                }
+
+                _captureCompleteOperation = null;
+                _captureCompleteResult = default;
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureCompleteCollected);
+
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe exact-issuance re-verification for the Run
+        /// Coordinator: true only when the attempt result is valid and was
+        /// issued by the exact retained CaptureComplete Execution Coordinator
+        /// for the exact supplied operation. ReferenceEquals only; it
+        /// deliberately compares against the supplied operation rather than the
+        /// Service slot, which is cleared before the terminal is published.
+        /// </summary>
+        internal bool IsCaptureCompleteAttemptIssued(
+            NvencRunCaptureCompleteAttemptResult attempt,
+            NvencRunCaptureCompleteOperation operation)
+        {
+            try
+            {
+                return !attempt.IsNone
+                    && attempt.IsValid
+                    && operation != null
+                    && ReferenceEquals(attempt.Completer, _captureCompleteCoordinator.Completer)
+                    && ReferenceEquals(attempt.Operation, operation);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Exception-safe exact-issuance re-verification for the Run
         /// Coordinator: true only when the attempt result is valid and was
         /// issued by the exact retained Artifact Publication Execution
@@ -769,6 +913,15 @@ namespace Zantetsu.Observability
                         }
 
                         continue;
+                    }
+
+                    if (state == (int)NvencRunPublicationServiceState.CaptureCompleteQueued)
+                    {
+                        // Run the CaptureComplete Execution Coordinator exactly
+                        // once. CaptureComplete is the final phase, so the
+                        // Worker always stops afterwards.
+                        TryExecuteCaptureComplete();
+                        return;
                     }
 
                     // Any other state (Poisoned, StoppedWithoutRequest, a
@@ -1062,10 +1215,99 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Claims the Queued CaptureComplete operation, runs the CaptureComplete
+        /// Execution Coordinator exactly once outside any gate, and publishes
+        /// the verified result as
+        /// <see cref="NvencRunPublicationServiceState.CaptureCompleteCompleted"/>.
+        /// CaptureComplete is the final phase, so the Worker always stops
+        /// afterwards and this terminal is never a parked state. A Poison that
+        /// linearizes during execution fails closed without publishing a normal
+        /// terminal.
+        /// </summary>
+        private void TryExecuteCaptureComplete()
+        {
+            if (!_processState.TryBeginSettlement())
+            {
+                EnterFailedWithoutResult();
+                return;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    EnterFailedWithoutResult();
+                    return;
+                }
+
+                if (Volatile.Read(ref _state) != (int)NvencRunPublicationServiceState.CaptureCompleteQueued)
+                {
+                    return;
+                }
+
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureCompleteExecuting);
+            }
+            finally
+            {
+                _processState.EndSettlement();
+            }
+
+            NvencRunCaptureCompleteAttemptResult result;
+            try
+            {
+                result = _captureCompleteCoordinator.Execute(_captureCompleteOperation);
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return;
+            }
+
+            if (!_processState.TryBeginSettlement())
+            {
+                EnterFailedWithoutResult();
+                return;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    EnterFailedWithoutResult();
+                    return;
+                }
+
+                if (result.IsNone
+                    || !result.IsValid
+                    || !ReferenceEquals(result.Completer, _captureCompleteCoordinator.Completer)
+                    || !ReferenceEquals(result.Operation, _captureCompleteOperation))
+                {
+                    throw new InvalidOperationException(
+                        "The CaptureComplete Execution Coordinator returned a null, foreign, default, or corrupt result.");
+                }
+
+                _captureCompleteResult = result;
+                Volatile.Write(ref _state, (int)NvencRunPublicationServiceState.CaptureCompleteCompleted);
+            }
+            catch (Exception ex)
+            {
+                RecordFatalFailure(ex);
+                _processState.TryPoison();
+                return;
+            }
+            finally
+            {
+                _processState.EndSettlement();
+            }
+        }
+
+        /// <summary>
         /// The states in which a notification carries no queued work and the
         /// Worker must re-park rather than terminate: the accepting states and
         /// the post-phase parked terminals whose Worker a later phase still
-        /// needs.
+        /// needs. The CaptureComplete terminal is deliberately absent: it is
+        /// the final phase and its Worker always stops.
         /// </summary>
         private static bool IsParkedState(int state)
         {
