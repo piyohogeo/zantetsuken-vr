@@ -192,8 +192,10 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Step 3: the staging ready marker must correlate to the Run identity
-        /// and to its staging peer, the staging initialization marker whose
-        /// content hash it records, before it is deleted.
+        /// and to both init hashes it binds - the staging one against the actual
+        /// staging initialization marker, the final one against the value
+        /// derived in memory from the Run identity and this exact root layout -
+        /// before it is deleted.
         /// </summary>
         private void DeleteStagingReadyMarker(NvencRunCaptureCompleteCleanupOperation operation)
         {
@@ -218,7 +220,7 @@ namespace Zantetsu.Observability
                             "The ready marker RunInitializationId does not match the operation.");
                     }
 
-                    RequireReadyBindsStagingInitialization(staging, ready, operation);
+                    RequireReadyBindsBothInitializations(staging, ready, operation);
 
                     _fileSystem.Delete(readyFile);
                 }
@@ -310,7 +312,15 @@ namespace Zantetsu.Observability
             return parent;
         }
 
-        private void RequireReadyBindsStagingInitialization(
+        /// <summary>
+        /// The ready marker is the record that binds the two initialization
+        /// markers, so both of its hashes are verified before it is deleted.
+        /// The staging hash is checked against the actual staging marker; the
+        /// final hash is checked against the value the marker binding factory
+        /// derives from the Run identity and this exact root layout, so the
+        /// final Run root is never opened, read, or existence-checked.
+        /// </summary>
+        private void RequireReadyBindsBothInitializations(
             CaptureIndexCommitDirectory staging,
             CaptureRunReadyMarker ready,
             NvencRunCaptureCompleteCleanupOperation operation)
@@ -335,6 +345,19 @@ namespace Zantetsu.Observability
             finally
             {
                 initFile.Dispose();
+            }
+
+            CaptureRunMarkerBinding expected = CaptureRunMarkerBindingFactory.Create(
+                operation.TestRunId,
+                operation.RunInitializationId,
+                _rootLayout.StagingRunRootSha256,
+                _rootLayout.FinalRunRootSha256);
+
+            if (!string.Equals(
+                    ready.FinalInitSha256, expected.FinalReady.FinalInitSha256, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "The ready marker FinalInitSha256 does not match the expected final initialization marker.");
             }
         }
 

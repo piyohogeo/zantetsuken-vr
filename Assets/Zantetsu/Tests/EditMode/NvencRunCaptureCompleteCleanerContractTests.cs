@@ -477,6 +477,56 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void Clean_ReadyMarkerFinalInitHashMismatch_Failed_NoFinalContact()
+        {
+            RequireWindows();
+            Sandbox sandbox = CreateSandbox();
+
+            using (Harness h = Harness.Create(sandbox.Layout))
+            {
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanup(h, sandbox);
+
+                // A canonical ready marker with the right Run identity and the
+                // right StagingInitSha256, but a well-formed FinalInitSha256
+                // that is not the one this Run's final initialization marker
+                // hashes to. The ready marker is the record that binds the two
+                // init hashes, so a half-correct binding must not be accepted.
+                CaptureRunMarkerBinding genuine = CaptureRunMarkerBindingFactory.Create(
+                    operation.TestRunId,
+                    operation.RunInitializationId,
+                    sandbox.Layout.StagingRunRootSha256,
+                    sandbox.Layout.FinalRunRootSha256);
+                Assert.That(genuine.StagingReady.FinalInitSha256, Is.Not.EqualTo(Hash64));
+
+                CaptureRunReadyMarker forged = new CaptureRunReadyMarker(
+                    operation.TestRunId,
+                    operation.RunInitializationId,
+                    genuine.StagingReady.StagingInitSha256,
+                    Hash64);
+                File.WriteAllBytes(
+                    sandbox.StagingReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(forged));
+
+                RecordingFileSystem fileSystem = new RecordingFileSystem(CaptureIndexCommitFileSystem.Create());
+                NvencRunCaptureCompleteCleanupAttemptResult result =
+                    new NvencRunCaptureCompleteCleaner(sandbox.Layout, fileSystem).Clean(operation);
+
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(result.Receipt, Is.Null);
+
+                // The ready marker and its staging peer both survive; the
+                // expected final hash was derived in memory, so the published
+                // side was never contacted.
+                Assert.That(fileSystem.DeletedFileNames, Has.No.Member(RunReadyMarkerName));
+                Assert.That(fileSystem.DeletedFileNames, Has.No.Member(RunInitializationMarkerName));
+                Assert.That(File.Exists(sandbox.StagingReadyPath), Is.True);
+                Assert.That(File.Exists(sandbox.StagingInitPath), Is.True);
+
+                sandbox.AssertFinalUntouched(fileSystem);
+                AssertHandlesReleased(fileSystem);
+            }
+        }
+
         // ---- Shape ----
 
         [Test]
