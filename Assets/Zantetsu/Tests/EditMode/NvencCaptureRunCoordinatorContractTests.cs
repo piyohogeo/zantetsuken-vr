@@ -2504,6 +2504,35 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void PrepareCaptureIndexCommit_PoisonAfterPrepare_InvalidatesOperationAndRefuses()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PublishAndCollectArtifact(h, NvencRunArtifactPublicationStatus.Published);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitOperation prepared), Is.True);
+                Assert.That(prepared.IsValid, Is.True);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // Poison outranks the retained operation: the already-issued
+                // one stops being usable and the re-call refuses without an
+                // exception, so no later capture index work can start.
+                Assert.That(prepared.IsValid, Is.False);
+                Assert.That(prepared.IsIssuedFor(h.RunCoordinator), Is.False);
+
+                Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
+                    out NvencRunCaptureIndexCommitOperation again), Is.False);
+                Assert.That(again, Is.Null);
+
+                // The published Committed state is untouched by the refusal.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+            }
+        }
+
+        [Test]
         public void PrepareCaptureIndexCommit_GateContention_ReturnsFalseNoChange()
         {
             using (Harness h = Harness.Create())

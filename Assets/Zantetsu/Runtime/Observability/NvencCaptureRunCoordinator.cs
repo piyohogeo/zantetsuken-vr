@@ -2004,7 +2004,11 @@ namespace Zantetsu.Observability
         /// CommitOutcomeUnknown, PublicationRecoveryRequired, or None
         /// disposition, a poisoned process, or a gate contention returns false
         /// with no change and never inspects any file, chunk, temporary, or
-        /// final name. Only a published Committed disposition whose collected
+        /// final name. Poison outranks the retained operation: it is checked
+        /// before the idempotent branch, so a Run poisoned after a successful
+        /// preparation refuses with false, without an exception, and the
+        /// already-issued operation reports itself invalid. Only a published
+        /// Committed disposition whose collected
         /// Published result, receipt, or Registry correlation is broken is
         /// corruption and poisons. Preparation never changes the disposition,
         /// Registry, plan, chunk, lease, or the retained publication result,
@@ -2026,6 +2030,15 @@ namespace Zantetsu.Observability
 
             try
             {
+                // A process-wide Poison outranks every retained shape. It is
+                // checked before the idempotent branch so a Run poisoned after
+                // a successful preparation can neither hand the retained
+                // operation out again nor start any later work with it.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
                 // Idempotent: an already-minted operation returns the same
                 // reference after re-checking its exact correlation.
                 if (_captureIndexCommitOperation != null)
@@ -2042,7 +2055,7 @@ namespace Zantetsu.Observability
                     return true;
                 }
 
-                if (!_processState.IsDraining || _processState.IsPoisoned)
+                if (!_processState.IsDraining)
                 {
                     return false;
                 }
@@ -2121,17 +2134,19 @@ namespace Zantetsu.Observability
         /// receipt of the exact retained, collected, Published artifact
         /// publication Attempt Result of the exact retained publication
         /// operation, and the existing Committed plan commit, Registry,
-        /// context, and Session Ownership Lease correlation must still hold.
-        /// ReferenceEquals and existing predicates only; no file is inspected
-        /// and nothing is changed. It deliberately does not consult whether the
-        /// Publication Service has been released.
+        /// context, and Session Ownership Lease correlation must still hold on
+        /// an unpoisoned process. ReferenceEquals and existing predicates only;
+        /// no file is inspected and nothing is changed. It deliberately does
+        /// not consult whether the Publication Service has been released.
         /// </summary>
         internal bool IsCaptureIndexCommitReceiptCorrelated(
             NvencRunArtifactPublicationReceipt receipt)
         {
             try
             {
-                if (receipt == null || !_artifactPublicationCollected)
+                // A poisoned process invalidates an already-issued operation
+                // too: no later capture index work may start from it.
+                if (receipt == null || _processState.IsPoisoned || !_artifactPublicationCollected)
                 {
                     return false;
                 }

@@ -23,7 +23,9 @@ namespace Zantetsu.Observability
     /// Coordinator's existing retained-state correlation for the collected
     /// Published artifact publication result; the already-validated plan,
     /// descriptor, registry entry, run identity, and session graph are never
-    /// re-verified by a separate mechanism. Validity is deliberately not tied
+    /// re-verified by a separate mechanism. A process-wide Poison invalidates
+    /// an already-issued operation, so no later capture index work can start
+    /// from it. Validity is deliberately not tied
     /// to whether the Publication Service has been released, so a later phase
     /// that keeps the same Service alive through CaptureComplete does not
     /// change this contract.
