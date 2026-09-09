@@ -84,8 +84,10 @@ namespace Zantetsu.Observability
         /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
         /// (after a Failed one), and a Poison does not by itself revoke it.
         /// Used by the issued attempt result and receipt so that reflecting the
-        /// outcome, or a later Poison, does not stop the same result from being
-        /// re-collected. It re-inspects no file, never re-hashes the published
+        /// outcome, or a later Poison, keeps them correlated and valid rather
+        /// than reporting them as retained-state corruption. It does not make
+        /// a poisoned Run collectible: the shared gates still refuse a poisoned
+        /// process. It re-inspects no file, never re-hashes the published
         /// artifact, and introduces no second authority.
         /// </summary>
         internal bool IsBindingIntact =>

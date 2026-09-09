@@ -3159,6 +3159,61 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void PrepareEarlierPhases_AfterCaptureCompleteTerminal_RefuseWithoutPoison()
+        {
+            foreach (NvencRunCaptureCompleteStatus status in new[]
+            {
+                NvencRunCaptureCompleteStatus.Completed,
+                NvencRunCaptureCompleteStatus.Failed,
+            })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    NvencRunCaptureCompleteOperation captureComplete =
+                        PrepareCaptureCompleteSubmission(h);
+                    h.RunCompleter.Status = status;
+
+                    Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+                    WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
+                    Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.True);
+
+                    NvencRunEvidenceDisposition expected =
+                        status == NvencRunCaptureCompleteStatus.Completed
+                            ? NvencRunEvidenceDisposition.CaptureComplete
+                            : NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                    Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(expected));
+
+                    string message = "after a " + status + " CaptureComplete";
+
+                    // Every earlier phase keeps its operation retained across
+                    // the Run's terminal, where the operation's Committed-only
+                    // validity is false by design. Re-preparing any of them is
+                    // an ordinary refusal, never corruption.
+                    Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                        out NvencRunArtifactPublicationOperation artifact), Is.False, message);
+                    Assert.That(artifact, Is.Null, message);
+                    Assert.That(h.State.IsPoisoned, Is.False, message);
+
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
+                        out NvencRunCaptureIndexCommitOperation index), Is.False, message);
+                    Assert.That(index, Is.Null, message);
+                    Assert.That(h.State.IsPoisoned, Is.False, message);
+
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureComplete(
+                        out NvencRunCaptureCompleteOperation again), Is.False, message);
+                    Assert.That(again, Is.Null, message);
+                    Assert.That(h.State.IsPoisoned, Is.False, message);
+
+                    // Nothing was disturbed by the refusals.
+                    Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(expected), message);
+                    Assert.That(h.Slot.State,
+                        Is.EqualTo(NvencRunLocalRegistrySlotState.Committed), message);
+                    Assert.That(captureComplete.IsBindingIntact, Is.True, message);
+                }
+            }
+        }
+
         // ---- CaptureComplete preparation ----
 
         /// <summary>

@@ -1674,14 +1674,16 @@ namespace Zantetsu.Observability
                         return true;
                     }
 
-                    // A Failed publication publishes PublicationRecoveryRequired
-                    // while its operation stays retained, so the operation's
-                    // Committed-only validity is false by design. That is a
-                    // normal terminal, not corruption: refuse with no change,
-                    // exactly as a PublicationRecoveryRequired disposition does
-                    // before any operation is minted. The issuance binding must
-                    // still hold.
-                    if (_disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                    // Every terminal past Committed keeps this operation
+                    // retained while the operation's Committed-only validity is
+                    // false by design: a Failed publication, capture index
+                    // commit, or CaptureComplete publishes
+                    // PublicationRecoveryRequired, and a Completed
+                    // CaptureComplete publishes CaptureComplete. All of them
+                    // are normal terminals, not corruption: refuse with no
+                    // change, exactly as those dispositions do before any
+                    // operation is minted. The issuance binding must still hold.
+                    if (IsPublishedTerminalDisposition()
                         && _artifactPublicationOperation.IsBindingIntact)
                     {
                         return false;
@@ -2108,14 +2110,14 @@ namespace Zantetsu.Observability
                         return true;
                     }
 
-                    // A Failed capture index commit publishes
-                    // PublicationRecoveryRequired while its operation stays
-                    // retained, so the operation's Committed-only validity is
-                    // false by design. That is a normal terminal, not
-                    // corruption: refuse with no change, exactly as a
-                    // PublicationRecoveryRequired disposition does before any
-                    // operation is minted. The issuance binding must still hold.
-                    if (_disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                    // Every terminal past Committed keeps this operation
+                    // retained while its Committed-only validity is false by
+                    // design: a Failed capture index commit or CaptureComplete
+                    // publishes PublicationRecoveryRequired, and a Completed
+                    // CaptureComplete publishes CaptureComplete. All of them
+                    // are normal terminals, not corruption: refuse with no
+                    // change. The issuance binding must still hold.
+                    if (IsPublishedTerminalDisposition()
                         && _captureIndexCommitOperation.IsBindingIntact)
                     {
                         return false;
@@ -2528,9 +2530,11 @@ namespace Zantetsu.Observability
             // A poisoned process invalidates an operation that has not started:
             // no later capture index work may begin from it. The binding
             // predicate below deliberately stays Poison-agnostic, exactly as
-            // the artifact publication pair does, so an already-collected
-            // result and its receipt remain re-verifiable after a Poison and
-            // re-collection stays idempotent.
+            // the artifact publication pair does, so an already-issued result
+            // and its receipt keep their history correlation and stay valid
+            // after a Poison instead of being reported as retained-state
+            // corruption. A poisoned process still fails the shared gates, so
+            // the collect entry itself refuses.
             return !_processState.IsPoisoned
                 && IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: true);
         }
@@ -2610,8 +2614,7 @@ namespace Zantetsu.Observability
                     // operation's admission validity is false by design. Both
                     // terminals are normal, not corruption: refuse with no
                     // change while the issuance binding still holds.
-                    if ((_disposition == NvencRunEvidenceDisposition.CaptureComplete
-                            || _disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired)
+                    if (IsPublishedTerminalDisposition()
                         && _captureCompleteOperation.IsBindingIntact)
                     {
                         return false;
@@ -3003,8 +3006,10 @@ namespace Zantetsu.Observability
         /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>, or
         /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
         /// and a Poison does not by itself revoke it, so reflecting the outcome
-        /// or a later Poison never stops the same result from being
-        /// re-collected. It reuses the existing capture index and publication
+        /// or a later Poison keeps the issued result and receipt correlated and
+        /// valid rather than reporting them as retained-state corruption. A
+        /// poisoned process still fails the shared gates, so the collect entry
+        /// itself refuses. It reuses the existing capture index and publication
         /// correlations, inspects no file, and changes nothing.
         /// </summary>
         internal bool IsCaptureCompleteBindingIntact(
@@ -3137,11 +3142,14 @@ namespace Zantetsu.Observability
         internal bool IsArtifactPublicationOperationCorrelated(
             NvencRunPublicationPlanCommitExecutionResult planCommitResult)
         {
-            // A poisoned process invalidates an already-issued operation: no
-            // later publication work may start from it. The issuance binding
-            // predicate below deliberately stays Poison-agnostic, so an
-            // already-collected attempt result and its receipt remain
-            // re-verifiable after a Poison and re-collection stays idempotent.
+            // A poisoned process invalidates an operation that has not
+            // started: no later publication work may begin from it. The
+            // issuance binding predicate below deliberately stays
+            // Poison-agnostic, so an already-issued attempt result and its
+            // receipt keep their history correlation and stay valid after a
+            // Poison instead of being reported as retained-state corruption. A
+            // poisoned process still fails the shared gates, so the collect
+            // entry itself refuses.
             return !_processState.IsPoisoned
                 && IsArtifactPublicationCorrelated(planCommitResult, requireCommittedDisposition: true);
         }
@@ -3193,6 +3201,23 @@ namespace Zantetsu.Observability
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// True while the Run has published a terminal past
+        /// <see cref="NvencRunEvidenceDisposition.Committed"/>: a Failed
+        /// artifact publication, capture index commit, or CaptureComplete
+        /// resolves to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// and a Completed CaptureComplete resolves to
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/>. Every
+        /// prepare entry keeps its operation retained across these, so a
+        /// re-call there is an ordinary refusal rather than corruption.
+        /// </summary>
+        private bool IsPublishedTerminalDisposition()
+        {
+            return _disposition == NvencRunEvidenceDisposition.PublicationRecoveryRequired
+                || _disposition == NvencRunEvidenceDisposition.CaptureComplete;
         }
 
         private bool IsArtifactPublicationCorrelated(
