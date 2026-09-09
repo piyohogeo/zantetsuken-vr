@@ -100,6 +100,7 @@ namespace Zantetsu.Observability
         private NvencRunPublicationPlanCommitExecutionResult _publicationPlanCommitResult;
         private bool _publicationPlanCommitServiceReleased;
         private bool _publicationPlanCommitServiceStopRequested;
+        private NvencRunArtifactPublicationOperation _artifactPublicationOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -1591,6 +1592,179 @@ namespace Zantetsu.Observability
             finally
             {
                 _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent NVENC artifact publication preparation. It
+        /// is admitted only after the Run published
+        /// <see cref="NvencRunEvidenceDisposition.Committed"/>: the retained
+        /// publication plan commit Execution Result must be the exact,
+        /// still-valid Committed result whose receipt is valid for the exact
+        /// committer and commit operation, the Registry Slot must be Committed
+        /// with the exact retained finalization result, the context must still
+        /// be Finalized, and the Session Ownership Lease must still be live.
+        /// On the first success the operation is minted and retained exactly
+        /// once; re-calls return the same reference.
+        /// </summary>
+        /// <remarks>
+        /// A Finalized, Incomplete, CommitOutcomeUnknown, or None disposition,
+        /// a poisoned process, or a gate contention returns false with no
+        /// change and never inspects any file. A published Committed
+        /// disposition whose retained result, receipt, or Committed Registry
+        /// correlation is broken is corruption and poisons. Preparation never
+        /// changes the disposition, Registry, plan, chunk, or lease, and no
+        /// additional publication-ready proof or state marker is introduced.
+        /// </remarks>
+        internal bool TryPrepareArtifactPublication(
+            out NvencRunArtifactPublicationOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-minted operation returns the same
+                // reference after re-checking its exact correlation.
+                if (_artifactPublicationOperation != null)
+                {
+                    if (!_artifactPublicationOperation.IsValid
+                        || !_artifactPublicationOperation.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained artifact publication operation no longer correlates.");
+                    }
+
+                    operation = _artifactPublicationOperation;
+                    return true;
+                }
+
+                if (!_processState.IsDraining || _processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    // Finalized, Incomplete, CommitOutcomeUnknown, or None:
+                    // refuse with no change and without inspecting any file,
+                    // chunk, temporary, or final name.
+                    return false;
+                }
+
+                // A published Committed disposition must still carry an intact
+                // retained result and Committed Registry correlation; a break
+                // here is corruption, not a not-ready shape.
+                NvencRunPublicationPlanCommitExecutionResult retained = _publicationPlanCommitResult;
+                if (!IsArtifactPublicationOperationCorrelated(retained))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained commit result or Registry correlation is broken after Committed.");
+                }
+
+                NvencRunArtifactPublicationOperation minted;
+                try
+                {
+                    minted = new NvencRunArtifactPublicationOperation(this, retained);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _artifactPublicationOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _artifactPublicationOperation = null;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The artifact publication operation does not correlate after construction.");
+                }
+
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe post-Committed correlation reused by the artifact
+        /// publication operation: the exact retained, collected, Committed
+        /// commit Execution Result with an exact receipt for the exact commit
+        /// operation, a Committed Registry Slot holding the exact finalization
+        /// result, a Finalized context, and a live Session Ownership Lease.
+        /// It reuses the existing commit result and Registry correlations and
+        /// never inspects any file.
+        /// </summary>
+        internal bool IsArtifactPublicationOperationCorrelated(
+            NvencRunPublicationPlanCommitExecutionResult planCommitResult)
+        {
+            try
+            {
+                NvencRunPublicationPlanCommitOperation commitOperation = _publicationPlanCommitOperation;
+                NvencRunPublicationPlanCommitExecutionResult retained = _publicationPlanCommitResult;
+
+                if (commitOperation == null
+                    || retained == null
+                    || planCommitResult == null
+                    || !ReferenceEquals(retained, planCommitResult)
+                    || !_publicationPlanCommitCollected)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed
+                    || retained.Status != NvencRunPublicationPlanCommitStatus.Committed
+                    || !retained.IsValid)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(retained.Attempt.Operation, commitOperation)
+                    || !ReferenceEquals(retained.FinalizationResult, commitOperation.FinalizationResult)
+                    || !ReferenceEquals(retained.Plan, commitOperation.Plan))
+                {
+                    return false;
+                }
+
+                NvencRunPublicationPlanCommitReceipt receipt = retained.Receipt;
+                if (receipt == null
+                    || !receipt.IsIssuedFor(retained.Attempt.Committer, commitOperation))
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                {
+                    return false;
+                }
+
+                if (!_registrySlot.TryGetEntry(
+                        out NvencChunkFinalizationResult entryResult,
+                        out _,
+                        out _)
+                    || !ReferenceEquals(entryResult, commitOperation.FinalizationResult))
+                {
+                    return false;
+                }
+
+                return _context.State == NvencRunChunkContextState.Finalized
+                    && _sessionIssue.IsValid;
+            }
+            catch
+            {
+                return false;
             }
         }
 

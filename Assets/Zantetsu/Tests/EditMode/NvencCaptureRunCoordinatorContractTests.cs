@@ -1782,6 +1782,271 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Artifact publication preparation ----
+
+        [Test]
+        public void PrepareArtifactPublication_Committed_ForwardsExactReferences()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunPublicationPlanCommitExecutionResult result =
+                    CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation operation), Is.True);
+
+                // The operation holds the exact retained commit result and
+                // forwards the rest of the graph without copying.
+                Assert.That(operation.PlanCommitResult, Is.SameAs(result));
+                Assert.That(operation.Plan, Is.SameAs(result.Plan));
+                Assert.That(operation.FinalizationResult, Is.SameAs(result.FinalizationResult));
+                Assert.That(operation.Descriptor, Is.SameAs(result.FinalizationResult.Descriptor));
+                Assert.That(operation.FrameRelation, Is.SameAs(result.FinalizationResult.FrameRelation));
+                Assert.That(operation.RootLayout, Is.SameAs(result.RootLayout));
+                Assert.That(operation.TestRunId, Is.EqualTo(h.Context.TestRunId));
+                Assert.That(operation.RunInitializationId, Is.EqualTo(result.RunInitializationId));
+
+                // Paths, length, and hash match the exact descriptor, and never
+                // the pending (.partial) path.
+                CaptureArtifactDescriptor descriptor = result.FinalizationResult.Descriptor;
+                Assert.That(operation.StagingRelativePath, Is.EqualTo(descriptor.StagingRelativePath));
+                Assert.That(operation.FinalRelativePath, Is.EqualTo(descriptor.FinalRelativePath));
+                Assert.That(operation.ExpectedByteLength, Is.EqualTo(descriptor.ByteLength));
+                Assert.That(operation.ExpectedContentHash, Is.EqualTo(descriptor.ContentHash));
+                Assert.That(operation.StagingRelativePath,
+                    Is.Not.EqualTo(NvencRunChunkArtifactDescriptorFactory.PendingRelativePath));
+                Assert.That(operation.FinalRelativePath,
+                    Is.Not.EqualTo(NvencRunChunkArtifactDescriptorFactory.PendingRelativePath));
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_Idempotent_ReturnsSameReference()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation first), Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation again), Is.True);
+
+                Assert.That(ReferenceEquals(first, again), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_FinalizedNotCollected_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_SubmittedNotCollected_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceStop(h, "service worker did not stop");
+
+                // Still Finalized: the commit result has not been collected.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_FailedBeforeRename_Incomplete_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.FailedBeforeRename);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Incomplete));
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_CommitOutcomeUnknown_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.CommitOutcomeUnknown);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.CommitOutcomeUnknown));
+
+                // Refuses before inspecting any file, chunk, or temporary.
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(out _), Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_ExternalPoisonFirst_ReturnsFalseNoOperation()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_GateContention_ReturnsFalseNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                        out NvencRunArtifactPublicationOperation operation), Is.False);
+                    Assert.That(operation, Is.Null);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                // Once the gate is released the preparation proceeds.
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation prepared), Is.True);
+                Assert.That(prepared, Is.Not.Null);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_CorruptRetainedResult_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+                SetField(h.RunCoordinator, "_publicationPlanCommitResult", null);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareArtifactPublication(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_CorruptRegistryCorrelation_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+                SetField(h.Slot, "_result", null);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryPrepareArtifactPublication(out _));
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareArtifactPublication_DoesNotChangeDispositionRegistryPlanChunkLease()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunPublicationPlanCommitExecutionResult result =
+                    CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+                CapturePublicationPlan planBefore = result.Plan;
+                NvencChunkFinalizationResult finalizationBefore = result.FinalizationResult;
+                Assert.That(h.SessionIssue.IsValid, Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                    out NvencRunArtifactPublicationOperation operation), Is.True);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(operation.Plan, Is.SameAs(planBefore));
+                Assert.That(operation.FinalizationResult, Is.SameAs(finalizationBefore));
+                Assert.That(h.SessionIssue.IsValid, Is.True);
+            }
+        }
+
+        [Test]
+        public void ArtifactPublicationOperation_TwoReadonlyFields_SealedInternal()
+        {
+            Type type = typeof(NvencRunArtifactPublicationOperation);
+
+            Assert.That(type.IsClass, Is.True);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields, Has.Length.EqualTo(2));
+            Assert.That(fields[0].FieldType, Is.EqualTo(typeof(NvencCaptureRunCoordinator)));
+            Assert.That(fields[1].FieldType, Is.EqualTo(typeof(NvencRunPublicationPlanCommitExecutionResult)));
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+            }
+        }
+
+        [Test]
+        public void ArtifactPublicationOperation_Source_NoFilesystemThreadTaskWaitProof()
+        {
+            string source = File.ReadAllText(
+                Path.Combine(RuntimeDirectory(), "NvencRunArtifactPublicationOperation.cs"));
+
+            string[] forbidden =
+            {
+                "File.", "Directory.", "FileStream", "Path.", "Stream",
+                "new Thread", "ThreadPool", "Task", "SpinWait", "WaitHandle", "Timer",
+                "AutoResetEvent", "ManualResetEvent", "Monitor", "Sleep",
+                "DllImport", "IntPtr", "SafeHandle", "JsonUtility",
+                "SHA256", "SHA384", "SHA512", "MD5", "ComputeHash", "HashAlgorithm",
+                "IncrementalHash", "System.Security.Cryptography",
+                "Disposition", "TryCommit", "TryDiscardRegistered", "Registry", "OwnershipLease",
+                "Token", "Nonce", "Proof", "Retry", "Rollback", "Cleanup",
+            };
+
+            foreach (string word in forbidden)
+            {
+                Assert.That(source, Does.Not.Contain(word), "operation source must not contain: " + word);
+            }
+
+            Assert.That(source, Does.Contain("PlanCommitResult"));
+            Assert.That(source, Does.Contain("StagingRelativePath"));
+            Assert.That(source, Does.Contain("FinalRelativePath"));
+            Assert.That(source, Does.Contain("ExpectedByteLength"));
+            Assert.That(source, Does.Contain("ExpectedContentHash"));
+        }
+
         [Test]
         public void TraceFreeze_BeforeBackendJoin_RefusesNoTraceContact()
         {
@@ -2663,6 +2928,19 @@ namespace Zantetsu.Core.Tests
                 h.RunCoordinator.TryPreparePublicationPlanCommit(Hash64, out NvencRunPublicationPlanCommitOperation operation),
                 Is.True);
             return operation;
+        }
+
+        private static NvencRunPublicationPlanCommitExecutionResult CommitAndCollect(
+            Harness h,
+            NvencRunPublicationPlanCommitStatus status)
+        {
+            FinalizeAndPrepareCommit(h);
+            h.Committer.Status = status;
+            Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+            WaitForServiceStop(h, "service worker did not stop");
+            Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
+                out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
+            return result;
         }
 
         private static void WaitForServiceStop(Harness h, string message)
