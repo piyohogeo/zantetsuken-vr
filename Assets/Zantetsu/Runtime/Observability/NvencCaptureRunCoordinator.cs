@@ -104,6 +104,7 @@ namespace Zantetsu.Observability
         private bool _artifactPublicationSubmitted;
         private bool _artifactPublicationCollected;
         private NvencRunArtifactPublicationAttemptResult _artifactPublicationResult;
+        private NvencRunCaptureIndexCommitOperation _captureIndexCommitOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -1978,6 +1979,182 @@ namespace Zantetsu.Observability
                         throw new InvalidOperationException(
                             "The artifact publication result has an unrecognized status.");
                     }
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent NVENC capture index commit preparation. It
+        /// is admitted only after the Run collected a Published artifact
+        /// publication: the process must be Draining and not Poisoned, the
+        /// disposition must still be
+        /// <see cref="NvencRunEvidenceDisposition.Committed"/>, the artifact
+        /// publication must have been submitted and collected, and the
+        /// retained Attempt Result must be the exact, still-valid Published
+        /// result of the exact retained publication operation whose receipt is
+        /// valid for the exact publisher. The already-validated plan commit
+        /// result, Committed Registry entry, Finalized context, and live
+        /// Session Ownership Lease correlations are reused, not re-derived. On
+        /// the first success the operation is minted and retained exactly once;
+        /// re-calls return the same reference after re-checking its exact
+        /// correlation.
+        /// </summary>
+        /// <remarks>
+        /// A publication that has not been prepared, submitted, or collected, a
+        /// Failed publication, a Running, Finalized, Incomplete,
+        /// CommitOutcomeUnknown, PublicationRecoveryRequired, or None
+        /// disposition, a poisoned process, or a gate contention returns false
+        /// with no change and never inspects any file, chunk, temporary, or
+        /// final name. Only a published Committed disposition whose collected
+        /// Published result, receipt, or Registry correlation is broken is
+        /// corruption and poisons. Preparation never changes the disposition,
+        /// Registry, plan, chunk, lease, or the retained publication result,
+        /// performs no serialization, and introduces no new proof or state
+        /// marker. It is deliberately not conditioned on whether the
+        /// Publication Service has been released, so a later phase that keeps
+        /// the same Service alive through CaptureComplete does not change this
+        /// admission rule.
+        /// </remarks>
+        internal bool TryPrepareCaptureIndexCommit(
+            out NvencRunCaptureIndexCommitOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // Idempotent: an already-minted operation returns the same
+                // reference after re-checking its exact correlation.
+                if (_captureIndexCommitOperation != null)
+                {
+                    if (!_captureIndexCommitOperation.IsValid
+                        || !_captureIndexCommitOperation.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained capture index commit operation no longer correlates.");
+                    }
+
+                    operation = _captureIndexCommitOperation;
+                    return true;
+                }
+
+                if (!_processState.IsDraining || _processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    // Running, Finalized, Incomplete, CommitOutcomeUnknown,
+                    // PublicationRecoveryRequired, or None: refuse with no
+                    // change and without inspecting any file, chunk, temporary,
+                    // or final name.
+                    return false;
+                }
+
+                if (!_artifactPublicationSubmitted || !_artifactPublicationCollected)
+                {
+                    // Not prepared, not submitted, or not collected yet: a
+                    // normal not-ready shape, never corruption.
+                    return false;
+                }
+
+                NvencRunArtifactPublicationAttemptResult retained = _artifactPublicationResult;
+                if (retained.IsNone
+                    || retained.Status != NvencRunArtifactPublicationStatus.Published)
+                {
+                    // A Failed publication is handed to Recovery, not to the
+                    // capture index; refuse with no change.
+                    return false;
+                }
+
+                // A published Committed disposition that already reflected a
+                // collected Published result must still carry an intact
+                // retained result, receipt, and Committed Registry
+                // correlation; a break here is corruption, not a not-ready
+                // shape.
+                NvencRunArtifactPublicationReceipt receipt = retained.Receipt;
+                if (!IsCaptureIndexCommitReceiptCorrelated(receipt))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Published publication result or Registry correlation is broken after Committed.");
+                }
+
+                NvencRunCaptureIndexCommitOperation minted;
+                try
+                {
+                    minted = new NvencRunCaptureIndexCommitOperation(this, receipt);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _captureIndexCommitOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _captureIndexCommitOperation = null;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The capture index commit operation does not correlate after construction.");
+                }
+
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe post-publication correlation reused by the capture
+        /// index commit operation: the supplied receipt must be the exact
+        /// receipt of the exact retained, collected, Published artifact
+        /// publication Attempt Result of the exact retained publication
+        /// operation, and the existing Committed plan commit, Registry,
+        /// context, and Session Ownership Lease correlation must still hold.
+        /// ReferenceEquals and existing predicates only; no file is inspected
+        /// and nothing is changed. It deliberately does not consult whether the
+        /// Publication Service has been released.
+        /// </summary>
+        internal bool IsCaptureIndexCommitReceiptCorrelated(
+            NvencRunArtifactPublicationReceipt receipt)
+        {
+            try
+            {
+                if (receipt == null || !_artifactPublicationCollected)
+                {
+                    return false;
+                }
+
+                NvencRunArtifactPublicationAttemptResult retained = _artifactPublicationResult;
+                NvencRunArtifactPublicationOperation publicationOperation = _artifactPublicationOperation;
+
+                if (retained.IsNone
+                    || retained.Status != NvencRunArtifactPublicationStatus.Published
+                    || !retained.IsValid
+                    || publicationOperation == null
+                    || !ReferenceEquals(retained.Receipt, receipt)
+                    || !ReferenceEquals(retained.Operation, publicationOperation)
+                    || !receipt.IsIssuedFor(retained.Publisher, publicationOperation))
+                {
+                    return false;
+                }
+
+                return IsArtifactPublicationOperationCorrelated(publicationOperation.PlanCommitResult);
+            }
+            catch
+            {
+                return false;
             }
         }
 
