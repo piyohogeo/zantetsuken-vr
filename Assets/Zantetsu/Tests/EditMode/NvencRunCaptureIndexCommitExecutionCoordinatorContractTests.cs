@@ -235,13 +235,13 @@ namespace Zantetsu.Core.Tests
                 // committer and operation match.
                 NvencRunCaptureIndexCommitReceipt foreignReceipt =
                     NvencRunCaptureIndexCommitReceipt.Create(otherCommitter, operation);
-                committer.UseOverride = true;
-                committer.OverrideResult = MakeAttempt(
-                    committer, operation, foreignReceipt, NvencRunCaptureIndexCommitStatus.Committed);
 
-                Assert.Throws<InvalidOperationException>(() =>
-                    new NvencRunCaptureIndexCommitExecutionCoordinator(committer).Execute(operation));
-                Assert.That(committer.CallCount, Is.EqualTo(1));
+                AssertRejected(
+                    committer,
+                    operation,
+                    MakeAttempt(
+                        committer, operation, foreignReceipt, NvencRunCaptureIndexCommitStatus.Committed),
+                    "Committed carrying another committer's receipt");
             }
         }
 
@@ -256,25 +256,37 @@ namespace Zantetsu.Core.Tests
                 NvencRunCaptureIndexCommitReceipt receipt =
                     NvencRunCaptureIndexCommitReceipt.Create(committer, operation);
 
+                // Every forged result below names this exact committer and this
+                // exact operation, so only the status/receipt disagreement is
+                // left to reject it.
+
                 // Committed without a receipt.
                 AssertRejected(
+                    committer,
                     operation,
-                    MakeAttempt(committer, operation, null, NvencRunCaptureIndexCommitStatus.Committed));
+                    MakeAttempt(committer, operation, null, NvencRunCaptureIndexCommitStatus.Committed),
+                    "Committed without a receipt");
 
                 // Failed carrying a receipt.
                 AssertRejected(
+                    committer,
                     operation,
-                    MakeAttempt(committer, operation, receipt, NvencRunCaptureIndexCommitStatus.Failed));
+                    MakeAttempt(committer, operation, receipt, NvencRunCaptureIndexCommitStatus.Failed),
+                    "Failed carrying a receipt");
 
                 // None is the uninitialized default and is never terminal.
                 AssertRejected(
+                    committer,
                     operation,
-                    MakeAttempt(committer, operation, null, NvencRunCaptureIndexCommitStatus.None));
+                    MakeAttempt(committer, operation, null, NvencRunCaptureIndexCommitStatus.None),
+                    "None status");
 
                 // An undefined status value.
                 AssertRejected(
+                    committer,
                     operation,
-                    MakeAttempt(committer, operation, receipt, (NvencRunCaptureIndexCommitStatus)7));
+                    MakeAttempt(committer, operation, receipt, (NvencRunCaptureIndexCommitStatus)7),
+                    "undefined status");
             }
         }
 
@@ -496,18 +508,32 @@ namespace Zantetsu.Core.Tests
 
         // ---- Helpers ----
 
+        /// <summary>
+        /// Executes the forged result through the exact committer it names, so
+        /// the corrupt part under test is the only thing that can reject it. A
+        /// helper that used a fresh committer would be rejected by the foreign
+        /// committer check first and would pass even if the status and receipt
+        /// verification regressed.
+        /// </summary>
         private static void AssertRejected(
+            FakeCaptureIndexCommitter committer,
             NvencRunCaptureIndexCommitOperation operation,
-            NvencRunCaptureIndexCommitAttemptResult forged)
+            NvencRunCaptureIndexCommitAttemptResult forged,
+            string message)
         {
-            FakeCaptureIndexCommitter committer = new FakeCaptureIndexCommitter
-            {
-                UseOverride = true,
-                OverrideResult = forged,
-            };
-            Assert.Throws<InvalidOperationException>(() =>
-                new NvencRunCaptureIndexCommitExecutionCoordinator(committer).Execute(operation));
-            Assert.That(committer.CallCount, Is.EqualTo(1));
+            Assert.That(ReferenceEquals(forged.Committer, committer), Is.True,
+                message + ": the forged result must name the executing committer.");
+            Assert.That(ReferenceEquals(forged.Operation, operation), Is.True,
+                message + ": the forged result must name the executed operation.");
+
+            int before = committer.CallCount;
+            committer.UseOverride = true;
+            committer.OverrideResult = forged;
+
+            Assert.Throws<InvalidOperationException>(
+                () => new NvencRunCaptureIndexCommitExecutionCoordinator(committer).Execute(operation),
+                message);
+            Assert.That(committer.CallCount, Is.EqualTo(before + 1), message);
         }
 
         private static NvencRunCaptureIndexCommitAttemptResult MakeAttempt(
