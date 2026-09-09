@@ -1446,7 +1446,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -1466,7 +1466,7 @@ namespace Zantetsu.Core.Tests
                     h.Buffer, h.Processor, new FakeMainThreadTeardown { BoundContext = h.Context });
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -3601,13 +3601,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-
-                FakeCleaner cleaner = new FakeCleaner();
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(
+                    h, operation, NvencRunCaptureCompleteCleanupStatus.Cleaned);
 
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
 
@@ -3620,11 +3616,13 @@ namespace Zantetsu.Core.Tests
                 // The issued result and receipt stay correlated afterwards.
                 Assert.That(result.IsCleaned, Is.True);
                 Assert.That(result.IsValid, Is.True);
-                Assert.That(result.Receipt.IsIssuedFor(cleaner, operation), Is.True);
+                Assert.That(ReferenceEquals(result.Cleaner, h.CleanupCleaner), Is.True);
+                Assert.That(result.Receipt.IsIssuedFor(h.CleanupCleaner, operation), Is.True);
                 Assert.That(operation.IsBindingIntact, Is.True);
 
-                // The reflection is not a cleanup: the cleaner is never called.
-                Assert.That(cleaner.CallCount, Is.EqualTo(0));
+                // The reflection is not a cleanup: the one call the Execution
+                // Coordinator made is still the only one.
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(1));
             }
         }
 
@@ -3633,13 +3631,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-
-                FakeCleaner cleaner = new FakeCleaner();
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(
+                    h, operation, NvencRunCaptureCompleteCleanupStatus.Failed);
 
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
 
@@ -3654,28 +3648,27 @@ namespace Zantetsu.Core.Tests
                 Assert.That(result.IsFailed, Is.True);
                 Assert.That(result.IsValid, Is.True);
                 Assert.That(result.Receipt, Is.Null);
+                Assert.That(ReferenceEquals(result.Cleaner, h.CleanupCleaner), Is.True);
                 Assert.That(operation.IsBindingIntact, Is.True);
                 Assert.That(operation.IsValid, Is.False);
 
-                Assert.That(cleaner.CallCount, Is.EqualTo(0));
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(1));
             }
         }
 
         [Test]
         public void ReflectCaptureCompleteCleanup_ReflectedResultAndReceipt_SurviveLaterPoison()
         {
-            foreach (bool cleaned in new[] { true, false })
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
             {
                 using (Harness h = Harness.Create())
                 {
-                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                        out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-
-                    FakeCleaner cleaner = new FakeCleaner();
-                    NvencRunCaptureCompleteCleanupAttemptResult result = cleaned
-                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
-                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+                    NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                    NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(h, operation, status);
 
                     Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
 
@@ -3685,14 +3678,14 @@ namespace Zantetsu.Core.Tests
                     Assert.That(h.State.TryPoison(), Is.True);
 
                     Assert.That(result.IsValid, Is.True);
-                    Assert.That(result.IsIssuedFor(cleaner, operation), Is.True);
+                    Assert.That(result.IsIssuedFor(h.CleanupCleaner, operation), Is.True);
                     Assert.That(operation.IsBindingIntact, Is.True);
                     Assert.That(operation.IsValid, Is.False);
 
-                    if (cleaned)
+                    if (status == NvencRunCaptureCompleteCleanupStatus.Cleaned)
                     {
                         Assert.That(result.Receipt.IsValid, Is.True);
-                        Assert.That(result.Receipt.IsIssuedFor(cleaner, operation), Is.True);
+                        Assert.That(result.Receipt.IsIssuedFor(h.CleanupCleaner, operation), Is.True);
                     }
                 }
             }
@@ -3702,30 +3695,30 @@ namespace Zantetsu.Core.Tests
         public void ReflectCaptureCompleteCleanup_NotPreparedOrEarlierDisposition_ReturnsFalse()
         {
             // Never prepared: a normal not-ready shape, not corruption. The
-            // result is minted against another Run's prepared operation so this
-            // Run has nothing retained at all.
+            // result is executed against another Run's prepared operation so
+            // this Run has nothing retained at all.
             using (Harness source = Harness.Create())
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(source, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(source.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation foreign), Is.True);
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), foreign);
+                NvencRunCaptureCompleteCleanupAttemptResult foreign = ExecuteCleanup(
+                    source,
+                    PrepareCleanupOperation(source),
+                    NvencRunCaptureCompleteCleanupStatus.Cleaned);
 
                 CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
 
-                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.False);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(foreign), Is.False);
                 Assert.That(h.State.IsPoisoned, Is.False);
                 Assert.That(h.RunCoordinator.Disposition,
                     Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(0));
 
-                // The refusal left nothing behind: the cleanup can still be
-                // prepared and reflected.
+                // The refusal left nothing behind: this Run's own cleanup can
+                // still be prepared, executed, and reflected.
                 Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
                     out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), operation)), Is.True);
+                    ExecuteCleanup(h, operation, NvencRunCaptureCompleteCleanupStatus.Cleaned)), Is.True);
             }
 
             // A Failed CaptureComplete never prepares a cleanup, so there is
@@ -3747,49 +3740,85 @@ namespace Zantetsu.Core.Tests
             using (Harness source = Harness.Create())
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(source, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(source.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation foreign), Is.True);
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(new FakeCleaner(), foreign);
+                NvencRunCaptureCompleteCleanupAttemptResult foreign = ExecuteCleanup(
+                    source,
+                    PrepareCleanupOperation(source),
+                    NvencRunCaptureCompleteCleanupStatus.Cleaned);
 
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
+                Assert.That(PrepareCleanupOperation(h), Is.Not.Null);
 
                 // Another Run's cleanup result reaching a normally prepared Run
                 // is corruption, not a not-ready shape.
                 Assert.Throws<InvalidOperationException>(
-                    () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(result));
+                    () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(foreign));
                 Assert.That(h.State.IsPoisoned, Is.True);
                 Assert.That(source.State.IsPoisoned, Is.False);
             }
         }
 
         [Test]
-        public void ReflectCaptureCompleteCleanup_DefaultForeignCleanerOrBrokenShape_Poisons()
+        public void ReflectCaptureCompleteCleanup_ForeignCleanupExecutionCoordinator_Poisons()
+        {
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+
+                    // A cleaner that is not this Run's configured one, driven
+                    // through its own Execution Coordinator, produces a fully
+                    // self-consistent result for the exact operation. It is
+                    // still evidence of a cleanup this Run never ran, so it must
+                    // be refused as corruption rather than accepted.
+                    FakeCleaner foreignCleaner = new FakeCleaner { Status = status };
+                    NvencRunCaptureCompleteCleanupAttemptResult foreign =
+                        new NvencRunCaptureCompleteCleanupExecutionCoordinator(foreignCleaner)
+                            .Execute(operation);
+
+                    Assert.That(foreign.IsValid, Is.True);
+                    Assert.That(foreign.Status, Is.EqualTo(status));
+                    Assert.That(ReferenceEquals(foreign.Operation, operation), Is.True);
+                    Assert.That(foreignCleaner.CallCount, Is.EqualTo(1));
+                    Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(0));
+
+                    Assert.Throws<InvalidOperationException>(
+                        () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(foreign));
+                    Assert.That(h.State.IsPoisoned, Is.True);
+                    Assert.That(h.RunCoordinator.Disposition,
+                        Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                }
+            }
+        }
+
+        [Test]
+        public void ReflectCaptureCompleteCleanup_DefaultOrBrokenShape_Poisons()
         {
             AssertReflectionPoisons(
-                (operation, cleaner) => default,
+                (h, operation) => default,
                 "a default result must poison");
 
             AssertReflectionPoisons(
-                (operation, cleaner) => MakeCleanupAttempt(
-                    cleaner, operation, null, NvencRunCaptureCompleteCleanupStatus.Cleaned),
+                (h, operation) => MakeCleanupAttempt(
+                    h.CleanupCleaner, operation, null, NvencRunCaptureCompleteCleanupStatus.Cleaned),
                 "a Cleaned result without a receipt must poison");
 
             AssertReflectionPoisons(
-                (operation, cleaner) => MakeCleanupAttempt(
-                    cleaner,
+                (h, operation) => MakeCleanupAttempt(
+                    h.CleanupCleaner,
                     operation,
-                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupReceipt.Create(h.CleanupCleaner, operation),
                     NvencRunCaptureCompleteCleanupStatus.Failed),
                 "a Failed result carrying a receipt must poison");
 
             AssertReflectionPoisons(
-                (operation, cleaner) => MakeCleanupAttempt(
-                    cleaner,
+                (h, operation) => MakeCleanupAttempt(
+                    h.CleanupCleaner,
                     operation,
-                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupReceipt.Create(h.CleanupCleaner, operation),
                     NvencRunCaptureCompleteCleanupStatus.None),
                 "a receipt-carrying None result must poison");
 
@@ -3797,18 +3826,18 @@ namespace Zantetsu.Core.Tests
             // instance: a receipt issued to another cleaner is not this
             // result's evidence.
             AssertReflectionPoisons(
-                (operation, cleaner) => MakeCleanupAttempt(
-                    cleaner,
+                (h, operation) => MakeCleanupAttempt(
+                    h.CleanupCleaner,
                     operation,
                     NvencRunCaptureCompleteCleanupReceipt.Create(new FakeCleaner(), operation),
                     NvencRunCaptureCompleteCleanupStatus.Cleaned),
                 "a Cleaned receipt issued to a foreign cleaner must poison");
 
             AssertReflectionPoisons(
-                (operation, cleaner) => MakeCleanupAttempt(
+                (h, operation) => MakeCleanupAttempt(
                     null,
                     operation,
-                    NvencRunCaptureCompleteCleanupReceipt.Create(cleaner, operation),
+                    NvencRunCaptureCompleteCleanupReceipt.Create(h.CleanupCleaner, operation),
                     NvencRunCaptureCompleteCleanupStatus.Cleaned),
                 "a Cleaned result without a cleaner must poison");
         }
@@ -3818,11 +3847,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(new FakeCleaner(), operation);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(
+                    h, operation, NvencRunCaptureCompleteCleanupStatus.Failed);
 
                 Assert.That(h.State.TryPoison(), Is.True);
 
@@ -3839,12 +3866,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-                FakeCleaner cleaner = new FakeCleaner();
-                NvencRunCaptureCompleteCleanupAttemptResult result =
-                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(
+                    h, operation, NvencRunCaptureCompleteCleanupStatus.Failed);
 
                 ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
                 ManualResetEventSlim release = new ManualResetEventSlim(false);
@@ -3890,20 +3914,17 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult cleaned = ExecuteCleanup(
+                    h, operation, NvencRunCaptureCompleteCleanupStatus.Cleaned);
 
-                FakeCleaner cleaner = new FakeCleaner();
-                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)), Is.True);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned), Is.True);
 
                 // One cleanup outcome per Run: neither the same result nor an
-                // opposite one is reflected a second time.
+                // opposite one from a second execution is reflected again.
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned), Is.False);
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)), Is.False);
-                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
-                    NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.False);
+                    ExecuteCleanup(h, operation, NvencRunCaptureCompleteCleanupStatus.Cleaned)), Is.False);
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(default), Is.False);
 
                 Assert.That(h.RunCoordinator.Disposition,
@@ -3915,18 +3936,17 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareCaptureCompleteCleanup_AfterReflection_ReturnsFalseWithoutPoison()
         {
-            foreach (bool cleaned in new[] { true, false })
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
             {
                 using (Harness h = Harness.Create())
                 {
-                    CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                        out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-
-                    FakeCleaner cleaner = new FakeCleaner();
-                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned
-                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
-                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.True);
+                    NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
+                        ExecuteCleanup(h, operation, status)), Is.True);
 
                     // One Run prepares one cleanup: after either outcome a
                     // re-prepare is an ordinary refusal, never corruption and
@@ -3948,12 +3968,9 @@ namespace Zantetsu.Core.Tests
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(
-                    NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(
-                        new FakeCleaner(), operation)), Is.True);
+                    ExecuteCleanup(h, operation, NvencRunCaptureCompleteCleanupStatus.Cleaned)), Is.True);
 
                 // Releasing the Session Ownership Lease breaks the published
                 // graph through the ordinary ownership API, so the reflected
@@ -3970,7 +3987,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReflectCaptureCompleteCleanup_ChangesNoRunRegistryContextServiceOrLease()
         {
-            foreach (bool cleaned in new[] { true, false })
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
             {
                 using (Harness h = Harness.Create())
                 {
@@ -3978,6 +3999,8 @@ namespace Zantetsu.Core.Tests
                         CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
                     Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
                         out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+                    NvencRunCaptureCompleteCleanupAttemptResult result =
+                        ExecuteCleanup(h, operation, status);
 
                     NvencRunLocalRegistrySlotState slotState = h.Slot.State;
                     bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
@@ -3993,10 +4016,7 @@ namespace Zantetsu.Core.Tests
                     int completerCalls = h.RunCompleter.CallCount;
                     CapturePublicationPlan plan = operation.Plan;
 
-                    FakeCleaner cleaner = new FakeCleaner();
-                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleaned
-                        ? NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(cleaner, operation)
-                        : NvencRunCaptureCompleteCleanupAttemptResult.Failed(cleaner, operation)), Is.True);
+                    Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
 
                     // Only the disposition may move, and only on a failure.
                     Assert.That(h.Slot.State, Is.EqualTo(slotState));
@@ -4009,9 +4029,9 @@ namespace Zantetsu.Core.Tests
                     Assert.That(h.SessionIssue.IsValid, Is.EqualTo(leaseValid));
                     Assert.That(h.State.IsPoisoned, Is.False);
 
-                    // No cleaner, committer, publisher, or completer is called
-                    // again: nothing is re-run, retried, or rolled back.
-                    Assert.That(cleaner.CallCount, Is.EqualTo(0));
+                    // The cleanup is not re-run and no earlier collaborator is
+                    // called again: nothing is retried or rolled back.
+                    Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(1));
                     Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
                     Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
                     Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
@@ -4031,29 +4051,57 @@ namespace Zantetsu.Core.Tests
 
         // ---- CaptureComplete cleanup reflection helpers ----
 
+        private static NvencRunCaptureCompleteCleanupOperation PrepareCleanupOperation(Harness h)
+        {
+            CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+            Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
+            return operation;
+        }
+
+        /// <summary>
+        /// Runs the Run's own configured cleanup Execution Coordinator exactly
+        /// once and returns its result, so every reflected result is evidence
+        /// of a cleanup this Run actually performed rather than a hand-built
+        /// value.
+        /// </summary>
+        private static NvencRunCaptureCompleteCleanupAttemptResult ExecuteCleanup(
+            Harness h,
+            NvencRunCaptureCompleteCleanupOperation operation,
+            NvencRunCaptureCompleteCleanupStatus status)
+        {
+            h.CleanupCleaner.Status = status;
+            int before = h.CleanupCleaner.CallCount;
+
+            NvencRunCaptureCompleteCleanupAttemptResult result = h.CleanupExecution.Execute(operation);
+
+            Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(before + 1),
+                "the Execution Coordinator must call the cleaner exactly once.");
+            Assert.That(result.Status, Is.EqualTo(status));
+            Assert.That(ReferenceEquals(result.Cleaner, h.CleanupCleaner), Is.True);
+            return result;
+        }
+
         /// <summary>
         /// Reflects the forged result into a Run that is otherwise normally
-        /// prepared, so the corrupt part under test is the only thing that can
-        /// reject it, and requires the corruption report rather than a refusal.
+        /// prepared, and whose own configured cleaner is the one the forgery
+        /// names, so the corrupt part under test is the only thing that can
+        /// reject it. It requires the corruption report rather than a refusal.
         /// </summary>
         private static void AssertReflectionPoisons(
-            Func<NvencRunCaptureCompleteCleanupOperation, FakeCleaner,
+            Func<Harness, NvencRunCaptureCompleteCleanupOperation,
                 NvencRunCaptureCompleteCleanupAttemptResult> forge,
             string message)
         {
             using (Harness h = Harness.Create())
             {
-                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.True);
-
-                FakeCleaner cleaner = new FakeCleaner();
-                NvencRunCaptureCompleteCleanupAttemptResult forged = forge(operation, cleaner);
+                NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult forged = forge(h, operation);
 
                 Assert.Throws<InvalidOperationException>(
                     () => h.RunCoordinator.TryReflectCaptureCompleteCleanup(forged), message);
                 Assert.That(h.State.IsPoisoned, Is.True, message);
-                Assert.That(cleaner.CallCount, Is.EqualTo(0), message);
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(0), message);
                 Assert.That(h.RunCoordinator.Disposition,
                     Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete), message);
             }
@@ -4085,12 +4133,21 @@ namespace Zantetsu.Core.Tests
         {
             private int _callCount;
 
+            internal NvencRunCaptureCompleteCleanupStatus Status =
+                NvencRunCaptureCompleteCleanupStatus.Cleaned;
+
             internal int CallCount => Volatile.Read(ref _callCount);
 
             public NvencRunCaptureCompleteCleanupAttemptResult Clean(
                 NvencRunCaptureCompleteCleanupOperation operation)
             {
                 Interlocked.Increment(ref _callCount);
+
+                if (Status == NvencRunCaptureCompleteCleanupStatus.Failed)
+                {
+                    return NvencRunCaptureCompleteCleanupAttemptResult.Failed(this, operation);
+                }
+
                 return NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(this, operation);
             }
         }
@@ -5056,7 +5113,7 @@ namespace Zantetsu.Core.Tests
                 {
                     Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
                         h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown,
-                        h.BackendJoin, h.SessionIssue, h.TraceFreeze, foreignService));
+                        h.BackendJoin, h.SessionIssue, h.TraceFreeze, foreignService, h.CleanupExecution));
                 }
                 finally
                 {
@@ -5420,7 +5477,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5430,7 +5487,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5442,7 +5499,7 @@ namespace Zantetsu.Core.Tests
                 // Same process state but a different Submit Worker instance
                 // than the one the Output Worker is bound to.
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5453,7 +5510,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5463,7 +5520,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5474,7 +5531,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5493,7 +5550,7 @@ namespace Zantetsu.Core.Tests
                 };
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
             }
         }
 
@@ -5503,25 +5560,27 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null, h.Service));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null, h.Service, h.CleanupExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, null));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, null, h.CleanupExecution));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, null));
             }
         }
 
@@ -6264,6 +6323,8 @@ namespace Zantetsu.Core.Tests
             internal FakeIndexCommitter IndexCommitter;
             internal FakeRunCompleter RunCompleter;
             internal NvencRunPublicationService Service;
+            internal FakeCleaner CleanupCleaner;
+            internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -6361,8 +6422,12 @@ namespace Zantetsu.Core.Tests
                     State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
                     captureCompleteCoordinator);
 
+                CleanupCleaner = new FakeCleaner();
+                CleanupExecution =
+                    new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
-                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);
+                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service, CleanupExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

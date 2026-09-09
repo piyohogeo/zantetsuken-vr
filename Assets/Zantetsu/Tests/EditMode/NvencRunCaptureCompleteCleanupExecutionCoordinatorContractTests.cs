@@ -1073,6 +1073,8 @@ namespace Zantetsu.Core.Tests
             internal FakeCaptureIndexCommitter IndexCommitter;
             internal FakeCompleter RunCompleter;
             internal NvencRunPublicationService Service;
+            internal FakeCleaner CleanupCleaner;
+            internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -1168,9 +1170,13 @@ namespace Zantetsu.Core.Tests
                     State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
                     captureCompleteCoordinator);
 
+                CleanupCleaner = new FakeCleaner();
+                CleanupExecution =
+                    new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,
-                    SessionIssue, TraceFreeze, Service);
+                    SessionIssue, TraceFreeze, Service, CleanupExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

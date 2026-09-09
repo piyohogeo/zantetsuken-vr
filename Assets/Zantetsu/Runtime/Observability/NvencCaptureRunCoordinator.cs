@@ -80,6 +80,7 @@ namespace Zantetsu.Observability
         private readonly CaptureRunInitializationSessionIssue _sessionIssue;
         private readonly NvencTraceFreezeCoordinator _traceFreeze;
         private readonly NvencRunPublicationService _publicationService;
+        private readonly NvencRunCaptureCompleteCleanupExecutionCoordinator _captureCompleteCleanupExecution;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -126,7 +127,8 @@ namespace Zantetsu.Observability
             NvencCaptureBackendJoinCoordinator backendJoin,
             CaptureRunInitializationSessionIssue sessionIssue,
             NvencTraceFreezeCoordinator traceFreeze,
-            NvencRunPublicationService publicationService)
+            NvencRunPublicationService publicationService,
+            NvencRunCaptureCompleteCleanupExecutionCoordinator captureCompleteCleanupExecution)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -138,6 +140,8 @@ namespace Zantetsu.Observability
             _sessionIssue = sessionIssue ?? throw new ArgumentNullException(nameof(sessionIssue));
             _traceFreeze = traceFreeze ?? throw new ArgumentNullException(nameof(traceFreeze));
             _publicationService = publicationService ?? throw new ArgumentNullException(nameof(publicationService));
+            _captureCompleteCleanupExecution = captureCompleteCleanupExecution
+                ?? throw new ArgumentNullException(nameof(captureCompleteCleanupExecution));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -3251,8 +3255,9 @@ namespace Zantetsu.Observability
         /// <summary>
         /// The exact shape one reflectable cleanup attempt result must have:
         /// not default, self-consistent, issued for the exact retained cleanup
-        /// operation whose binding is still intact, with a Cleaned receipt
-        /// issued for that result's own exact cleaner and operation and no
+        /// operation whose binding is still intact, produced by the exact
+        /// cleaner of this Run's cleanup Execution Coordinator, with a Cleaned
+        /// receipt issued for that same exact cleaner and operation and no
         /// receipt at all on Failed. ReferenceEquals and existing predicates
         /// only; no file is inspected and nothing is changed.
         /// </summary>
@@ -3265,6 +3270,15 @@ namespace Zantetsu.Observability
                 || result.Cleaner == null
                 || !ReferenceEquals(result.Operation, operation)
                 || !operation.IsBindingIntact)
+            {
+                return false;
+            }
+
+            // The cleanup authority is bound to this Run: only the exact
+            // cleaner of this Run's configured cleanup Execution Coordinator
+            // may have produced the result. A self-consistent result from any
+            // other cleaner is evidence of a cleanup this Run never ran.
+            if (!ReferenceEquals(result.Cleaner, _captureCompleteCleanupExecution.Cleaner))
             {
                 return false;
             }

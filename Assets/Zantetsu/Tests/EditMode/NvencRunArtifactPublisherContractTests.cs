@@ -940,6 +940,20 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        /// <summary>
+        /// Identity-only CaptureComplete cleaner: this fixture never runs a
+        /// cleanup, but the Run Coordinator requires the exact cleanup
+        /// Execution Coordinator its results must come from.
+        /// </summary>
+        private sealed class FakeCleanupCleaner : INvencRunCaptureCompleteCleaner
+        {
+            public NvencRunCaptureCompleteCleanupAttemptResult Clean(
+                NvencRunCaptureCompleteCleanupOperation operation)
+            {
+                return NvencRunCaptureCompleteCleanupAttemptResult.Cleaned(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -979,6 +993,8 @@ namespace Zantetsu.Core.Tests
             internal FakeIndexCommitter IndexCommitter;
             internal FakeRunCompleter RunCompleter;
             internal NvencRunPublicationService Service;
+            internal FakeCleanupCleaner CleanupCleaner;
+            internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -1073,9 +1089,13 @@ namespace Zantetsu.Core.Tests
                     State, commitCoordinator, artifactCoordinator, captureIndexCoordinator,
                     captureCompleteCoordinator);
 
+                CleanupCleaner = new FakeCleanupCleaner();
+                CleanupExecution =
+                    new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,
-                    SessionIssue, TraceFreeze, Service);
+                    SessionIssue, TraceFreeze, Service, CleanupExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
