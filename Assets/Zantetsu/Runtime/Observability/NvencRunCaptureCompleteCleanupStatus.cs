@@ -9,10 +9,13 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// Failed deliberately carries no partial-progress shape, no per-target
-    /// breakdown, no outcome-unknown case, and no retryable hint. Cleanup runs
-    /// only after the Run's published evidence is already settled, so an
-    /// unfinished cleanup changes nothing a finer status could act on; what it
-    /// means for the Run is the later Coordinator's decision.
+    /// breakdown, no outcome-unknown case, and no retryable hint. The cleanup
+    /// contract allows several deletions with no rollback, so a Failed cleanup
+    /// can leave the staging side partly removed. This status is simply not the
+    /// authority on how far it got: a later step re-inspects the actual file
+    /// set under the still-held Run lock rather than reading progress out of
+    /// the result. What a Failed cleanup means for the Run is the later
+    /// Coordinator's decision.
     /// </remarks>
     internal enum NvencRunCaptureCompleteCleanupStatus
     {
