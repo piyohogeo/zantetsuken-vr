@@ -530,11 +530,15 @@ namespace Zantetsu.Observability
                     int state = Volatile.Read(ref _state);
 
                     if (state == (int)NvencRunPublicationServiceState.AcceptingPlanCommit
+                        || state == (int)NvencRunPublicationServiceState.PlanCommitCompleted
                         || state == (int)NvencRunPublicationServiceState.AcceptingArtifactPublication)
                     {
                         // An early or spurious notification with no queued
                         // request: re-park instead of terminating, so a later
-                        // submission still converges.
+                        // submission still converges. PlanCommitCompleted is a
+                        // parked state after a Committed plan: a stray
+                        // notification delivered during plan execution must not
+                        // stop the Worker before the Artifact phase.
                         continue;
                     }
 

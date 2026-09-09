@@ -282,6 +282,46 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void PlanCommit_SpuriousNotifyDuringExecution_WorkerStillServicesArtifactPhase()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunPublicationPlanCommitOperation planOperation = PreparePlanOperation(h);
+                h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.Committer.Entered = entered;
+                h.Committer.Release = release;
+
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+
+                // An extra notification while the Plan is executing must not
+                // stop the Worker after the committed Plan terminal: the Worker
+                // re-parks and the Artifact phase still converges.
+                h.Service.Notify();
+
+                release.Set();
+                WaitForServiceState(h.Service, NvencRunPublicationServiceState.PlanCommitCompleted,
+                    "service did not publish the committed plan terminal");
+                Assert.That(h.Service.IsStopped, Is.False);
+
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingArtifactPublication));
+
+                Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(out _), Is.True);
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+
+                WaitForServiceStop(h.Service, "worker did not stop after the artifact publication");
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
         // ---- Artifact publication phase ----
 
         [Test]

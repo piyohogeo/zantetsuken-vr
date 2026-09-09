@@ -1881,9 +1881,14 @@ namespace Zantetsu.Observability
                         "The artifact publication result is null, foreign, default, or corrupt.");
                 }
 
+                // Resolve the next disposition first (side-effect-free
+                // validation). A validation failure poisons without any partial
+                // determination.
+                NvencRunEvidenceDisposition next = ResolveArtifactPublicationDisposition(collected);
+
                 // Release the Service wait handle exactly once. A dispose
                 // failure poisons and propagates the original exception without
-                // faking a successful state.
+                // any partial determination.
                 try
                 {
                     _publicationService.Dispose();
@@ -1894,11 +1899,18 @@ namespace Zantetsu.Observability
                     throw;
                 }
 
-                ReflectArtifactPublication(collected);
-
+                // Retain the result, the collected latch, and the
+                // Service-release evidence first, then publish the disposition
+                // last. A Published result keeps the existing Committed
+                // disposition untouched.
                 _artifactPublicationResult = collected;
                 _artifactPublicationCollected = true;
                 _publicationServiceReleased = true;
+
+                if (next != NvencRunEvidenceDisposition.Committed)
+                {
+                    _disposition = next;
+                }
 
                 result = collected;
                 return true;
@@ -1910,15 +1922,18 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Advances the Run's authoritative state from the exact artifact
-        /// publication status. A Published result keeps the Registry Slot and
-        /// disposition Committed and never changes the Plan or chunk; a Failed
-        /// result keeps the Registry Slot, Plan, chunk, and dedicated tmp
-        /// unchanged and advances only the disposition to
+        /// Side-effect-free resolution of the Run's next authoritative state
+        /// from the exact artifact publication status. A Published result keeps
+        /// the Registry Slot and the disposition Committed and never changes the
+        /// Plan or chunk; a Failed result keeps the Registry Slot, Plan, chunk,
+        /// and dedicated tmp unchanged and resolves only the disposition to
         /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
-        /// No retry, re-inspection, or cleanup is performed.
+        /// The disposition itself is not written here; the caller publishes it
+        /// last after retaining the result, the collected latch, and the
+        /// Service-release evidence. No retry, re-inspection, or cleanup is
+        /// performed.
         /// </summary>
-        private void ReflectArtifactPublication(
+        private NvencRunEvidenceDisposition ResolveArtifactPublicationDisposition(
             NvencRunArtifactPublicationAttemptResult collected)
         {
             switch (collected.Status)
@@ -1932,9 +1947,9 @@ namespace Zantetsu.Observability
                                 "The Registry Slot is no longer Committed for a Published artifact.");
                         }
 
-                        // Disposition stays Committed; the receipt is retained on
-                        // the collected result for a later CaptureComplete.
-                        return;
+                        // The receipt is retained on the collected result for a
+                        // later CaptureComplete.
+                        return NvencRunEvidenceDisposition.Committed;
                     }
 
                 case NvencRunArtifactPublicationStatus.Failed:
@@ -1948,8 +1963,7 @@ namespace Zantetsu.Observability
 
                         // Plan, chunk, and dedicated tmp stay unchanged; only the
                         // disposition advances to Recovery.
-                        _disposition = NvencRunEvidenceDisposition.PublicationRecoveryRequired;
-                        return;
+                        return NvencRunEvidenceDisposition.PublicationRecoveryRequired;
                     }
 
                 default:
