@@ -41,9 +41,16 @@ does not call `StopFinalizedBackend` and does not belong to the teardown-timing
 entry above.
 
 Cause not established, and it is not known whether this is a test-side race or
-a worker defect. Observed once, in the full suite run `20260909-190835-7250d9`;
-later full suite runs passed, but the test has not been shown to be
-deterministic in isolation.
+a worker defect. Observed twice, in the full suite runs
+`20260909-190835-7250d9` and `20260910-065539-58293d`, with the same assertion
+and message both times. Other full suite runs passed, but the test has not been
+shown to be deterministic in isolation.
+
+The second observation came from a run whose only change was additive — new
+files that this fixture does not reference — so it is not a regression from
+that change. That rules one suspect out; it does not establish the cause, so
+this entry stays here rather than moving to "Active flakes", and a failure of
+it is still a regression candidate to investigate.
 
 ## Resolved
 
