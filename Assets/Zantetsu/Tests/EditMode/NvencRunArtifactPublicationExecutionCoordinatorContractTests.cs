@@ -627,7 +627,16 @@ namespace Zantetsu.Core.Tests
             FinalizeAndPrepareCommit(h);
             h.Committer.Status = status;
             Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-            WaitForServiceStop(h, "service worker did not stop");
+            if (status == NvencRunPublicationPlanCommitStatus.Committed)
+            {
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted,
+                    "service did not publish the committed plan terminal");
+            }
+            else
+            {
+                WaitForServiceStop(h, "service worker did not stop");
+            }
+
             Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
                 out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
             return result;
@@ -635,7 +644,7 @@ namespace Zantetsu.Core.Tests
 
         private static void WaitForServiceStop(Harness h, string message)
         {
-            FieldInfo field = typeof(NvencRunPublicationPlanCommitService).GetField(
+            FieldInfo field = typeof(NvencRunPublicationService).GetField(
                 "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
             Thread worker = (Thread)field?.GetValue(h.Service);
             if (worker != null)
@@ -644,6 +653,15 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(h.Service.IsStopped, Is.True, message);
+        }
+
+        private static void WaitForServiceState(
+            Harness h,
+            NvencRunPublicationServiceState expected,
+            string message)
+        {
+            SpinWait.SpinUntil(() => h.Service.State == expected, WatchdogTimeoutMs);
+            Assert.That(h.Service.State, Is.EqualTo(expected), message);
         }
 
         // ---- Fakes ----
@@ -908,7 +926,8 @@ namespace Zantetsu.Core.Tests
             internal ManualResetEventSlim SettledEvent;
 
             internal FakeCommitter Committer;
-            internal NvencRunPublicationPlanCommitService Service;
+            internal FakePublisher Publisher;
+            internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -993,7 +1012,10 @@ namespace Zantetsu.Core.Tests
                 Committer = new FakeCommitter();
                 NvencRunPublicationPlanCommitExecutionCoordinator commitCoordinator =
                     new NvencRunPublicationPlanCommitExecutionCoordinator(Committer);
-                Service = new NvencRunPublicationPlanCommitService(State, commitCoordinator);
+                Publisher = new FakePublisher();
+                NvencRunArtifactPublicationExecutionCoordinator artifactCoordinator =
+                    new NvencRunArtifactPublicationExecutionCoordinator(Publisher);
+                Service = new NvencRunPublicationService(State, commitCoordinator, artifactCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);
@@ -1067,7 +1089,7 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
-                FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(
+                FieldInfo serviceField = typeof(NvencRunPublicationService).GetField(
                     "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
                 Thread serviceThread = (Thread)serviceField?.GetValue(Service);
                 if (serviceThread != null)

@@ -76,5 +76,37 @@ namespace Zantetsu.Observability
                 && ReferenceEquals(_coordinator, coordinator)
                 && IsValid;
         }
+
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only while this exact operation is the exact retained
+        /// artifact publication operation of its Run Coordinator and that Run
+        /// Coordinator is bound to the exact supplied process state. It
+        /// delegates only ReferenceEquals checks to the Run Coordinator and
+        /// never exposes the Coordinator or the process state as a property.
+        /// </summary>
+        internal bool IsBoundToProcessState(NvencCaptureProcessState processState)
+        {
+            return processState != null
+                && _coordinator != null
+                && _coordinator.IsArtifactPublicationOperationBoundTo(this, processState);
+        }
+
+        /// <summary>
+        /// Exception-safe post-publication issuance binding: true only while the
+        /// exact coordinator retention, the exact committed plan result and
+        /// receipt, the exact finalization result, descriptor, relation, run
+        /// identity, the Registry Slot's exact committed entry, a Finalized
+        /// context, and a live Session Ownership Lease still hold, without
+        /// requiring the disposition to remain <c>Committed</c>: a
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// after a Failed publish keeps the binding intact. Used by the issued
+        /// attempt result and receipt so that reflecting a Failed publish does
+        /// not invalidate them.
+        /// </summary>
+        internal bool IsBindingIntact =>
+            _coordinator != null
+            && _planCommitResult != null
+            && _coordinator.IsArtifactPublicationBindingIntact(this);
     }
 }

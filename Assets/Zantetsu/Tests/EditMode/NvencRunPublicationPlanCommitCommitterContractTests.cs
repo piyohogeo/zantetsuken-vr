@@ -675,6 +675,40 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        private sealed class FakePublisher : INvencRunArtifactPublisher
+        {
+            private int _callCount;
+            internal NvencRunArtifactPublicationStatus Status = NvencRunArtifactPublicationStatus.Published;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunArtifactPublicationAttemptResult OverrideResult;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunArtifactPublicationAttemptResult Publish(
+                NvencRunArtifactPublicationOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunArtifactPublicationStatus.Failed)
+                {
+                    return NvencRunArtifactPublicationAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunArtifactPublicationAttemptResult.Published(this, operation);
+            }
+        }
+
         private sealed class FakeHandle : ICaptureRunLockHandle
         {
             public FakeHandle(string lockPath, bool isCreated)
@@ -865,7 +899,8 @@ namespace Zantetsu.Core.Tests
             internal NvencTraceFreezeCoordinator TraceFreeze;
 
             internal FakeCommitter Committer;
-            internal NvencRunPublicationPlanCommitService Service;
+            internal FakePublisher Publisher;
+            internal NvencRunPublicationService Service;
 
             private readonly Action _settledHandler;
 
@@ -940,7 +975,10 @@ namespace Zantetsu.Core.Tests
                 Committer = new FakeCommitter();
                 NvencRunPublicationPlanCommitExecutionCoordinator commitCoordinator =
                     new NvencRunPublicationPlanCommitExecutionCoordinator(Committer);
-                Service = new NvencRunPublicationPlanCommitService(State, commitCoordinator);
+                Publisher = new FakePublisher();
+                NvencRunArtifactPublicationExecutionCoordinator artifactCoordinator =
+                    new NvencRunArtifactPublicationExecutionCoordinator(Publisher);
+                Service = new NvencRunPublicationService(State, commitCoordinator, artifactCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);
@@ -1011,7 +1049,7 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
-                FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(
+                FieldInfo serviceField = typeof(NvencRunPublicationService).GetField(
                     "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
                 Thread serviceThread = (Thread)serviceField?.GetValue(Service);
                 if (serviceThread != null)

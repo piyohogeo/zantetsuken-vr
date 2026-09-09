@@ -1641,22 +1641,22 @@ namespace Zantetsu.Core.Tests
                 // No Plan was ever prepared or submitted: the unused Service
                 // stops normally without poisoning while the process stays
                 // Draining.
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.True);
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.True);
 
                 WaitForServiceStop(h, "service worker did not stop normally");
 
                 Assert.That(h.State.IsDraining, Is.True);
                 Assert.That(h.State.IsPoisoned, Is.False);
                 Assert.That(h.Service.State,
-                    Is.EqualTo(NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest));
+                    Is.EqualTo(NvencRunPublicationServiceState.StoppedWithoutRequest));
 
                 // The worker is physically stopped; the non-waiting completion
                 // entry releases the wait handle exactly once, and a re-call is
                 // idempotent.
-                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.True);
-                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.True);
+                Assert.That(h.RunCoordinator.TryCompletePublicationServiceStop(), Is.True);
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
                 Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(1));
-                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompletePublicationServiceStop(), Is.True);
             }
         }
 
@@ -1667,12 +1667,12 @@ namespace Zantetsu.Core.Tests
             {
                 // Run start: not Draining, no disposition, no operation. The
                 // stop request must be rejected without locking the Service.
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.False);
 
                 Assert.That(h.State.IsAccepting, Is.True);
                 Assert.That(h.State.IsPoisoned, Is.False);
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.None));
-                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingPlanCommit));
             }
         }
 
@@ -1684,10 +1684,10 @@ namespace Zantetsu.Core.Tests
                 FinalizeOnly(h);
 
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.False);
 
                 Assert.That(h.State.IsPoisoned, Is.False);
-                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingPlanCommit));
             }
         }
 
@@ -1699,13 +1699,13 @@ namespace Zantetsu.Core.Tests
                 FinalizeAndPrepareCommit(h);
 
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
-                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationPlanCommitServiceState.Accepting));
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.False);
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingPlanCommit));
 
                 // The prepared operation is untouched: the Service is still
                 // usable and the submission still proceeds.
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop after submission");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
             }
         }
@@ -1717,11 +1717,11 @@ namespace Zantetsu.Core.Tests
             {
                 FinalizeAndPrepareCommit(h);
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
 
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.False);
                 Assert.That(h.State.IsPoisoned, Is.False);
             }
         }
@@ -1738,7 +1738,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.CommitOutcomeUnknown));
 
-                Assert.That(h.RunCoordinator.TryStopPublicationPlanCommitService(), Is.False);
+                Assert.That(h.RunCoordinator.TryStopPublicationService(), Is.False);
                 Assert.That(h.State.IsPoisoned, Is.False);
             }
         }
@@ -1751,8 +1751,8 @@ namespace Zantetsu.Core.Tests
                 // The Service is still parked Accepting: its Worker is alive,
                 // so the non-waiting completion entry must neither dispose nor
                 // publish release evidence.
-                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.False);
-                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.False);
+                Assert.That(h.RunCoordinator.TryCompletePublicationServiceStop(), Is.False);
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
                 Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(0));
             }
         }
@@ -1764,14 +1764,14 @@ namespace Zantetsu.Core.Tests
             {
                 FinalizeAndPrepareCommit(h);
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
 
                 // The Worker reached Completed with the commit Result still
                 // uncollected: this is a commit terminal, not a normal
                 // StoppedWithoutRequest release. The completion entry must not
                 // dispose the Service or publish release evidence.
-                Assert.That(h.RunCoordinator.TryCompletePublicationPlanCommitServiceStop(), Is.False);
-                Assert.That(h.RunCoordinator.PublicationPlanCommitServiceReleased, Is.False);
+                Assert.That(h.RunCoordinator.TryCompletePublicationServiceStop(), Is.False);
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
                 Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(0));
 
                 // The commit Result is still normally collectable afterwards.
@@ -1858,7 +1858,7 @@ namespace Zantetsu.Core.Tests
             {
                 FinalizeAndPrepareCommit(h);
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
 
                 // Still Finalized: the commit result has not been collected.
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Finalized));
@@ -2014,12 +2014,260 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Artifact publication submit and reflection ----
+
+        private static NvencRunArtifactPublicationOperation PrepareArtifactSubmission(Harness h)
+        {
+            CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+            Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
+                out NvencRunArtifactPublicationOperation operation), Is.True);
+            return operation;
+        }
+
+        [Test]
+        public void SubmitArtifactPublication_Committed_ForwardsExactOperationOnce()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.True);
+                Assert.That(result.IsPublished, Is.True);
+                Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
+                Assert.That(result.Receipt.IsIssuedFor(h.Publisher, operation), Is.True);
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void SubmitArtifactPublication_BeforePrepare_PlanUncollected_Poisoned_GateBusy_NoPublisherContact()
+        {
+            // No retained operation: refused before the publisher is contacted.
+            using (Harness h = Harness.Create())
+            {
+                CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
+                SetField(h.RunCoordinator, "_artifactPublicationOperation", null);
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(0));
+            }
+
+            // Plan commit result not yet collected: refused.
+            using (Harness h = Harness.Create())
+            {
+                FinalizeAndPrepareCommit(h);
+                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted,
+                    "service did not publish the plan terminal");
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(0));
+            }
+
+            // Double submission: the retained operation is handed over exactly
+            // once.
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+            }
+
+            // Poisoned: the process-state gate refuses before any Service contact.
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(0));
+            }
+
+            // Gate contention: a background holder keeps the shared gate busy.
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
+                    Assert.That(h.Publisher.CallCount, Is.EqualTo(0));
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void CollectArtifactPublication_Published_KeepsCommittedAndReceipt()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.True);
+                Assert.That(result.IsPublished, Is.True);
+                Assert.That(result.Receipt, Is.Not.Null);
+                Assert.That(result.Receipt.IsIssuedFor(h.Publisher, operation), Is.True);
+
+                // Registry and disposition stay Committed; the Plan and chunk are
+                // never touched.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
+                Assert.That(h.SessionIssue.IsValid, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void CollectArtifactPublication_Failed_AdvancesDispositionOnly()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunArtifactPublicationOperation operation = PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Failed;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the failed artifact");
+
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.True);
+                Assert.That(result.IsFailed, Is.True);
+                Assert.That(result.Receipt, Is.Null);
+
+                // Registry stays Committed; only the disposition advances.
+                Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The retained result and its binding stay intact after the
+                // Failed reflection.
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(result.IsFailed, Is.True);
+
+                // Re-call returns the same retained result without re-collecting,
+                // re-disposing, or re-transitioning.
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult again), Is.True);
+                Assert.That(again.Status, Is.EqualTo(NvencRunArtifactPublicationStatus.Failed));
+                Assert.That(ReferenceEquals(again.Operation, operation), Is.True);
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+            }
+        }
+
+        [Test]
+        public void CollectArtifactPublication_PollBeforeStop_RetrySucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.Publisher.Entered = entered;
+                h.Publisher.Release = release;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "publisher did not enter");
+
+                // A poll while the Worker is still executing must not collect and
+                // must not clear the slot.
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.False);
+
+                release.Set();
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.True);
+                Assert.That(result.IsPublished, Is.True);
+
+                entered.Dispose();
+                release.Dispose();
+            }
+        }
+
+        [Test]
+        public void CollectArtifactPublication_ExternalPoisonFirst_NoReflection()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+                h.Publisher.Status = NvencRunArtifactPublicationStatus.Published;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the artifact publication");
+
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+
+                // The uncollected result is never reflected.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+            }
+        }
+
+        [Test]
+        public void CollectArtifactPublication_CorruptPublisherResult_Poisons()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareArtifactSubmission(h);
+
+                // A default (None) attempt result is corrupt: the Service Worker
+                // rejects it and poisons the process.
+                h.Publisher.UseOverride = true;
+                h.Publisher.OverrideResult = default;
+
+                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                WaitForServiceStop(h, "publication worker did not stop after the corrupt artifact result");
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Service.TryGetFailure(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
+                    out NvencRunArtifactPublicationAttemptResult result), Is.False);
+                Assert.That(result.IsNone, Is.True);
+            }
+        }
+
         [Test]
         public void ArtifactPublicationOperation_TwoReadonlyFields_SealedInternal()
         {
             Type type = typeof(NvencRunArtifactPublicationOperation);
-
-            Assert.That(type.IsClass, Is.True);
             Assert.That(type.IsSealed, Is.True);
             Assert.That(type.IsPublic, Is.False);
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
@@ -2259,8 +2507,10 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 NvencCaptureProcessState foreign = new NvencCaptureProcessState();
-                NvencRunPublicationPlanCommitService foreignService = new NvencRunPublicationPlanCommitService(
-                    foreign, new NvencRunPublicationPlanCommitExecutionCoordinator(new FakeCommitter()));
+                NvencRunPublicationService foreignService = new NvencRunPublicationService(
+                    foreign,
+                    new NvencRunPublicationPlanCommitExecutionCoordinator(new FakeCommitter()),
+                    new NvencRunArtifactPublicationExecutionCoordinator(new FakePublisher()));
 
                 try
                 {
@@ -2276,7 +2526,7 @@ namespace Zantetsu.Core.Tests
                         foreignService.Notify();
                     }
 
-                    FieldInfo field = typeof(NvencRunPublicationPlanCommitService).GetField(
+                    FieldInfo field = typeof(NvencRunPublicationService).GetField(
                         "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
                     Thread worker = (Thread)field?.GetValue(foreignService);
                     if (worker != null)
@@ -2343,7 +2593,7 @@ namespace Zantetsu.Core.Tests
 
                 // Once the gate is released the submission proceeds.
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
             }
         }
@@ -2359,7 +2609,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.False);
 
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
             }
         }
@@ -2373,7 +2623,7 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
                     out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
 
@@ -2382,7 +2632,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
-                Assert.That(h.Committer.ExecutingThreadName, Is.EqualTo(NvencRunPublicationPlanCommitService.WorkerThreadName));
+                Assert.That(h.Committer.ExecutingThreadName, Is.EqualTo(NvencRunPublicationService.WorkerThreadName));
             }
         }
 
@@ -2435,7 +2685,7 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
                     out NvencRunPublicationPlanCommitExecutionResult first), Is.True);
 
@@ -2447,49 +2697,49 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
-                Assert.That(h.Service.IsStopped, Is.True);
+
+                // A Committed collect keeps the Worker parked for the Artifact
+                // phase: the Service is neither stopped nor released.
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingArtifactPublication));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
             }
         }
 
         [Test]
-        public void Collect_PollBeforeWorkerStop_RetrySucceeds()
+        public void Collect_PollBeforeCompleted_RetrySucceeds()
         {
             using (Harness h = Harness.Create())
             {
                 FinalizeAndPrepareCommit(h);
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
-                int callbackRan = 0;
-                int earlyCollected = 0;
-                ManualResetEventSlim settled = new ManualResetEventSlim(false);
-
-                // The Service publishes Completed while its Worker is still
-                // alive; a poll inside that window must not clear the slot.
-                h.Service.Settled += () =>
-                {
-                    Interlocked.Increment(ref callbackRan);
-                    if (h.RunCoordinator.TryCollectPublicationPlanCommit(out _))
-                    {
-                        Interlocked.Increment(ref earlyCollected);
-                    }
-
-                    settled.Set();
-                };
+                ManualResetEventSlim entered = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                h.Committer.Entered = entered;
+                h.Committer.Release = release;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitSettled(settled, "service did not settle");
-                WaitForServiceStop(h, "service worker did not stop");
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                Assert.That(Volatile.Read(ref callbackRan), Is.EqualTo(1));
-                Assert.That(Volatile.Read(ref earlyCollected), Is.EqualTo(0),
-                    "the pre-stop poll must not collect the result");
+                // A poll while the Worker is still executing must not collect
+                // and must not clear the slot.
+                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.False);
 
-                // After the Worker exited, the retry collects and reflects.
+                release.Set();
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted,
+                    "service did not publish the plan commit terminal");
+
+                // After the terminal is published, the retry collects and
+                // reflects.
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
                     out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
                 Assert.That(result, Is.Not.Null);
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+
+                entered.Dispose();
+                release.Dispose();
             }
         }
 
@@ -2502,7 +2752,7 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
 
                 Assert.That(h.State.TryPoison(), Is.True);
 
@@ -2525,7 +2775,7 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
 
                 // Break the issuance binding so the collected result is no longer
                 // valid at reflection time.
@@ -2548,7 +2798,7 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
 
                 // Corrupt the registered entry so the Commit transition fails.
                 SetField(h.Slot, "_result", null);
@@ -2561,7 +2811,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Collect_ReleasesWorkerAndWaitHandle()
+        public void Collect_Committed_KeepsWorkerParkedAndServiceAlive()
         {
             using (Harness h = Harness.Create())
             {
@@ -2569,14 +2819,15 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                WaitForServiceStop(h, "service worker did not stop");
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted, "service did not publish the plan commit terminal");
                 Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.True);
 
-                // The worker is physically stopped and the wait handle is
-                // released exactly once (dispose is idempotent).
-                Assert.That(h.Service.IsStopped, Is.True);
-                Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(1));
-                Assert.DoesNotThrow(() => h.Service.Dispose());
+                // A Committed collect keeps the Worker parked for the Artifact
+                // phase: the Service is neither physically stopped nor released.
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That((int)GetField(h.Service, "_lifecycleState"), Is.EqualTo(0));
+                Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingArtifactPublication));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
             }
         }
 
@@ -2954,7 +3205,18 @@ namespace Zantetsu.Core.Tests
             FinalizeAndPrepareCommit(h);
             h.Committer.Status = status;
             Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-            WaitForServiceStop(h, "service worker did not stop");
+            if (status == NvencRunPublicationPlanCommitStatus.Committed)
+            {
+                // A Committed plan keeps the Worker parked; wait only for the
+                // published terminal, never for a physical stop.
+                WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted,
+                    "service did not publish the committed plan terminal");
+            }
+            else
+            {
+                WaitForServiceStop(h, "service worker did not stop");
+            }
+
             Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(
                 out NvencRunPublicationPlanCommitExecutionResult result), Is.True);
             return result;
@@ -2962,7 +3224,7 @@ namespace Zantetsu.Core.Tests
 
         private static void WaitForServiceStop(Harness h, string message)
         {
-            FieldInfo field = typeof(NvencRunPublicationPlanCommitService).GetField(
+            FieldInfo field = typeof(NvencRunPublicationService).GetField(
                 "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
             Thread worker = (Thread)field?.GetValue(h.Service);
             if (worker != null)
@@ -2971,6 +3233,15 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(h.Service.IsStopped, Is.True, message);
+        }
+
+        private static void WaitForServiceState(
+            Harness h,
+            NvencRunPublicationServiceState expected,
+            string message)
+        {
+            SpinWait.SpinUntil(() => h.Service.State == expected, WatchdogTimeoutMs);
+            Assert.That(h.Service.State, Is.EqualTo(expected), message);
         }
 
         private static NvencOrderedSubmitWorkerService BuildSubmitWorker(NvencCaptureProcessState state)
@@ -3000,6 +3271,8 @@ namespace Zantetsu.Core.Tests
             internal Exception ExceptionToThrow;
             internal string ExecutingThreadName;
             internal int ExecutingManagedThreadId;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
 
             internal int CallCount => Volatile.Read(ref _callCount);
 
@@ -3009,6 +3282,16 @@ namespace Zantetsu.Core.Tests
                 Interlocked.Increment(ref _callCount);
                 ExecutingThreadName = Thread.CurrentThread.Name;
                 ExecutingManagedThreadId = Thread.CurrentThread.ManagedThreadId;
+
+                if (Entered != null)
+                {
+                    Entered.Set();
+                }
+
+                if (Release != null)
+                {
+                    Release.Wait(WatchdogTimeoutMs);
+                }
 
                 if (ExceptionToThrow != null)
                 {
@@ -3026,6 +3309,52 @@ namespace Zantetsu.Core.Tests
                 }
 
                 return NvencRunPublicationPlanCommitAttemptResult.Committed(this, operation);
+            }
+        }
+
+        private sealed class FakePublisher : INvencRunArtifactPublisher
+        {
+            private int _callCount;
+            internal NvencRunArtifactPublicationStatus Status = NvencRunArtifactPublicationStatus.Published;
+            internal Exception ExceptionToThrow;
+            internal bool UseOverride;
+            internal NvencRunArtifactPublicationAttemptResult OverrideResult;
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Release;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunArtifactPublicationAttemptResult Publish(
+                NvencRunArtifactPublicationOperation operation)
+            {
+                Interlocked.Increment(ref _callCount);
+
+                if (Entered != null)
+                {
+                    Entered.Set();
+                }
+
+                if (Release != null)
+                {
+                    Release.Wait(WatchdogTimeoutMs);
+                }
+
+                if (ExceptionToThrow != null)
+                {
+                    throw ExceptionToThrow;
+                }
+
+                if (UseOverride)
+                {
+                    return OverrideResult;
+                }
+
+                if (Status == NvencRunArtifactPublicationStatus.Failed)
+                {
+                    return NvencRunArtifactPublicationAttemptResult.Failed(this, operation);
+                }
+
+                return NvencRunArtifactPublicationAttemptResult.Published(this, operation);
             }
         }
 
@@ -3291,7 +3620,8 @@ namespace Zantetsu.Core.Tests
             internal ManualResetEventSlim SettledEvent;
 
             internal FakeCommitter Committer;
-            internal NvencRunPublicationPlanCommitService Service;
+            internal FakePublisher Publisher;
+            internal NvencRunPublicationService Service;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -3376,7 +3706,10 @@ namespace Zantetsu.Core.Tests
                 Committer = new FakeCommitter();
                 NvencRunPublicationPlanCommitExecutionCoordinator commitCoordinator =
                     new NvencRunPublicationPlanCommitExecutionCoordinator(Committer);
-                Service = new NvencRunPublicationPlanCommitService(State, commitCoordinator);
+                Publisher = new FakePublisher();
+                NvencRunArtifactPublicationExecutionCoordinator artifactCoordinator =
+                    new NvencRunArtifactPublicationExecutionCoordinator(Publisher);
+                Service = new NvencRunPublicationService(State, commitCoordinator, artifactCoordinator);
 
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service);
@@ -3450,7 +3783,7 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
-                FieldInfo serviceField = typeof(NvencRunPublicationPlanCommitService).GetField(
+                FieldInfo serviceField = typeof(NvencRunPublicationService).GetField(
                     "_workerThread", BindingFlags.Instance | BindingFlags.NonPublic);
                 Thread serviceThread = (Thread)serviceField?.GetValue(Service);
                 if (serviceThread != null)

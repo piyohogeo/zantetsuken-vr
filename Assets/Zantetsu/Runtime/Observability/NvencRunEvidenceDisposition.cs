@@ -24,5 +24,6 @@ namespace Zantetsu.Observability
         Incomplete = 2,
         Committed = 3,
         CommitOutcomeUnknown = 4,
+        PublicationRecoveryRequired = 5,
     }
 }

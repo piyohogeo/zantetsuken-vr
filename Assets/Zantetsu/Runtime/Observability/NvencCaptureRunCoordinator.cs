@@ -79,7 +79,7 @@ namespace Zantetsu.Observability
         private readonly NvencCaptureBackendJoinCoordinator _backendJoin;
         private readonly CaptureRunInitializationSessionIssue _sessionIssue;
         private readonly NvencTraceFreezeCoordinator _traceFreeze;
-        private readonly NvencRunPublicationPlanCommitService _publicationPlanCommitService;
+        private readonly NvencRunPublicationService _publicationService;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -98,9 +98,12 @@ namespace Zantetsu.Observability
         private bool _publicationPlanCommitSubmitted;
         private bool _publicationPlanCommitCollected;
         private NvencRunPublicationPlanCommitExecutionResult _publicationPlanCommitResult;
-        private bool _publicationPlanCommitServiceReleased;
-        private bool _publicationPlanCommitServiceStopRequested;
+        private bool _publicationServiceReleased;
+        private bool _publicationServiceStopRequested;
         private NvencRunArtifactPublicationOperation _artifactPublicationOperation;
+        private bool _artifactPublicationSubmitted;
+        private bool _artifactPublicationCollected;
+        private NvencRunArtifactPublicationAttemptResult _artifactPublicationResult;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -112,7 +115,7 @@ namespace Zantetsu.Observability
             NvencCaptureBackendJoinCoordinator backendJoin,
             CaptureRunInitializationSessionIssue sessionIssue,
             NvencTraceFreezeCoordinator traceFreeze,
-            NvencRunPublicationPlanCommitService publicationPlanCommitService)
+            NvencRunPublicationService publicationService)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -123,7 +126,7 @@ namespace Zantetsu.Observability
             _backendJoin = backendJoin ?? throw new ArgumentNullException(nameof(backendJoin));
             _sessionIssue = sessionIssue ?? throw new ArgumentNullException(nameof(sessionIssue));
             _traceFreeze = traceFreeze ?? throw new ArgumentNullException(nameof(traceFreeze));
-            _publicationPlanCommitService = publicationPlanCommitService ?? throw new ArgumentNullException(nameof(publicationPlanCommitService));
+            _publicationService = publicationService ?? throw new ArgumentNullException(nameof(publicationService));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -183,14 +186,14 @@ namespace Zantetsu.Observability
                     nameof(traceFreeze));
             }
 
-            // The Publication Plan Commit Service must be bound to the exact
-            // process state; this is checked before any side effect so a
-            // foreign Service can never submit a Plan against this Run.
-            if (!_publicationPlanCommitService.IsBoundToProcessState(_processState))
+            // The Publication Service must be bound to the exact process
+            // state; this is checked before any side effect so a foreign
+            // Service can never submit a Plan or Artifact against this Run.
+            if (!_publicationService.IsBoundToProcessState(_processState))
             {
                 throw new ArgumentException(
-                    "The Publication Plan Commit Service must be bound to the exact process state.",
-                    nameof(publicationPlanCommitService));
+                    "The Publication Service must be bound to the exact process state.",
+                    nameof(publicationService));
             }
         }
 
@@ -1339,8 +1342,8 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_publicationPlanCommitService.State
-                    != NvencRunPublicationPlanCommitServiceState.Accepting)
+                if (_publicationService.State
+                    != NvencRunPublicationServiceState.AcceptingPlanCommit)
                 {
                     return false;
                 }
@@ -1348,7 +1351,7 @@ namespace Zantetsu.Observability
                 // The Service re-checks its own state inside the same
                 // process-state gate (reentrant), so the retained operation is
                 // handed over exactly once.
-                if (!_publicationPlanCommitService.TrySubmit(operation))
+                if (!_publicationService.TrySubmitPlanCommit(operation))
                 {
                     return false;
                 }
@@ -1367,14 +1370,17 @@ namespace Zantetsu.Observability
         /// plan commit outcome into the Run's authoritative state. The first
         /// successful call collects the Execution Result from the Service
         /// exactly once, verifies it against the retained operation and the Run
-        /// identity, releases the Service wait handle exactly once, advances the
-        /// Registry Slot per status, retains the result, and publishes the
-        /// disposition last. Re-calls return the same retained reference after
-        /// re-checking the current correlation without re-collecting,
-        /// re-transitioning, or re-disposing. A null, foreign, or corrupt
-        /// result, a Service fatal failure, or a failed Registry transition
-        /// poisons without guessing another disposition. An external Poison
-        /// that linearized first never reflects a normal result.
+        /// identity, advances the Registry Slot per status, retains the result,
+        /// and publishes the disposition last. A Committed result is collected
+        /// while the Worker stays parked and the Service advances to the
+        /// Artifact-accepting phase without being disposed; a non-Committed
+        /// result is collected only after the Worker has physically stopped and
+        /// the Service is then disposed exactly once. Re-calls return the same
+        /// retained reference after re-checking the current correlation without
+        /// re-collecting, re-transitioning, or re-disposing. A null, foreign, or
+        /// corrupt result, a Service fatal failure, or a failed Registry
+        /// transition poisons without guessing another disposition. An external
+        /// Poison that linearized first never reflects a normal result.
         /// </summary>
         internal bool TryCollectPublicationPlanCommit(
             out NvencRunPublicationPlanCommitExecutionResult result)
@@ -1407,23 +1413,14 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // The Service publishes Completed while its Worker is still
-                // alive. Collect only after the Worker has physically stopped,
-                // so a poll inside that window never clears the Service slot
-                // before the result can be reflected.
-                if (!_publicationPlanCommitService.IsStopped)
-                {
-                    return false;
-                }
-
-                if (_publicationPlanCommitService.TryGetFailure(out _))
+                if (_publicationService.TryGetFailure(out _))
                 {
                     _processState.TryPoison();
                     throw new InvalidOperationException(
-                        "The publication plan commit service reported a fatal failure.");
+                        "The publication service reported a fatal failure.");
                 }
 
-                if (!_publicationPlanCommitService.TryCollect(
+                if (!_publicationService.TryCollectPlanCommit(
                         out NvencRunPublicationPlanCommitExecutionResult collected))
                 {
                     return false;
@@ -1438,22 +1435,29 @@ namespace Zantetsu.Observability
                         "The publication plan commit result is null, foreign, or corrupt.");
                 }
 
-                // Release the Service wait handle exactly once. A dispose
-                // failure poisons and propagates the original exception without
-                // faking a successful state.
-                try
-                {
-                    _publicationPlanCommitService.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    _processState.TryPoison();
-                    throw;
-                }
-
                 ReflectPublicationPlanCommit(collected);
 
                 _publicationPlanCommitCollected = true;
+
+                // A Committed result keeps the Worker parked for the Artifact
+                // phase, so the Service is not disposed. Any non-Committed
+                // result has already physically stopped the Worker, so the
+                // Service wait handle is released exactly once here.
+                if (collected.Status != NvencRunPublicationPlanCommitStatus.Committed)
+                {
+                    try
+                    {
+                        _publicationService.Dispose();
+                    }
+                    catch (Exception)
+                    {
+                        _processState.TryPoison();
+                        throw;
+                    }
+
+                    _publicationServiceReleased = true;
+                }
+
                 result = collected;
                 return true;
             }
@@ -1477,7 +1481,7 @@ namespace Zantetsu.Observability
         /// gate contention returns false with no change. The actual wait handle
         /// release is a separate non-waiting completion entry.
         /// </summary>
-        internal bool TryStopPublicationPlanCommitService()
+        internal bool TryStopPublicationService()
         {
             if (!_processState.TryBeginSubmitStep())
             {
@@ -1492,8 +1496,8 @@ namespace Zantetsu.Observability
                     || _publicationPlanCommitOperation != null
                     || _publicationPlanCommitSubmitted
                     || _publicationPlanCommitCollected
-                    || _publicationPlanCommitService.State
-                        != NvencRunPublicationPlanCommitServiceState.Accepting)
+                    || _publicationService.State
+                        != NvencRunPublicationServiceState.AcceptingPlanCommit)
                 {
                     return false;
                 }
@@ -1501,12 +1505,12 @@ namespace Zantetsu.Observability
                 // The Service re-checks its own state inside the same
                 // process-state gate (reentrant), so the stop is linearized
                 // with a concurrent submission and never races it.
-                if (!_publicationPlanCommitService.TryStopWithoutRequest())
+                if (!_publicationService.TryStopWithoutRequest())
                 {
                     return false;
                 }
 
-                _publicationPlanCommitServiceStopRequested = true;
+                _publicationServiceStopRequested = true;
                 return true;
             }
             finally
@@ -1516,31 +1520,31 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// True only after <see cref="TryCompletePublicationPlanCommitServiceStop"/>
-        /// has released the Service wait handle exactly once.
+        /// True only after the Publication Service wait handle has been
+        /// released exactly once, either by
+        /// <see cref="TryCompletePublicationServiceStop"/> for a never-requested
+        /// Incomplete Run or by the normal Artifact publication collection.
         /// </summary>
-        internal bool PublicationPlanCommitServiceReleased =>
-            _publicationPlanCommitServiceReleased;
+        internal bool PublicationServiceReleased =>
+            _publicationServiceReleased;
 
         /// <summary>
-        /// Non-waiting, idempotent completion of the Publication Plan Commit
-        /// Service stop. It is admitted only for the exact stop-requested,
-        /// never-committed Incomplete Run: the stop request must have
-        /// succeeded, the disposition must still be
-        /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>, no Plan
-        /// commit may be prepared, submitted, or collected, and the Service
-        /// must be in
-        /// <see cref="NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest"/>.
-        /// It then bounded-polls
-        /// <see cref="NvencRunPublicationPlanCommitService.IsStopped"/> (never
-        /// joining the Worker on the Main Thread), and once the Worker has
-        /// physically exited it disposes the Service exactly once, retaining the
-        /// release evidence. A never-requested stop, an uncollected commit
+        /// Non-waiting, idempotent completion of the Publication Service stop.
+        /// It is admitted only for the exact stop-requested, never-committed
+        /// Incomplete Run: the stop request must have succeeded, the
+        /// disposition must still be
+        /// <see cref="NvencRunEvidenceDisposition.Incomplete"/>, no Plan commit
+        /// may be prepared, submitted, or collected, and the Service must be in
+        /// <see cref="NvencRunPublicationServiceState.StoppedWithoutRequest"/>.
+        /// It then bounded-polls <see cref="NvencRunPublicationService.IsStopped"/>
+        /// (never joining the Worker on the Main Thread), and once the Worker
+        /// has physically exited it disposes the Service exactly once, retaining
+        /// the release evidence. A never-requested stop, an uncollected commit
         /// terminal, a non-Incomplete disposition, or a still-running Worker
         /// returns false with no side effect; after release re-calls return true
         /// without a second dispose.
         /// </summary>
-        internal bool TryCompletePublicationPlanCommitServiceStop()
+        internal bool TryCompletePublicationServiceStop()
         {
             if (!_processState.TryBeginResourceResolution())
             {
@@ -1551,7 +1555,7 @@ namespace Zantetsu.Observability
             {
                 // Idempotent: an already-released Service returns the same
                 // result with no second dispose.
-                if (_publicationPlanCommitServiceReleased)
+                if (_publicationServiceReleased)
                 {
                     return true;
                 }
@@ -1560,25 +1564,25 @@ namespace Zantetsu.Observability
                 // may release the Service: an uncollected commit terminal or a
                 // never-requested stop is never mistaken for a normal
                 // StoppedWithoutRequest completion.
-                if (!_publicationPlanCommitServiceStopRequested
+                if (!_publicationServiceStopRequested
                     || _disposition != NvencRunEvidenceDisposition.Incomplete
                     || _publicationPlanCommitOperation != null
                     || _publicationPlanCommitSubmitted
                     || _publicationPlanCommitCollected
-                    || _publicationPlanCommitService.State
-                        != NvencRunPublicationPlanCommitServiceState.StoppedWithoutRequest)
+                    || _publicationService.State
+                        != NvencRunPublicationServiceState.StoppedWithoutRequest)
                 {
                     return false;
                 }
 
-                if (!_publicationPlanCommitService.IsStopped)
+                if (!_publicationService.IsStopped)
                 {
                     return false;
                 }
 
                 try
                 {
-                    _publicationPlanCommitService.Dispose();
+                    _publicationService.Dispose();
                 }
                 catch (Exception)
                 {
@@ -1586,7 +1590,7 @@ namespace Zantetsu.Observability
                     throw;
                 }
 
-                _publicationPlanCommitServiceReleased = true;
+                _publicationServiceReleased = true;
                 return true;
             }
             finally
@@ -1699,6 +1703,265 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Non-waiting, idempotent submission of the retained artifact
+        /// publication operation to the exact Publication Service. It is
+        /// admitted only when the process is Draining and not Poisoned, the
+        /// disposition is <see cref="NvencRunEvidenceDisposition.Committed"/>,
+        /// the retained operation exists, is valid, and was issued by this exact
+        /// coordinator, the Plan commit result has been collected, the Registry
+        /// Slot is Committed with the exact entry, the context is Finalized, the
+        /// Session Ownership Lease is live, the Service is accepting the
+        /// Artifact phase, and no submission has been made yet. The submission
+        /// is linearized with the Poison transition on the shared process-state
+        /// gate; on acceptance the retained operation is handed to the Service
+        /// exactly once. A second submission, a submission before preparation,
+        /// an uncollected Plan result, a non-Committed disposition, a gate
+        /// contention, a phase mismatch, or a poisoned process returns false
+        /// with no change.
+        /// </summary>
+        internal bool TrySubmitArtifactPublication()
+        {
+            if (!_processState.TryBeginSubmitStep())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_artifactPublicationSubmitted)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    return false;
+                }
+
+                if (!_publicationPlanCommitCollected)
+                {
+                    return false;
+                }
+
+                NvencRunArtifactPublicationOperation operation = _artifactPublicationOperation;
+                if (operation == null
+                    || !operation.IsValid
+                    || !operation.IsIssuedFor(this))
+                {
+                    return false;
+                }
+
+                if (_context.State != NvencRunChunkContextState.Finalized)
+                {
+                    return false;
+                }
+
+                if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                {
+                    return false;
+                }
+
+                if (!_sessionIssue.IsValid)
+                {
+                    return false;
+                }
+
+                if (_publicationService.State
+                    != NvencRunPublicationServiceState.AcceptingArtifactPublication)
+                {
+                    return false;
+                }
+
+                // The Service re-checks its own state and the operation's exact
+                // process-state correlation inside the same gate (reentrant),
+                // so the retained operation is handed over exactly once.
+                if (!_publicationService.TrySubmitArtifactPublication(operation))
+                {
+                    return false;
+                }
+
+                _artifactPublicationSubmitted = true;
+                return true;
+            }
+            finally
+            {
+                _processState.EndSubmitStep();
+            }
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent collection and reflection of the artifact
+        /// publication outcome into the Run's authoritative state. The first
+        /// successful call collects the Attempt Result from the Service at most
+        /// once only after the Worker has physically stopped, verifies the exact
+        /// publisher/operation/receipt correlation, disposes the Service exactly
+        /// once, retains the result and the collected latch, and publishes the
+        /// disposition last. A Published result keeps the Registry Slot and the
+        /// disposition Committed and retains the receipt for CaptureComplete; a
+        /// Failed result keeps the Registry Slot and the Plan/chunk/tmp
+        /// unchanged and advances only the disposition to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
+        /// Re-calls return the same retained reference after re-checking the
+        /// current correlation without re-collecting, re-disposing, or
+        /// re-transitioning. A null, foreign, default, or corrupt result, a
+        /// Service fatal failure, or a failed dispose poisons without guessing
+        /// another disposition. An external Poison that linearized first never
+        /// reflects a normal result.
+        /// </summary>
+        internal bool TryCollectArtifactPublication(
+            out NvencRunArtifactPublicationAttemptResult result)
+        {
+            result = default;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                if (_artifactPublicationCollected)
+                {
+                    NvencRunArtifactPublicationAttemptResult retained = _artifactPublicationResult;
+                    if (!retained.IsNone
+                        && retained.IsValid
+                        && ReferenceEquals(retained.Operation, _artifactPublicationOperation))
+                    {
+                        result = retained;
+                        return true;
+                    }
+
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained artifact publication result no longer correlates.");
+                }
+
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (!_artifactPublicationSubmitted)
+                {
+                    return false;
+                }
+
+                // The Service publishes ArtifactPublicationCompleted while its
+                // Worker is still alive. Collect only after the Worker has
+                // physically stopped, so a poll inside that window never clears
+                // the Service slot before the result can be reflected.
+                if (!_publicationService.IsStopped)
+                {
+                    return false;
+                }
+
+                if (_publicationService.TryGetFailure(out _))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The publication service reported a fatal failure.");
+                }
+
+                if (!_publicationService.TryCollectArtifactPublication(
+                        out NvencRunArtifactPublicationAttemptResult collected))
+                {
+                    return false;
+                }
+
+                if (!_publicationService.IsArtifactPublicationAttemptIssued(
+                        collected, _artifactPublicationOperation))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The artifact publication result is null, foreign, default, or corrupt.");
+                }
+
+                // Release the Service wait handle exactly once. A dispose
+                // failure poisons and propagates the original exception without
+                // faking a successful state.
+                try
+                {
+                    _publicationService.Dispose();
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                ReflectArtifactPublication(collected);
+
+                _artifactPublicationResult = collected;
+                _artifactPublicationCollected = true;
+                _publicationServiceReleased = true;
+
+                result = collected;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Advances the Run's authoritative state from the exact artifact
+        /// publication status. A Published result keeps the Registry Slot and
+        /// disposition Committed and never changes the Plan or chunk; a Failed
+        /// result keeps the Registry Slot, Plan, chunk, and dedicated tmp
+        /// unchanged and advances only the disposition to
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>.
+        /// No retry, re-inspection, or cleanup is performed.
+        /// </summary>
+        private void ReflectArtifactPublication(
+            NvencRunArtifactPublicationAttemptResult collected)
+        {
+            switch (collected.Status)
+            {
+                case NvencRunArtifactPublicationStatus.Published:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Published artifact.");
+                        }
+
+                        // Disposition stays Committed; the receipt is retained on
+                        // the collected result for a later CaptureComplete.
+                        return;
+                    }
+
+                case NvencRunArtifactPublicationStatus.Failed:
+                    {
+                        if (_registrySlot.State != NvencRunLocalRegistrySlotState.Committed)
+                        {
+                            _processState.TryPoison();
+                            throw new InvalidOperationException(
+                                "The Registry Slot is no longer Committed for a Failed artifact.");
+                        }
+
+                        // Plan, chunk, and dedicated tmp stay unchanged; only the
+                        // disposition advances to Recovery.
+                        _disposition = NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                        return;
+                    }
+
+                default:
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The artifact publication result has an unrecognized status.");
+                    }
+            }
+        }
+
+        /// <summary>
         /// Exception-safe post-Committed correlation reused by the artifact
         /// publication operation: the exact retained, collected, Committed
         /// commit Execution Result with an exact receipt for the exact commit
@@ -1709,6 +1972,62 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool IsArtifactPublicationOperationCorrelated(
             NvencRunPublicationPlanCommitExecutionResult planCommitResult)
+        {
+            return IsArtifactPublicationCorrelated(planCommitResult, requireCommittedDisposition: true);
+        }
+
+        /// <summary>
+        /// Minimal O(1) exact-process-state correlation used by the Publication
+        /// Service: true only when the supplied operation is the exact retained
+        /// artifact publication operation and this Run Coordinator is bound to
+        /// the exact supplied process state. ReferenceEquals only, no side
+        /// effect, and neither the process state nor the retained operation is
+        /// exposed as a property.
+        /// </summary>
+        internal bool IsArtifactPublicationOperationBoundTo(
+            NvencRunArtifactPublicationOperation operation,
+            NvencCaptureProcessState processState)
+        {
+            return operation != null
+                && processState != null
+                && ReferenceEquals(_artifactPublicationOperation, operation)
+                && ReferenceEquals(_processState, processState);
+        }
+
+        /// <summary>
+        /// Exception-safe post-publication binding predicate: the exact
+        /// retained artifact publication operation plus the exact committed plan
+        /// result and receipt, the exact finalization result, descriptor,
+        /// relation, run identity, the Registry Slot's exact committed entry, a
+        /// Finalized context, and a live Session Issue. It deliberately allows
+        /// the disposition to be either <c>Committed</c> (before publication)
+        /// or <c>PublicationRecoveryRequired</c> (after a Failed publish), so
+        /// reflecting a Failed publish does not invalidate an already-issued
+        /// result or receipt.
+        /// </summary>
+        internal bool IsArtifactPublicationBindingIntact(
+            NvencRunArtifactPublicationOperation operation)
+        {
+            try
+            {
+                if (operation == null
+                    || !ReferenceEquals(_artifactPublicationOperation, operation))
+                {
+                    return false;
+                }
+
+                return IsArtifactPublicationCorrelated(
+                    operation.PlanCommitResult, requireCommittedDisposition: false);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsArtifactPublicationCorrelated(
+            NvencRunPublicationPlanCommitExecutionResult planCommitResult,
+            bool requireCommittedDisposition)
         {
             try
             {
@@ -1724,11 +2043,26 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (_disposition != NvencRunEvidenceDisposition.Committed
-                    || retained.Status != NvencRunPublicationPlanCommitStatus.Committed
+                if (retained.Status != NvencRunPublicationPlanCommitStatus.Committed
                     || !retained.IsValid)
                 {
                     return false;
+                }
+
+                if (requireCommittedDisposition)
+                {
+                    if (_disposition != NvencRunEvidenceDisposition.Committed)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (_disposition != NvencRunEvidenceDisposition.Committed
+                        && _disposition != NvencRunEvidenceDisposition.PublicationRecoveryRequired)
+                    {
+                        return false;
+                    }
                 }
 
                 if (!ReferenceEquals(retained.Attempt.Operation, commitOperation)

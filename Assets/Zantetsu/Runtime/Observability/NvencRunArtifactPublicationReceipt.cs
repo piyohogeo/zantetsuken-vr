@@ -86,7 +86,7 @@ namespace Zantetsu.Observability
         internal bool IsValid =>
             _publisher != null
             && _operation != null
-            && _operation.IsValid;
+            && _operation.IsBindingIntact;
 
         internal bool IsIssuedFor(
             INvencRunArtifactPublisher publisher,
