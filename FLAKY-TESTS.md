@@ -71,20 +71,48 @@ Submit worker entry above, which is a different test and a different
 assertion. Until the cause is known, do not merge this entry into either of
 them.
 
-Observed once, in the full suite run `20260910-080619-481d11`. That run was a
-deliberately perturbed one: the PngJson capture-complete cleanup backend had
-been temporarily reverted to flushing the grandparent directory in order to
-prove that a new regression test detects the old flush target. The three clean
-full suite runs around it - `20260910-080413-410905`, `20260910-080900-96c8f2`,
-and `20260910-081054-4f81ca` - all passed, so the failure has not reproduced.
+The victim test is not fixed. Every observation so far is the same helper and
+the same assertion, in whichever fixture happened to run it:
 
-No direct code dependency between the reverted PngJson flush target and this
-fixture was found. Whether that revert, or the surrounding suite changes,
-shifted suite duration, thread scheduling, or machine load enough to expose the
-failure has not been evaluated, so neither is excluded as a trigger. It is
-undetermined whether this is a test-side race or a product defect, so a failure
-of this test stays a regression candidate to investigate and this entry is not
-permission to re-run it.
+- `20260910-080619-481d11`:
+  `NvencRunPublicationPlanCommitterContractTests.Commit_UnsupportedFileSystem_ThrowsBeforeContact`
+- `20260910-082320-86a951`:
+  `NvencCaptureRunCoordinatorContractTests.BackendJoin_BindingSwappedAfterConstruction_PoisonsNoDispose`
+  and
+  `NvencRunPublicationServiceContractTests.CaptureIndex_SameServiceInstanceAndWorkerThread_NoSecondWorker`
+- `20260910-082628-e82fe3`:
+  `NvencCaptureRunCoordinatorContractTests.BackendJoin_PoolOccupied_RefusesNoDispose`
+  and
+  `NvencRunPublicationPlanCommitContractTests.Builder_TamperedDescriptorKind_Throws`
+
+So it is not tied to one test, one fixture, or one change. It did not fire in
+the runs `20260910-080413-410905`, `20260910-080900-96c8f2`,
+`20260910-081054-4f81ca`, `20260910-082855-d24b85`, or
+`20260910-083111-287faf`, and fired twice in each of the two runs that did
+show it, so at the current suite size it is intermittent per run rather than
+per test.
+
+There is now a concrete cause hypothesis, not yet demonstrated by a targeted
+reproduction: the fixtures' convergence protocol cannot distinguish a stale
+settle from the post-request one. `NvencOrderedOutputWorkerService` documents
+`Settled` as a best-effort observation raised when the worker is about to park,
+with production correctness never depending on subscribers. The worker reaches
+`RaiseSettled()` only after it has already called `_signal.Reset()` and
+re-checked for work. If the fixture calls `h.SettledEvent.Reset()` and then
+`TryRequestTerminal()` - which accepts the request and then calls `Notify()` -
+while the worker sits in that window, the worker's pending `RaiseSettled()`
+satisfies the freshly reset event before it has advanced the terminal. The
+fixture's `WaitSettled` then returns on the stale settle and
+`TryCollectTerminal` correctly reports that nothing is collectable yet.
+
+If that is the cause, it is a test-side race in the helper rather than a
+product defect, and the fix belongs in the fixtures' settle-observation
+protocol, not in the worker. It would also cover the Submit worker entry above,
+which has the same `Reset()`-request-`WaitSettled` shape. That is a hypothesis
+read off the code, however, and no reproduction has confirmed it, so this entry
+stays under "Under investigation", stays separate from the Submit worker entry
+and from the Active teardown-timing entry, and is still not permission to
+re-run any of these tests.
 
 ## Resolved
 
