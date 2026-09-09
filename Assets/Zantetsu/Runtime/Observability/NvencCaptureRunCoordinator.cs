@@ -108,6 +108,7 @@ namespace Zantetsu.Observability
         private bool _captureIndexCommitSubmitted;
         private bool _captureIndexCommitCollected;
         private NvencRunCaptureIndexCommitAttemptResult _captureIndexCommitResult;
+        private NvencRunCaptureCompleteOperation _captureCompleteOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -2522,6 +2523,200 @@ namespace Zantetsu.Observability
             NvencRunArtifactPublicationReceipt receipt)
         {
             return IsCaptureIndexCommitCorrelated(receipt, requireCommittedDisposition: true);
+        }
+
+        /// <summary>
+        /// Non-waiting, idempotent NVENC CaptureComplete preparation. It is
+        /// admitted only after the Run collected a Committed capture index
+        /// commit: the process must be Draining and not Poisoned, the
+        /// disposition must still be
+        /// <see cref="NvencRunEvidenceDisposition.Committed"/>, the capture
+        /// index commit must have been prepared, submitted, and collected, and
+        /// the retained Attempt Result must be the exact, still-valid Committed
+        /// result of the exact retained capture index operation whose receipt
+        /// is valid for the exact committer. The already-validated Published
+        /// artifact publication, plan commit, Committed Registry entry,
+        /// Finalized context, and live Session Ownership Lease correlations are
+        /// reused, not re-derived, and the Service must still be accepting the
+        /// CaptureComplete phase. On the first success the operation is minted
+        /// and retained exactly once; re-calls return the same reference after
+        /// re-checking its exact correlation.
+        /// </summary>
+        /// <remarks>
+        /// A capture index commit that has not been prepared, submitted, or
+        /// collected, a Failed capture index commit, a
+        /// PublicationRecoveryRequired or any other non-Committed disposition,
+        /// a Service that is not accepting CaptureComplete, a poisoned
+        /// process, or a gate contention returns false with no change and never
+        /// inspects any file. Poison is checked before the retained operation,
+        /// so a Run poisoned after a successful preparation refuses with false
+        /// and without an exception. Only a retained operation whose exact
+        /// correlation is broken is corruption and poisons. Preparation changes
+        /// nothing but the retained CaptureComplete operation: the disposition,
+        /// Registry, plan, capture index, chunk, publication and capture index
+        /// results and receipts, context, lease, Service state, and filesystem
+        /// are all untouched, and no new proof or state marker is introduced.
+        /// The Service's unreleased state follows from its accepting phase and
+        /// is deliberately not re-derived from a separate release flag.
+        /// </remarks>
+        internal bool TryPrepareCaptureComplete(
+            out NvencRunCaptureCompleteOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A process-wide Poison outranks every retained shape, so a Run
+                // poisoned after a successful preparation refuses rather than
+                // reporting corruption.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                // Idempotent: an already-minted operation returns the same
+                // reference after re-checking its exact correlation.
+                if (_captureCompleteOperation != null)
+                {
+                    if (!_captureCompleteOperation.IsValid
+                        || !_captureCompleteOperation.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained CaptureComplete operation no longer correlates.");
+                    }
+
+                    operation = _captureCompleteOperation;
+                    return true;
+                }
+
+                if (!_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_disposition != NvencRunEvidenceDisposition.Committed)
+                {
+                    // PublicationRecoveryRequired, Finalized, Incomplete,
+                    // CommitOutcomeUnknown, or None: refuse with no change and
+                    // without inspecting any file.
+                    return false;
+                }
+
+                if (!_captureIndexCommitSubmitted || !_captureIndexCommitCollected)
+                {
+                    // Not prepared, not submitted, or not collected yet: a
+                    // normal not-ready shape, never corruption.
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitAttemptResult retained = _captureIndexCommitResult;
+                if (retained.IsNone
+                    || retained.Status != NvencRunCaptureIndexCommitStatus.Committed)
+                {
+                    // A Failed capture index commit is handed to Recovery, not
+                    // to CaptureComplete; refuse with no change.
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitReceipt receipt = retained.Receipt;
+                if (!IsCaptureCompleteReceiptCorrelated(receipt))
+                {
+                    return false;
+                }
+
+                if (_publicationService.State
+                    != NvencRunPublicationServiceState.AcceptingCaptureComplete)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteOperation minted;
+                try
+                {
+                    minted = new NvencRunCaptureCompleteOperation(this, receipt);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _captureCompleteOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _captureCompleteOperation = null;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The CaptureComplete operation does not correlate after construction.");
+                }
+
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe post-commit correlation reused by the CaptureComplete
+        /// operation: on an unpoisoned process the supplied receipt must be the
+        /// exact receipt of the exact retained, submitted, collected, Committed
+        /// capture index Attempt Result of the exact retained capture index
+        /// operation, issued for that Result's exact committer, and the
+        /// existing Published artifact publication, plan commit, Registry,
+        /// context, and Session Ownership Lease correlation must still hold
+        /// with a Committed disposition. ReferenceEquals and existing
+        /// predicates only; no file is inspected, the published artifact is
+        /// never re-hashed, and nothing is changed.
+        /// </summary>
+        internal bool IsCaptureCompleteReceiptCorrelated(
+            NvencRunCaptureIndexCommitReceipt receipt)
+        {
+            try
+            {
+                if (receipt == null
+                    || _processState.IsPoisoned
+                    || !_captureIndexCommitSubmitted
+                    || !_captureIndexCommitCollected)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureIndexCommitAttemptResult retained = _captureIndexCommitResult;
+                NvencRunCaptureIndexCommitOperation commitOperation = _captureIndexCommitOperation;
+
+                if (retained.IsNone
+                    || retained.Status != NvencRunCaptureIndexCommitStatus.Committed
+                    || !retained.IsValid
+                    || commitOperation == null
+                    || !ReferenceEquals(retained.Receipt, receipt)
+                    || !ReferenceEquals(retained.Operation, commitOperation)
+                    || !receipt.IsIssuedFor(retained.Committer, commitOperation))
+                {
+                    return false;
+                }
+
+                // The capture index operation's own correlation carries the
+                // exact Published artifact result and receipt, the committed
+                // plan commit, the Committed Registry entry, the Finalized
+                // context, and the live lease, and requires a Committed
+                // disposition. It is reused rather than re-derived.
+                return IsCaptureIndexCommitCorrelated(
+                    commitOperation.ArtifactPublicationReceipt, requireCommittedDisposition: true);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
