@@ -46,11 +46,13 @@ a worker defect. Observed twice, in the full suite runs
 and message both times. Other full suite runs passed, but the test has not been
 shown to be deterministic in isolation.
 
-The second observation came from a run whose only change was additive — new
-files that this fixture does not reference — so it is not a regression from
-that change. That rules one suspect out; it does not establish the cause, so
-this entry stays here rather than moving to "Active flakes", and a failure of
-it is still a regression candidate to investigate.
+The second observation came from a run whose only change was additive: new
+files this fixture does not reference. No direct code dependency on that change
+was found, but whether the added tests shifted suite duration, thread
+scheduling, or machine load enough to expose the race has not been evaluated,
+so that change is not excluded as a trigger. Either way the root cause is
+undetermined, so this entry stays here rather than moving to "Active flakes",
+and a failure of it is still a regression candidate to investigate.
 
 ## Resolved
 
