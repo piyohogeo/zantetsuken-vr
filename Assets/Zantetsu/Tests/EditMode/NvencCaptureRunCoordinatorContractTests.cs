@@ -47,9 +47,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the finalize request");
                 Assert.That(outcome.IsFinalized, Is.True);
                 Assert.That(outcome.Result, Is.Not.Null);
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Registered));
@@ -85,9 +83,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the finalize request");
                 Assert.That(outcome.IsFinalized, Is.True);
                 Assert.That(h.Slot.HasRegisteredEntry, Is.True);
             }
@@ -125,9 +121,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
                 Assert.That(outcome.Result, Is.Null);
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
@@ -148,9 +142,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
             }
@@ -169,9 +161,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
             }
         }
@@ -539,9 +529,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the finalize request");
                 Assert.That(outcome.IsFinalized, Is.True);
                 Assert.That(h.Slot.HasRegisteredEntry, Is.True);
 
@@ -573,9 +561,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Empty));
 
@@ -625,8 +611,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -657,8 +642,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -693,8 +677,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
 
                 h.SettledEvent.Reset();
@@ -743,8 +726,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SubmitWorker.Dispose();
 
@@ -766,8 +748,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -795,8 +776,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 // Park the Output Worker inside its teardown so it is
                 // deterministically not yet stopped.
@@ -832,8 +812,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 InvalidOperationException boom = new InvalidOperationException("teardown boom");
                 h.Teardown.ExceptionToThrow = boom;
@@ -866,8 +845,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -918,8 +896,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -952,8 +929,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -982,8 +958,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -1036,8 +1011,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -1070,8 +1044,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-                Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the finalize request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -5635,6 +5608,18 @@ namespace Zantetsu.Core.Tests
 
         // ---- Helpers ----
 
+        /// <summary>
+        /// Collects the requested Run chunk terminal by confirming the real
+        /// condition inside a watchdog. A settle observed after the request may
+        /// be a raise that was already in flight when the request was accepted,
+        /// so it is used only as a wake hint; see TerminalConvergence.
+        /// </summary>
+        private static NvencRunChunkTerminalOutcome CollectTerminal(Harness h, string message)
+        {
+            return TerminalConvergence.Collect(
+                h.RunCoordinator.TryCollectTerminal, h.Worker, h.SettledEvent, WatchdogTimeoutMs, message);
+        }
+
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
@@ -5649,8 +5634,7 @@ namespace Zantetsu.Core.Tests
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-            WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-            Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+            CollectTerminal(h, "worker did not converge the finalize request");
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -5673,8 +5657,7 @@ namespace Zantetsu.Core.Tests
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-            WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-            Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+            NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
             Assert.That(outcome.IsAbandoned, Is.True);
 
             h.SettledEvent.Reset();

@@ -19,6 +19,12 @@ namespace Zantetsu.Core.Tests
     {
         private const int WatchdogTimeoutMs = 5000;
 
+        /// <summary>
+        /// Deliberately short deadline for a probe whose condition can never
+        /// become true, so the probe's own failure is the assertion.
+        /// </summary>
+        private const int BoundedProbeTimeoutMs = 250;
+
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
         private const string Hash64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -536,6 +542,112 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Terminal convergence ----
+
+        [Test]
+        public void Terminal_SettleObservedAfterRequest_IsNotEvidence_ConvergenceConfirmsTheRealCondition()
+        {
+            using (Harness h = Harness.Create())
+            {
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                h.SubmitDrained = true;
+                Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
+
+                ManualResetEventSlim insideRaise = new ManualResetEventSlim(false);
+                ManualResetEventSlim proceed = new ManualResetEventSlim(false);
+                ManualResetEventSlim observedSettle = new ManualResetEventSlim(false);
+                ManualResetEventSlim releaseWorker = new ManualResetEventSlim(false);
+
+                // Two ordinary Settled observers, no product change and no
+                // reflection. The first parks the Worker at the very start of a
+                // raise - a point it reaches only after it has already reset its
+                // wake signal and re-checked for work - so the terminal request
+                // below lands while that raise is in flight. The second
+                // publishes the settle the way a fixture's own handler does, and
+                // then holds the Worker inside the raise so it cannot advance
+                // the terminal while the assertions run.
+                Action enterRaise = () =>
+                {
+                    insideRaise.Set();
+                    proceed.Wait(WatchdogTimeoutMs);
+                };
+                Action publishSettle = () =>
+                {
+                    observedSettle.Set();
+                    releaseWorker.Wait(WatchdogTimeoutMs);
+                };
+
+                h.Worker.Settled += enterRaise;
+                h.Worker.Settled += publishSettle;
+                try
+                {
+                    // Wake the parked Worker so it converges on nothing and
+                    // walks into the raise.
+                    h.Worker.Notify();
+                    Assert.That(insideRaise.Wait(WatchdogTimeoutMs), Is.True,
+                        "worker did not reach its settle raise");
+
+                    // The request is accepted while that raise is in flight, so
+                    // the raise carries no information about it.
+                    Assert.That(observedSettle.IsSet, Is.False);
+                    Assert.That(h.Worker.TryRequestAbandon(), Is.True);
+
+                    // Let the in-flight raise finish: the settle is now observed
+                    // strictly after the request was accepted.
+                    proceed.Set();
+                    Assert.That(observedSettle.Wait(WatchdogTimeoutMs), Is.True,
+                        "the in-flight settle was not observed");
+
+                    // Treating that settle as convergence evidence is wrong. The
+                    // terminal has not been advanced and is not collectable, and
+                    // this holds deterministically because the Worker is still
+                    // held inside the raise.
+                    Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+
+                    // The convergence helper does not accept it either: with the
+                    // Worker still held, the real condition never becomes true,
+                    // so the helper exhausts its bounded watchdog and fails
+                    // instead of reporting a terminal.
+                    Assert.Throws<AssertionException>(
+                        () => TerminalConvergence.Collect(
+                            h.Worker.TryCollectTerminal,
+                            h.Worker,
+                            observedSettle,
+                            BoundedProbeTimeoutMs,
+                            "bounded probe against a held worker"),
+                        "the convergence helper must not accept a settle as evidence.");
+                    Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+                }
+                finally
+                {
+                    proceed.Set();
+                    releaseWorker.Set();
+                    h.Worker.Settled -= enterRaise;
+                    h.Worker.Settled -= publishSettle;
+                }
+
+                // Released, the same request converges and the helper collects
+                // that terminal exactly once, inside the watchdog.
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(
+                    h, "worker did not converge the abandon request");
+                Assert.That(outcome.IsNone, Is.False);
+                Assert.That(outcome.IsAbandoned, Is.True);
+                Assert.That(outcome.IsFinalized, Is.False);
+
+                // Nothing was re-issued and nothing is collected twice: the only
+                // repeated call is the non-destructive collect.
+                Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+                Assert.That(h.Worker.TryRequestAbandon(), Is.False);
+                Assert.That(h.Worker.TryRequestFinalize(), Is.False);
+                Assert.That(h.Worker.TryGetFailure(out _), Is.False);
+
+                // The four events are deliberately not disposed: the Worker may
+                // still be invoking a handler snapshot taken before the removal
+                // above, and a disposed event there would be swallowed rather
+                // than reported.
+            }
+        }
+
         // ---- Normal teardown ----
 
         [Test]
@@ -549,9 +661,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-
-                Assert.That(h.Worker.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+                NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
                 Assert.That(outcome.IsAbandoned, Is.True);
                 Assert.That(h.Worker.TeardownCompleted, Is.False);
 
@@ -588,8 +698,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 // A failed-before-submit record enqueued without a
                 // notification leaves the processor with pending work
@@ -631,8 +740,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 InvalidOperationException boom = new InvalidOperationException("teardown boom");
                 h.Teardown.ExceptionToThrow = boom;
@@ -662,8 +770,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 h.Teardown.ReturnNull = true;
 
@@ -691,8 +798,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 // A receipt issued by a different teardown implementation.
                 h.Teardown.ReceiptToReturn = NvencOutputWorkerTeardownReceipt.Issue(new FakeTeardown());
@@ -734,8 +840,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 // Park the teardown inside TearDown() so the main thread can
                 // poison deterministically while the teardown is still running.
@@ -777,8 +882,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 // Park the teardown so the worker returns from it only while
                 // the Main Thread still holds the process-state gate, exactly
@@ -826,8 +930,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestAbandon(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.True);
+                CollectTerminal(h, "worker did not converge the abandon request");
 
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.TryRequestTeardown(), Is.True);
@@ -956,6 +1059,18 @@ namespace Zantetsu.Core.Tests
         // -------------------------------------------------------------------
         // Helpers
         // -------------------------------------------------------------------
+
+        /// <summary>
+        /// Collects the requested Run chunk terminal by confirming the real
+        /// condition inside a watchdog. A settle observed after the request may
+        /// be a raise that was already in flight when the request was accepted,
+        /// so it is used only as a wake hint; see TerminalConvergence.
+        /// </summary>
+        private static NvencRunChunkTerminalOutcome CollectTerminal(Harness h, string message)
+        {
+            return TerminalConvergence.Collect(
+                h.Worker.TryCollectTerminal, h.Worker, h.SettledEvent, WatchdogTimeoutMs, message);
+        }
 
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {

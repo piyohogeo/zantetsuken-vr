@@ -615,6 +615,18 @@ namespace Zantetsu.Core.Tests
 
         // ---- Helpers ----
 
+        /// <summary>
+        /// Collects the requested Run chunk terminal by confirming the real
+        /// condition inside a watchdog. A settle observed after the request may
+        /// be a raise that was already in flight when the request was accepted,
+        /// so it is used only as a wake hint; see TerminalConvergence.
+        /// </summary>
+        private static NvencRunChunkTerminalOutcome CollectTerminal(Harness h, string message)
+        {
+            return TerminalConvergence.Collect(
+                h.RunCoordinator.TryCollectTerminal, h.Worker, h.SettledEvent, WatchdogTimeoutMs, message);
+        }
+
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
@@ -637,8 +649,7 @@ namespace Zantetsu.Core.Tests
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-            WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
-            Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True);
+            CollectTerminal(h, "worker did not converge the finalize request");
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
@@ -658,8 +669,7 @@ namespace Zantetsu.Core.Tests
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-            WaitSettled(h.SettledEvent, "worker did not converge the abandon request");
-            Assert.That(h.RunCoordinator.TryCollectTerminal(out NvencRunChunkTerminalOutcome outcome), Is.True);
+            NvencRunChunkTerminalOutcome outcome = CollectTerminal(h, "worker did not converge the abandon request");
             Assert.That(outcome.IsAbandoned, Is.True);
 
             h.SettledEvent.Reset();
