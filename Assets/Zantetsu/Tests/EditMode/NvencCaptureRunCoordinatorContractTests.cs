@@ -5086,14 +5086,16 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CompleteRun_GateContention_ReturnsFalseNoChange_ThenSucceeds()
         {
+            // The events outlive the Harness: the holder thread waits on them,
+            // so they are released only after it has been joined.
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
                 Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
                 Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -5106,10 +5108,16 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    // Inside the try, so a timeout here still releases the
+                    // holder and joins it.
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True,
+                        "holder did not acquire the gate");
+
                     Assert.That(h.RunCoordinator.TryCompleteRun(), Is.False);
                     Assert.That(h.State.IsDraining, Is.True);
                     Assert.That(h.State.IsPoisoned, Is.False);
@@ -5117,11 +5125,10 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
                 Assert.That(h.State.IsAccepting, Is.True);

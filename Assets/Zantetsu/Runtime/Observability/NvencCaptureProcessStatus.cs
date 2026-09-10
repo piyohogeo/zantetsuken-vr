@@ -1,10 +1,14 @@
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// One-way, process-wide fail-stop state for the Phase 0.11 NVENC capture
-    /// path. Numeric values are fixed. The state only ever advances from
-    /// <see cref="Running"/> toward <see cref="Draining"/> or
-    /// <see cref="PoisonedUntilProcessRestart"/> and never moves back.
+    /// Process-wide fail-stop state for the Phase 0.11 NVENC capture path.
+    /// Numeric values are fixed. <see cref="Running"/> advances to
+    /// <see cref="Draining"/> or to
+    /// <see cref="PoisonedUntilProcessRestart"/>, and
+    /// <see cref="Draining"/> returns to <see cref="Running"/> only when a Run
+    /// completes normally or in a controlled failure, so the next Run can be
+    /// admitted. <see cref="PoisonedUntilProcessRestart"/> is the only
+    /// irreversible state: nothing leaves it until the process restarts.
     /// </summary>
     internal enum NvencCaptureProcessStatus : int
     {

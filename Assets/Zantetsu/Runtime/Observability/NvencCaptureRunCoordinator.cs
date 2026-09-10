@@ -3459,10 +3459,10 @@ namespace Zantetsu.Observability
         /// <para>
         /// A gate contention, a preceding Poison, a release that was never
         /// prepared, and a release that has not succeeded all return false with
-        /// no change. A retained receipt that no longer correlates to this Run's
-        /// exact configured releaser and exact retained operation, or that is
-        /// invalid while its lease is not even fully released, is corruption and
-        /// poisons. A re-call after completion returns true without touching the
+        /// no change. A retained receipt that no longer correlates - to this
+        /// Run's exact configured releaser, to its exact retained operation, or
+        /// to a completed release - is corruption and poisons; the lease's own
+        /// state never substitutes for the receipt. A re-call after completion returns true without touching the
         /// process state again: by then the next Run may already have started,
         /// drained, or poisoned, and this Coordinator must not treat that as
         /// corruption.
@@ -3502,20 +3502,13 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!ReferenceEquals(retained.Operation, operation)
-                    || !ReferenceEquals(
-                        retained.Releaser, _sessionOwnershipReleaseExecution.Releaser))
+                // The receipt is the whole authority: the lease's own state
+                // never stands in for it.
+                if (!IsIssuedReleaseReceiptCorrelated(retained, operation))
                 {
                     _processState.TryPoison();
                     throw new InvalidOperationException(
                         "The retained Session Ownership Lease release receipt no longer correlates.");
-                }
-
-                if (!retained.IsValid && !operation.OwnershipLease.IsReleaseComplete)
-                {
-                    _processState.TryPoison();
-                    throw new InvalidOperationException(
-                        "The Session Ownership Lease release receipt is not evidence of a released lease.");
                 }
 
                 if (!_processState.IsDraining)
