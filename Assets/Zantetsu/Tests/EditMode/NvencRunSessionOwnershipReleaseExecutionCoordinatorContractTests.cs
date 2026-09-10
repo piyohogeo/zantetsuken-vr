@@ -1104,6 +1104,8 @@ namespace Zantetsu.Core.Tests
             internal NvencRunPublicationService Service;
             internal FakeCleaner CleanupCleaner;
             internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
+            internal FakeReleaser Releaser;
+            internal NvencRunSessionOwnershipReleaseExecutionCoordinator ReleaseExecution;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
             internal TraceLogger TraceLogger;
@@ -1203,9 +1205,13 @@ namespace Zantetsu.Core.Tests
                 CleanupExecution =
                     new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
 
+                Releaser = new FakeReleaser();
+                ReleaseExecution =
+                    new NvencRunSessionOwnershipReleaseExecutionCoordinator(Releaser);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
                     State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin,
-                    SessionIssue, TraceFreeze, Service, CleanupExecution);
+                    SessionIssue, TraceFreeze, Service, CleanupExecution, ReleaseExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

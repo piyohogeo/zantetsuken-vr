@@ -23,6 +23,13 @@ namespace Zantetsu.Core.Tests
     {
         private const int WatchdogTimeoutMs = 5000;
 
+        /// <summary>
+        /// Bounded probe for a thread that must still be blocked. Join returning
+        /// false is one-sided, so this deadline can only be exceeded by a thread
+        /// that genuinely got through.
+        /// </summary>
+        private const int BlockedProbeTimeoutMs = 200;
+
         private const byte Seed = 0x40;
 
         private const string InitId = "0123456789abcdef0123456789abcdef";
@@ -1419,7 +1426,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, other.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -1439,7 +1446,7 @@ namespace Zantetsu.Core.Tests
                     h.Buffer, h.Processor, new FakeMainThreadTeardown { BoundContext = h.Context });
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, foreignTeardownJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -4612,6 +4619,400 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Session Ownership Lease release execution ----
+
+        [Test]
+        public void ReleaseSessionOwnership_BeforePrepare_ReturnsFalse_ReleaserNotContacted()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                // Prepared cleanup but no release operation yet.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.False);
+                Assert.That(receipt, Is.Null);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_Prepared_ReleasesOnce_RetainsExactReceipt()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.True);
+
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(receipt.IsValid, Is.True);
+                Assert.That(receipt.IsIssuedFor(h.Releaser, operation), Is.True);
+                Assert.That(ReferenceEquals(receipt.Releaser, h.Releaser), Is.True);
+                Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
+
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.True);
+                Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_Idempotent_ReturnsSameReceipt_NoSecondRelease()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt first), Is.True);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt second), Is.True);
+
+                Assert.That(ReferenceEquals(first, second), Is.True);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_ExternalPoisonFirst_ReturnsFalse_LeaseKept()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.False);
+                Assert.That(receipt, Is.Null);
+
+                // The releaser is never contacted after a Poison, and the lock
+                // is still held.
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(0));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(0));
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.True);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_GateContention_ReturnsFalseNoContact_ThenSucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                        out NvencRunSessionOwnershipReleaseReceipt contended), Is.False);
+                    Assert.That(contended, Is.Null);
+                    Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
+                    Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.True);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                // The refusal left nothing behind.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.True);
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_HoldingTheGate_DefersAConcurrentPoisonUntilTheAttemptEnds()
+        {
+            using (ManualResetEventSlim insideRelease = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim proceed = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim poisonReturned = new ManualResetEventSlim(false))
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+
+                // The releaser parks inside the attempt, which is inside the
+                // resource-resolution gate.
+                h.Releaser.Entered = insideRelease;
+                h.Releaser.Proceed = proceed;
+
+                bool poisoned = false;
+                ManualResetEventSlim poisonAboutToRun = new ManualResetEventSlim(false);
+                Thread poisoner = new Thread(() =>
+                {
+                    poisonAboutToRun.Set();
+                    poisoned = h.State.TryPoison();
+                    poisonReturned.Set();
+                })
+                {
+                    IsBackground = true,
+                };
+
+                NvencRunSessionOwnershipReleaseReceipt receipt = null;
+                bool released = false;
+                Thread releaser = new Thread(() =>
+                {
+                    released = h.RunCoordinator.TryReleaseSessionOwnership(out receipt);
+                })
+                {
+                    IsBackground = true,
+                };
+
+                releaser.Start();
+                Assert.That(insideRelease.Wait(WatchdogTimeoutMs), Is.True,
+                    "the releaser did not enter its attempt");
+
+                // The Poison blocks on the gate the attempt holds; it cannot
+                // complete while the releaser is parked. Join returning false is
+                // one-sided: a poison that has not started yet also fails to
+                // complete, so this can only fail if the poison actually got
+                // through the held gate.
+                poisoner.Start();
+                Assert.That(poisonAboutToRun.Wait(WatchdogTimeoutMs), Is.True,
+                    "the poisoner did not start");
+                Assert.That(poisoner.Join(BlockedProbeTimeoutMs), Is.False,
+                    "the poison completed while the release attempt held the gate");
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                proceed.Set();
+                Assert.That(releaser.Join(WatchdogTimeoutMs), Is.True, "the releaser did not finish");
+                Assert.That(poisonReturned.Wait(WatchdogTimeoutMs), Is.True,
+                    "the poison did not complete after the gate was released");
+                Assert.That(poisoner.Join(WatchdogTimeoutMs), Is.True, "the poisoner did not exit");
+                poisonAboutToRun.Dispose();
+
+                // The one attempt completed and was retained; the Poison took
+                // effect only afterwards.
+                Assert.That(released, Is.True);
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.True);
+                Assert.That(poisoned, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.True);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_PartialFailure_PropagatesWithoutPoison_ThenRetrySucceeds()
+        {
+            using (Harness h = Harness.Create(throwingFirstRelease: true))
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+
+                AggregateException failure = Assert.Throws<AggregateException>(
+                    () => h.RunCoordinator.TryReleaseSessionOwnership(out _));
+                Assert.That(failure.InnerExceptions, Has.Count.EqualTo(1));
+                Assert.That(failure.InnerExceptions[0], Is.TypeOf<InvalidOperationException>());
+
+                // The lease can still be released, so the failure is retryable:
+                // no receipt, no latch, no Poison.
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(operation.CanRelease, Is.True);
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.False);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+
+                // The same retained operation retries and succeeds; the handle
+                // released by the first attempt is not touched again.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.True);
+
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(receipt.IsIssuedFor(h.Releaser, operation), Is.True);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(2));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(2));
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_PoisonBeforeRetry_KeepsTheLeaseUnreleased()
+        {
+            using (Harness h = Harness.Create(throwingFirstRelease: true))
+            {
+                PrepareReleaseOperation(h);
+
+                Assert.Throws<AggregateException>(
+                    () => h.RunCoordinator.TryReleaseSessionOwnership(out _));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                // The retry is refused, so the partially released lease is kept
+                // rather than released under a poisoned process.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.False);
+                Assert.That(receipt, Is.Null);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.False);
+            }
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_ReleasedButNoValidReceipt_Poisons()
+        {
+            // A releaser that really releases the lease and then hands back
+            // nothing usable. The lease can no longer be released, so this is
+            // unretryable and must poison while the original exception
+            // propagates.
+            AssertReleasedWithoutReceiptPoisons(
+                (releaser, operation) => null,
+                "a null receipt after a completed release must poison");
+
+            AssertReleasedWithoutReceiptPoisons(
+                (releaser, operation) => NvencRunSessionOwnershipReleaseReceipt.Create(
+                    new FakeSessionOwnershipReleaser(), operation),
+                "a foreign-releaser receipt after a completed release must poison");
+        }
+
+        [Test]
+        public void ReleaseSessionOwnership_ChangesOnlyTheRetainedReceiptAndLease()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+
+                NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+                bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
+                NvencRunChunkContextState contextState = h.Context.State;
+                NvencRunPublicationServiceState serviceState = h.Service.State;
+                bool serviceReleased = h.RunCoordinator.PublicationServiceReleased;
+                bool serviceStopped = h.Service.IsStopped;
+                int cleanerCalls = h.CleanupCleaner.CallCount;
+                int publisherCalls = h.Publisher.CallCount;
+                int committerCalls = h.Committer.CallCount;
+                int indexCommitterCalls = h.IndexCommitter.CallCount;
+                int completerCalls = h.RunCompleter.CallCount;
+                NvencRunCaptureCompleteCleanupOperation cleanupOperation = operation.CleanupOperation;
+                NvencRunCaptureCompleteCleanupReceipt cleanupReceipt = operation.CleanupResult.Receipt;
+
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+                Assert.That(h.Slot.State, Is.EqualTo(slotState));
+                Assert.That(h.Slot.HasRegisteredEntry, Is.EqualTo(hasRegisteredEntry));
+                Assert.That(h.Context.State, Is.EqualTo(contextState));
+                Assert.That(h.Service.State, Is.EqualTo(serviceState));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.EqualTo(serviceReleased));
+                Assert.That(h.Service.IsStopped, Is.EqualTo(serviceStopped));
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(cleanerCalls));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+                Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(completerCalls));
+                Assert.That(ReferenceEquals(operation.CleanupOperation, cleanupOperation), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.CleanupResult.Receipt, cleanupReceipt), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_AfterRelease_ReturnsFalseWithoutPoison()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                // The existing preparation rule stands: a completed release
+                // leaves nothing to prepare, and that is not corruption.
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation again), Is.False);
+                Assert.That(again, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        // ---- Session Ownership Lease release execution helpers ----
+
+        private static NvencRunSessionOwnershipReleaseOperation PrepareReleaseOperation(Harness h)
+        {
+            PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+            Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                out NvencRunSessionOwnershipReleaseOperation operation), Is.True);
+            return operation;
+        }
+
+        /// <summary>
+        /// Drives a release that really disposes the lease and then returns the
+        /// forged receipt, so the completed release is real and the forged
+        /// receipt is the only reason the attempt cannot be retained. The forge
+        /// runs after the release, with the executing releaser and the executed
+        /// operation in hand, so a mismatch cannot be mistaken for some earlier
+        /// rejection.
+        /// </summary>
+        private static void AssertReleasedWithoutReceiptPoisons(
+            Func<FakeSessionOwnershipReleaser, NvencRunSessionOwnershipReleaseOperation,
+                NvencRunSessionOwnershipReleaseReceipt> forge,
+            string message)
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+
+                h.Releaser.OverrideFactory = (executing, executed) =>
+                {
+                    Assert.That(ReferenceEquals(executing, h.Releaser), Is.True,
+                        message + ": the forge must run on the configured releaser.");
+                    Assert.That(ReferenceEquals(executed, operation), Is.True,
+                        message + ": the forge must run on the prepared operation.");
+                    Assert.That(executed.OwnershipLease.IsReleaseComplete, Is.True,
+                        message + ": the release must really have completed.");
+                    return forge(executing, executed);
+                };
+
+                Assert.Throws<InvalidOperationException>(
+                    () => h.RunCoordinator.TryReleaseSessionOwnership(out _), message);
+
+                Assert.That(h.State.IsPoisoned, Is.True, message);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1), message);
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.True, message);
+
+                // Nothing was retained, and a re-call refuses on the Poison.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.False, message);
+                Assert.That(receipt, Is.Null, message);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(1), message);
+            }
+        }
+
         // ---- Session Ownership Lease release helpers ----
 
         /// <summary>
@@ -5589,7 +5990,7 @@ namespace Zantetsu.Core.Tests
                 {
                     Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
                         h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown,
-                        h.BackendJoin, h.SessionIssue, h.TraceFreeze, foreignService, h.CleanupExecution));
+                        h.BackendJoin, h.SessionIssue, h.TraceFreeze, foreignService, h.CleanupExecution, h.ReleaseExecution));
                 }
                 finally
                 {
@@ -5953,7 +6354,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    new NvencCaptureProcessState(), h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -5963,7 +6364,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, BuildSubmitWorker(new NvencCaptureProcessState()), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -5975,7 +6376,7 @@ namespace Zantetsu.Core.Tests
                 // Same process state but a different Submit Worker instance
                 // than the one the Output Worker is bound to.
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, BuildSubmitWorker(h.State), h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -5986,7 +6387,7 @@ namespace Zantetsu.Core.Tests
             using (Harness other = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, other.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -5996,7 +6397,7 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, MakeContext(new NvencCaptureProcessState()), h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -6007,7 +6408,7 @@ namespace Zantetsu.Core.Tests
             {
                 NvencRunChunkContext foreign = MakeContext(new NvencCaptureProcessState());
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, new NvencRunLocalRegistrySlot(foreign), h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -6026,7 +6427,7 @@ namespace Zantetsu.Core.Tests
                 };
 
                 Assert.Throws<ArgumentException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, foreignTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
             }
         }
 
@@ -6036,27 +6437,29 @@ namespace Zantetsu.Core.Tests
             using (Harness h = Harness.Create())
             {
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    null, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, null, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, null, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, null, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, null, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, null, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, null, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, null, h.TraceFreeze, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null, h.Service, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, null, h.Service, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, null, h.CleanupExecution));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, null, h.CleanupExecution, h.ReleaseExecution));
                 Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
-                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, null));
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, null, h.ReleaseExecution));
+                Assert.Throws<ArgumentNullException>(() => new NvencCaptureRunCoordinator(
+                    h.State, h.SubmitWorker, h.Worker, h.Context, h.Slot, h.MainThreadTeardown, h.BackendJoin, h.SessionIssue, h.TraceFreeze, h.Service, h.CleanupExecution, null));
             }
         }
 
@@ -6187,16 +6590,17 @@ namespace Zantetsu.Core.Tests
             return new CaptureFrameCompletion(token, captureFrameId, status, true, producedArtifactCount, failure);
         }
 
-        private static CaptureRunInitializationSessionIssue MakeIssue(bool throwingFirstRelease = false)
+        private static CaptureRunInitializationSessionIssue MakeIssue(
+            bool throwingFirstRelease,
+            out CountingHandle firstHandle,
+            out CountingHandle secondHandle)
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            ICaptureRunLockHandle first = throwingFirstRelease
-                ? new ThrowingOnceHandle(pathSet.FirstLockPath)
-                : (ICaptureRunLockHandle)new FakeHandle(pathSet.FirstLockPath, true) { Tag = "first" };
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true) { Tag = "second" };
-            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first, second);
+            firstHandle = new CountingHandle(pathSet.FirstLockPath, throwingFirstRelease);
+            secondHandle = new CountingHandle(pathSet.SecondLockPath);
+            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, firstHandle, secondHandle);
             CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
             CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
@@ -6250,7 +6654,8 @@ namespace Zantetsu.Core.Tests
             FakeWriter writer = new FakeWriter();
             NvencRunChunkSink sink = new NvencRunChunkSink(state, buffer, writer);
             NvencRunChunkFinalizationCoordinator coordinator = new NvencRunChunkFinalizationCoordinator(writer);
-            return new NvencRunChunkContext(MakeIssue(), sink, coordinator, "chunk/foreign");
+            return new NvencRunChunkContext(
+                MakeIssue(false, out _, out _), sink, coordinator, "chunk/foreign");
         }
 
         private static ForcedDropFrameIdSet MakeForcedDropSet(Harness h)
@@ -6468,50 +6873,37 @@ namespace Zantetsu.Core.Tests
         }
 
         /// <summary>
-        /// A lock handle whose first release fails and whose second succeeds.
-        /// Disposing a lease built with it as the first handle releases the
-        /// second handle and then throws, which is the ordinary API's partial
-        /// release: the Ownership Lease is no longer fully retained but its
-        /// disposal has not completed, so a retry is still possible.
+        /// A lock handle that counts its own releases, and optionally fails the
+        /// first one. As a lease's first handle the failing variant produces the
+        /// ordinary API's partial release: the second handle is released, the
+        /// disposal throws, and the Ownership Lease is left no longer fully
+        /// retained but still releasable.
         /// </summary>
-        private sealed class ThrowingOnceHandle : ICaptureRunLockHandle
+        private sealed class CountingHandle : ICaptureRunLockHandle
         {
-            private int _calls;
+            private readonly bool _throwFirstRelease;
+            private int _disposeCalls;
 
-            internal ThrowingOnceHandle(string lockPath)
+            internal CountingHandle(string lockPath, bool throwFirstRelease = false)
             {
                 LockPath = lockPath;
+                _throwFirstRelease = throwFirstRelease;
             }
 
             public string LockPath { get; }
 
             public bool IsCreated => true;
 
+            internal int DisposeCallCount => _disposeCalls;
+
             public void Dispose()
             {
-                if (_calls++ == 0)
+                _disposeCalls++;
+
+                if (_throwFirstRelease && _disposeCalls == 1)
                 {
                     throw new InvalidOperationException("First release fails.");
                 }
-            }
-        }
-
-        private sealed class FakeHandle : ICaptureRunLockHandle
-        {
-            public FakeHandle(string lockPath, bool isCreated)
-            {
-                LockPath = lockPath;
-                IsCreated = isCreated;
-            }
-
-            public string LockPath { get; }
-
-            public bool IsCreated { get; }
-
-            public string Tag { get; set; }
-
-            public void Dispose()
-            {
             }
         }
 
@@ -6800,6 +7192,56 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        /// <summary>
+        /// Session Ownership Lease releaser standing in for the production one:
+        /// it shares the same admission predicate, releases the operation's
+        /// exact lease once, and issues the ordinary receipt. It can park inside
+        /// the attempt, so a test can hold the resource-resolution gate the
+        /// attempt runs in, and it can hand back a forged receipt built after
+        /// the release really completed.
+        /// </summary>
+        private sealed class FakeSessionOwnershipReleaser : INvencRunSessionOwnershipReleaser
+        {
+            private int _callCount;
+
+            internal ManualResetEventSlim Entered;
+            internal ManualResetEventSlim Proceed;
+
+            internal Func<FakeSessionOwnershipReleaser, NvencRunSessionOwnershipReleaseOperation,
+                NvencRunSessionOwnershipReleaseReceipt> OverrideFactory;
+
+            internal int CallCount => Volatile.Read(ref _callCount);
+
+            public NvencRunSessionOwnershipReleaseReceipt Release(
+                NvencRunSessionOwnershipReleaseOperation operation)
+            {
+                if (operation == null)
+                {
+                    throw new ArgumentNullException(nameof(operation));
+                }
+
+                if (!NvencRunSessionOwnershipReleaseAdmission.IsAdmissible(operation))
+                {
+                    throw new ArgumentException(
+                        "The operation cannot start a release attempt.", nameof(operation));
+                }
+
+                Interlocked.Increment(ref _callCount);
+
+                Entered?.Set();
+                Proceed?.Wait(WatchdogTimeoutMs);
+
+                operation.OwnershipLease.Dispose();
+
+                if (OverrideFactory != null)
+                {
+                    return OverrideFactory(this, operation);
+                }
+
+                return NvencRunSessionOwnershipReleaseReceipt.Create(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -6842,8 +7284,12 @@ namespace Zantetsu.Core.Tests
             internal NvencRunPublicationService Service;
             internal FakeCleaner CleanupCleaner;
             internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
+            internal FakeSessionOwnershipReleaser Releaser;
+            internal NvencRunSessionOwnershipReleaseExecutionCoordinator ReleaseExecution;
 
             internal CaptureRunInitializationSessionIssue SessionIssue;
+            internal CountingHandle FirstHandle;
+            internal CountingHandle SecondHandle;
             internal TraceLogger TraceLogger;
             internal TraceFlightRecorder TraceRecorder;
             internal CaptureFrameFreezeTerminalCoordinator FreezeTerminalCoordinator;
@@ -6868,7 +7314,12 @@ namespace Zantetsu.Core.Tests
                 Writer = new FakeWriter();
                 Sink = new NvencRunChunkSink(State, Buffer, Writer);
                 FinalizationCoordinator = new NvencRunChunkFinalizationCoordinator(Writer);
-                SessionIssue = MakeIssue(throwingFirstRelease);
+                SessionIssue = MakeIssue(
+                    throwingFirstRelease,
+                    out CountingHandle firstHandle,
+                    out CountingHandle secondHandle);
+                FirstHandle = firstHandle;
+                SecondHandle = secondHandle;
                 Context = new NvencRunChunkContext(SessionIssue, Sink, FinalizationCoordinator, "chunk/0");
                 Slot = new NvencRunLocalRegistrySlot(Context);
 
@@ -6943,8 +7394,12 @@ namespace Zantetsu.Core.Tests
                 CleanupExecution =
                     new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
 
+                Releaser = new FakeSessionOwnershipReleaser();
+                ReleaseExecution =
+                    new NvencRunSessionOwnershipReleaseExecutionCoordinator(Releaser);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
-                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service, CleanupExecution);
+                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service, CleanupExecution, ReleaseExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();

@@ -81,6 +81,7 @@ namespace Zantetsu.Observability
         private readonly NvencTraceFreezeCoordinator _traceFreeze;
         private readonly NvencRunPublicationService _publicationService;
         private readonly NvencRunCaptureCompleteCleanupExecutionCoordinator _captureCompleteCleanupExecution;
+        private readonly NvencRunSessionOwnershipReleaseExecutionCoordinator _sessionOwnershipReleaseExecution;
 
         private NvencRunAcceptedFrameSnapshot _snapshot;
         private int _reflectedCount;
@@ -117,6 +118,8 @@ namespace Zantetsu.Observability
         private bool _captureCompleteCleanupReflected;
         private NvencRunCaptureCompleteCleanupAttemptResult _captureCompleteCleanupResult;
         private NvencRunSessionOwnershipReleaseOperation _sessionOwnershipReleaseOperation;
+        private bool _sessionOwnershipReleased;
+        private NvencRunSessionOwnershipReleaseReceipt _sessionOwnershipReleaseReceipt;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -129,7 +132,8 @@ namespace Zantetsu.Observability
             CaptureRunInitializationSessionIssue sessionIssue,
             NvencTraceFreezeCoordinator traceFreeze,
             NvencRunPublicationService publicationService,
-            NvencRunCaptureCompleteCleanupExecutionCoordinator captureCompleteCleanupExecution)
+            NvencRunCaptureCompleteCleanupExecutionCoordinator captureCompleteCleanupExecution,
+            NvencRunSessionOwnershipReleaseExecutionCoordinator sessionOwnershipReleaseExecution)
         {
             _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _submitWorker = submitWorker ?? throw new ArgumentNullException(nameof(submitWorker));
@@ -143,6 +147,8 @@ namespace Zantetsu.Observability
             _publicationService = publicationService ?? throw new ArgumentNullException(nameof(publicationService));
             _captureCompleteCleanupExecution = captureCompleteCleanupExecution
                 ?? throw new ArgumentNullException(nameof(captureCompleteCleanupExecution));
+            _sessionOwnershipReleaseExecution = sessionOwnershipReleaseExecution
+                ?? throw new ArgumentNullException(nameof(sessionOwnershipReleaseExecution));
 
             if (!ReferenceEquals(_submitWorker.ProcessState, _processState))
             {
@@ -3290,6 +3296,172 @@ namespace Zantetsu.Observability
             {
                 _processState.EndResourceResolution();
             }
+        }
+
+        /// <summary>
+        /// Runs the one Session Ownership Lease release attempt for this Run
+        /// through its configured Execution Coordinator and retains the
+        /// resulting receipt exactly once. The whole attempt happens inside the
+        /// existing resource-resolution gate, so a Poison either precedes it -
+        /// and the releaser is never contacted - or waits for the attempt to
+        /// finish and the gate to be released.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A gate contention, a poisoned process, a release operation that was
+        /// never prepared, and an operation that simply cannot start an attempt
+        /// yet all return false with no change. An already successful release
+        /// returns the same retained receipt. A broken binding, a lease whose
+        /// release completed without a retained receipt, and a returned receipt
+        /// that is null, foreign, or invalid are corruption and poison.
+        /// </para>
+        /// <para>
+        /// An exception from the Execution Coordinator or the releaser
+        /// propagates unchanged and is never classified by its type or message.
+        /// What follows it is decided only by the lease's own state: while the
+        /// lease can still be released, the failure - a first-attempt failure or
+        /// a partial release - leaves no receipt and no latch and does not
+        /// poison, so the same retained operation may be retried on a later
+        /// call; if the lease can no longer be released and no valid receipt was
+        /// obtained, that is an unretryable invariant violation and poisons. No
+        /// retry counter, failed result, or partial-release status is
+        /// introduced.
+        /// </para>
+        /// <para>
+        /// Success changes only the retained receipt and its latch. The
+        /// disposition, Registry, plan, chunk, capture index, cleanup result,
+        /// context, and Publication Service are untouched, and nothing here
+        /// re-acquires a lock, re-inspects a file, or retries inside one call.
+        /// </para>
+        /// </remarks>
+        internal bool TryReleaseSessionOwnership(
+            out NvencRunSessionOwnershipReleaseReceipt receipt)
+        {
+            receipt = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A process-wide Poison outranks every retained shape, and the
+                // releaser is never contacted after it.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_sessionOwnershipReleased)
+                {
+                    NvencRunSessionOwnershipReleaseReceipt retained = _sessionOwnershipReleaseReceipt;
+                    if (!IsRetainedReleaseReceiptCorrelated(retained))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained Session Ownership Lease release receipt no longer correlates.");
+                    }
+
+                    receipt = retained;
+                    return true;
+                }
+
+                NvencRunSessionOwnershipReleaseOperation operation = _sessionOwnershipReleaseOperation;
+                if (operation == null)
+                {
+                    // Never prepared: a normal not-ready shape, and the releaser
+                    // is not contacted.
+                    return false;
+                }
+
+                if (!operation.IsBindingIntact)
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Session Ownership Lease release operation no longer correlates.");
+                }
+
+                if (!NvencRunSessionOwnershipReleaseAdmission.IsAdmissible(operation))
+                {
+                    if (!operation.CanRelease)
+                    {
+                        // The lease's release completed without this Run ever
+                        // retaining a receipt for it: unretryable, and not a
+                        // not-ready shape.
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The Session Ownership Lease release completed without a retained receipt.");
+                    }
+
+                    // Not startable yet, for example because the admission
+                    // validity a first attempt needs is gone. No change.
+                    return false;
+                }
+
+                NvencRunSessionOwnershipReleaseReceipt issued;
+                try
+                {
+                    issued = _sessionOwnershipReleaseExecution.Execute(operation);
+                }
+                catch (Exception)
+                {
+                    // Classified only by the lease's own state, never by the
+                    // exception's type or message.
+                    if (!operation.CanRelease)
+                    {
+                        _processState.TryPoison();
+                    }
+
+                    throw;
+                }
+
+                if (!IsIssuedReleaseReceiptCorrelated(issued, operation))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Session Ownership Lease release returned a null, foreign, or invalid receipt.");
+                }
+
+                _sessionOwnershipReleaseReceipt = issued;
+                _sessionOwnershipReleased = true;
+
+                receipt = issued;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// The retained release receipt must still be the exact receipt of this
+        /// Run's exact release operation, issued by the exact releaser this Run
+        /// is configured with, and still report a completed release.
+        /// </summary>
+        private bool IsRetainedReleaseReceiptCorrelated(
+            NvencRunSessionOwnershipReleaseReceipt retained)
+        {
+            return retained != null
+                && IsIssuedReleaseReceiptCorrelated(retained, _sessionOwnershipReleaseOperation);
+        }
+
+        private bool IsIssuedReleaseReceiptCorrelated(
+            NvencRunSessionOwnershipReleaseReceipt issued,
+            NvencRunSessionOwnershipReleaseOperation operation)
+        {
+            if (issued == null || operation == null)
+            {
+                return false;
+            }
+
+            INvencRunSessionOwnershipReleaser releaser = _sessionOwnershipReleaseExecution.Releaser;
+
+            return ReferenceEquals(issued.Releaser, releaser)
+                && ReferenceEquals(issued.Operation, operation)
+                && issued.IsValid
+                && issued.IsIssuedFor(releaser, operation);
         }
 
         /// <summary>

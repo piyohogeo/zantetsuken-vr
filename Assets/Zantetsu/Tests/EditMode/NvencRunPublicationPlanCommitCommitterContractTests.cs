@@ -958,6 +958,32 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        /// <summary>
+        /// Identity-only Session Ownership Lease releaser: this fixture never
+        /// releases a lease, but the Run Coordinator requires the exact release
+        /// Execution Coordinator its receipts must come from.
+        /// </summary>
+        private sealed class FakeSessionOwnershipReleaser : INvencRunSessionOwnershipReleaser
+        {
+            public NvencRunSessionOwnershipReleaseReceipt Release(
+                NvencRunSessionOwnershipReleaseOperation operation)
+            {
+                if (operation == null)
+                {
+                    throw new ArgumentNullException(nameof(operation));
+                }
+
+                if (!NvencRunSessionOwnershipReleaseAdmission.IsAdmissible(operation))
+                {
+                    throw new ArgumentException(
+                        "The operation cannot start a release attempt.", nameof(operation));
+                }
+
+                operation.OwnershipLease.Dispose();
+                return NvencRunSessionOwnershipReleaseReceipt.Create(this, operation);
+            }
+        }
+
         private sealed class Harness : IDisposable
         {
             internal NvencCaptureProcessState State;
@@ -1008,6 +1034,8 @@ namespace Zantetsu.Core.Tests
             internal NvencRunPublicationService Service;
             internal FakeCleanupCleaner CleanupCleaner;
             internal NvencRunCaptureCompleteCleanupExecutionCoordinator CleanupExecution;
+            internal FakeSessionOwnershipReleaser Releaser;
+            internal NvencRunSessionOwnershipReleaseExecutionCoordinator ReleaseExecution;
 
             private readonly Action _settledHandler;
 
@@ -1099,8 +1127,12 @@ namespace Zantetsu.Core.Tests
                 CleanupExecution =
                     new NvencRunCaptureCompleteCleanupExecutionCoordinator(CleanupCleaner);
 
+                Releaser = new FakeSessionOwnershipReleaser();
+                ReleaseExecution =
+                    new NvencRunSessionOwnershipReleaseExecutionCoordinator(Releaser);
+
                 RunCoordinator = new NvencCaptureRunCoordinator(
-                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service, CleanupExecution);
+                    State, SubmitWorker, Worker, Context, Slot, MainThreadTeardown, BackendJoin, SessionIssue, TraceFreeze, Service, CleanupExecution, ReleaseExecution);
 
                 SettledEvent = new ManualResetEventSlim(false);
                 _settledHandler = () => SettledEvent.Set();
