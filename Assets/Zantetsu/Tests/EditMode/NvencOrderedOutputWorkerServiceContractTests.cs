@@ -547,16 +547,19 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Terminal_SettleObservedAfterRequest_IsNotEvidence_ConvergenceConfirmsTheRealCondition()
         {
+            // The four events outlive the Harness: the Worker can still be
+            // invoking a handler snapshot taken before the removal below, so
+            // they are released only after the Harness has joined the Worker
+            // thread.
+            using (ManualResetEventSlim insideRaise = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim proceed = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim observedSettle = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim releaseWorker = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 Assert.That(h.State.TryBeginDrain(), Is.True);
                 h.SubmitDrained = true;
                 Assert.That(h.Context.TryFreezeAcceptedFrames(out _), Is.True);
-
-                ManualResetEventSlim insideRaise = new ManualResetEventSlim(false);
-                ManualResetEventSlim proceed = new ManualResetEventSlim(false);
-                ManualResetEventSlim observedSettle = new ManualResetEventSlim(false);
-                ManualResetEventSlim releaseWorker = new ManualResetEventSlim(false);
 
                 // Two ordinary Settled observers, no product change and no
                 // reflection. The first parks the Worker at the very start of a
@@ -640,11 +643,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Worker.TryRequestAbandon(), Is.False);
                 Assert.That(h.Worker.TryRequestFinalize(), Is.False);
                 Assert.That(h.Worker.TryGetFailure(out _), Is.False);
-
-                // The four events are deliberately not disposed: the Worker may
-                // still be invoking a handler snapshot taken before the removal
-                // above, and a disposed event there would be swallowed rather
-                // than reported.
             }
         }
 
