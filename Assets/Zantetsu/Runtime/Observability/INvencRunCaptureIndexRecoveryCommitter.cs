@@ -30,11 +30,15 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// An existing final index, canonical bytes describing something else, a
-    /// document past the limit, a reparse point, a file whose identity does not
-    /// match what was observed, and anything that could not be observed at all
-    /// are never deleted or overwritten. An exception after the rename is still
-    /// an exception: no receipt is returned and no outcome is inferred on the
-    /// spot. A caller must not blindly retry the same operation; under the OS
+    /// document past the limit, a reparse point, and anything that could not be
+    /// observed at all are never deleted or overwritten. More precisely: an
+    /// entry that this attempt's own no-follow open cannot establish as an
+    /// exact ordinary file under the verified directory is left unchanged, and
+    /// every delete and rename binds to the handle that attempt opened. No file
+    /// identity is compared against an earlier inspection - the snapshot holds
+    /// no such identity and none is invented. An exception after the rename is
+    /// still an exception: no receipt is returned and no outcome is inferred on
+    /// the spot. A caller must not blindly retry the same operation; under the OS
     /// lock it still holds, it re-inspects and decides again.
     /// </para>
     /// <para>
