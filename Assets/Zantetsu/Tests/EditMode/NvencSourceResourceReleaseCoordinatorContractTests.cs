@@ -317,18 +317,25 @@ namespace Zantetsu.Core.Tests
                         }
                     });
                     holder.IsBackground = true;
+                    bool holderJoined = false;
                     holder.Start();
+                    try
+                    {
+                        Assert.That(held.Wait(WatchdogTimeoutMs), Is.True, "Holder did not acquire the gate in time.");
+                        Assert.That(acquired, Is.True);
 
-                    Assert.That(held.Wait(WatchdogTimeoutMs), Is.True, "Holder did not acquire the gate in time.");
-                    Assert.That(acquired, Is.True);
+                        // Gate is held by another thread: fail without waiting, no change.
+                        Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.False);
+                        Assert.That(record.Surface.IsBackendOwned, Is.True);
+                        Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
+                    }
+                    finally
+                    {
+                        release.Set();
+                        holderJoined = holder.Join(WatchdogTimeoutMs);
+                    }
 
-                    // Gate is held by another thread: fail without waiting, no change.
-                    Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.False);
-                    Assert.That(record.Surface.IsBackendOwned, Is.True);
-                    Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
-
-                    release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "Holder did not finish in time.");
+                    Assert.That(holderJoined, Is.True, "Holder did not finish in time.");
                 }
 
                 // Retry after the gate is free succeeds: handoff, then apply.

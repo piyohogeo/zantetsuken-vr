@@ -155,12 +155,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PlanCommit_PoisonDuringExecution_NoNormalResult()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunPublicationPlanCommitOperation operation = PreparePlanOperation(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
@@ -176,14 +176,13 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Service.TryCollectPlanCommit(out NvencRunPublicationPlanCommitExecutionResult result), Is.False);
                 Assert.That(result, Is.Null);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
         [Test]
         public void PlanCommit_ConcurrentCollect_ExactlyOneSucceeds()
         {
+            using (ManualResetEventSlim start = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunPublicationPlanCommitOperation operation = PreparePlanOperation(h);
@@ -193,7 +192,6 @@ namespace Zantetsu.Core.Tests
                     "service did not publish the plan terminal");
 
                 int successes = 0;
-                ManualResetEventSlim start = new ManualResetEventSlim(false);
                 Thread[] threads = new Thread[2];
                 for (int i = 0; i < threads.Length; i++)
                 {
@@ -220,19 +218,18 @@ namespace Zantetsu.Core.Tests
                 Assert.That(Volatile.Read(ref successes), Is.EqualTo(1));
                 Assert.That(h.Service.State, Is.EqualTo(NvencRunPublicationServiceState.AcceptingArtifactPublication));
 
-                start.Dispose();
             }
         }
 
         [Test]
         public void PlanCommit_CollectBeforeCompleted_ReturnsFalseNoClear()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunPublicationPlanCommitOperation operation = PreparePlanOperation(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
@@ -247,20 +244,18 @@ namespace Zantetsu.Core.Tests
                     "service did not publish the plan terminal");
                 Assert.That(h.Service.TryCollectPlanCommit(out _), Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
         [Test]
         public void PlanCommit_DisposeRejectedWhileRunning_IdempotentAfterStop()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunPublicationPlanCommitOperation operation = PreparePlanOperation(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
@@ -277,21 +272,19 @@ namespace Zantetsu.Core.Tests
                 // while running stays rejected.
                 Assert.Throws<InvalidOperationException>(() => h.Service.Dispose());
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
         [Test]
         public void PlanCommit_SpuriousNotifyDuringExecution_WorkerStillServicesArtifactPhase()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunPublicationPlanCommitOperation planOperation = PreparePlanOperation(h);
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
@@ -317,8 +310,6 @@ namespace Zantetsu.Core.Tests
                 WaitForArtifactTerminal(h, "worker did not reach the terminal for the artifact publication");
                 Assert.That(h.Publisher.CallCount, Is.EqualTo(1));
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -463,13 +454,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Artifact_PoisonDuringExecution_NoNormalResult()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 CommitPlanAndCollect(h);
                 NvencRunArtifactPublicationOperation operation = PrepareArtifactOperation(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Publisher.Entered = entered;
                 h.Publisher.Release = release;
 
@@ -485,8 +476,6 @@ namespace Zantetsu.Core.Tests
                     out NvencRunArtifactPublicationAttemptResult result), Is.False);
                 Assert.That(result.IsNone, Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -601,12 +590,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CaptureIndex_Failed_StopsWorker_CollectsAfterStopOnly()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureIndexCommitOperation operation = PublishArtifactAndPrepareCaptureIndex(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
                 h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
@@ -630,20 +619,18 @@ namespace Zantetsu.Core.Tests
                     Is.EqualTo(NvencRunPublicationServiceState.CaptureIndexCommitCollected));
                 Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(1));
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
         [Test]
         public void CaptureIndex_ExtraNotificationDuringExecution_DoesNotStopTheWorker()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureIndexCommitOperation operation = PublishArtifactAndPrepareCaptureIndex(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
 
@@ -668,8 +655,6 @@ namespace Zantetsu.Core.Tests
                 h.Service.Notify();
                 Assert.That(h.Service.IsStopped, Is.False);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -777,12 +762,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CaptureIndex_MidExecutionPoison_NoNormalTerminal()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureIndexCommitOperation operation = PublishArtifactAndPrepareCaptureIndex(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
 
@@ -800,8 +785,6 @@ namespace Zantetsu.Core.Tests
                     out NvencRunCaptureIndexCommitAttemptResult result), Is.False);
                 Assert.That(result.IsNone, Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -892,13 +875,13 @@ namespace Zantetsu.Core.Tests
                 NvencRunCaptureCompleteStatus.Failed,
             })
             {
+                using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+                using (ManualResetEventSlim release = new ManualResetEventSlim(false))
                 using (Harness h = Harness.Create())
                 {
                     NvencRunCaptureCompleteOperation operation =
                         CommitCaptureIndexAndPrepareCaptureComplete(h);
 
-                    ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                    ManualResetEventSlim release = new ManualResetEventSlim(false);
                     h.RunCompleter.Entered = entered;
                     h.RunCompleter.Release = release;
                     h.RunCompleter.Status = status;
@@ -927,8 +910,6 @@ namespace Zantetsu.Core.Tests
                     Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
                     Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
 
-                    entered.Dispose();
-                    release.Dispose();
                 }
             }
         }
@@ -993,13 +974,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CaptureComplete_ExtraNotificationDuringExecution_DoesNotRunTwice()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureCompleteOperation operation =
                     CommitCaptureIndexAndPrepareCaptureComplete(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
@@ -1017,8 +998,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Service.State,
                     Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteCompleted));
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -1069,13 +1048,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CaptureComplete_MidExecutionPoison_NoNormalTerminal()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureCompleteOperation operation =
                     CommitCaptureIndexAndPrepareCaptureComplete(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
@@ -1091,8 +1070,6 @@ namespace Zantetsu.Core.Tests
                     out NvencRunCaptureCompleteAttemptResult result), Is.False);
                 Assert.That(result.IsNone, Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 

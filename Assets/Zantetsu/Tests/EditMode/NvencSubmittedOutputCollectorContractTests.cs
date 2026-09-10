@@ -283,15 +283,22 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                Assert.That(h.Collector.TryCollect(record, out _), Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(0));
+                Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
-            Assert.That(h.Collector.TryCollect(record, out _), Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(0));
-            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "gate holder did not exit");
+            Assert.That(holderJoined, Is.True, "gate holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Retry succeeds once the gate is free.
@@ -336,18 +343,25 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The source is called once; the post-source gate is then held, so
+                // the collector parks without poisoning or a terminal result.
+                Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult first), Is.False);
+                Assert.That(first.IsNone, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The source is called once; the post-source gate is then held, so
-            // the collector parks without poisoning or a terminal result.
-            Assert.That(h.Collector.TryCollect(record, out NvencSubmittedOutputCollectResult first), Is.False);
-            Assert.That(first.IsNone, Is.True);
-            Assert.That(h.State.IsPoisoned, Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-            Assert.That(h.SamplePool.IsActive(record.SampleSlot), Is.True);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Retry converges without re-contacting the source.
@@ -393,14 +407,21 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // Park A behind the post-source gate without a terminal result.
+                Assert.That(h.Collector.TryCollect(a, out _), Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Park A behind the post-source gate without a terminal result.
-            Assert.That(h.Collector.TryCollect(a, out _), Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // B is a different record and must never receive A's parked result:
@@ -448,14 +469,21 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // Park A behind the post-source gate without a terminal result.
+                Assert.That(h.Collector.TryCollect(a, out _), Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Park A behind the post-source gate without a terminal result.
-            Assert.That(h.Collector.TryCollect(a, out _), Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Return the Frame Completion credit while A is parked: its lease is

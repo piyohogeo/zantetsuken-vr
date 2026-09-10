@@ -135,14 +135,14 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CollectorBusy_ParksThenResumesWithoutRerun()
         {
+            using (ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
                 h.Enqueue(record);
 
-                ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Source.SourceEntered = sourceEntered;
                 h.Source.WaitForGateHeld = gateHeld;
 
@@ -161,20 +161,27 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
+                try
+                {
+                    h.SettledEvent.Reset();
+                    h.Worker.Notify();
+                    WaitSettled(h.SettledEvent, "worker did not park behind the collector gate");
 
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not park behind the collector gate");
+                    // Parked: the source ran once, no completion, and the worker is
+                    // still alive.
+                    Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                    Assert.That(h.Boundary.TryCollect(out _), Is.False);
+                    Assert.That(h.Worker.IsStopped, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
+                }
 
-                // Parked: the source ran once, no completion, and the worker is
-                // still alive.
-                Assert.That(h.Source.CallCount, Is.EqualTo(1));
-                Assert.That(h.Boundary.TryCollect(out _), Is.False);
-                Assert.That(h.Worker.IsStopped, Is.False);
-
-                release.Set();
-                Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 // Notify again: resume without re-running the source.
                 h.SettledEvent.Reset();
@@ -190,14 +197,14 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void SinkBusy_ParksThenResumesWithoutRerun()
         {
+            using (ManualResetEventSlim writerEntered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
                 h.Enqueue(record);
 
-                ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Writer.Entered = writerEntered;
                 h.Writer.WaitForGateHeld = gateHeld;
 
@@ -216,20 +223,27 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
+                try
+                {
+                    h.SettledEvent.Reset();
+                    h.Worker.Notify();
+                    WaitSettled(h.SettledEvent, "worker did not park behind the sink gate");
 
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not park behind the sink gate");
+                    // Parked: source and writer each ran once, no completion yet.
+                    Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                    Assert.That(h.Writer.AppendCount, Is.EqualTo(1));
+                    Assert.That(h.Boundary.TryCollect(out _), Is.False);
+                    Assert.That(h.Worker.IsStopped, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
+                }
 
-                // Parked: source and writer each ran once, no completion yet.
-                Assert.That(h.Source.CallCount, Is.EqualTo(1));
-                Assert.That(h.Writer.AppendCount, Is.EqualTo(1));
-                Assert.That(h.Boundary.TryCollect(out _), Is.False);
-                Assert.That(h.Worker.IsStopped, Is.False);
-
-                release.Set();
-                Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
@@ -246,6 +260,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CompletionGateBusy_ParksThenResumesWithoutRerun()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
@@ -254,8 +270,6 @@ namespace Zantetsu.Core.Tests
                 // result, as if the collector and sink had already completed.
                 ParkAtSubmittedPublish(h.Processor, record);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -268,18 +282,26 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                try
+                {
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
 
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not park behind the completion gate");
+                    h.SettledEvent.Reset();
+                    h.Worker.Notify();
+                    WaitSettled(h.SettledEvent, "worker did not park behind the completion gate");
 
-                Assert.That(h.Boundary.TryCollect(out _), Is.False);
-                Assert.That(h.Worker.IsStopped, Is.False);
+                    Assert.That(h.Boundary.TryCollect(out _), Is.False);
+                    Assert.That(h.Worker.IsStopped, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
+                }
 
-                release.Set();
-                Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
@@ -293,14 +315,14 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReleaseGateBusy_ParksThenResumes()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencSubmitToOutputRecord record = h.CreateFailedBeforeSubmit(
                     1, NvencFailedBeforeSubmitReason.GpuConversionFailed);
                 h.Enqueue(record);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -313,19 +335,27 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                try
+                {
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
 
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not park behind the release gate");
+                    h.SettledEvent.Reset();
+                    h.Worker.Notify();
+                    WaitSettled(h.SettledEvent, "worker did not park behind the release gate");
 
-                // The Sample Slot is still held; nothing progressed.
-                Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
-                Assert.That(h.Boundary.TryCollect(out _), Is.False);
+                    // The Sample Slot is still held; nothing progressed.
+                    Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
+                    Assert.That(h.Boundary.TryCollect(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
+                }
 
-                release.Set();
-                Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
@@ -830,6 +860,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Teardown_PoisonDuringTeardown_NoNormalStopEvidence()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 Assert.That(h.State.TryBeginDrain(), Is.True);
@@ -842,8 +874,6 @@ namespace Zantetsu.Core.Tests
 
                 // Park the teardown inside TearDown() so the main thread can
                 // poison deterministically while the teardown is still running.
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
 
@@ -872,6 +902,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Teardown_GateBusyAtReturn_DoesNotRerun_ConvergesOnRelease()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim returned = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 Assert.That(h.State.TryBeginDrain(), Is.True);
@@ -885,9 +918,6 @@ namespace Zantetsu.Core.Tests
                 // Park the teardown so the worker returns from it only while
                 // the Main Thread still holds the process-state gate, exactly
                 // the transient contention that previously re-ran TearDown().
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
-                ManualResetEventSlim returned = new ManualResetEventSlim(false);
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
                 h.Teardown.Returned = returned;

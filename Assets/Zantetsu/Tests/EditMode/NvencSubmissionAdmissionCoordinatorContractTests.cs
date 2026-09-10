@@ -984,13 +984,12 @@ namespace Zantetsu.Core.Tests
                     }
                 });
                 holder.IsBackground = true;
+                bool holderJoined = false;
                 holder.Start();
-
-                Assert.That(guardHeld.Wait(WatchdogTimeoutMs), Is.True, "Guard holder did not acquire the gate in time.");
-                Assert.That(guardAcquired, Is.True);
-
                 try
                 {
+                    Assert.That(guardHeld.Wait(WatchdogTimeoutMs), Is.True, "Guard holder did not acquire the gate in time.");
+                    Assert.That(guardAcquired, Is.True);
                     using (CaptureFrameRenderTargetPool renderPool = MakeRenderPool(1))
                     {
                         CaptureSurfaceLease surface = MakeCallerOwnedSurface(renderPool);
@@ -1014,8 +1013,10 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "Guard holder did not finish in time.");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "Guard holder did not finish in time.");
             }
         }
 

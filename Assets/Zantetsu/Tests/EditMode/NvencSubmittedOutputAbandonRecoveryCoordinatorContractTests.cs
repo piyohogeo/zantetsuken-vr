@@ -95,20 +95,27 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
 
-            Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                // Gate held: no source contact, no side effect, no overtake.
+                Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
+                Assert.That(first.IsValid, Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(0));
+                Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
+                Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Gate held: no source contact, no side effect, no overtake.
-            Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
-            Assert.That(first.IsValid, Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(0));
-            Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
-            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.Free));
-            Assert.That(h.State.IsPoisoned, Is.False);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "gate holder did not exit");
+            Assert.That(holderJoined, Is.True, "gate holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Retry succeeds once the gate is free.
@@ -153,17 +160,24 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The source runs once; the post-source commit is deferred behind
+                // the held gate, so the collector parks and the coordinator returns
+                // false without overtaking.
+                Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
+                Assert.That(first.IsValid, Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The source runs once; the post-source commit is deferred behind
-            // the held gate, so the collector parks and the coordinator returns
-            // false without overtaking.
-            Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
-            Assert.That(first.IsValid, Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume converges without re-contacting the source.
@@ -216,20 +230,27 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
 
-            Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                // Gate held: the owned return fails as Busy and the lease stays
+                // parked; the collector and source are never re-contacted.
+                Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
+                Assert.That(first.IsValid, Is.False);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Gate held: the owned return fails as Busy and the lease stays
-            // parked; the collector and source are never re-contacted.
-            Assert.That(h.Coordinator.TryRecover(record, out NvencRunAbandonedRecoveryResult first), Is.False);
-            Assert.That(first.IsValid, Is.False);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
-            Assert.That(h.State.IsPoisoned, Is.False);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume: the same owned lease is returned exactly once and a single

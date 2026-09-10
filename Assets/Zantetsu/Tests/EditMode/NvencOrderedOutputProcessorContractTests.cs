@@ -112,17 +112,24 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The collector parks; the processor holds the current and never
+                // touches the second record.
+                Assert.That(h.Processor.TryProcessNext(), Is.False);
+                Assert.That(h.Processor.HasCurrentWork, Is.True);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The collector parks; the processor holds the current and never
-            // touches the second record.
-            Assert.That(h.Processor.TryProcessNext(), Is.False);
-            Assert.That(h.Processor.HasCurrentWork, Is.True);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-            Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume: first completes without re-contacting the source.
@@ -173,18 +180,25 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The sink parks behind the post-writer gate; the processor holds
+                // the current, the owned lease, and the sink stage.
+                Assert.That(h.Processor.TryProcessNext(), Is.False);
+                Assert.That(h.Processor.HasCurrentWork, Is.True);
+                Assert.That(h.Source.CallCount, Is.EqualTo(1));
+                Assert.That(h.Writer.AppendCount, Is.EqualTo(1));
+                Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The sink parks behind the post-writer gate; the processor holds
-            // the current, the owned lease, and the sink stage.
-            Assert.That(h.Processor.TryProcessNext(), Is.False);
-            Assert.That(h.Processor.HasCurrentWork, Is.True);
-            Assert.That(h.Source.CallCount, Is.EqualTo(1));
-            Assert.That(h.Writer.AppendCount, Is.EqualTo(1));
-            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume: converges without re-running the source or the writer.
@@ -235,14 +249,21 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(h.Processor.TryProcessNext(), Is.False);
+                Assert.That(h.Processor.HasCurrentWork, Is.True);
+                Assert.That(h.Processor.HasPendingWork, Is.True);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            Assert.That(h.Processor.TryProcessNext(), Is.False);
-            Assert.That(h.Processor.HasCurrentWork, Is.True);
-            Assert.That(h.Processor.HasPendingWork, Is.True);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             Assert.That(h.Processor.TryProcessNext(), Is.True);

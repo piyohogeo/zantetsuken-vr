@@ -471,6 +471,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Entry_GateBusy_RefusesWithoutChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
@@ -479,8 +481,6 @@ namespace Zantetsu.Core.Tests
                 // A background thread holds the shared process-state gate,
                 // exactly as a concurrent Poison transition would; every entry
                 // must refuse without advancing any state.
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -493,11 +493,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.False);
                     Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.False);
                     Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.False);
@@ -507,8 +507,10 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 // Once the gate is released the reflection proceeds again.
                 Assert.That(h.RunCoordinator.TryReflectCompletion(MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
@@ -767,6 +769,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MainThreadTeardown_OutputWorkerNotStopped_RefusesNoContact()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
@@ -780,8 +784,6 @@ namespace Zantetsu.Core.Tests
 
                 // Park the Output Worker inside its teardown so it is
                 // deterministically not yet stopped.
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
 
@@ -836,6 +838,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MainThreadTeardown_GateBusy_RefusesNonBlocking()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
@@ -854,8 +858,6 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -868,19 +870,21 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.False);
                     Assert.That(h.MainThreadTeardown.CallCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "holder did not exit");
             }
         }
 
@@ -1035,6 +1039,10 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MainThreadTeardown_PoisonDuringTeardown_LinearizesAfterCompletion()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim poisonStarted = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim poisonDone = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 h.AcceptAndAppendChunk(1, 64, Seed);
@@ -1053,10 +1061,6 @@ namespace Zantetsu.Core.Tests
 
                 h.SubmitWorker.Dispose();
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
-                ManualResetEventSlim poisonStarted = new ManualResetEventSlim(false);
-                ManualResetEventSlim poisonDone = new ManualResetEventSlim(false);
                 h.MainThreadTeardown.Entered = entered;
                 h.MainThreadTeardown.Release = release;
 
@@ -1881,12 +1885,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareArtifactPublication_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 CommitAndCollect(h, NvencRunPublicationPlanCommitStatus.Committed);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -1899,10 +1903,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
                         out NvencRunArtifactPublicationOperation operation), Is.False);
                     Assert.That(operation, Is.Null);
@@ -1910,8 +1915,10 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 // Once the gate is released the preparation proceeds.
                 Assert.That(h.RunCoordinator.TryPrepareArtifactPublication(
@@ -2156,12 +2163,12 @@ namespace Zantetsu.Core.Tests
             }
 
             // Gate contention: a background holder keeps the shared gate busy.
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareArtifactSubmission(h);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -2174,18 +2181,21 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.False);
                     Assert.That(h.Publisher.CallCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
                 WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
@@ -2267,12 +2277,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CollectArtifactPublication_PollBeforeStop_RetrySucceeds()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareArtifactSubmission(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Publisher.Entered = entered;
                 h.Publisher.Release = release;
 
@@ -2290,8 +2300,6 @@ namespace Zantetsu.Core.Tests
                     out NvencRunArtifactPublicationAttemptResult result), Is.True);
                 Assert.That(result.IsPublished, Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -2491,12 +2499,12 @@ namespace Zantetsu.Core.Tests
             }
 
             // Gate contention: a background holder keeps the shared gate busy.
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareCaptureIndexSubmission(h);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginSubmitStep())
@@ -2509,21 +2517,22 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.False);
                     Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
                 WaitForCaptureIndexTerminal(h, "publication worker did not reach the capture index terminal");
@@ -2611,12 +2620,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CollectCaptureIndexCommit_FailedPollBeforeStop_RetrySucceeds()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareCaptureIndexSubmission(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
                 h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
@@ -2635,8 +2644,6 @@ namespace Zantetsu.Core.Tests
                     out NvencRunCaptureIndexCommitAttemptResult result), Is.True);
                 Assert.That(result.IsFailed, Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -2844,12 +2851,12 @@ namespace Zantetsu.Core.Tests
             }
 
             // Gate contention: a background holder keeps the shared gate busy.
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareCaptureCompleteSubmission(h);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginSubmitStep())
@@ -2862,21 +2869,22 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.False);
                     Assert.That(h.RunCompleter.CallCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
                 WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
@@ -2958,12 +2966,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void CollectCaptureComplete_PollBeforeStop_RetrySucceeds()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareCaptureCompleteSubmission(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
@@ -2984,8 +2992,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RunCoordinator.Disposition,
                     Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -3307,12 +3313,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareCaptureCompleteCleanup_MidExecutionBeforeServiceStop_ReturnsFalse()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareCaptureCompleteSubmission(h);
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
@@ -3331,8 +3337,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.True);
                 Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 
@@ -3409,12 +3413,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareCaptureCompleteCleanup_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -3427,10 +3431,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
                         out NvencRunCaptureCompleteCleanupOperation contended), Is.False);
                     Assert.That(contended, Is.Null);
@@ -3441,11 +3446,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind.
                 Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
@@ -3837,14 +3842,14 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReflectCaptureCompleteCleanup_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencRunCaptureCompleteCleanupOperation operation = PrepareCleanupOperation(h);
                 NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(
                     h, operation, NvencRunCaptureCompleteCleanupStatus.Failed);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -3857,10 +3862,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.False);
                     Assert.That(h.RunCoordinator.Disposition,
                         Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
@@ -3869,11 +3875,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind.
                 Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
@@ -4308,12 +4314,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareSessionOwnershipRelease_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -4326,10 +4332,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
                         out NvencRunSessionOwnershipReleaseOperation contended), Is.False);
                     Assert.That(contended, Is.Null);
@@ -4340,11 +4347,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind.
                 Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
@@ -4699,12 +4706,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReleaseSessionOwnership_GateContention_ReturnsFalseNoContact_ThenSucceeds()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareReleaseOperation(h);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -4717,10 +4724,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
                         out NvencRunSessionOwnershipReleaseReceipt contended), Is.False);
                     Assert.That(contended, Is.Null);
@@ -4731,11 +4739,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind.
                 Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
@@ -5607,12 +5615,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareCaptureComplete_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 CommitCaptureIndexAndCollect(h, NvencRunCaptureIndexCommitStatus.Committed);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -5625,10 +5633,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryPrepareCaptureComplete(
                         out NvencRunCaptureCompleteOperation contended), Is.False);
                     Assert.That(contended, Is.Null);
@@ -5638,11 +5647,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind: the first real preparation
                 // still mints the operation.
@@ -5954,12 +5963,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PrepareCaptureIndexCommit_GateContention_ReturnsFalseNoChange()
         {
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PublishAndCollectArtifact(h, NvencRunArtifactPublicationStatus.Published);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -5972,10 +5981,11 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TryPrepareCaptureIndexCommit(
                         out NvencRunCaptureIndexCommitOperation contended), Is.False);
                     Assert.That(contended, Is.Null);
@@ -5985,11 +5995,11 @@ namespace Zantetsu.Core.Tests
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
 
-                gateHeld.Dispose();
-                release.Dispose();
+                Assert.That(holderJoined, Is.True, "holder did not exit");
+
 
                 // The refusal left nothing behind: the first real preparation
                 // still mints the operation.
@@ -6322,12 +6332,12 @@ namespace Zantetsu.Core.Tests
             }
 
             // Gate contention: a background holder keeps the shared gate busy.
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 FinalizeAndPrepareCommit(h);
 
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 Thread holder = new Thread(() =>
                 {
                     if (h.State.TryBeginResourceResolution())
@@ -6340,18 +6350,21 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                 try
                 {
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
                     Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.False);
                     Assert.That(h.Committer.CallCount, Is.EqualTo(0));
                 }
                 finally
                 {
                     release.Set();
-                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
                 }
+
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 // Once the gate is released the submission proceeds.
                 Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
@@ -6473,13 +6486,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Collect_PollBeforeCompleted_RetrySucceeds()
         {
+            using (ManualResetEventSlim entered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 FinalizeAndPrepareCommit(h);
                 h.Committer.Status = NvencRunPublicationPlanCommitStatus.Committed;
 
-                ManualResetEventSlim entered = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
@@ -6502,8 +6515,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Slot.State, Is.EqualTo(NvencRunLocalRegistrySlotState.Committed));
                 Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
 
-                entered.Dispose();
-                release.Dispose();
             }
         }
 

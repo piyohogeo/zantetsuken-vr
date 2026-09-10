@@ -499,37 +499,44 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
-            holder.Start();
-
+            bool holderJoined = false;
             Exception copierError = null;
             NvencAccessUnitCopyStatus status = default;
             NvencAccessUnitCopyProof proof = default;
-            Thread copier = new Thread(() =>
+            holder.Start();
+            try
             {
-                try
+                Thread copier = new Thread(() =>
                 {
-                    status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
-                }
-                catch (Exception ex)
+                    try
+                    {
+                        status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
+                    }
+                    catch (Exception ex)
+                    {
+                        copierError = ex;
+                    }
+                })
                 {
-                    copierError = ex;
-                }
-            })
+                    IsBackground = true,
+                };
+                copier.Start();
+
+                Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+                Assert.That(copierError, Is.Null);
+                Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
+
+                // The failed commit path wrote no buffer field.
+                Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
+                Assert.That(ReadContentReady(buffer), Is.False);
+            }
+            finally
             {
-                IsBackground = true,
-            };
-            copier.Start();
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
-            Assert.That(copierError, Is.Null);
-            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
-
-            // The failed commit path wrote no buffer field.
-            Assert.That(ReadValidLength(buffer), Is.EqualTo(0));
-            Assert.That(ReadContentReady(buffer), Is.False);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Poison immediately after the deferred commit path.
@@ -585,34 +592,41 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
-            holder.Start();
-
+            bool holderJoined = false;
             Exception copierError = null;
             NvencAccessUnitCopyStatus status = default;
             NvencAccessUnitCopyProof proof = default;
-            Thread copier = new Thread(() =>
+            holder.Start();
+            try
             {
-                try
+                Thread copier = new Thread(() =>
                 {
-                    status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
-                }
-                catch (Exception ex)
+                    try
+                    {
+                        status = buffer.TryCopyCompletedOutput(write, default, source, out proof);
+                    }
+                    catch (Exception ex)
+                    {
+                        copierError = ex;
+                    }
+                })
                 {
-                    copierError = ex;
-                }
-            })
+                    IsBackground = true,
+                };
+                copier.Start();
+
+                Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
+                Assert.That(copierError, Is.Null);
+                Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
+                Assert.That(source.CallCount, Is.EqualTo(1));
+            }
+            finally
             {
-                IsBackground = true,
-            };
-            copier.Start();
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            Assert.That(copier.Join(WatchdogTimeoutMs), Is.True, "copier did not exit");
-            Assert.That(copierError, Is.Null);
-            Assert.That(status, Is.EqualTo(NvencAccessUnitCopyStatus.Pending));
-            Assert.That(source.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // The parked length is committed without re-contacting the source.

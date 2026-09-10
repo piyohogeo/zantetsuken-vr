@@ -72,6 +72,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ProcessorHoldingWork_DoesNotTouchTerminal()
         {
+            using (ManualResetEventSlim writerEntered = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim gateHeld = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim release = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
@@ -83,9 +86,6 @@ namespace Zantetsu.Core.Tests
                 h.SubmitDrained = true;
 
                 // Park the processor mid-record behind the sink writer.
-                ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
-                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-                ManualResetEventSlim release = new ManualResetEventSlim(false);
                 h.Writer.Entered = writerEntered;
                 h.Writer.WaitForGateHeld = gateHeld;
 
@@ -104,20 +104,27 @@ namespace Zantetsu.Core.Tests
                 {
                     IsBackground = true,
                 };
+                bool holderJoined = false;
                 holder.Start();
+                try
+                {
+                    h.Enqueue(record);
 
-                h.Enqueue(record);
+                    // Accepting notifies the worker; the worker dequeues the record
+                    // and blocks in the sink, so the terminal must not be touched
+                    // while the processor holds the current record.
+                    Assert.That(h.Worker.TryRequestFinalize(), Is.True);
+                    Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "worker did not reach the sink");
+                    Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
+                    Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    holderJoined = holder.Join(WatchdogTimeoutMs);
+                }
 
-                // Accepting notifies the worker; the worker dequeues the record
-                // and blocks in the sink, so the terminal must not be touched
-                // while the processor holds the current record.
-                Assert.That(h.Worker.TryRequestFinalize(), Is.True);
-                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "worker did not reach the sink");
-                Assert.That(h.Finalizer.CallCount, Is.EqualTo(0));
-                Assert.That(h.Worker.TryCollectTerminal(out _), Is.False);
-
-                release.Set();
-                Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                Assert.That(holderJoined, Is.True, "holder did not exit");
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();

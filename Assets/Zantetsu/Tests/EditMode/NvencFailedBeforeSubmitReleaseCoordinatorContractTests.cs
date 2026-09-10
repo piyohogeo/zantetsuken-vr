@@ -94,22 +94,29 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
 
-            Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "gate holder did not enter");
+                // Gate held: fail non-waiting with no change to any pool or result.
+                Assert.That(h.Coordinator.TryRelease(record, out NvencFailedBeforeSubmitReleaseResult first), Is.False);
+                Assert.That(first.IsValid, Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
+                Assert.That(h.WorkSlots.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.SampleSlots.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.SubmitToOutputCredits.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.FrameCompletionCredits.OccupiedCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Gate held: fail non-waiting with no change to any pool or result.
-            Assert.That(h.Coordinator.TryRelease(record, out NvencFailedBeforeSubmitReleaseResult first), Is.False);
-            Assert.That(first.IsValid, Is.False);
-            Assert.That(h.State.IsPoisoned, Is.False);
-            Assert.That(h.SampleSlots.IsActive(record.SampleSlot), Is.True);
-            Assert.That(h.WorkSlots.OccupiedCount, Is.EqualTo(1));
-            Assert.That(h.SampleSlots.OccupiedCount, Is.EqualTo(1));
-            Assert.That(h.SubmitToOutputCredits.OccupiedCount, Is.EqualTo(1));
-            Assert.That(h.FrameCompletionCredits.OccupiedCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "gate holder did not exit");
+            Assert.That(holderJoined, Is.True, "gate holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Retry succeeds once the gate is free.

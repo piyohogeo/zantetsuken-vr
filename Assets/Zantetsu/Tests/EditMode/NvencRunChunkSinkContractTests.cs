@@ -278,23 +278,30 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The writer runs once and the post-consume gate is held, so the
+                // sink parks without a terminal result.
+                Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
+                Assert.That(first.IsNone, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+                Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
 
-            // The writer runs once and the post-consume gate is held, so the
-            // sink parks without a terminal result.
-            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
-            Assert.That(first.IsNone, Is.True);
-            Assert.That(h.State.IsPoisoned, Is.False);
-            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
-            Assert.That(h.Buffer.Phase, Is.EqualTo(NvencAccessUnitPhase.SinkOwned));
+                // The consume claim stays held while parked: Return and
+                // re-reservation are refused until the deferred completion runs.
+                Assert.That(h.Buffer.Return(lease), Is.False);
+                Assert.That(h.Buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The consume claim stays held while parked: Return and
-            // re-reservation are refused until the deferred completion runs.
-            Assert.That(h.Buffer.Return(lease), Is.False);
-            Assert.That(h.Buffer.TryBeginWrite(MakeToken(2), out _), Is.False);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resuming converges without re-running the writer.
@@ -342,13 +349,20 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(h.Sink.TryAppend(token, lease, out _), Is.False);
+                Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.False);
-            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // The consume claim stays held while parked, so the buffer cannot
@@ -398,16 +412,23 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // The writer runs once and the post-consume gate is held, so the
+                // sink parks with the consume claim still held.
+                Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
+                Assert.That(first.IsNone, Is.True);
+                Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // The writer runs once and the post-consume gate is held, so the
-            // sink parks with the consume claim still held.
-            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
-            Assert.That(first.IsNone, Is.True);
-            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Poison after the writer returned but before the deferred
@@ -732,15 +753,22 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                // Park behind the post-consume gate; nothing is committed yet.
+                Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
+                Assert.That(h.Writer.CallCount, Is.EqualTo(1));
+                Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // Park behind the post-consume gate; nothing is committed yet.
-            Assert.That(h.Sink.TryAppend(token, lease, out NvencRunChunkSinkResult first), Is.False);
-            Assert.That(h.Writer.CallCount, Is.EqualTo(1));
-            Assert.That(h.Sink.AppendedCount, Is.EqualTo(0));
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume converges without re-running the writer; the frame id is
@@ -819,16 +847,23 @@ namespace Zantetsu.Core.Tests
             {
                 IsBackground = true,
             };
+            bool holderJoined = false;
             holder.Start();
+            try
+            {
+                Assert.That(h.Sink.TryAppend(token, lease, out _), Is.False);
 
-            Assert.That(h.Sink.TryAppend(token, lease, out _), Is.False);
+                // No evidence while the sink is parked.
+                Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
+                Assert.That(evidence, Is.Null);
+            }
+            finally
+            {
+                release.Set();
+                holderJoined = holder.Join(WatchdogTimeoutMs);
+            }
 
-            // No evidence while the sink is parked.
-            Assert.That(h.Sink.TryCaptureFinalizationEvidence(1, out NvencRunChunkSinkFinalizationEvidence evidence), Is.False);
-            Assert.That(evidence, Is.Null);
-
-            release.Set();
-            Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+            Assert.That(holderJoined, Is.True, "holder did not exit");
             Assert.That(holderError, Is.Null);
 
             // Resume and then the evidence can be captured.
