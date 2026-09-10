@@ -320,6 +320,16 @@ namespace Zantetsu.Core.Tests
 
             public bool IsDirectoryFlushSupported => DirectoryFlushSupported;
 
+            public CaptureIndexDirectoryOpen TryOpenDirectory(string absolutePath)
+            {
+                if (ThrowOnOpenDirectory)
+                {
+                    return CaptureIndexDirectoryOpen.Of(CaptureIndexFileOpenStatus.IoFailure);
+                }
+
+                return CaptureIndexDirectoryOpen.Opened(OpenDirectory(absolutePath));
+            }
+
             public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
             {
                 if (ThrowOnOpenDirectory)

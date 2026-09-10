@@ -142,6 +142,84 @@ namespace Zantetsu.Observability
             }
         }
 
+        public CaptureIndexDirectoryOpen TryOpenDirectory(string absolutePath)
+        {
+            if (absolutePath == null)
+            {
+                throw new ArgumentNullException(nameof(absolutePath));
+            }
+
+            if (!IsSupported)
+            {
+                return CaptureIndexDirectoryOpen.Of(CaptureIndexFileOpenStatus.Unsupported);
+            }
+
+            string normalized = Path.GetFullPath(absolutePath);
+
+            SafeFileHandle handle = CreateFileW(
+                normalized,
+                GenericRead | GenericWrite | DeleteAccess,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagOpenReparsePoint | FileFlagBackupSemantics,
+                IntPtr.Zero);
+
+            if (handle.IsInvalid)
+            {
+                // Only the kernel's own "not found" is absence; every other
+                // failure stays a failure to observe.
+                int error = Marshal.GetLastWin32Error();
+                handle.Dispose();
+                return CaptureIndexDirectoryOpen.Of(
+                    error == ErrorFileNotFound || error == ErrorPathNotFound
+                        ? CaptureIndexFileOpenStatus.Absent
+                        : CaptureIndexFileOpenStatus.IoFailure);
+            }
+
+            try
+            {
+                if (!GetFileInformationByHandle(handle, out ByHandleFileInformation information))
+                {
+                    handle.Dispose();
+                    return CaptureIndexDirectoryOpen.Of(CaptureIndexFileOpenStatus.IoFailure);
+                }
+
+                if ((information.FileAttributes & FileAttributeReparsePoint) != 0
+                    || (information.FileAttributes & FileAttributeDirectory) == 0)
+                {
+                    handle.Dispose();
+                    return CaptureIndexDirectoryOpen.Of(
+                        CaptureIndexFileOpenStatus.InvalidFileKind);
+                }
+
+                string canonicalPath = GetCanonicalPath(handle);
+                string expected = "\\\\?\\" + normalized.TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (canonicalPath == null
+                    || !string.Equals(canonicalPath, expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    handle.Dispose();
+                    return CaptureIndexDirectoryOpen.Of(CaptureIndexFileOpenStatus.EscapesRoot);
+                }
+
+                if (!FlushFileBuffers(handle))
+                {
+                    handle.Dispose();
+                    throw new CaptureArtifactNoFollowUnavailableException(
+                        "Directory metadata flush is not available for " + normalized + ".");
+                }
+
+                return CaptureIndexDirectoryOpen.Opened(
+                    new CaptureIndexCommitDirectory(handle, normalized, canonicalPath));
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
+        }
+
         public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
         {
             if (directory == null)

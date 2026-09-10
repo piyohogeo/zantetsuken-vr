@@ -710,6 +710,19 @@ namespace Zantetsu.Core.Tests
                 return directory;
             }
 
+            public CaptureIndexDirectoryOpen TryOpenDirectory(string absolutePath)
+            {
+                CaptureIndexDirectoryOpen opened = _inner.TryOpenDirectory(absolutePath);
+                if (opened.Status == CaptureIndexFileOpenStatus.Opened)
+                {
+                    OpenedDirectoryPaths.Add(absolutePath);
+                    OpenedDirectories.Add(opened.Directory);
+                    _directoryPaths[opened.Directory] = absolutePath;
+                }
+
+                return opened;
+            }
+
             public CaptureIndexFileOpen TryOpen(CaptureIndexCommitDirectory directory, string name)
             {
                 CaptureIndexFileOpen opened = _inner.TryOpen(directory, name);
