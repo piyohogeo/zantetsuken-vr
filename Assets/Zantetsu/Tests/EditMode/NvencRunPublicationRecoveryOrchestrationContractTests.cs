@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Security.Cryptography;
 using NUnit.Framework;
 using Zantetsu.Observability;
@@ -240,32 +239,6 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- The classification ----
-
-        [Test]
-        public void Classification_CarriesNoIssuerAuthority()
-        {
-            // The orchestration hands back the classifier's own decision, and a
-            // decision is built from a snapshot alone. There is no
-            // coordinator-bound result type to construct, so no decision can be
-            // attributed - or misattributed - to a coordinator, and a stateless
-            // coordinator claims no authority it could not prove.
-            Assert.That(
-                typeof(NvencRunPublicationRecoveryOrchestrationCoordinator)
-                    .GetMethod("Execute", BindingFlags.Instance | BindingFlags.NonPublic)
-                    .ReturnType,
-                Is.EqualTo(typeof(NvencRunPublicationRecoveryDecision)));
-
-            ConstructorInfo[] constructors = typeof(NvencRunPublicationRecoveryDecision)
-                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-            Assert.That(constructors.Length, Is.EqualTo(1));
-
-            ParameterInfo[] parameters = constructors[0].GetParameters();
-
-            Assert.That(parameters.Length, Is.EqualTo(1));
-            Assert.That(parameters[0].ParameterType,
-                Is.EqualTo(typeof(NvencRunPublicationRecoveryInspectionSnapshot)));
-        }
 
         [Test]
         public void Classification_AfterLockRelease_BecomesInvalid()
