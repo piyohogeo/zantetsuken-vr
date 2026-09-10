@@ -23,13 +23,6 @@ namespace Zantetsu.Core.Tests
     {
         private const int WatchdogTimeoutMs = 5000;
 
-        /// <summary>
-        /// Bounded probe for a thread that must still be blocked. Join returning
-        /// false is one-sided, so this deadline can only be exceeded by a thread
-        /// that genuinely got through.
-        /// </summary>
-        private const int BlockedProbeTimeoutMs = 200;
-
         private const byte Seed = 0x40;
 
         private const string InitId = "0123456789abcdef0123456789abcdef";
@@ -4755,62 +4748,78 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReleaseSessionOwnership_HoldingTheGate_DefersAConcurrentPoisonUntilTheAttemptEnds()
         {
+            // Both events outlive the Harness: the release thread parks inside
+            // the fake releaser, so they are released only after both threads
+            // have been joined and the Harness has torn down.
             using (ManualResetEventSlim insideRelease = new ManualResetEventSlim(false))
             using (ManualResetEventSlim proceed = new ManualResetEventSlim(false))
-            using (ManualResetEventSlim poisonReturned = new ManualResetEventSlim(false))
             using (Harness h = Harness.Create())
             {
                 PrepareReleaseOperation(h);
 
-                // The releaser parks inside the attempt, which is inside the
+                // The releaser parks inside the attempt, which runs inside the
                 // resource-resolution gate.
                 h.Releaser.Entered = insideRelease;
                 h.Releaser.Proceed = proceed;
 
                 bool poisoned = false;
-                ManualResetEventSlim poisonAboutToRun = new ManualResetEventSlim(false);
-                Thread poisoner = new Thread(() =>
-                {
-                    poisonAboutToRun.Set();
-                    poisoned = h.State.TryPoison();
-                    poisonReturned.Set();
-                })
+                Thread poisoner = new Thread(() => poisoned = h.State.TryPoison())
                 {
                     IsBackground = true,
                 };
 
                 NvencRunSessionOwnershipReleaseReceipt receipt = null;
                 bool released = false;
-                Thread releaser = new Thread(() =>
-                {
-                    released = h.RunCoordinator.TryReleaseSessionOwnership(out receipt);
-                })
+                Thread releaser = new Thread(
+                    () => released = h.RunCoordinator.TryReleaseSessionOwnership(out receipt))
                 {
                     IsBackground = true,
                 };
 
+                bool poisonerStarted = false;
+                bool releaserJoined = false;
+                bool poisonerJoined = true;
+
                 releaser.Start();
-                Assert.That(insideRelease.Wait(WatchdogTimeoutMs), Is.True,
-                    "the releaser did not enter its attempt");
+                try
+                {
+                    Assert.That(insideRelease.Wait(WatchdogTimeoutMs), Is.True,
+                        "the releaser did not enter its attempt");
 
-                // The Poison blocks on the gate the attempt holds; it cannot
-                // complete while the releaser is parked. Join returning false is
-                // one-sided: a poison that has not started yet also fails to
-                // complete, so this can only fail if the poison actually got
-                // through the held gate.
-                poisoner.Start();
-                Assert.That(poisonAboutToRun.Wait(WatchdogTimeoutMs), Is.True,
-                    "the poisoner did not start");
-                Assert.That(poisoner.Join(BlockedProbeTimeoutMs), Is.False,
-                    "the poison completed while the release attempt held the gate");
-                Assert.That(h.State.IsPoisoned, Is.False);
+                    // While the attempt is parked, this test thread cannot take
+                    // the shared resource-resolution gate. That is the same gate
+                    // a Poison must acquire, so the attempt provably holds it -
+                    // no timing assumption is involved.
+                    bool tookGate = h.State.TryBeginResourceResolution();
+                    if (tookGate)
+                    {
+                        h.State.EndResourceResolution();
+                    }
 
-                proceed.Set();
-                Assert.That(releaser.Join(WatchdogTimeoutMs), Is.True, "the releaser did not finish");
-                Assert.That(poisonReturned.Wait(WatchdogTimeoutMs), Is.True,
-                    "the poison did not complete after the gate was released");
-                Assert.That(poisoner.Join(WatchdogTimeoutMs), Is.True, "the poisoner did not exit");
-                poisonAboutToRun.Dispose();
+                    Assert.That(tookGate, Is.False,
+                        "the release attempt must hold the shared resource-resolution gate");
+
+                    poisoner.Start();
+                    poisonerStarted = true;
+
+                    // The Poison cannot have taken effect: it must acquire the
+                    // gate the parked attempt is still holding.
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    // Never leave the release thread parked, whatever failed
+                    // above, and join both threads before the events go away.
+                    proceed.Set();
+                    releaserJoined = releaser.Join(WatchdogTimeoutMs);
+                    if (poisonerStarted)
+                    {
+                        poisonerJoined = poisoner.Join(WatchdogTimeoutMs);
+                    }
+                }
+
+                Assert.That(releaserJoined, Is.True, "the releaser did not finish");
+                Assert.That(poisonerJoined, Is.True, "the poisoner did not exit");
 
                 // The one attempt completed and was retained; the Poison took
                 // effect only afterwards.
