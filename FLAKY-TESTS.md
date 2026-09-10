@@ -30,31 +30,38 @@ regression candidate until the cause is established. Move an entry to "Active
 flakes" only once its reproduction conditions or a test-side race are
 confirmed, or to "Resolved" once it is fixed.
 
+## Resolved
+
 ### Submit worker: settle observed before the output queue was filled
 
 `NvencOrderedSubmitWorkerServiceContractTests.BeginDrain_WhileRunning_IsRejected_WorkerContinues`
 failed at `Assert.That(h.OutputQueue.Count, Is.EqualTo(1))`
 (`Expected: 1 But was: 0`) right after the fixture's
-`WaitSettled(h.SettledEvent, "worker did not process the accepted work")`. So
-the settle signal had been observed while the queue was still empty. This test
-does not call `StopFinalizedBackend` and does not belong to the teardown-timing
-entry above.
+`WaitSettled(h.SettledEvent, "worker did not process the accepted work")`.
+Observed three times in total, in the full suite runs
+`20260909-190835-7250d9`, `20260910-065539-58293d`, and
+`20260910-173958-272c43`, with the same test, the same assertion, and the same
+symptom every time.
 
-Cause not established, and it is not known whether this is a test-side race or
-a worker defect. Observed twice, in the full suite runs
-`20260909-190835-7250d9` and `20260910-065539-58293d`, with the same assertion
-and message both times. Other full suite runs passed, but the test has not been
-shown to be deterministic in isolation.
+This was a fixture race, not a product defect. The Submit Worker's `Settled`
+event is a best-effort park notification, and a raise that was already in
+flight before the record was enqueued completes afterwards while carrying no
+information about it. The fixture consumed exactly one such settle and read
+`OutputQueue.Count` as though it proved the work had been processed.
 
-The second observation came from a run whose only change was additive: new
-files this fixture does not reference. No direct code dependency on that change
-was found, but whether the added tests shifted suite duration, thread
-scheduling, or machine load enough to expose the race has not been evaluated,
-so that change is not excluded as a trigger. Either way the root cause is
-undetermined, so this entry stays here rather than moving to "Active flakes",
-and a failure of it is still a regression candidate to investigate.
+`NvencOrderedSubmitWorkerServiceContractTests.OutputQueue_SettleObservedAfterEnqueue_IsNotEvidenceOfProcessedWork`
+demonstrates that mechanism deterministically, with two ordinary Settled
+observers and no product change: the worker is held at the start of a raise,
+the record is enqueued inside that window, the raise is then allowed to publish
+its settle, and the queue is shown to be empty at that exact point. It
+reproduces the same mis-judgement mechanism rather than replaying the original
+interleaving.
 
-## Resolved
+Fixed in 7f26217, which changed the four sites that read `OutputQueue.Count`
+straight after a settle wait to a bounded convergence on that count.
+
+A failure of this assertion is now a regression to investigate, never something
+to pass by re-running.
 
 ### Output worker: settle observed before terminal result became collectable
 
