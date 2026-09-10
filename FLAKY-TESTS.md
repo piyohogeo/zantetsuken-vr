@@ -54,69 +54,50 @@ so that change is not excluded as a trigger. Either way the root cause is
 undetermined, so this entry stays here rather than moving to "Active flakes",
 and a failure of it is still a regression candidate to investigate.
 
+## Resolved
+
 ### Output worker: settle observed before terminal result became collectable
 
+Tests that converged a Run chunk terminal through the fixtures'
+`StopFinalizedBackend` and `FinalizeAndFreeze` helpers could fail at
+`Assert.That(runCoordinator.TryCollectTerminal(out _), Is.True)`
+(`Expected: True But was: False`) immediately after the preceding
+`WaitSettled(...)` had observed a settle. Observed in
 `NvencRunPublicationPlanCommitterContractTests.Commit_UnsupportedFileSystem_ThrowsBeforeContact`
-failed inside the fixture's `StopFinalizedBackend` helper at
-`Assets/Zantetsu/Tests/EditMode/NvencRunPublicationPlanCommitterContractTests.cs`
-line 549, `Assert.That(h.RunCoordinator.TryCollectTerminal(out _), Is.True)`
-(`Expected: True But was: False`). The collect returned false immediately after
-the preceding `WaitSettled(h.SettledEvent, "worker did not converge the
-finalize request")` had observed the settle signal.
+(`20260910-080619-481d11`),
+`NvencCaptureRunCoordinatorContractTests.BackendJoin_BindingSwappedAfterConstruction_PoisonsNoDispose`
+and
+`NvencRunPublicationServiceContractTests.CaptureIndex_SameServiceInstanceAndWorkerThread_NoSecondWorker`
+(`20260910-082320-86a951`), and
+`NvencCaptureRunCoordinatorContractTests.BackendJoin_PoolOccupied_RefusesNoDispose`
+and `NvencRunPublicationPlanCommitContractTests.Builder_TamperedDescriptorKind_Throws`
+(`20260910-082628-e82fe3`).
 
-This failure is inside `StopFinalizedBackend` but is not the teardown-timing
-entry under "Active flakes": that entry covers the physical-stop wait and
-`h.Worker.TeardownCompleted`, which is a later boundary. It is also not the
-Submit worker entry above, which is a different test and a different
-assertion. Until the cause is known, do not merge this entry into either of
-them.
+This was a fixture race, not a product defect. The Worker's `Settled` event is
+documented as a best-effort notification raised when the Worker is about to
+park, with production correctness never depending on subscribers, and the
+Worker reaches its raise only after it has already reset its wake signal and
+re-checked for work. A raise that was already in flight when a terminal request
+was accepted therefore completes afterwards while carrying no information about
+that request. The helpers used exactly one such settle as proof of convergence,
+so the collect that followed it correctly reported that nothing had been
+advanced yet.
 
-Every observation so far is that same helper and that same assertion, in
-several different fixtures and tests:
+`NvencOrderedOutputWorkerServiceContractTests.Terminal_SettleObservedAfterRequest_IsNotEvidence_ConvergenceConfirmsTheRealCondition`
+demonstrates that mechanism deterministically, with two ordinary Settled
+observers and no product change: the Worker is held at the start of a raise,
+the request is accepted inside that window, the raise then publishes its
+settle, and the terminal is shown to be uncollectable at that exact point -
+the observed symptom, on demand. It reproduces the mechanism rather than
+replaying any original interleaving.
 
-- `20260910-080619-481d11`:
-  `NvencRunPublicationPlanCommitterContractTests.Commit_UnsupportedFileSystem_ThrowsBeforeContact`
-- `20260910-082320-86a951`:
-  `NvencCaptureRunCoordinatorContractTests.BackendJoin_BindingSwappedAfterConstruction_PoisonsNoDispose`
-  and
-  `NvencRunPublicationServiceContractTests.CaptureIndex_SameServiceInstanceAndWorkerThread_NoSecondWorker`
-- `20260910-082628-e82fe3`:
-  `NvencCaptureRunCoordinatorContractTests.BackendJoin_PoolOccupied_RefusesNoDispose`
-  and
-  `NvencRunPublicationPlanCommitContractTests.Builder_TamperedDescriptorKind_Throws`
+Fixed in 7d22dd5, which routes every terminal convergence site through the
+`TerminalConvergence` test helper. That helper treats `Settled` only as a wake
+hint and confirms the real condition, `TryCollectTerminal`, inside a bounded
+watchdog.
 
-Two of those runs showed two such failures each, in different fixtures, so a
-single run can produce more than one. The runs `20260910-080413-410905`,
-`20260910-080900-96c8f2`, `20260910-081054-4f81ca`, `20260910-082855-d24b85`,
-and `20260910-083111-287faf` showed none. That is the extent of what has been
-observed: how the failure is distributed across runs, tests, and fixtures is
-not established, and whether the implementation changes or the added suite load
-in these runs acted as a trigger has not been evaluated and is not excluded.
-
-There is a cause hypothesis, not demonstrated by any reproduction: the
-fixtures' convergence protocol may not be able to distinguish a stale settle
-from the post-request one. `NvencOrderedOutputWorkerService` documents
-`Settled` as a best-effort observation raised when the worker is about to park,
-with production correctness never depending on subscribers. The worker reaches
-`RaiseSettled()` only after it has already called `_signal.Reset()` and
-re-checked for work. If the fixture calls `h.SettledEvent.Reset()` and then
-`TryRequestTerminal()` - which accepts the request and then calls `Notify()` -
-while the worker sits in that window, the worker's pending `RaiseSettled()`
-satisfies the freshly reset event before it has advanced the terminal. The
-fixture's `WaitSettled` then returns on the stale settle and
-`TryCollectTerminal` correctly reports that nothing is collectable yet.
-
-If that were the cause it would be a test-side race in the helper rather than a
-product defect, and the fix would belong in the fixtures' settle-observation
-protocol rather than in the worker; the Submit worker entry above has the same
-`Reset()`-request-`WaitSettled` shape. All of that is read off the code and
-unproven: no reproduction has confirmed it, so it does not establish the cause
-and does not rule out a product defect. This entry therefore stays under "Under
-investigation", stays separate from the Submit worker entry and from the Active
-teardown-timing entry, and is still not permission to re-run any of these
-tests.
-
-## Resolved
+A failure of this assertion is now a regression to investigate, never something
+to pass by re-running.
 
 The PngJson capture index committer failures once listed here
 (`Commit_CreateTemporary_WritesAndCommits`,
