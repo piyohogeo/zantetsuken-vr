@@ -89,6 +89,8 @@ namespace Zantetsu.Core.Tests
 
             using (Harness h = Harness.Create(sandbox.Layout))
             {
+                h.StartWorkers();
+
                 // ---- 1. the Run produces its one finalized staging chunk ----
                 FinalizeChunkAndFreeze(h);
 
@@ -821,19 +823,30 @@ namespace Zantetsu.Core.Tests
                 Worker.Settled += _settledHandler;
             }
 
+            /// <summary>
+            /// Builds the graph only. Nothing is started and nothing is
+            /// asserted here, so a failure can never happen before the caller's
+            /// using owns the Harness.
+            /// </summary>
             internal static Harness Create(CaptureRunRootLayout layout)
             {
-                Harness h = new Harness(layout);
+                return new Harness(layout);
+            }
 
-                // The Submit Worker runs for real in this test: no private
-                // drain state is forced and no started thread is skipped.
-                h.SubmitWorker.Start();
+            /// <summary>
+            /// Starts the workers from inside the caller's using, so every
+            /// started thread is covered by <see cref="Dispose"/>. The Submit
+            /// Worker runs for real: no private drain state is forced and no
+            /// started thread is skipped.
+            /// </summary>
+            internal void StartWorkers()
+            {
+                SubmitWorker.Start();
 
-                h.SettledEvent.Reset();
-                h.Worker.Notify();
-                Assert.That(h.SettledEvent.Wait(WatchdogTimeoutMs), Is.True, "worker did not settle initially");
-
-                return h;
+                SettledEvent.Reset();
+                Worker.Notify();
+                Assert.That(SettledEvent.Wait(WatchdogTimeoutMs), Is.True,
+                    "worker did not settle initially");
             }
 
             internal void AcceptAndAppendChunk(long frameId, int length, byte seed)
@@ -860,17 +873,44 @@ namespace Zantetsu.Core.Tests
 
             public void Dispose()
             {
-                if (!Worker.IsStopped)
+                // One poison covers both workers: a test that failed part way
+                // through can have left either of them running.
+                if (!Worker.IsStopped || !SubmitWorker.IsStopped)
                 {
                     State.TryPoison();
+                }
+
+                if (!Worker.IsStopped)
+                {
                     Worker.Notify();
+                }
+
+                if (!SubmitWorker.IsStopped)
+                {
+                    SubmitWorker.Notify();
                 }
 
                 WaitForPhysicalStop("worker thread did not physically exit during teardown");
 
                 Worker.Dispose();
                 Worker.Settled -= _settledHandler;
-                SettledEvent.Dispose();
+
+                // The Submit Worker: still running after a mid-test failure, or
+                // never started if the failure preceded StartWorkers. Confirm
+                // the real stop condition inside a bounded watchdog, then
+                // release it; the normal path already disposed it, and that
+                // disposal is idempotent.
+                SpinWait.SpinUntil(() => SubmitWorker.IsStopped, WatchdogTimeoutMs);
+                try
+                {
+                    SubmitWorker.Dispose();
+                }
+                catch (InvalidOperationException)
+                {
+                    // A worker that still has not stopped must not be disposed.
+                    // Leaving it is safer than throwing out of teardown and
+                    // hiding the failure that brought us here.
+                }
 
                 if (!Service.IsStopped)
                 {
@@ -891,6 +931,9 @@ namespace Zantetsu.Core.Tests
                 }
 
                 Service.Dispose();
+
+                // Every worker that could raise into this event has stopped.
+                SettledEvent.Dispose();
             }
         }
     }
