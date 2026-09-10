@@ -716,6 +716,10 @@ namespace Zantetsu.Core.Tests
 
             private readonly Action _settledHandler;
 
+            // Set only after Start returned normally, so teardown never treats
+            // an unstarted Submit Worker as a live one.
+            private bool _submitWorkerStarted;
+
             internal Harness(CaptureRunRootLayout layout)
             {
                 Layout = layout;
@@ -824,9 +828,10 @@ namespace Zantetsu.Core.Tests
             }
 
             /// <summary>
-            /// Builds the graph only. Nothing is started and nothing is
-            /// asserted here, so a failure can never happen before the caller's
-            /// using owns the Harness.
+            /// Builds the graph. It starts no worker explicitly and asserts
+            /// nothing, so the caller's using owns the Harness before any
+            /// assertion can fail. The Output Worker's own thread still starts
+            /// inside its constructor, and <see cref="Dispose"/> covers it.
             /// </summary>
             internal static Harness Create(CaptureRunRootLayout layout)
             {
@@ -842,6 +847,7 @@ namespace Zantetsu.Core.Tests
             internal void StartWorkers()
             {
                 SubmitWorker.Start();
+                _submitWorkerStarted = true;
 
                 SettledEvent.Reset();
                 Worker.Notify();
@@ -873,9 +879,13 @@ namespace Zantetsu.Core.Tests
 
             public void Dispose()
             {
+                // A Submit Worker that was never started is not alive, and must
+                // not be poisoned, notified, or waited on as though it were.
+                bool submitWorkerAlive = _submitWorkerStarted && !SubmitWorker.IsStopped;
+
                 // One poison covers both workers: a test that failed part way
                 // through can have left either of them running.
-                if (!Worker.IsStopped || !SubmitWorker.IsStopped)
+                if (!Worker.IsStopped || submitWorkerAlive)
                 {
                     State.TryPoison();
                 }
@@ -885,7 +895,7 @@ namespace Zantetsu.Core.Tests
                     Worker.Notify();
                 }
 
-                if (!SubmitWorker.IsStopped)
+                if (submitWorkerAlive)
                 {
                     SubmitWorker.Notify();
                 }
@@ -895,21 +905,16 @@ namespace Zantetsu.Core.Tests
                 Worker.Dispose();
                 Worker.Settled -= _settledHandler;
 
-                // The Submit Worker: still running after a mid-test failure, or
-                // never started if the failure preceded StartWorkers. Confirm
-                // the real stop condition inside a bounded watchdog, then
-                // release it; the normal path already disposed it, and that
-                // disposal is idempotent.
-                SpinWait.SpinUntil(() => SubmitWorker.IsStopped, WatchdogTimeoutMs);
-                try
+                // Only a live Submit Worker is waited on, and only its real stop
+                // condition ends the wait.
+                bool submitWorkerStopped = !submitWorkerAlive
+                    || SpinWait.SpinUntil(() => SubmitWorker.IsStopped, WatchdogTimeoutMs);
+
+                if (submitWorkerStopped)
                 {
+                    // Idempotent after the normal path's own disposal, and the
+                    // release for a worker that was never started.
                     SubmitWorker.Dispose();
-                }
-                catch (InvalidOperationException)
-                {
-                    // A worker that still has not stopped must not be disposed.
-                    // Leaving it is safer than throwing out of teardown and
-                    // hiding the failure that brought us here.
                 }
 
                 if (!Service.IsStopped)
@@ -934,6 +939,12 @@ namespace Zantetsu.Core.Tests
 
                 // Every worker that could raise into this event has stopped.
                 SettledEvent.Dispose();
+
+                // Reported last, after the rest of the teardown ran, and never
+                // swallowed: a Submit Worker left running would pollute the
+                // tests that follow.
+                Assert.That(submitWorkerStopped, Is.True,
+                    "the submit worker thread did not physically exit during teardown");
             }
         }
     }
