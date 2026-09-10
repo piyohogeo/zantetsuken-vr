@@ -7,7 +7,7 @@ namespace Zantetsu.Observability
     /// once under the held lock: from a publication-recovery open outcome it
     /// issues one inspection operation, runs the configured inspection
     /// execution coordinator once, classifies the returned snapshot once, and
-    /// returns the single correlated orchestration result.
+    /// returns that single classification.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -27,6 +27,15 @@ namespace Zantetsu.Observability
     /// operation is issued before the inspector is ever contacted and issuing
     /// it has no side effect, so a refused outcome never reaches the
     /// filesystem.
+    /// </para>
+    /// <para>
+    /// The returned <see cref="NvencRunPublicationRecoveryDecision"/> is the
+    /// classifier's own result, handed back by reference. Nothing is wrapped in
+    /// a coordinator-bound result type: a stateless coordinator cannot prove
+    /// after the fact that a decision came from it without minting a token or
+    /// keeping an issue history, so no such authority is claimed. A decision's
+    /// authority is the graph it already carries - the snapshot, the operation,
+    /// and the open outcome that still holds the lock.
     /// </para>
     /// <para>
     /// This unit classifies and stops. It deletes no incomplete root and no
@@ -53,7 +62,7 @@ namespace Zantetsu.Observability
         internal NvencRunPublicationRecoveryInspectionExecutionCoordinator InspectionExecution =>
             _inspectionExecution;
 
-        internal NvencRunPublicationRecoveryOrchestrationResult Execute(
+        internal NvencRunPublicationRecoveryDecision Execute(
             CaptureRunInitializationOpenOutcome openOutcome)
         {
             if (openOutcome == null)
@@ -89,7 +98,7 @@ namespace Zantetsu.Observability
 
             VerifyDecision(decision, snapshot, operation, openOutcome);
 
-            return new NvencRunPublicationRecoveryOrchestrationResult(this, decision);
+            return decision;
         }
 
         private static void VerifyDecision(

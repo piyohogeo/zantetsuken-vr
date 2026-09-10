@@ -12,7 +12,7 @@ namespace Zantetsu.Core.Tests
     /// Contract tests for the Phase 0.11 NVENC publication recovery
     /// orchestration boundary: admission of the open outcome, exactly one
     /// inspection and one classification of that exact snapshot, and the
-    /// correlation the orchestration result forwards.
+    /// correlation the returned classification carries.
     /// </summary>
     /// <remarks>
     /// The inspector is a small recording fake returning in-memory snapshots,
@@ -127,27 +127,25 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationOpenOutcome outcome = MakeRecoveryOutcome(layout);
             NvencRunPublicationRecoveryOrchestrationCoordinator coordinator = MakeCoordinator(inspector);
 
-            NvencRunPublicationRecoveryOrchestrationResult result = coordinator.Execute(outcome);
+            NvencRunPublicationRecoveryDecision decision = coordinator.Execute(outcome);
 
             Assert.That(inspector.CallCount, Is.EqualTo(1));
-            Assert.That(result.Disposition, Is.EqualTo(
+            Assert.That(decision.Disposition, Is.EqualTo(
                 NvencRunPublicationRecoveryDisposition.PublicationRecoveryRequired));
-            Assert.That(result.IsValid, Is.True);
+            Assert.That(decision.IsValid, Is.True);
 
-            // The result forwards the very graph that was inspected and
-            // classified: nothing is copied or rebuilt.
-            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
-            Assert.That(ReferenceEquals(result.Snapshot, inspector.LastSnapshot), Is.True);
-            Assert.That(ReferenceEquals(result.Decision.Snapshot, inspector.LastSnapshot), Is.True);
-            Assert.That(ReferenceEquals(result.Operation, inspector.LastOperation), Is.True);
-            Assert.That(ReferenceEquals(result.Operation, result.Snapshot.Operation), Is.True);
-            Assert.That(ReferenceEquals(result.OpenOutcome, outcome), Is.True);
-            Assert.That(ReferenceEquals(result.RootLayout, layout), Is.True);
+            // The classification carries the very graph that was inspected:
+            // nothing is copied, rebuilt, or wrapped.
+            Assert.That(ReferenceEquals(decision.Snapshot, inspector.LastSnapshot), Is.True);
+            Assert.That(ReferenceEquals(decision.Operation, inspector.LastOperation), Is.True);
+            Assert.That(ReferenceEquals(decision.Operation, decision.Snapshot.Operation), Is.True);
+            Assert.That(ReferenceEquals(decision.Operation.OpenOutcome, outcome), Is.True);
+            Assert.That(ReferenceEquals(decision.RootLayout, layout), Is.True);
             Assert.That(ReferenceEquals(
-                    result.AuthoritativePlan, result.Snapshot.PublicationPlan),
+                    decision.AuthoritativePlan, decision.Snapshot.PublicationPlan),
                 Is.True);
-            Assert.That(result.TestRunId, Is.EqualTo(layout.TestRunId));
-            Assert.That(ReferenceEquals(result.RunInitializationId, outcome.RunInitializationId),
+            Assert.That(decision.TestRunId, Is.EqualTo(layout.TestRunId));
+            Assert.That(ReferenceEquals(decision.RunInitializationId, outcome.RunInitializationId),
                 Is.True);
         }
 
@@ -156,14 +154,14 @@ namespace Zantetsu.Core.Tests
         {
             FakeInspector inspector = new FakeInspector(Incomplete);
 
-            NvencRunPublicationRecoveryOrchestrationResult result =
+            NvencRunPublicationRecoveryDecision decision =
                 MakeCoordinator(inspector).Execute(MakeRecoveryOutcome(MakeLayout()));
 
-            Assert.That(result.Disposition,
+            Assert.That(decision.Disposition,
                 Is.EqualTo(NvencRunPublicationRecoveryDisposition.Incomplete));
-            Assert.That(result.AuthoritativePlan, Is.Null);
-            Assert.That(result.Snapshot.PublicationPlan, Is.Null);
-            Assert.That(result.IsValid, Is.True);
+            Assert.That(decision.AuthoritativePlan, Is.Null);
+            Assert.That(decision.Snapshot.PublicationPlan, Is.Null);
+            Assert.That(decision.IsValid, Is.True);
         }
 
         [Test]
@@ -173,12 +171,12 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeSandboxLayout(out string sandbox);
             Dictionary<string, string> before = SnapshotFileSet(sandbox);
 
-            NvencRunPublicationRecoveryOrchestrationResult result =
+            NvencRunPublicationRecoveryDecision decision =
                 MakeCoordinator(inspector).Execute(MakeRecoveryOutcome(layout));
 
-            Assert.That(result.Disposition, Is.EqualTo(
+            Assert.That(decision.Disposition, Is.EqualTo(
                 NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision));
-            Assert.That(result.AuthoritativePlan, Is.Null);
+            Assert.That(decision.AuthoritativePlan, Is.Null);
             Assert.That(SnapshotFileSet(sandbox), Is.EqualTo(before));
         }
 
@@ -187,13 +185,13 @@ namespace Zantetsu.Core.Tests
         {
             FakeInspector inspector = new FakeInspector(Deferred);
 
-            NvencRunPublicationRecoveryOrchestrationResult result =
+            NvencRunPublicationRecoveryDecision decision =
                 MakeCoordinator(inspector).Execute(MakeRecoveryOutcome(MakeLayout()));
 
-            Assert.That(result.Disposition,
+            Assert.That(decision.Disposition,
                 Is.EqualTo(NvencRunPublicationRecoveryDisposition.Deferred));
-            Assert.That(result.AuthoritativePlan, Is.Null);
-            Assert.That(result.IsValid, Is.True);
+            Assert.That(decision.AuthoritativePlan, Is.Null);
+            Assert.That(decision.IsValid, Is.True);
         }
 
         // ---- Failure paths ----
@@ -241,44 +239,51 @@ namespace Zantetsu.Core.Tests
             Assert.That(invalid.CallCount, Is.EqualTo(1));
         }
 
-        // ---- The result ----
+        // ---- The classification ----
 
         [Test]
-        public void Result_NullOrInvalidArguments_Rejected()
+        public void Classification_CarriesNoIssuerAuthority()
         {
-            FakeInspector inspector = new FakeInspector(Recoverable);
-            NvencRunPublicationRecoveryOrchestrationCoordinator coordinator = MakeCoordinator(inspector);
-            NvencRunPublicationRecoveryOrchestrationResult result =
-                coordinator.Execute(MakeRecoveryOutcome(MakeLayout()));
+            // The orchestration hands back the classifier's own decision, and a
+            // decision is built from a snapshot alone. There is no
+            // coordinator-bound result type to construct, so no decision can be
+            // attributed - or misattributed - to a coordinator, and a stateless
+            // coordinator claims no authority it could not prove.
+            Assert.That(
+                typeof(NvencRunPublicationRecoveryOrchestrationCoordinator)
+                    .GetMethod("Execute", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .ReturnType,
+                Is.EqualTo(typeof(NvencRunPublicationRecoveryDecision)));
 
-            Assert.Throws<ArgumentNullException>(
-                () => new NvencRunPublicationRecoveryOrchestrationResult(null, result.Decision));
-            Assert.Throws<ArgumentNullException>(
-                () => new NvencRunPublicationRecoveryOrchestrationResult(coordinator, null));
+            ConstructorInfo[] constructors = typeof(NvencRunPublicationRecoveryDecision)
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-            ReleaseAllLocks();
+            Assert.That(constructors.Length, Is.EqualTo(1));
 
-            Assert.Throws<ArgumentException>(
-                () => new NvencRunPublicationRecoveryOrchestrationResult(coordinator, result.Decision));
+            ParameterInfo[] parameters = constructors[0].GetParameters();
+
+            Assert.That(parameters.Length, Is.EqualTo(1));
+            Assert.That(parameters[0].ParameterType,
+                Is.EqualTo(typeof(NvencRunPublicationRecoveryInspectionSnapshot)));
         }
 
         [Test]
-        public void Result_AfterLockRelease_BecomesInvalid()
+        public void Classification_AfterLockRelease_BecomesInvalid()
         {
             FakeInspector inspector = new FakeInspector(Recoverable);
-            NvencRunPublicationRecoveryOrchestrationResult result =
+            NvencRunPublicationRecoveryDecision decision =
                 MakeCoordinator(inspector).Execute(MakeRecoveryOutcome(MakeLayout()));
 
-            Assert.That(result.IsValid, Is.True);
+            Assert.That(decision.IsValid, Is.True);
 
             ReleaseAllLocks();
 
-            Assert.That(result.IsValid, Is.False);
-            Assert.That(result.Operation.IsValid, Is.False);
+            Assert.That(decision.IsValid, Is.False);
+            Assert.That(decision.Operation.IsValid, Is.False);
 
-            // The result still forwards the same graph; it simply no longer
-            // claims to be valid, and it released nothing itself.
-            Assert.That(ReferenceEquals(result.Snapshot, inspector.LastSnapshot), Is.True);
+            // It still carries the same graph; it simply no longer claims to be
+            // valid, and it released nothing itself.
+            Assert.That(ReferenceEquals(decision.Snapshot, inspector.LastSnapshot), Is.True);
         }
 
         [Test]
@@ -288,7 +293,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationOpenOutcome outcome = MakeRecoveryOutcome(
                 MakeLayout(), out CaptureRunInitializationSessionOwnershipLease owner);
 
-            NvencRunPublicationRecoveryOrchestrationResult result =
+            NvencRunPublicationRecoveryDecision decision =
                 MakeCoordinator(inspector).Execute(outcome);
 
             // Nothing here owns or releases the lock, converts the outcome into
@@ -299,29 +304,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(outcome.Session, Is.Null);
             Assert.That(outcome.Status,
                 Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
-            Assert.That(result.Operation.IsValid, Is.True);
-        }
-
-        [Test]
-        public void Result_HoldsOnlyTheCoordinatorAndTheDecision()
-        {
-            FieldInfo[] fields = typeof(NvencRunPublicationRecoveryOrchestrationResult).GetFields(
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-            Assert.That(fields.Length, Is.EqualTo(2));
-
-            List<Type> types = new List<Type>();
-            foreach (FieldInfo field in fields)
-            {
-                Assert.That(field.IsInitOnly, Is.True, "every held reference must be readonly.");
-                types.Add(field.FieldType);
-            }
-
-            Assert.That(types, Is.EquivalentTo(new[]
-            {
-                typeof(NvencRunPublicationRecoveryOrchestrationCoordinator),
-                typeof(NvencRunPublicationRecoveryDecision),
-            }));
+            Assert.That(decision.Operation.IsValid, Is.True);
         }
 
         // ---- Fixture helpers ----
