@@ -10,12 +10,13 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those three references are the whole state. No raw bytes, decoded or
-    /// copied plan, path, hash, exception, or handle is held: the comparison
-    /// against the authoritative plan is already inside each status, and
-    /// nothing else about the documents survives the inspection. The snapshot
-    /// holds observed facts only - no disposition, commit mode, or cleanup
-    /// hint - and no auxiliary field infers one status from the other.
+    /// Those three values - one reference and two observations - are the whole
+    /// state. No raw bytes, decoded or copied plan, path, hash, exception, or
+    /// handle is held: the comparison against the authoritative plan is already
+    /// inside each status, and nothing else about the documents survives the
+    /// inspection. The snapshot holds observed facts only - no disposition,
+    /// commit mode, or cleanup hint - and no auxiliary field infers one status
+    /// from the other.
     /// </para>
     /// <para>
     /// This type performs no filesystem, codec, or hash work, owns and
