@@ -1416,7 +1416,7 @@ Licensed RenderCutInputは実Triangle帯`1..224／225..707／708..1414／1415..3
 
 正式Licensed生成は原則1回とし、各Category最低1 Source、EnvironmentはTree／Rock両方（合計最低6 Source）のhash-seeded固定監査sampleだけをclean directoryへGeometry／sidecarと対応Entryを再生成し、Review PresentationのUV／atlas／bake／画像は対象外とする。選抜seed／規則と数値toleranceは監査前に固定し、上記Licensed再現性監査の初期toleranceと論理親参照の比較規則を使う。ProcessStatus、Variant graph、SelectionClass、Transform、Bounds、Triangle／Component、surface deviation等の用途上の意味的等価を検証し、LicensedのBlender出力や再生成ZCGのbyte完全一致は要求しない。ただし採用済みfileのcontent hash照合、同一ZCG入力のcanonical再serialize一致は常に要求する。差異は影響cohortだけを再検証する。公開Synthetic／Goldenは2回のclean生成でbyte一致を要求する。
 
-公開Synthetic SuiteはPositive TriangleMesh 8 case（SingleCapLoop、MultipleCapLoop、Concave、MultipleShell、CenterCut、EdgeCut、NonIntersectingCut、3 Fragment以上の既知形状）とNegative 4 case（反転winding、退化、開放Boundary、Non-Manifold Edge）を固定Case IDで持つ。切断caseは入力Geometry／Cut Plane／期待交差・Fragment数・Cap Loop・退化分類を渡すだけで、Phase 0.2でcutterや切断済み出力を実装しない。3 Fragment以上caseは既知順序／OBBを持つ4面Synthetic StructuralSlabFixtureを兼ねる。NegativeはPassed Watertight Datasetへ入れず別のtest fixture群とする。
+公開Synthetic SuiteはPositive TriangleMesh 8 case（SingleCapLoop、MultipleCapLoop、Concave、MultipleShell、CenterCut、EdgeCut、NonIntersectingCut、3個以上の閉Componentを含む既知の入力形状）とNegative 4 case（反転winding、退化、開放Boundary、Non-Manifold Edge）を固定Case IDで持つ。切断caseは入力Geometry／Cut Plane／期待交差・入力の幾何Component数・Cap Loop・退化分類を渡すだけで、Phase 0.2でcutterや切断済み出力を実装しない。3個以上の閉Componentを含む入力caseは既知順序／OBBを持つ4面Synthetic StructuralSlabFixtureを兼ねる。NegativeはPassed Watertight Datasetへ入れず別のtest fixture群とする。
 
 Synthetic Convexは単一Hullの4／16／64／128頂点をCook Positive、129頂点をZCG成功・PhysicsCookInput拒否のRole Negative、255頂点をBindingなしのCodec Positiveとする。3／256頂点、HullCountが1以外をCodec Negativeへ固定する。Face／index導出上限の直前・一致・超過を検査するが、独立Face budgetやCompound規模系列を成果物へ追加しない。既存のSynthetic Solid Numeric Kernel／Validatorは次節のまま使用する。
 
@@ -2185,7 +2185,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | ComponentFragment | 幾何処理が局所的に必要とするClosed Cut Componentの切断片。同Sideに複数存在できるが、全島列挙や個別の論理子・物理所有者を要求しない |
 | Physics Proxy | 物理接触と高速切断のための低複雑度Convex／Compound。各Convexは閉凸契約を満たすが、同一Compound内の別Convex同士はOverlapしてよく、Strict SolidやConvex Boolean Unionを入力に要求しない |
 | PhysicsConvexMassWeight | 同一FragmentGroup内の各Physics Convexへ親質量の配分比を与えるbinary64、finite、0以上のFinal用Metadata。Local ID順の左畳み和がfiniteかつ正であることを要求し、`assignedMass = parentMass * (weight / weightSum)`の固定順で配分する。Convexの生体積とは独立して重複Compoundの二重計上を避け、非交差時は継承し、交差時は当該Convexの子体積比だけで分割する。切断後はFinal物理Commit対象Fragmentごとにも和がfiniteかつ正でなければならない。Weight 0 Convexだけの子を空集合へ読み替えず、現物理を正式採用してGeometryをその構成へ追従させる |
-| FragmentGroup | 同じ切断系譜、Canonical Mass Budget、支持集約、世代、Final物理Commitを共有するLogical Fragment集合。Provisional成功時は複数Actorを持て、分裂を成立させられない場合は利用可能な既存物理表現を正式採用した`Stable Unsplit`で終端できる |
+| FragmentGroup | 同じ切断系譜、Canonical Mass Budget、点Anchor集約、世代、Final物理Commitを共有するLogical Fragment集合。Provisional成功時は複数Actorを持て、分裂を成立させられない場合は利用可能な既存物理表現を正式採用した`Stable Unsplit`で終端できる |
 | PendingPhysicsSplit | 評価または必要資源待ちで、見た目と論理状態は切断済みだが、1つのRigidbody／旧Colliderを共有して物理分裂を待つ状態。成立不能が確定した後の終端状態には使わない |
 | ProvisionalRigidbody | Final Convex cook前にLogical Fragment別のpose／速度／外界Collisionを持たせる短命Actor。旧cook済みConvex Geometryを共有し、OBB切断体積比または等WeightでCanonical Mass Budgetを保存した近似mass／COM／inertiaを持つが、Final質量特性の正本にはしない |
 | ProvisionalSeparationConstraint | 同じ切断で生じたProvisional Siblingの相対回転と接線移動を抑え、切断面法線方向の分離だけを許可して初期位置より深い再侵入を防ぐ短命Constraint。Sibling Collision無効化とは別の役割を持つ |
