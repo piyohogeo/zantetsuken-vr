@@ -471,8 +471,9 @@ namespace Zantetsu.Core.Tests
 
             byte[] chunkBefore = File.ReadAllBytes(h.ChunkPath);
 
-            // The pool holds exactly one buffer; renting it makes the
-            // verification impossible without touching anything.
+            // The pool holds exactly one buffer; renting it makes the chunk
+            // verification impossible, so the chunk is never opened and no
+            // observed file is changed.
             CaptureArtifactVerificationBufferPool.Lease held = h.Pool.TryRent();
             Assert.That(held, Is.Not.Null);
             try

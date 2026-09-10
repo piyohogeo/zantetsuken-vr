@@ -253,8 +253,8 @@ namespace Zantetsu.Observability
             CaptureArtifactVerificationBufferPool.Lease lease = _bufferPool.TryRent();
             if (lease == null)
             {
-                // Nothing on the filesystem is touched when the one buffer is
-                // already in use.
+                // The chunk is never opened when the one buffer is already in
+                // use, and no observed file is changed.
                 return Deferred(descriptor);
             }
 
