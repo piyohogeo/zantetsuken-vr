@@ -489,32 +489,57 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Clean_AlreadyDeletedStagingTargets_AreStillFlushedBeforeBeingAcceptedAsProcessed()
+        public void Clean_AllStagingTargetsAlreadyDeleted_FlushesTheStagingRootOncePerStep()
         {
             // A previous attempt removed the chunks directory, the plan, and
-            // both markers but never flushed; the staging Run root is still
-            // there, so this attempt must flush it for each of those steps.
+            // both markers but may never have flushed, so all four steps flush
+            // the staging Run root again before it is removed.
             Harness h = MakeHarness(Absent);
-            h.FileSystem.RemoveDirectory(h.ChunksPath);
-            h.FileSystem.RemoveFile(h.PlanPath);
-            h.FileSystem.RemoveFile(h.ReadyPath);
-            h.FileSystem.RemoveFile(h.InitPath);
-            h.FileSystem.FailFlushesAt(h.Layout.StagingRunRoot, 4);
-
-            // Each of the four staging steps insists on its own flush, so four
-            // failures in a row take four attempts to get past.
-            for (int attempt = 1; attempt <= 4; attempt++)
-            {
-                Assert.That(
-                    h.Cleaner.Clean(h.Operation).IsFailed,
-                    Is.True,
-                    "attempt " + attempt);
-                Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.True);
-            }
+            RemoveEveryStagingTarget(h);
 
             Assert.That(h.Cleaner.Clean(h.Operation).IsCleaned, Is.True);
-            Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.False);
+
+            Assert.That(h.FileSystem.Flushes, Is.EqualTo(new List<string>
+            {
+                Path.GetFullPath(h.Layout.FinalRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(Path.GetDirectoryName(h.Layout.StagingRunRoot)),
+            }));
             AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Clean_EachAlreadyDeletedStagingStep_DemandsItsOwnFlush()
+        {
+            // Failing only the n-th flush of the staging Run root shows that
+            // the n-th staging step - chunks, plan, ready, init - is the one
+            // asking for it: the attempt stops there, having flushed n-1
+            // times, and never reaches the Run root's removal.
+            for (int step = 1; step <= 4; step++)
+            {
+                Harness h = MakeHarness(Absent);
+                RemoveEveryStagingTarget(h);
+                h.FileSystem.FailFlushOccurrence(h.Layout.StagingRunRoot, step);
+
+                Assert.That(h.Cleaner.Clean(h.Operation).IsFailed, Is.True, "step " + step);
+
+                Assert.That(
+                    h.FileSystem.FlushAttempts(h.Layout.StagingRunRoot),
+                    Is.EqualTo(step),
+                    "step " + step);
+                Assert.That(
+                    h.FileSystem.SuccessfulFlushes(h.Layout.StagingRunRoot),
+                    Is.EqualTo(step - 1),
+                    "step " + step);
+                Assert.That(
+                    h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot),
+                    Is.True,
+                    "step " + step);
+                AssertEverythingReleased(h);
+            }
         }
 
         [Test]
@@ -740,6 +765,14 @@ namespace Zantetsu.Core.Tests
             {
                 Assert.That(handle.IsClosed, Is.True, "every directory handle must be released.");
             }
+        }
+
+        private static void RemoveEveryStagingTarget(Harness h)
+        {
+            h.FileSystem.RemoveDirectory(h.ChunksPath);
+            h.FileSystem.RemoveFile(h.PlanPath);
+            h.FileSystem.RemoveFile(h.ReadyPath);
+            h.FileSystem.RemoveFile(h.InitPath);
         }
 
         private void ReleaseAllLocks()
@@ -1130,6 +1163,10 @@ namespace Zantetsu.Core.Tests
                 new Dictionary<string, Exception>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, int> _flushFailures =
                 new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, int> _flushOrdinalFailures =
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, int> _flushAttempts =
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<CaptureIndexCommitDirectory, string> _directoryPaths =
                 new Dictionary<CaptureIndexCommitDirectory, string>();
             private readonly Dictionary<CaptureIndexCommitFile, string> _filePaths =
@@ -1214,6 +1251,35 @@ namespace Zantetsu.Core.Tests
             internal void FailFlushesAt(string path, int times)
             {
                 _flushFailures[Norm(path)] = times;
+            }
+
+            /// <summary>
+            /// Fails only the <paramref name="ordinal"/>-th flush of one
+            /// directory, counting from the first flush of this instance.
+            /// </summary>
+            internal void FailFlushOccurrence(string path, int ordinal)
+            {
+                _flushOrdinalFailures[Norm(path)] = ordinal;
+            }
+
+            internal int FlushAttempts(string path)
+            {
+                return _flushAttempts.TryGetValue(Norm(path), out int attempts) ? attempts : 0;
+            }
+
+            internal int SuccessfulFlushes(string path)
+            {
+                string normalized = Norm(path);
+                int flushes = 0;
+                foreach (string flushed in Flushes)
+                {
+                    if (string.Equals(flushed, normalized, StringComparison.OrdinalIgnoreCase))
+                    {
+                        flushes++;
+                    }
+                }
+
+                return flushes;
             }
 
             public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
@@ -1341,9 +1407,17 @@ namespace Zantetsu.Core.Tests
                 string path = _directoryPaths[directory];
                 Calls.Add("FlushDirectory:" + path);
 
+                int attempts = FlushAttempts(path) + 1;
+                _flushAttempts[path] = attempts;
+
                 if (_flushFailures.TryGetValue(path, out int remaining) && remaining > 0)
                 {
                     _flushFailures[path] = remaining - 1;
+                    throw new IOException("Failed to flush " + path + ".");
+                }
+
+                if (_flushOrdinalFailures.TryGetValue(path, out int ordinal) && ordinal == attempts)
+                {
                     throw new IOException("Failed to flush " + path + ".");
                 }
 
