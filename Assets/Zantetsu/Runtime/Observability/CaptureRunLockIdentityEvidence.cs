@@ -104,6 +104,35 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Exception-safe binding check that ignores liveness: the given
+        /// ownership lease must be the exact instance this evidence was issued
+        /// for, still bound to the exact lock path set. It deliberately says
+        /// nothing about whether the lock is still held, so a boundary that has
+        /// to stay correlated across a partial or completed release can ask
+        /// about the binding alone. Use <see cref="IsIssuedFor"/> when the lock
+        /// must also still be held.
+        /// </summary>
+        internal bool IsBoundTo(
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
+        {
+            if (ownershipLease == null || _ownershipLease == null || _lockPathSet == null)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_ownershipLease, ownershipLease))
+            {
+                return false;
+            }
+
+            CaptureRunLockPathSet ownedPathSet = ownershipLease.LockPathSet;
+
+            return ownedPathSet != null
+                && ReferenceEquals(ownedPathSet, _lockPathSet)
+                && _lockPathSet.RootLayout != null;
+        }
+
+        /// <summary>
         /// Exception-safe exact-issuance check: the given ownership lease must
         /// be the exact instance this evidence was issued for, bound to the
         /// exact lock path set, and both must still be live. A foreign,
