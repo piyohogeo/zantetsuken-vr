@@ -231,7 +231,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void NoTransitionBackToRunning()
+        public void OnlyRunCompletionReturnsToRunning()
         {
             Type type = typeof(NvencCaptureProcessState);
 
@@ -246,6 +246,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(
                     method.Name == "TryBeginDrain" || method.Name == "TryPoison" ||
                     method.Name == "TryBeginRunAbandoned" ||
+                    method.Name == "TryCompleteRunWhileResourceResolutionHeld" ||
                     method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
                     method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution" ||
                     method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep" ||
@@ -253,6 +254,99 @@ namespace Zantetsu.Core.Tests
                     Is.True,
                     type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, submit-step, or settlement method.");
             }
+        }
+
+        // ---- Run completion ----
+
+        [Test]
+        public void CompleteRun_WithoutTheGate_Throws()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginDrain(), Is.True);
+
+            Assert.Throws<InvalidOperationException>(
+                () => state.TryCompleteRunWhileResourceResolutionHeld());
+            Assert.That(state.IsDraining, Is.True);
+        }
+
+        [Test]
+        public void CompleteRun_FromDraining_PublishesRunningAndClearsAbandoned()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginRunAbandoned(), Is.True);
+            Assert.That(state.IsDraining, Is.True);
+            Assert.That(state.IsRunAbandoned, Is.True);
+
+            Assert.That(state.TryBeginResourceResolution(), Is.True);
+            try
+            {
+                Assert.That(state.TryCompleteRunWhileResourceResolutionHeld(), Is.True);
+            }
+            finally
+            {
+                state.EndResourceResolution();
+            }
+
+            // The abandoned flag is cleared and Running is published, so the
+            // next Run is admitted without inheriting the previous one's
+            // abandonment. The clear happens before the publish, and the whole
+            // transition runs inside the gate every admission also takes, so no
+            // admission can observe an intermediate state.
+            Assert.That(state.IsRunAbandoned, Is.False);
+            Assert.That(state.IsAccepting, Is.True);
+            Assert.That(state.IsDraining, Is.False);
+
+            Assert.That(state.TryBeginAdmission(), Is.True);
+            state.EndAdmission();
+        }
+
+        [Test]
+        public void CompleteRun_FromRunning_ReturnsFalse()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+
+            Assert.That(state.TryBeginResourceResolution(), Is.True);
+            try
+            {
+                Assert.That(state.TryCompleteRunWhileResourceResolutionHeld(), Is.False);
+            }
+            finally
+            {
+                state.EndResourceResolution();
+            }
+
+            Assert.That(state.IsAccepting, Is.True);
+        }
+
+        [Test]
+        public void CompleteRun_FromPoisoned_ReturnsFalse_StaysPoisoned()
+        {
+            NvencCaptureProcessState state = new NvencCaptureProcessState();
+            Assert.That(state.TryBeginDrain(), Is.True);
+
+            Assert.That(state.TryBeginResourceResolution(), Is.True);
+            try
+            {
+                // Poison taken while this thread already holds the gate, which
+                // is the only way a poisoned state can be reached with the gate
+                // held: every gate entry refuses once poisoned.
+                Assert.That(state.TryPoison(), Is.True);
+
+                Assert.That(state.TryCompleteRunWhileResourceResolutionHeld(), Is.False);
+            }
+            finally
+            {
+                state.EndResourceResolution();
+            }
+
+            Assert.That(state.IsPoisoned, Is.True);
+            Assert.That(state.IsAccepting, Is.False);
+
+            // There is no route back: every gate entry a completion needs is
+            // refused while poisoned.
+            Assert.That(state.TryBeginResourceResolution(), Is.False);
+            Assert.That(state.TryBeginAdmission(), Is.False);
+            Assert.That(state.TryBeginSettlement(), Is.False);
         }
 
         [Test]

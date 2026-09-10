@@ -4969,6 +4969,278 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Run completion ----
+
+        [Test]
+        public void CompleteRun_BeforeReleaseSucceeds_ReturnsFalse_StaysDraining()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReleaseOperation(h);
+
+                // Prepared but not released: nothing proves the Run finished.
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.False);
+                Assert.That(h.State.IsDraining, Is.True);
+                Assert.That(h.State.IsAccepting, Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_BeforeReleasePrepared_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.False);
+                Assert.That(h.State.IsDraining, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_AfterRelease_PublishesRunningAndReadmits()
+        {
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    PrepareReflectedCleanup(h, status);
+                    Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
+                    Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                    NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                    Assert.That(disposition, Is.EqualTo(
+                        status == NvencRunCaptureCompleteCleanupStatus.Cleaned
+                            ? NvencRunEvidenceDisposition.CaptureComplete
+                            : NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                    // Both terminal dispositions finish on a genuine release
+                    // receipt, and the disposition itself is left alone.
+                    Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+
+                    Assert.That(h.State.IsAccepting, Is.True);
+                    Assert.That(h.State.IsDraining, Is.False);
+                    Assert.That(h.State.IsRunAbandoned, Is.False);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                    Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+
+                    // The next Run can be admitted.
+                    Assert.That(h.State.TryBeginAdmission(), Is.True);
+                    h.State.EndAdmission();
+                }
+            }
+        }
+
+        [Test]
+        public void CompleteRun_AfterAbandonedRun_ClearsTheAbandonedFlag()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                // Recorded through the ordinary API while already Draining.
+                Assert.That(h.State.TryBeginRunAbandoned(), Is.True);
+                Assert.That(h.State.IsRunAbandoned, Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+
+                Assert.That(h.State.IsRunAbandoned, Is.False);
+                Assert.That(h.State.IsAccepting, Is.True);
+                Assert.That(h.State.TryBeginAdmission(), Is.True);
+                h.State.EndAdmission();
+            }
+        }
+
+        [Test]
+        public void CompleteRun_Twice_ReturnsTrue_NoSecondReleaseOrTransition()
+        {
+            using (Harness h = Harness.Create())
+            {
+                CompleteReleasedRun(h);
+
+                int releaserCalls = h.Releaser.CallCount;
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(releaserCalls));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.State.IsAccepting, Is.True);
+
+                // A later Run may already have moved the process on. The old
+                // Coordinator must still answer true rather than call that
+                // corruption.
+                Assert.That(h.State.TryBeginDrain(), Is.True);
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+                Assert.That(h.State.IsDraining, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_GateContention_ReturnsFalseNoChange_ThenSucceeds()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryCompleteRun(), Is.False);
+                    Assert.That(h.State.IsDraining, Is.True);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+                Assert.That(h.State.IsAccepting, Is.True);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_ExternalPoisonFirst_ReturnsFalse_DoesNotUnpoison()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.State.IsAccepting, Is.False);
+                Assert.That(h.State.TryBeginAdmission(), Is.False);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_UsesTheRetainedReleaseReceiptAsItsAuthority()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.True);
+
+                // The receipt this Run retained is the exact one the completion
+                // rests on: issued by the configured releaser for the exact
+                // retained operation, and evidence of a fully released lease.
+                Assert.That(ReferenceEquals(receipt.Releaser, h.Releaser), Is.True);
+                Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
+                Assert.That(receipt.IsValid, Is.True);
+                Assert.That(operation.OwnershipLease.IsReleaseComplete, Is.True);
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+                Assert.That(h.State.IsAccepting, Is.True);
+            }
+        }
+
+        [Test]
+        public void CompleteRun_ChangesNoRegistryDispositionResultServiceOrLease()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunSessionOwnershipReleaseOperation operation = PrepareReleaseOperation(h);
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt receipt), Is.True);
+
+                NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+                bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
+                NvencRunChunkContextState contextState = h.Context.State;
+                NvencRunPublicationServiceState serviceState = h.Service.State;
+                bool serviceReleased = h.RunCoordinator.PublicationServiceReleased;
+                bool serviceStopped = h.Service.IsStopped;
+                bool leaseCreated = h.SessionIssue.OwnershipLease.IsCreated;
+                bool leaseCanRelease = h.SessionIssue.OwnershipLease.CanRelease;
+                bool leaseReleaseComplete = h.SessionIssue.OwnershipLease.IsReleaseComplete;
+                int releaserCalls = h.Releaser.CallCount;
+                int cleanerCalls = h.CleanupCleaner.CallCount;
+                int publisherCalls = h.Publisher.CallCount;
+                int committerCalls = h.Committer.CallCount;
+                int indexCommitterCalls = h.IndexCommitter.CallCount;
+                int completerCalls = h.RunCompleter.CallCount;
+                NvencRunCaptureCompleteCleanupOperation cleanupOperation = operation.CleanupOperation;
+
+                Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+
+                // Only the process state moved.
+                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+                Assert.That(h.Slot.State, Is.EqualTo(slotState));
+                Assert.That(h.Slot.HasRegisteredEntry, Is.EqualTo(hasRegisteredEntry));
+                Assert.That(h.Context.State, Is.EqualTo(contextState));
+                Assert.That(h.Service.State, Is.EqualTo(serviceState));
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.EqualTo(serviceReleased));
+                Assert.That(h.Service.IsStopped, Is.EqualTo(serviceStopped));
+
+                // The lock is not touched again in either direction.
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.EqualTo(leaseCreated));
+                Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.EqualTo(leaseCanRelease));
+                Assert.That(
+                    h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.EqualTo(leaseReleaseComplete));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+
+                // No collaborator is contacted again.
+                Assert.That(h.Releaser.CallCount, Is.EqualTo(releaserCalls));
+                Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(cleanerCalls));
+                Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+                Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
+                Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
+                Assert.That(h.RunCompleter.CallCount, Is.EqualTo(completerCalls));
+
+                // The retained release result graph is the same reference.
+                Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(
+                    out NvencRunSessionOwnershipReleaseReceipt again), Is.True);
+                Assert.That(ReferenceEquals(again, receipt), Is.True);
+                Assert.That(ReferenceEquals(again.Operation, operation), Is.True);
+                Assert.That(ReferenceEquals(operation.CleanupOperation, cleanupOperation), Is.True);
+            }
+        }
+
+        // ---- Run completion helpers ----
+
+        private static void CompleteReleasedRun(Harness h)
+        {
+            PrepareReleaseOperation(h);
+            Assert.That(h.RunCoordinator.TryReleaseSessionOwnership(out _), Is.True);
+            Assert.That(h.RunCoordinator.TryCompleteRun(), Is.True);
+            Assert.That(h.State.IsAccepting, Is.True);
+        }
+
         // ---- Session Ownership Lease release execution helpers ----
 
         private static NvencRunSessionOwnershipReleaseOperation PrepareReleaseOperation(Harness h)

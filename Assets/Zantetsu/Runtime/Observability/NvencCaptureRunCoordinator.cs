@@ -120,6 +120,7 @@ namespace Zantetsu.Observability
         private NvencRunSessionOwnershipReleaseOperation _sessionOwnershipReleaseOperation;
         private bool _sessionOwnershipReleased;
         private NvencRunSessionOwnershipReleaseReceipt _sessionOwnershipReleaseReceipt;
+        private bool _runCompleted;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -3427,6 +3428,111 @@ namespace Zantetsu.Observability
                 _sessionOwnershipReleased = true;
 
                 receipt = issued;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Completes this Run once its Session Ownership Lease release is
+        /// proven, returning the process state from Draining to Running so the
+        /// next Run can be admitted. It is not an unpoison.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The authority for finishing a Run is the retained
+        /// <see cref="NvencRunSessionOwnershipReleaseReceipt"/> and the
+        /// operation graph behind it. That graph already proves the Publication
+        /// Service was released and stopped, the CaptureComplete cleanup
+        /// outcome was reflected, and the Registry, plan, final chunk, capture
+        /// index, context, and Workers reached their terminal shapes, so none of
+        /// them is re-examined here. No file is re-inspected, no lock is
+        /// re-acquired, and no cleanup, retry, or wait is performed. Both
+        /// <see cref="NvencRunEvidenceDisposition.CaptureComplete"/> and
+        /// <see cref="NvencRunEvidenceDisposition.PublicationRecoveryRequired"/>
+        /// finish here on a genuine receipt, and the disposition itself is left
+        /// unchanged.
+        /// </para>
+        /// <para>
+        /// A gate contention, a preceding Poison, a release that was never
+        /// prepared, and a release that has not succeeded all return false with
+        /// no change. A retained receipt that no longer correlates to this Run's
+        /// exact configured releaser and exact retained operation, or that is
+        /// invalid while its lease is not even fully released, is corruption and
+        /// poisons. A re-call after completion returns true without touching the
+        /// process state again: by then the next Run may already have started,
+        /// drained, or poisoned, and this Coordinator must not treat that as
+        /// corruption.
+        /// </para>
+        /// </remarks>
+        internal bool TryCompleteRun()
+        {
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A preceding Poison refuses here and is never lifted.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_runCompleted)
+                {
+                    return true;
+                }
+
+                NvencRunSessionOwnershipReleaseOperation operation = _sessionOwnershipReleaseOperation;
+                if (operation == null || !_sessionOwnershipReleased)
+                {
+                    // The lock has not been released through this Run yet: a
+                    // normal not-ready shape.
+                    return false;
+                }
+
+                NvencRunSessionOwnershipReleaseReceipt retained = _sessionOwnershipReleaseReceipt;
+                if (retained == null)
+                {
+                    return false;
+                }
+
+                if (!ReferenceEquals(retained.Operation, operation)
+                    || !ReferenceEquals(
+                        retained.Releaser, _sessionOwnershipReleaseExecution.Releaser))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The retained Session Ownership Lease release receipt no longer correlates.");
+                }
+
+                if (!retained.IsValid && !operation.OwnershipLease.IsReleaseComplete)
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Session Ownership Lease release receipt is not evidence of a released lease.");
+                }
+
+                if (!_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                _runCompleted = true;
+
+                if (!_processState.TryCompleteRunWhileResourceResolutionHeld())
+                {
+                    _runCompleted = false;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Run completion could not republish the process state as Running.");
+                }
+
                 return true;
             }
             finally

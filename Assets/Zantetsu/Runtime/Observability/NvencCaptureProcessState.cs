@@ -8,9 +8,14 @@ namespace Zantetsu.Observability
     /// NVENC Backend, Run Coordinator, and Publication Service. It owns no
     /// NVENC session, resource handle, texture, queue, pool, work slot,
     /// exception, OS lock, artifact, context, registry, or cleanup ledger; it
-    /// holds only the one-way control state. A single small atomic state
-    /// machine advances Running to Draining or to PoisonedUntilProcessRestart
-    /// and never moves back, and poison always wins over a concurrent drain.
+    /// holds only the lifecycle control state. A single small atomic state
+    /// machine advances Running to Draining or to PoisonedUntilProcessRestart,
+    /// and poison always wins over a concurrent drain. Draining returns to
+    /// Running only on a normal or controlled Run completion, through
+    /// <see cref="TryCompleteRunWhileResourceResolutionHeld"/>, which the Run
+    /// Coordinator calls while holding the shared gate;
+    /// PoisonedUntilProcessRestart is irreversible until the process restarts
+    /// and no reset or unpoison entry exists.
     /// </summary>
     /// <remarks>
     /// The state is read and advanced with Interlocked/Volatile only, and a
@@ -21,7 +26,9 @@ namespace Zantetsu.Observability
     /// transitions wait only for the preceding short critical section. Run
     /// Abandoned is a monotonic flag recorded inside the same gate that stops
     /// new admission by advancing Running to Draining; a normal
-    /// <see cref="TryBeginDrain"/> never sets it. Reads perform no allocation,
+    /// <see cref="TryBeginDrain"/> never sets it, and a Run completion clears
+    /// it before republishing Running so the next Run never observes the
+    /// previous Run's abandonment. Reads perform no allocation,
     /// transitions are idempotent and exception-safe, and this type is not an
     /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject. The
     /// Composition Root, not this type, creates exactly one instance per
@@ -252,6 +259,46 @@ namespace Zantetsu.Observability
             {
                 Monitor.Exit(_admissionGate);
             }
+        }
+
+        /// <summary>
+        /// Returns Draining to Running when a Run has finished normally or in a
+        /// controlled failure, so the next Run can be admitted. It is not an
+        /// unpoison: PoisonedUntilProcessRestart is irreversible until the
+        /// process restarts, and Running is left alone.
+        /// </summary>
+        /// <remarks>
+        /// The caller must already hold the shared gate through
+        /// <see cref="TryBeginResourceResolution"/>, so the completion is
+        /// ordered against admission, drain, and poison exactly like every
+        /// other lifecycle transition; calling it without the gate is a
+        /// programming error and throws
+        /// <see cref="InvalidOperationException"/>. The Run Abandoned flag is
+        /// cleared before Running is published, so a Run admitted right after
+        /// this never observes the previous Run's abandonment. This type
+        /// verifies no Worker, Service, lease, Registry, or disposition: the
+        /// caller owns that evidence.
+        /// </remarks>
+        internal bool TryCompleteRunWhileResourceResolutionHeld()
+        {
+            if (!Monitor.IsEntered(_admissionGate))
+            {
+                throw new InvalidOperationException(
+                    "Run completion requires the shared resource-resolution gate.");
+            }
+
+            if (Volatile.Read(ref _state) != (int)NvencCaptureProcessStatus.Draining)
+            {
+                return false;
+            }
+
+            // Cleared before Running is published, never after.
+            Volatile.Write(ref _runAbandoned, 0);
+
+            return Interlocked.CompareExchange(
+                ref _state,
+                (int)NvencCaptureProcessStatus.Running,
+                (int)NvencCaptureProcessStatus.Draining) == (int)NvencCaptureProcessStatus.Draining;
         }
 
         internal bool TryPoison()
