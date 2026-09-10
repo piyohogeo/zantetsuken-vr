@@ -72,8 +72,8 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.CreateSubmittedRecord(1);
 
-            ManualResetEventSlim entered = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim entered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             Thread holder = new Thread(() =>
@@ -130,9 +130,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             NvencSubmitToOutputRecord record = h.CreateSubmittedRecord(1);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             h.Source.SourceEntered = sourceEntered;
@@ -207,8 +207,8 @@ namespace Zantetsu.Core.Tests
             // recovery return.
             ParkPending(h.Coordinator, record, ownedLease);
 
-            ManualResetEventSlim entered = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim entered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             Thread holder = new Thread(() =>

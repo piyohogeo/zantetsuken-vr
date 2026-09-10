@@ -787,16 +787,22 @@ namespace Zantetsu.Core.Tests
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
 
-                h.SettledEvent.Reset();
-                Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "worker teardown did not enter");
+                try
+                {
+                    h.SettledEvent.Reset();
+                    Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "worker teardown did not enter");
 
-                h.SubmitWorker.Dispose();
+                    h.SubmitWorker.Dispose();
 
-                Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.False);
-                Assert.That(h.MainThreadTeardown.CallCount, Is.EqualTo(0));
+                    Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.False);
+                    Assert.That(h.MainThreadTeardown.CallCount, Is.EqualTo(0));
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitSettled(h.SettledEvent, "worker did not complete the teardown after release");
                 h.WaitForPhysicalStop("worker did not physically exit");
             }
@@ -2286,14 +2292,20 @@ namespace Zantetsu.Core.Tests
                 h.Publisher.Entered = entered;
                 h.Publisher.Release = release;
 
-                Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "publisher did not enter");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitArtifactPublication(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "publisher did not enter");
 
-                // A poll while the Worker is still executing must not collect and
-                // must not clear the slot.
-                Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.False);
+                    // A poll while the Worker is still executing must not collect and
+                    // must not clear the slot.
+                    Assert.That(h.RunCoordinator.TryCollectArtifactPublication(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForArtifactTerminal(h, "publication worker did not reach the terminal for the artifact publication");
 
                 Assert.That(h.RunCoordinator.TryCollectArtifactPublication(
@@ -2628,16 +2640,23 @@ namespace Zantetsu.Core.Tests
 
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
-                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
 
-                Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
 
-                // A poll while the Worker is still executing must not collect
-                // and must not clear the slot.
-                Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(out _), Is.False);
+                    Assert.That(h.RunCoordinator.TrySubmitCaptureIndexCommit(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                release.Set();
+                    // A poll while the Worker is still executing must not collect
+                    // and must not clear the slot.
+                    Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h, "publication worker did not stop after the failed capture index commit");
 
                 Assert.That(h.RunCoordinator.TryCollectCaptureIndexCommit(
@@ -2975,15 +2994,21 @@ namespace Zantetsu.Core.Tests
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
-                Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
 
-                // A poll while the Worker is still executing must not collect
-                // and must not clear the slot.
-                Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.False);
-                Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                    // A poll while the Worker is still executing must not collect
+                    // and must not clear the slot.
+                    Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.False);
+                    Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(NvencRunEvidenceDisposition.Committed));
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceStop(h, "publication worker did not stop after CaptureComplete");
 
                 Assert.That(h.RunCoordinator.TryCollectCaptureComplete(
@@ -3322,17 +3347,23 @@ namespace Zantetsu.Core.Tests
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
-                Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitCaptureComplete(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
 
-                // The Worker is still running and nothing is released.
-                Assert.That(h.Service.IsStopped, Is.False);
-                Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
-                    out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
-                Assert.That(operation, Is.Null);
-                Assert.That(h.State.IsPoisoned, Is.False);
+                    // The Worker is still running and nothing is released.
+                    Assert.That(h.Service.IsStopped, Is.False);
+                    Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(
+                        out NvencRunCaptureCompleteCleanupOperation operation), Is.False);
+                    Assert.That(operation, Is.Null);
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForCaptureCompleteTerminal(h, "publication worker did not reach the CaptureComplete terminal");
                 Assert.That(h.RunCoordinator.TryCollectCaptureComplete(out _), Is.True);
                 Assert.That(h.RunCoordinator.TryPrepareCaptureCompleteCleanup(out _), Is.True);
@@ -6496,14 +6527,20 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
-                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                // A poll while the Worker is still executing must not collect
-                // and must not clear the slot.
-                Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.False);
+                    // A poll while the Worker is still executing must not collect
+                    // and must not clear the slot.
+                    Assert.That(h.RunCoordinator.TryCollectPublicationPlanCommit(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceState(h, NvencRunPublicationServiceState.PlanCommitCompleted,
                     "service did not publish the plan commit terminal");
 

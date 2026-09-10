@@ -82,9 +82,9 @@ namespace Zantetsu.Core.Tests
             h.Enqueue(first);
             h.Enqueue(second);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             h.Source.SourceEntered = sourceEntered;
@@ -150,9 +150,9 @@ namespace Zantetsu.Core.Tests
             NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
             h.Enqueue(record);
 
-            ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             h.Writer.Entered = writerEntered;
@@ -219,9 +219,9 @@ namespace Zantetsu.Core.Tests
             NvencSubmitToOutputRecord record = h.CreateSubmitted(1);
             h.Enqueue(record);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             h.Source.SourceEntered = sourceEntered;

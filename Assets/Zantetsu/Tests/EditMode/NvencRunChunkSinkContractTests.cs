@@ -248,9 +248,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             h.Writer.Entered = sourceEntered;
             h.Writer.WaitFor = gateHeld;
@@ -319,9 +319,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             h.Writer.Entered = sourceEntered;
             h.Writer.WaitFor = gateHeld;
@@ -382,9 +382,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             h.Writer.Entered = sourceEntered;
             h.Writer.WaitFor = gateHeld;
@@ -723,9 +723,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
 
-            ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             h.Writer.Entered = writerEntered;
             h.Writer.WaitFor = gateHeld;
@@ -817,9 +817,9 @@ namespace Zantetsu.Core.Tests
             Harness h = new Harness();
             CaptureFrameWorkToken token = h.ProduceOwnedLease(1, 56, Seed, out NvencOwnedAccessUnitLease lease);
 
-            ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim writerEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             h.Writer.Entered = writerEntered;
             h.Writer.WaitFor = gateHeld;

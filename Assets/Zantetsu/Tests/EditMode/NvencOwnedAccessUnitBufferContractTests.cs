@@ -466,9 +466,9 @@ namespace Zantetsu.Core.Tests
             CaptureFrameWorkToken token = MakeToken(1);
             Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             BlockingSource source = new BlockingSource
             {
@@ -559,9 +559,9 @@ namespace Zantetsu.Core.Tests
             CaptureFrameWorkToken token = MakeToken(1);
             Assert.That(buffer.TryBeginWrite(token, out NvencAccessUnitWriteLease write), Is.True);
 
-            ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
-            ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim sourceEntered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
 
             BlockingSource source = new BlockingSource
             {

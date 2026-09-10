@@ -164,11 +164,18 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
-                Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                Assert.That(h.State.TryPoison(), Is.True);
-                release.Set();
+                    Assert.That(h.State.TryPoison(), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h.Service, "worker did not stop after the mid-execution poison");
 
                 Assert.That(h.Committer.CallCount, Is.EqualTo(1));
@@ -233,13 +240,19 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
-                Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                // A poll while executing must not collect or clear the slot.
-                Assert.That(h.Service.TryCollectPlanCommit(out _), Is.False);
+                    // A poll while executing must not collect or clear the slot.
+                    Assert.That(h.Service.TryCollectPlanCommit(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceState(h.Service, NvencRunPublicationServiceState.PlanCommitCompleted,
                     "service did not publish the plan terminal");
                 Assert.That(h.Service.TryCollectPlanCommit(out _), Is.True);
@@ -259,11 +272,17 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
-                Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
-                Assert.Throws<InvalidOperationException>(() => h.Service.Dispose());
+                try
+                {
+                    Assert.That(h.Service.TrySubmitPlanCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                    Assert.Throws<InvalidOperationException>(() => h.Service.Dispose());
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceState(h.Service, NvencRunPublicationServiceState.PlanCommitCompleted,
                     "service did not publish the plan terminal");
                 Assert.That(h.Service.TryCollectPlanCommit(out _), Is.True);
@@ -288,15 +307,21 @@ namespace Zantetsu.Core.Tests
                 h.Committer.Entered = entered;
                 h.Committer.Release = release;
 
-                Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TrySubmitPublicationPlanCommit(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                // An extra notification while the Plan is executing must not
-                // stop the Worker after the committed Plan terminal: the Worker
-                // re-parks and the Artifact phase still converges.
-                h.Service.Notify();
+                    // An extra notification while the Plan is executing must not
+                    // stop the Worker after the committed Plan terminal: the Worker
+                    // re-parks and the Artifact phase still converges.
+                    h.Service.Notify();
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceState(h.Service, NvencRunPublicationServiceState.PlanCommitCompleted,
                     "service did not publish the committed plan terminal");
                 Assert.That(h.Service.IsStopped, Is.False);
@@ -464,11 +489,18 @@ namespace Zantetsu.Core.Tests
                 h.Publisher.Entered = entered;
                 h.Publisher.Release = release;
 
-                Assert.That(h.Service.TrySubmitArtifactPublication(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "publisher did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitArtifactPublication(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "publisher did not enter");
 
-                Assert.That(h.State.TryPoison(), Is.True);
-                release.Set();
+                    Assert.That(h.State.TryPoison(), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h.Service, "worker did not stop after the mid-execution poison");
 
                 Assert.That(h.State.IsPoisoned, Is.True);
@@ -598,15 +630,22 @@ namespace Zantetsu.Core.Tests
 
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
-                h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
 
-                Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    h.IndexCommitter.Status = NvencRunCaptureIndexCommitStatus.Failed;
 
-                // A poll while the Worker is still executing must not collect.
-                Assert.That(h.Service.TryCollectCaptureIndexCommit(out _), Is.False);
+                    Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                release.Set();
+                    // A poll while the Worker is still executing must not collect.
+                    Assert.That(h.Service.TryCollectCaptureIndexCommit(out _), Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h.Service, "worker did not stop after the failed capture index commit");
                 Assert.That(h.Service.State,
                     Is.EqualTo(NvencRunPublicationServiceState.CaptureIndexCommitCompleted));
@@ -634,14 +673,20 @@ namespace Zantetsu.Core.Tests
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
 
-                Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                // A stray notification delivered while the capture index commit
-                // executes must not stop the Worker that CaptureComplete needs.
-                h.Service.Notify();
+                    // A stray notification delivered while the capture index commit
+                    // executes must not stop the Worker that CaptureComplete needs.
+                    h.Service.Notify();
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceState(h.Service, NvencRunPublicationServiceState.CaptureIndexCommitCompleted,
                     "service did not publish the committed capture index terminal");
                 Assert.That(h.Service.IsStopped, Is.False);
@@ -771,11 +816,18 @@ namespace Zantetsu.Core.Tests
                 h.IndexCommitter.Entered = entered;
                 h.IndexCommitter.Release = release;
 
-                Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitCaptureIndexCommit(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "committer did not enter");
 
-                Assert.That(h.State.TryPoison(), Is.True);
-                release.Set();
+                    Assert.That(h.State.TryPoison(), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h.Service, "worker did not stop after the mid-execution poison");
 
                 // A Poison that linearized during execution fails closed: no
@@ -884,18 +936,25 @@ namespace Zantetsu.Core.Tests
 
                     h.RunCompleter.Entered = entered;
                     h.RunCompleter.Release = release;
-                    h.RunCompleter.Status = status;
 
-                    Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
-                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
-                    Assert.That(h.Service.State,
-                        Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteExecuting));
+                    try
+                    {
+                        h.RunCompleter.Status = status;
 
-                    // A poll while the Worker is still executing must not
-                    // collect.
-                    Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
+                        Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                        Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                        Assert.That(h.Service.State,
+                            Is.EqualTo(NvencRunPublicationServiceState.CaptureCompleteExecuting));
 
-                    release.Set();
+                        // A poll while the Worker is still executing must not
+                        // collect.
+                        Assert.That(h.Service.TryCollectCaptureComplete(out _), Is.False);
+                    }
+                    finally
+                    {
+                        release.Set();
+                    }
+
                     WaitForServiceStop(h.Service, "worker did not stop after the final phase");
 
                     Assert.That(h.Service.TryCollectCaptureComplete(
@@ -984,14 +1043,20 @@ namespace Zantetsu.Core.Tests
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
-                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
 
-                // A stray notification delivered while CaptureComplete executes
-                // must not cause a second execution.
-                h.Service.Notify();
+                    // A stray notification delivered while CaptureComplete executes
+                    // must not cause a second execution.
+                    h.Service.Notify();
+                }
+                finally
+                {
+                    release.Set();
+                }
 
-                release.Set();
                 WaitForServiceStop(h.Service, "worker did not stop after CaptureComplete");
 
                 Assert.That(h.RunCompleter.CallCount, Is.EqualTo(1));
@@ -1058,11 +1123,18 @@ namespace Zantetsu.Core.Tests
                 h.RunCompleter.Entered = entered;
                 h.RunCompleter.Release = release;
 
-                Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
+                try
+                {
+                    Assert.That(h.Service.TrySubmitCaptureComplete(operation), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "completer did not enter");
 
-                Assert.That(h.State.TryPoison(), Is.True);
-                release.Set();
+                    Assert.That(h.State.TryPoison(), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 WaitForServiceStop(h.Service, "worker did not stop after the mid-execution poison");
 
                 Assert.That(h.State.IsPoisoned, Is.True);

@@ -71,8 +71,8 @@ namespace Zantetsu.Core.Tests
             NvencSubmitToOutputRecord record = h.ProduceFailedBeforeSubmit(
                 1, NvencFailedBeforeSubmitReason.GpuConversionFailed, out _, out _);
 
-            ManualResetEventSlim entered = new ManualResetEventSlim(false);
-            ManualResetEventSlim release = new ManualResetEventSlim(false);
+            using ManualResetEventSlim entered = new ManualResetEventSlim(false);
+            using ManualResetEventSlim release = new ManualResetEventSlim(false);
             Exception holderError = null;
 
             Thread holder = new Thread(() =>

@@ -877,17 +877,23 @@ namespace Zantetsu.Core.Tests
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
 
-                h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                try
+                {
+                    h.SettledEvent.Reset();
+                    Assert.That(h.Worker.TryRequestTeardown(), Is.True);
 
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
 
-                // Poison while the teardown is still executing.
-                Assert.That(h.State.TryPoison(), Is.True);
+                    // Poison while the teardown is still executing.
+                    Assert.That(h.State.TryPoison(), Is.True);
 
-                // The teardown returns normally, but the process is already
-                // Poisoned: no normal-stop evidence may be published.
-                release.Set();
+                    // The teardown returns normally, but the process is already
+                    // Poisoned: no normal-stop evidence may be published.
+                }
+                finally
+                {
+                    release.Set();
+                }
 
                 WaitSettled(h.SettledEvent, "worker did not stop after the poison");
                 h.WaitForPhysicalStop("worker did not physically exit");
@@ -920,17 +926,24 @@ namespace Zantetsu.Core.Tests
                 // the transient contention that previously re-ran TearDown().
                 h.Teardown.Entered = entered;
                 h.Teardown.Release = release;
-                h.Teardown.Returned = returned;
 
-                h.SettledEvent.Reset();
-                Assert.That(h.Worker.TryRequestTeardown(), Is.True);
-                Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
+                try
+                {
+                    h.Teardown.Returned = returned;
 
-                // Hold the gate, as a concurrent submit step would, while the
-                // teardown returns.
-                Assert.That(h.State.TryBeginSubmitStep(), Is.True);
+                    h.SettledEvent.Reset();
+                    Assert.That(h.Worker.TryRequestTeardown(), Is.True);
+                    Assert.That(entered.Wait(WatchdogTimeoutMs), Is.True, "teardown did not enter");
 
-                release.Set();
+                    // Hold the gate, as a concurrent submit step would, while the
+                    // teardown returns.
+                    Assert.That(h.State.TryBeginSubmitStep(), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                }
+
                 Assert.That(returned.Wait(WatchdogTimeoutMs), Is.True, "teardown did not return");
 
                 // Release the gate: the worker must settle the pinned receipt
