@@ -38,9 +38,15 @@ namespace Zantetsu.Observability
     /// still present with no initialization marker to bind it - is a failure.
     /// </para>
     /// <para>
-    /// Each side effect is followed by a flush of the directory that actually
-    /// holds the deleted entry, and the staging Run root's own removal is
-    /// followed by a flush of <c>&lt;staging base&gt;/runs</c>.
+    /// Each step ends with a flush of the directory that actually holds its
+    /// entry - <c>&lt;staging base&gt;/runs</c> for the staging Run root
+    /// itself - and that flush happens whether this attempt deleted the entry
+    /// or found it already gone. An earlier attempt may have deleted an entry
+    /// and then failed to flush, so a step is only "processed" once its own
+    /// flush has succeeded here; nothing relies on some other call flushing
+    /// that directory as a side effect. The one case with nothing to flush is
+    /// a staging Run root that is itself already gone, since the directory
+    /// those entries lived in no longer exists.
     /// </para>
     /// <para>
     /// One call is one attempt. There is no retry, rollback, re-creation,
@@ -199,9 +205,13 @@ namespace Zantetsu.Observability
 
                     temporary.Dispose();
                     temporary = null;
-
-                    _fileSystem.FlushDirectory(finalRoot);
                 }
+
+                // The flush belongs to the step, not to the deletion: an entry
+                // that is already gone may have been removed by an attempt
+                // whose flush then failed, so this attempt must flush too
+                // before calling the step processed.
+                _fileSystem.FlushDirectory(finalRoot);
             }
             catch
             {
@@ -300,9 +310,9 @@ namespace Zantetsu.Observability
 
                     chunks.Dispose();
                     chunks = null;
-
-                    _fileSystem.FlushDirectory(staging);
                 }
+
+                _fileSystem.FlushDirectory(staging);
             }
             catch
             {
@@ -420,9 +430,9 @@ namespace Zantetsu.Observability
 
                     staging.Dispose();
                     staging = null;
-
-                    _fileSystem.FlushDirectory(baseDirectory);
                 }
+
+                _fileSystem.FlushDirectory(baseDirectory);
             }
             catch
             {
@@ -474,9 +484,9 @@ namespace Zantetsu.Observability
 
                     file.Dispose();
                     file = null;
-
-                    _fileSystem.FlushDirectory(staging);
                 }
+
+                _fileSystem.FlushDirectory(staging);
             }
             catch
             {
@@ -520,10 +530,18 @@ namespace Zantetsu.Observability
                         "The ready marker StagingInitSha256 does not match the staging initialization marker.");
                 }
             }
-            finally
+            catch
             {
+                // A verification failure is the outcome, so the release must
+                // not replace it.
                 ReleaseQuietly(initFile);
+                throw;
             }
+
+            // The verification passed, so this handle's own release is part of
+            // the result: a failure here stops the cleanup instead of leading
+            // to a deletion.
+            initFile.Dispose();
 
             CaptureRunMarkerBinding expected = CaptureRunMarkerBindingFactory.Create(
                 operation.TestRunId,

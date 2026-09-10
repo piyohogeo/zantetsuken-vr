@@ -186,16 +186,16 @@ namespace Zantetsu.Core.Tests
                 h.Layout.StagingRunRoot,
             }));
 
-            // Each side effect is followed by a flush of the directory that
-            // actually held the entry.
+            // Each step ends with a flush of the directory that actually held
+            // its entry.
             Assert.That(h.FileSystem.Flushes, Is.EqualTo(new List<string>
             {
-                h.Layout.FinalRunRoot,
-                h.Layout.StagingRunRoot,
-                h.Layout.StagingRunRoot,
-                h.Layout.StagingRunRoot,
-                h.Layout.StagingRunRoot,
-                Path.GetDirectoryName(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.FinalRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(h.Layout.StagingRunRoot),
+                Path.GetFullPath(Path.GetDirectoryName(h.Layout.StagingRunRoot)),
             }));
 
             AssertPublishedSideUntouched(h);
@@ -431,6 +431,111 @@ namespace Zantetsu.Core.Tests
                 RunInitializationMarkerName,
             }));
             AssertEverythingReleased(h);
+        }
+
+        // ---- A failed flush is retried, not skipped ----
+
+        [Test]
+        public void Clean_TemporaryFlushFailure_IsRetriedUntilItSucceeds()
+        {
+            Harness h = MakeHarness(Matches);
+            h.FileSystem.FailFlushesAt(h.Layout.FinalRunRoot, 1);
+
+            // The temporary is deleted, then its directory flush fails.
+            NvencRunCaptureCompleteRecoveryCleanupAttemptResult first =
+                h.Cleaner.Clean(h.Operation);
+
+            Assert.That(first.IsFailed, Is.True);
+            Assert.That(h.FileSystem.Exists(h.TemporaryPath), Is.False);
+            Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.True);
+
+            // The retry finds the temporary already gone and must still flush
+            // the directory that held it before calling the step processed.
+            h.FileSystem.Flushes.Clear();
+
+            NvencRunCaptureCompleteRecoveryCleanupAttemptResult second =
+                h.Cleaner.Clean(h.Operation);
+
+            Assert.That(second.IsCleaned, Is.True);
+            Assert.That(h.FileSystem.Flushes[0], Is.EqualTo(Path.GetFullPath(h.Layout.FinalRunRoot)));
+            AssertPublishedSideUntouched(h);
+            AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Clean_StagingRunRootFlushFailure_IsRetriedUntilItSucceeds()
+        {
+            Harness h = MakeHarness(Absent);
+            string parent = Path.GetDirectoryName(h.Layout.StagingRunRoot);
+            h.FileSystem.FailFlushesAt(parent, 1);
+
+            // Everything is removed, then the parent directory flush fails.
+            NvencRunCaptureCompleteRecoveryCleanupAttemptResult first =
+                h.Cleaner.Clean(h.Operation);
+
+            Assert.That(first.IsFailed, Is.True);
+            Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.False);
+
+            // The retry finds the Run root already gone and must still flush
+            // its parent before reporting success.
+            h.FileSystem.Flushes.Clear();
+
+            NvencRunCaptureCompleteRecoveryCleanupAttemptResult second =
+                h.Cleaner.Clean(h.Operation);
+
+            Assert.That(second.IsCleaned, Is.True);
+            Assert.That(h.FileSystem.Flushes, Has.Member(Path.GetFullPath(parent)));
+            AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Clean_AlreadyDeletedStagingTargets_AreStillFlushedBeforeBeingAcceptedAsProcessed()
+        {
+            // A previous attempt removed the chunks directory, the plan, and
+            // both markers but never flushed; the staging Run root is still
+            // there, so this attempt must flush it for each of those steps.
+            Harness h = MakeHarness(Absent);
+            h.FileSystem.RemoveDirectory(h.ChunksPath);
+            h.FileSystem.RemoveFile(h.PlanPath);
+            h.FileSystem.RemoveFile(h.ReadyPath);
+            h.FileSystem.RemoveFile(h.InitPath);
+            h.FileSystem.FailFlushesAt(h.Layout.StagingRunRoot, 4);
+
+            // Each of the four staging steps insists on its own flush, so four
+            // failures in a row take four attempts to get past.
+            for (int attempt = 1; attempt <= 4; attempt++)
+            {
+                Assert.That(
+                    h.Cleaner.Clean(h.Operation).IsFailed,
+                    Is.True,
+                    "attempt " + attempt);
+                Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.True);
+            }
+
+            Assert.That(h.Cleaner.Clean(h.Operation).IsCleaned, Is.True);
+            Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.False);
+            AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Clean_InitializationMarkerReleaseFailureDuringVerification_StopsBeforeDeleting()
+        {
+            // The ready marker verification reads the initialization marker
+            // and then releases it. A release failure there is the outcome: no
+            // marker is deleted and no receipt is issued.
+            Harness h = MakeHarness(Absent);
+            h.FileSystem.FailReleaseAt(h.InitPath, new IOException("release failed"));
+
+            NvencRunCaptureCompleteRecoveryCleanupAttemptResult result =
+                h.Cleaner.Clean(h.Operation);
+
+            Assert.That(result.IsFailed, Is.True);
+            Assert.That(result.Receipt, Is.Null);
+            Assert.That(h.FileSystem.Deletions, Has.No.Member(RunReadyMarkerName));
+            Assert.That(h.FileSystem.Deletions, Has.No.Member(RunInitializationMarkerName));
+            Assert.That(h.FileSystem.Exists(h.ReadyPath), Is.True);
+            Assert.That(h.FileSystem.Exists(h.InitPath), Is.True);
+            Assert.That(h.FileSystem.DirectoryExists(h.Layout.StagingRunRoot), Is.True);
         }
 
         // ---- Resumption ----
@@ -1021,6 +1126,10 @@ namespace Zantetsu.Core.Tests
                 new Dictionary<string, CaptureIndexFileOpenStatus>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<string, Exception> _readFailures =
                 new Dictionary<string, Exception>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, Exception> _releaseFailures =
+                new Dictionary<string, Exception>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, int> _flushFailures =
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             private readonly Dictionary<CaptureIndexCommitDirectory, string> _directoryPaths =
                 new Dictionary<CaptureIndexCommitDirectory, string>();
             private readonly Dictionary<CaptureIndexCommitFile, string> _filePaths =
@@ -1096,6 +1205,17 @@ namespace Zantetsu.Core.Tests
                 _readFailures[Norm(path)] = failure;
             }
 
+            internal void FailReleaseAt(string path, Exception failure)
+            {
+                _releaseFailures[Norm(path)] = failure;
+            }
+
+            /// <summary>Fails the next <paramref name="times"/> flushes of one directory.</summary>
+            internal void FailFlushesAt(string path, int times)
+            {
+                _flushFailures[Norm(path)] = times;
+            }
+
             public CaptureIndexCommitDirectory OpenDirectory(string absolutePath)
             {
                 CaptureIndexDirectoryOpen opened = TryOpenDirectory(absolutePath);
@@ -1158,6 +1278,11 @@ namespace Zantetsu.Core.Tests
                     stream.ReadFailure = failure;
                 }
 
+                if (_releaseFailures.TryGetValue(path, out Exception releaseFailure))
+                {
+                    stream.DisposeFailure = releaseFailure;
+                }
+
                 Streams.Add(stream);
                 OpenedPaths.Add(path);
 
@@ -1215,6 +1340,13 @@ namespace Zantetsu.Core.Tests
             {
                 string path = _directoryPaths[directory];
                 Calls.Add("FlushDirectory:" + path);
+
+                if (_flushFailures.TryGetValue(path, out int remaining) && remaining > 0)
+                {
+                    _flushFailures[path] = remaining - 1;
+                    throw new IOException("Failed to flush " + path + ".");
+                }
+
                 Flushes.Add(path);
             }
 
@@ -1242,6 +1374,8 @@ namespace Zantetsu.Core.Tests
 
             internal Exception ReadFailure { get; set; }
 
+            internal Exception DisposeFailure { get; set; }
+
             internal bool Disposed { get; private set; }
 
             public override int Read(byte[] buffer, int offset, int count)
@@ -1258,6 +1392,11 @@ namespace Zantetsu.Core.Tests
             {
                 Disposed = true;
                 base.Dispose(disposing);
+
+                if (DisposeFailure != null)
+                {
+                    throw DisposeFailure;
+                }
             }
         }
 
