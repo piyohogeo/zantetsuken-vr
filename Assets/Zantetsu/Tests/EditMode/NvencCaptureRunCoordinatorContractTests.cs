@@ -4125,6 +4125,461 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        // ---- Session Ownership Lease release preparation ----
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_AfterCleanedReflection_ForwardsExactReferences()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteCleanupOperation cleanup = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult cleanupResult = ExecuteCleanup(
+                    h, cleanup, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleanupResult), Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.True);
+
+                Assert.That(operation, Is.Not.Null);
+                Assert.That(operation.IsValid, Is.True);
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(operation.CanRelease, Is.True);
+                Assert.That(operation.IsIssuedFor(h.RunCoordinator), Is.True);
+                Assert.That(operation.IsIssuedFor(null), Is.False);
+
+                // Every forwarded value is the existing graph's exact
+                // reference; nothing is copied and no lock is released.
+                Assert.That(ReferenceEquals(operation.CleanupOperation, cleanup), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.OwnershipLease, h.SessionIssue.OwnershipLease), Is.True);
+                Assert.That(ReferenceEquals(operation.RootLayout, cleanup.RootLayout), Is.True);
+                Assert.That(operation.TestRunId, Is.EqualTo(cleanup.TestRunId));
+                Assert.That(ReferenceEquals(
+                    operation.RunInitializationId, cleanup.RunInitializationId), Is.True);
+
+                NvencRunCaptureCompleteCleanupAttemptResult forwarded = operation.CleanupResult;
+                Assert.That(forwarded.Status, Is.EqualTo(NvencRunCaptureCompleteCleanupStatus.Cleaned));
+                Assert.That(ReferenceEquals(forwarded.Cleaner, h.CleanupCleaner), Is.True);
+                Assert.That(ReferenceEquals(forwarded.Operation, cleanup), Is.True);
+                Assert.That(ReferenceEquals(forwarded.Receipt, cleanupResult.Receipt), Is.True);
+
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_AfterFailedReflection_StillPrepares()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteCleanupOperation cleanup = PrepareCleanupOperation(h);
+                NvencRunCaptureCompleteCleanupAttemptResult cleanupResult = ExecuteCleanup(
+                    h, cleanup, NvencRunCaptureCompleteCleanupStatus.Failed);
+                Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(cleanupResult), Is.True);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+
+                // A failed cleanup does not suppress the lock release.
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.True);
+
+                Assert.That(operation.IsValid, Is.True);
+                Assert.That(operation.CleanupResult.Status,
+                    Is.EqualTo(NvencRunCaptureCompleteCleanupStatus.Failed));
+                Assert.That(operation.CleanupResult.Receipt, Is.Null);
+                Assert.That(ReferenceEquals(operation.CleanupOperation, cleanup), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.OwnershipLease, h.SessionIssue.OwnershipLease), Is.True);
+
+                // The recovery disposition is kept, not rewritten.
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.PublicationRecoveryRequired));
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_Idempotent_ReturnsSameReference()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation first), Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation second), Is.True);
+
+                Assert.That(ReferenceEquals(first, second), Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_BeforeCleanupPrepareOrReflection_ReturnsFalse()
+        {
+            // The cleanup was never prepared.
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Completed);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // Prepared but never reflected.
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteCleanupOperation cleanup = PrepareCleanupOperation(h);
+                Assert.That(cleanup, Is.Not.Null);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // Executing the cleanup without reflecting it is still not
+                // enough: the outcome must be reflected first.
+                ExecuteCleanup(h, cleanup, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // A Failed CaptureComplete never prepares a cleanup at all.
+            using (Harness h = Harness.Create())
+            {
+                CompleteCaptureAndCollect(h, NvencRunCaptureCompleteStatus.Failed);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.False);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_BeforeServiceReleasedAndStopped_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                // The capture index phase leaves the Service running and
+                // unreleased, so no cleanup exists and no release is prepared.
+                CommitCaptureIndexAndCollect(h, NvencRunCaptureIndexCommitStatus.Committed);
+
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.False);
+                Assert.That(h.Service.IsStopped, Is.False);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // Once the Service is released and stopped and the cleanup outcome
+            // is reflected, the same entry succeeds.
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.True);
+                Assert.That(h.Service.IsStopped, Is.True);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(out _), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_ExternalPoisonFirst_ReturnsFalse()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                Assert.That(h.State.TryPoison(), Is.True);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.RunCoordinator.Disposition,
+                    Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_GateContention_ReturnsFalseNoChange()
+        {
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                ManualResetEventSlim gateHeld = new ManualResetEventSlim(false);
+                ManualResetEventSlim release = new ManualResetEventSlim(false);
+                Thread holder = new Thread(() =>
+                {
+                    if (h.State.TryBeginResourceResolution())
+                    {
+                        gateHeld.Set();
+                        release.Wait(WatchdogTimeoutMs);
+                        h.State.EndResourceResolution();
+                    }
+                })
+                {
+                    IsBackground = true,
+                };
+                holder.Start();
+                Assert.That(gateHeld.Wait(WatchdogTimeoutMs), Is.True, "holder did not acquire the gate");
+                try
+                {
+                    Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                        out NvencRunSessionOwnershipReleaseOperation contended), Is.False);
+                    Assert.That(contended, Is.Null);
+                    Assert.That(h.RunCoordinator.Disposition,
+                        Is.EqualTo(NvencRunEvidenceDisposition.CaptureComplete));
+                    Assert.That(h.State.IsPoisoned, Is.False);
+                }
+                finally
+                {
+                    release.Set();
+                    Assert.That(holder.Join(WatchdogTimeoutMs), Is.True, "holder did not exit");
+                }
+
+                gateHeld.Dispose();
+                release.Dispose();
+
+                // The refusal left nothing behind.
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation prepared), Is.True);
+                Assert.That(prepared, Is.Not.Null);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_ChangesNoRunRegistryContextServiceOrLease()
+        {
+            foreach (NvencRunCaptureCompleteCleanupStatus status in new[]
+            {
+                NvencRunCaptureCompleteCleanupStatus.Cleaned,
+                NvencRunCaptureCompleteCleanupStatus.Failed,
+            })
+            {
+                using (Harness h = Harness.Create())
+                {
+                    NvencRunCaptureCompleteCleanupAttemptResult cleanupResult =
+                        PrepareReflectedCleanup(h, status);
+
+                    NvencRunEvidenceDisposition disposition = h.RunCoordinator.Disposition;
+                    NvencRunLocalRegistrySlotState slotState = h.Slot.State;
+                    bool hasRegisteredEntry = h.Slot.HasRegisteredEntry;
+                    NvencRunChunkContextState contextState = h.Context.State;
+                    NvencRunPublicationServiceState serviceState = h.Service.State;
+                    bool serviceReleased = h.RunCoordinator.PublicationServiceReleased;
+                    bool serviceStopped = h.Service.IsStopped;
+                    bool leaseCreated = h.SessionIssue.OwnershipLease.IsCreated;
+                    bool leaseCanRelease = h.SessionIssue.OwnershipLease.CanRelease;
+                    bool leaseReleaseComplete = h.SessionIssue.OwnershipLease.IsReleaseComplete;
+                    int cleanerCalls = h.CleanupCleaner.CallCount;
+                    int publisherCalls = h.Publisher.CallCount;
+                    int committerCalls = h.Committer.CallCount;
+                    int indexCommitterCalls = h.IndexCommitter.CallCount;
+                    int completerCalls = h.RunCompleter.CallCount;
+
+                    Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                        out NvencRunSessionOwnershipReleaseOperation operation), Is.True);
+
+                    Assert.That(h.RunCoordinator.Disposition, Is.EqualTo(disposition));
+                    Assert.That(h.Slot.State, Is.EqualTo(slotState));
+                    Assert.That(h.Slot.HasRegisteredEntry, Is.EqualTo(hasRegisteredEntry));
+                    Assert.That(h.Context.State, Is.EqualTo(contextState));
+                    Assert.That(h.Service.State, Is.EqualTo(serviceState));
+                    Assert.That(h.RunCoordinator.PublicationServiceReleased, Is.EqualTo(serviceReleased));
+                    Assert.That(h.Service.IsStopped, Is.EqualTo(serviceStopped));
+                    Assert.That(h.State.IsPoisoned, Is.False);
+
+                    // Nothing is released here: the lease is exactly as it was.
+                    Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.EqualTo(leaseCreated));
+                    Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.EqualTo(leaseCanRelease));
+                    Assert.That(
+                        h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.EqualTo(leaseReleaseComplete));
+
+                    // No collaborator is contacted again.
+                    Assert.That(h.CleanupCleaner.CallCount, Is.EqualTo(cleanerCalls));
+                    Assert.That(h.Publisher.CallCount, Is.EqualTo(publisherCalls));
+                    Assert.That(h.Committer.CallCount, Is.EqualTo(committerCalls));
+                    Assert.That(h.IndexCommitter.CallCount, Is.EqualTo(indexCommitterCalls));
+                    Assert.That(h.RunCompleter.CallCount, Is.EqualTo(completerCalls));
+
+                    // The reflected cleanup result is reused, never replaced.
+                    Assert.That(ReferenceEquals(
+                        operation.CleanupOperation, cleanupResult.Operation), Is.True);
+                    Assert.That(ReferenceEquals(
+                        operation.CleanupResult.Receipt, cleanupResult.Receipt), Is.True);
+                }
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_LeaseAlreadyReleased_ReturnsFalseWithoutPoison()
+        {
+            // Released through the ordinary ownership API before any release
+            // operation was prepared: there is nothing left to release, which is
+            // a normal shape and never corruption. The lock is not re-acquired.
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.False);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.False);
+                Assert.That(operation, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+
+            // Released after the operation was prepared: the re-prepare is an
+            // ordinary refusal, and the reference correlation survives while
+            // only the release-state predicates change.
+            using (Harness h = Harness.Create())
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation prepared), Is.True);
+
+                h.SessionIssue.OwnershipLease.Dispose();
+
+                Assert.That(prepared.IsBindingIntact, Is.True);
+                Assert.That(prepared.CanRelease, Is.False);
+                Assert.That(prepared.IsValid, Is.False);
+                Assert.That(prepared.IsIssuedFor(h.RunCoordinator), Is.False);
+
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation again), Is.False);
+                Assert.That(again, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_Predicates_AreDistinct()
+        {
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteCleanupAttemptResult cleanupResult =
+                    PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation operation), Is.True);
+
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(operation.CanRelease, Is.True);
+                Assert.That(operation.IsValid, Is.True);
+
+                // A Poison closes admission but never rewrites history: the
+                // reference correlation and the lease's own releasability are
+                // unaffected, so a later release attempt is not foreclosed by
+                // this predicate.
+                Assert.That(h.State.TryPoison(), Is.True);
+                Assert.That(operation.IsValid, Is.False);
+                Assert.That(operation.IsIssuedFor(h.RunCoordinator), Is.False);
+                Assert.That(operation.IsBindingIntact, Is.True);
+                Assert.That(operation.CanRelease, Is.True);
+
+                // The binding is reference correlation only: it does not read
+                // the disposition, the process state, or the lease's release
+                // state, and the forwarded graph stays readable.
+                Assert.That(ReferenceEquals(
+                    operation.CleanupOperation, cleanupResult.Operation), Is.True);
+                Assert.That(ReferenceEquals(
+                    operation.OwnershipLease, h.SessionIssue.OwnershipLease), Is.True);
+            }
+        }
+
+        [Test]
+        public void PrepareSessionOwnershipRelease_ForeignCleanupResultOrLease_NotCorrelated()
+        {
+            using (Harness source = Harness.Create())
+            using (Harness h = Harness.Create())
+            {
+                NvencRunCaptureCompleteCleanupAttemptResult foreignResult =
+                    PrepareReflectedCleanup(source, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                NvencRunCaptureCompleteCleanupAttemptResult ownResult =
+                    PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+
+                // Another Run's reflected result, and another Run's lease, are
+                // both refused by the binding and the admission predicates.
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseBindingIntact(
+                    foreignResult, h.SessionIssue.OwnershipLease), Is.False);
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseCorrelated(
+                    foreignResult, h.SessionIssue.OwnershipLease), Is.False);
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseBindingIntact(
+                    ownResult, source.SessionIssue.OwnershipLease), Is.False);
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseCorrelated(
+                    ownResult, source.SessionIssue.OwnershipLease), Is.False);
+
+                // A default result is refused too, and none of this poisons.
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseBindingIntact(
+                    default, h.SessionIssue.OwnershipLease), Is.False);
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseCorrelated(
+                    ownResult, null), Is.False);
+
+                Assert.That(h.RunCoordinator.IsSessionOwnershipReleaseBindingIntact(
+                    ownResult, h.SessionIssue.OwnershipLease), Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+                Assert.That(source.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void SessionOwnershipReleaseOperation_SealedInternal_ThreeReadonlyReferenceFields()
+        {
+            Type type = typeof(NvencRunSessionOwnershipReleaseOperation);
+            Assert.That(type.IsSealed, Is.True);
+            Assert.That(type.IsPublic, Is.False);
+            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
+
+            FieldInfo[] fields = type.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            Assert.That(fields, Has.Length.EqualTo(3));
+
+            // Verify by field-type set, never by reflection return order or
+            // private field names: a harmless rename must not break this test.
+            Assert.That(
+                fields.Select(field => field.FieldType),
+                Is.EquivalentTo(new[]
+                {
+                    typeof(NvencCaptureRunCoordinator),
+                    typeof(NvencRunCaptureCompleteCleanupAttemptResult),
+                    typeof(CaptureRunInitializationSessionOwnershipLease),
+                }));
+
+            foreach (FieldInfo field in fields)
+            {
+                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
+            }
+
+            Assert.That(
+                type.GetFields(
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                    .Where(field => !field.IsLiteral && !field.IsInitOnly),
+                Is.Empty,
+                "the operation must hold no mutable static state.");
+        }
+
+        // ---- Session Ownership Lease release helpers ----
+
+        /// <summary>
+        /// Drives the Run to a reflected CaptureComplete cleanup of the given
+        /// status and returns the result that was reflected.
+        /// </summary>
+        private static NvencRunCaptureCompleteCleanupAttemptResult PrepareReflectedCleanup(
+            Harness h,
+            NvencRunCaptureCompleteCleanupStatus status)
+        {
+            NvencRunCaptureCompleteCleanupOperation cleanup = PrepareCleanupOperation(h);
+            NvencRunCaptureCompleteCleanupAttemptResult result = ExecuteCleanup(h, cleanup, status);
+            Assert.That(h.RunCoordinator.TryReflectCaptureCompleteCleanup(result), Is.True);
+            return result;
+        }
+
         // ---- CaptureComplete preparation ----
 
         /// <summary>

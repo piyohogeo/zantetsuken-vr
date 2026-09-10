@@ -116,6 +116,7 @@ namespace Zantetsu.Observability
         private NvencRunCaptureCompleteCleanupOperation _captureCompleteCleanupOperation;
         private bool _captureCompleteCleanupReflected;
         private NvencRunCaptureCompleteCleanupAttemptResult _captureCompleteCleanupResult;
+        private NvencRunSessionOwnershipReleaseOperation _sessionOwnershipReleaseOperation;
 
         internal NvencCaptureRunCoordinator(
             NvencCaptureProcessState processState,
@@ -3147,6 +3148,239 @@ namespace Zantetsu.Observability
             finally
             {
                 _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Prepares the one Session Ownership Lease release operation for this
+        /// Run, exactly once, after the CaptureComplete cleanup outcome has been
+        /// reflected. Both terminal cleanup shapes qualify: a Failed cleanup
+        /// does not suppress the lock release. On the first success the
+        /// operation is minted and retained exactly once; re-calls return the
+        /// same reference after re-checking its exact correlation.
+        /// </summary>
+        /// <remarks>
+        /// A poisoned process, a Run that is not Draining, a cleanup that was
+        /// never prepared or never reflected, a Publication Service that is not
+        /// both released and physically stopped, a lease whose release has
+        /// already completed, or a gate contention returns false with no change
+        /// and never inspects any file. Poison is checked before the retained
+        /// operation. Only a published terminal whose retained cleanup result,
+        /// operation, cleaner authority, disposition, or lease correlation is
+        /// broken is corruption and poisons. Preparation changes nothing but the
+        /// retained release operation: the disposition, Registry, plan, chunk,
+        /// capture index, cleanup result, context, Service, session, and lease
+        /// are all untouched, and nothing is released here.
+        /// </remarks>
+        internal bool TryPrepareSessionOwnershipRelease(
+            out NvencRunSessionOwnershipReleaseOperation operation)
+        {
+            operation = null;
+
+            if (!_processState.TryBeginResourceResolution())
+            {
+                return false;
+            }
+
+            try
+            {
+                // A process-wide Poison outranks every retained shape, so a Run
+                // poisoned after a successful preparation refuses rather than
+                // reporting corruption.
+                if (_processState.IsPoisoned)
+                {
+                    return false;
+                }
+
+                if (_sessionOwnershipReleaseOperation != null)
+                {
+                    NvencRunSessionOwnershipReleaseOperation retained = _sessionOwnershipReleaseOperation;
+
+                    if (!retained.IsBindingIntact)
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained Session Ownership Lease release operation no longer correlates.");
+                    }
+
+                    if (!retained.CanRelease)
+                    {
+                        // The lease's release already completed after this
+                        // terminal: there is nothing left to prepare, and that
+                        // is a normal shape rather than corruption.
+                        return false;
+                    }
+
+                    if (!retained.IsValid || !retained.IsIssuedFor(this))
+                    {
+                        _processState.TryPoison();
+                        throw new InvalidOperationException(
+                            "The retained Session Ownership Lease release operation is no longer admissible.");
+                    }
+
+                    operation = retained;
+                    return true;
+                }
+
+                if (!_processState.IsDraining)
+                {
+                    return false;
+                }
+
+                if (_captureCompleteCleanupOperation == null || !_captureCompleteCleanupReflected)
+                {
+                    // The cleanup was never prepared, or its outcome was never
+                    // reflected: a normal not-ready shape.
+                    return false;
+                }
+
+                if (!_publicationServiceReleased || !_publicationService.IsStopped)
+                {
+                    return false;
+                }
+
+                CaptureRunInitializationSessionOwnershipLease ownershipLease = _sessionIssue.OwnershipLease;
+                if (ownershipLease == null || !ownershipLease.CanRelease || !ownershipLease.IsCreated)
+                {
+                    // Already released, or partially released, before any
+                    // release was prepared: a normal shape, and the lock is
+                    // never re-acquired here.
+                    return false;
+                }
+
+                // A published terminal must still carry an intact retained
+                // cleanup result, cleaner authority, disposition, and lease
+                // correlation. A break here is corruption, not a not-ready
+                // shape: every normal shape was already refused above.
+                NvencRunCaptureCompleteCleanupAttemptResult cleanupResult = _captureCompleteCleanupResult;
+                if (!IsSessionOwnershipReleaseCorrelated(cleanupResult, ownershipLease))
+                {
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The reflected CaptureComplete cleanup result or its lease correlation is broken.");
+                }
+
+                NvencRunSessionOwnershipReleaseOperation minted;
+                try
+                {
+                    minted = new NvencRunSessionOwnershipReleaseOperation(this, cleanupResult, ownershipLease);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                _sessionOwnershipReleaseOperation = minted;
+
+                if (!minted.IsValid || !minted.IsIssuedFor(this))
+                {
+                    _sessionOwnershipReleaseOperation = null;
+                    _processState.TryPoison();
+                    throw new InvalidOperationException(
+                        "The Session Ownership Lease release operation does not correlate after construction.");
+                }
+
+                operation = minted;
+                return true;
+            }
+            finally
+            {
+                _processState.EndResourceResolution();
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe admission correlation for the Session Ownership Lease
+        /// release: on an unpoisoned Run whose Publication Service is released
+        /// and stopped, the supplied cleanup result must be the exact reflected
+        /// one, the disposition must be the one that result implies, and the
+        /// supplied lease must be this Run's exact Session Ownership Lease,
+        /// still fully retained and still releasable. ReferenceEquals and
+        /// existing predicates only; no file is inspected, nothing is released,
+        /// and nothing is changed.
+        /// </summary>
+        internal bool IsSessionOwnershipReleaseCorrelated(
+            NvencRunCaptureCompleteCleanupAttemptResult cleanupResult,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
+        {
+            try
+            {
+                if (_processState.IsPoisoned
+                    || !IsSessionOwnershipReleaseBindingIntact(cleanupResult, ownershipLease)
+                    || !_publicationServiceReleased
+                    || !_publicationService.IsStopped)
+                {
+                    return false;
+                }
+
+                // The reflected outcome and the published disposition must
+                // agree: a Cleaned cleanup leaves the successful terminal, a
+                // Failed one hands the Run to Recovery.
+                NvencRunEvidenceDisposition expected =
+                    cleanupResult.Status == NvencRunCaptureCompleteCleanupStatus.Cleaned
+                        ? NvencRunEvidenceDisposition.CaptureComplete
+                        : NvencRunEvidenceDisposition.PublicationRecoveryRequired;
+                if (_disposition != expected || !cleanupResult.IsValid)
+                {
+                    return false;
+                }
+
+                return _sessionIssue.IsValid
+                    && ownershipLease.IsCreated
+                    && ownershipLease.CanRelease;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Exception-safe pure reference correlation for the issued Session
+        /// Ownership Lease release operation: the supplied cleanup result must
+        /// be the exact reflected one, produced by this Run's configured cleanup
+        /// cleaner for the exact retained cleanup operation, and the supplied
+        /// lease must be this Run's exact Session Ownership Lease.
+        /// </summary>
+        /// <remarks>
+        /// It reads no lease release state, no disposition, and no Poison, so
+        /// releasing the lease - partially or completely - and a later Poison
+        /// leave it intact. That is what lets a later release receipt still
+        /// prove its exact operation after the lock is gone, and what keeps a
+        /// retry possible after a partial release failure.
+        /// </remarks>
+        internal bool IsSessionOwnershipReleaseBindingIntact(
+            NvencRunCaptureCompleteCleanupAttemptResult cleanupResult,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease)
+        {
+            try
+            {
+                if (ownershipLease == null
+                    || !_captureCompleteCleanupReflected
+                    || _captureCompleteCleanupOperation == null)
+                {
+                    return false;
+                }
+
+                NvencRunCaptureCompleteCleanupAttemptResult retained = _captureCompleteCleanupResult;
+                if (retained.IsNone
+                    || cleanupResult.IsNone
+                    || cleanupResult.Status != retained.Status
+                    || !ReferenceEquals(cleanupResult.Cleaner, retained.Cleaner)
+                    || !ReferenceEquals(cleanupResult.Operation, retained.Operation)
+                    || !ReferenceEquals(cleanupResult.Receipt, retained.Receipt))
+                {
+                    return false;
+                }
+
+                return ReferenceEquals(cleanupResult.Operation, _captureCompleteCleanupOperation)
+                    && ReferenceEquals(cleanupResult.Cleaner, _captureCompleteCleanupExecution.Cleaner)
+                    && ReferenceEquals(ownershipLease, _sessionIssue.OwnershipLease);
+            }
+            catch
+            {
+                return false;
             }
         }
 
