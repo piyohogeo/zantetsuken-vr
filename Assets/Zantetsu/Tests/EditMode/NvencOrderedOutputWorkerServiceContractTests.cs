@@ -938,25 +938,30 @@ namespace Zantetsu.Core.Tests
                     // Hold the gate, as a concurrent submit step would, while the
                     // teardown returns.
                     Assert.That(h.State.TryBeginSubmitStep(), Is.True);
+                    try
+                    {
+                        release.Set();
+                        Assert.That(returned.Wait(WatchdogTimeoutMs), Is.True, "teardown did not return");
+                    }
+                    finally
+                    {
+                        // Release the gate: the worker must settle the pinned
+                        // receipt and converge to a normal stop without any
+                        // notification and without re-running the teardown.
+                        h.State.EndSubmitStep();
+                    }
+
+                    WaitSettled(h.SettledEvent, "worker did not converge after the gate release");
+                    h.WaitForPhysicalStop("worker did not physically exit");
+
+                    Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
+                    Assert.That(h.Worker.TeardownCompleted, Is.True);
+                    Assert.That(h.Worker.IsStopped, Is.True);
                 }
                 finally
                 {
                     release.Set();
                 }
-
-                Assert.That(returned.Wait(WatchdogTimeoutMs), Is.True, "teardown did not return");
-
-                // Release the gate: the worker must settle the pinned receipt
-                // and converge to a normal stop without any notification and
-                // without re-running the teardown.
-                h.State.EndSubmitStep();
-
-                WaitSettled(h.SettledEvent, "worker did not converge after the gate release");
-                h.WaitForPhysicalStop("worker did not physically exit");
-
-                Assert.That(h.Teardown.CallCount, Is.EqualTo(1));
-                Assert.That(h.Worker.TeardownCompleted, Is.True);
-                Assert.That(h.Worker.IsStopped, Is.True);
             }
         }
 
