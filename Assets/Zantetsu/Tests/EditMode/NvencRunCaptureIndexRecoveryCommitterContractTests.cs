@@ -477,6 +477,55 @@ namespace Zantetsu.Core.Tests
             AssertEverythingReleased(h);
         }
 
+        [Test]
+        public void Rename_FailureWithReleaseFailure_StillPropagatesTheRenameException()
+        {
+            Harness h = MakeHarness(Absent, Absent);
+            IOException failure = new IOException("rename failed");
+            h.FileSystem.RenameException = failure;
+            h.FileSystem.StreamDisposeException = new IOException("release failed");
+
+            IOException thrown = Assert.Throws<IOException>(() => h.Committer.Commit(h.Operation));
+
+            // The failure the caller must see is the rename's, not the
+            // release's.
+            Assert.That(ReferenceEquals(thrown, failure), Is.True);
+            AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Write_FailureWithReleaseFailure_StillPropagatesTheWriteException()
+        {
+            Harness h = MakeHarness(Absent, Absent);
+            IOException failure = new IOException("write failed");
+            h.FileSystem.WriteException = failure;
+            h.FileSystem.StreamDisposeException = new IOException("release failed");
+
+            IOException thrown = Assert.Throws<IOException>(() => h.Committer.Commit(h.Operation));
+
+            Assert.That(ReferenceEquals(thrown, failure), Is.True);
+            Assert.That(h.FileSystem.RenameCount, Is.EqualTo(0));
+            AssertEverythingReleased(h);
+        }
+
+        [Test]
+        public void Commit_ReleaseFailureAfterASuccessfulRename_YieldsNoReceipt()
+        {
+            Harness h = MakeHarness(Absent, Absent);
+            IOException failure = new IOException("release failed");
+            h.FileSystem.StreamDisposeException = failure;
+
+            IOException thrown = Assert.Throws<IOException>(() => h.Committer.Commit(h.Operation));
+
+            // The commit succeeded, but the release did not: that is the
+            // outcome, and no receipt exists.
+            Assert.That(ReferenceEquals(thrown, failure), Is.True);
+            Assert.That(h.FileSystem.RenameCount, Is.EqualTo(1));
+
+            // The directory is released even though the file release failed.
+            AssertEverythingReleased(h);
+        }
+
         // ---- Purity and shape ----
 
         [Test]
@@ -871,6 +920,10 @@ namespace Zantetsu.Core.Tests
 
             internal Exception RenameException { get; set; }
 
+            internal Exception WriteException { get; set; }
+
+            internal Exception StreamDisposeException { get; set; }
+
             internal List<string> Calls { get; } = new List<string>();
 
             internal List<string> OpenedDirectories { get; } = new List<string>();
@@ -950,6 +1003,8 @@ namespace Zantetsu.Core.Tests
                     stream.ReadFailure = failure;
                 }
 
+                stream.DisposeFailure = StreamDisposeException;
+
                 FakeFile file = new FakeFile(stream);
                 AllFiles.Add(file);
                 OpenedFiles.Add(file);
@@ -963,6 +1018,7 @@ namespace Zantetsu.Core.Tests
                 CreateNewCount++;
 
                 FakeFile file = new FakeFile(new RecordingStream(this, new byte[0]));
+                file.Stream.DisposeFailure = StreamDisposeException;
                 AllFiles.Add(file);
                 CreatedFiles.Add(file);
                 return file.File;
@@ -1056,6 +1112,8 @@ namespace Zantetsu.Core.Tests
 
             internal Exception ReadFailure { get; set; }
 
+            internal Exception DisposeFailure { get; set; }
+
             internal bool Disposed { get; private set; }
 
             internal byte[] WrittenBytes => _written.ToArray();
@@ -1072,6 +1130,11 @@ namespace Zantetsu.Core.Tests
 
             public override void Write(byte[] buffer, int offset, int count)
             {
+                if (_fileSystem.WriteException != null)
+                {
+                    throw _fileSystem.WriteException;
+                }
+
                 _fileSystem.RecordWrite(count);
                 for (int i = 0; i < count; i++)
                 {
@@ -1091,6 +1154,11 @@ namespace Zantetsu.Core.Tests
             {
                 Disposed = true;
                 base.Dispose(disposing);
+
+                if (DisposeFailure != null)
+                {
+                    throw DisposeFailure;
+                }
             }
         }
 

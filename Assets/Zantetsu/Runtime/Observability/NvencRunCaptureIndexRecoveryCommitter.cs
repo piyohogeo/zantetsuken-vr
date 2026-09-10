@@ -55,7 +55,11 @@ namespace Zantetsu.Observability
     /// A receipt is minted only after the rename has returned and the handles
     /// it needed have been released; a failure anywhere, the rename included,
     /// propagates by the same reference and is never converted into a status or
-    /// a success. Nothing is retried, re-renamed, existence-checked after the
+    /// a success. When a failure is already propagating, every resource is
+    /// still released, but a release failure is dropped rather than allowed to
+    /// replace that exception; when the commit itself succeeded, a release
+    /// failure is the outcome and no receipt is issued - and the directory is
+    /// released even then. Nothing is retried, re-renamed, existence-checked after the
     /// rename, rolled back, or cleaned up: the caller decides again from a
     /// fresh inspection under the lock it still holds.
     /// </para>
@@ -128,13 +132,13 @@ namespace Zantetsu.Observability
 
             CaptureIndexCommitDirectory directory =
                 _fileSystem.OpenDirectory(_rootLayout.FinalRunRoot);
+            CaptureIndexCommitFile file = null;
             try
             {
                 // The final name decides whether this attempt may touch the
                 // temporary at all.
                 RequireAbsent(directory, CaptureIndexName);
 
-                CaptureIndexCommitFile file;
                 switch (operation.CommitMode)
                 {
                     case CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit:
@@ -154,21 +158,33 @@ namespace Zantetsu.Observability
                             "Commit mode must be defined.", nameof(operation));
                 }
 
-                try
-                {
-                    // One handle-bound, non-overwriting rename. Its outcome is
-                    // never re-derived, re-read, retried, or undone.
-                    _fileSystem.Rename(file, directory, CaptureIndexName);
-                }
-                finally
-                {
-                    file.Dispose();
-                }
+                // One handle-bound, non-overwriting rename. Its outcome is
+                // never re-derived, re-read, retried, or undone.
+                _fileSystem.Rename(file, directory, CaptureIndexName);
             }
-            finally
+            catch
             {
-                directory.Dispose();
+                // A failure is already on its way out: release everything, but
+                // never let a release failure take its place.
+                ReleaseQuietly(file);
+                ReleaseQuietly(directory);
+                throw;
             }
+
+            // The rename returned. From here the release must itself succeed
+            // before any receipt exists, and the directory is released even
+            // when the file release fails.
+            try
+            {
+                file.Dispose();
+            }
+            catch
+            {
+                ReleaseQuietly(directory);
+                throw;
+            }
+
+            directory.Dispose();
 
             return NvencRunCaptureIndexRecoveryCommitReceipt.Committed(this, operation);
         }
@@ -187,7 +203,7 @@ namespace Zantetsu.Observability
             }
             catch
             {
-                file.Dispose();
+                ReleaseQuietly(file);
                 throw;
             }
         }
@@ -212,7 +228,7 @@ namespace Zantetsu.Observability
             }
             catch
             {
-                file.Dispose();
+                ReleaseQuietly(file);
                 throw;
             }
         }
@@ -235,15 +251,16 @@ namespace Zantetsu.Observability
             }
             catch
             {
-                existing.Dispose();
+                ReleaseQuietly(existing);
                 throw;
             }
 
             if (!unusable)
             {
                 // A canonical document is another writer's evidence whether or
-                // not it is this Run's, and is never deleted.
-                existing.Dispose();
+                // not it is this Run's, and is never deleted. The refusal is
+                // the outcome, so a release failure must not replace it.
+                ReleaseQuietly(existing);
                 throw new InvalidDataException(
                     "capture.index.tmp is a canonical document; refusing to replace it.");
             }
@@ -253,10 +270,15 @@ namespace Zantetsu.Observability
                 // Only this attempt's own verified handle is deleted.
                 _fileSystem.Delete(existing);
             }
-            finally
+            catch
             {
-                existing.Dispose();
+                ReleaseQuietly(existing);
+                throw;
             }
+
+            // The disposition takes effect when this handle closes, so the
+            // close must succeed before the replacement is created.
+            existing.Dispose();
 
             CaptureIndexCommitFile file = _fileSystem.CreateNew(directory, CaptureIndexTemporaryName);
             try
@@ -266,8 +288,24 @@ namespace Zantetsu.Observability
             }
             catch
             {
-                file.Dispose();
+                ReleaseQuietly(file);
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Releases a resource while a failure is already propagating, so the
+        /// original exception reaches the caller by the same reference. It is
+        /// never used on a path whose own success still has to be reported.
+        /// </summary>
+        private static void ReleaseQuietly(IDisposable resource)
+        {
+            try
+            {
+                resource?.Dispose();
+            }
+            catch
+            {
             }
         }
 
@@ -393,7 +431,7 @@ namespace Zantetsu.Observability
                     return;
 
                 case CaptureIndexFileOpenStatus.Opened:
-                    opened.File.Dispose();
+                    ReleaseQuietly(opened.File);
                     throw new IOException(name + " already exists.");
 
                 case CaptureIndexFileOpenStatus.InvalidFileKind:
