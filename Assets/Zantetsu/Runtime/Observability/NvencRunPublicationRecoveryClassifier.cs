@@ -22,10 +22,12 @@ namespace Zantetsu.Observability
     /// It performs no filesystem work, no codec, serialization, or hash
     /// computation, releases no lock, deletes nothing, and mutates, owns, or
     /// disposes nothing. It never restores or infers the previous process's
-    /// <see cref="NvencRunEvidenceDisposition"/>. A contradictory snapshot -
-    /// an undefined status, a canonical plan with no verification, or a
-    /// verification of some other descriptor - resolves to a collision rather
-    /// than to anything that would allow the Run to be published.
+    /// <see cref="NvencRunEvidenceDisposition"/>. A contradictory snapshot - an
+    /// undefined status, or a verification of some other descriptor - resolves
+    /// to a collision rather than to anything that would allow the Run to be
+    /// published. A missing verification is different in kind: it means the
+    /// inspection did not finish, so such an observation is refused as a
+    /// snapshot rather than classified as a collision.
     /// </para>
     /// </remarks>
     internal static class NvencRunPublicationRecoveryClassifier
@@ -102,9 +104,13 @@ namespace Zantetsu.Observability
 
             if (!snapshot.HasChunkVerificationResult)
             {
-                // A canonical plan of this Run with no verification of its own
-                // chunk decides nothing; it is not read as recoverable.
-                return NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision;
+                // Reaching here means the plan is this Run's own fixed graph and
+                // no temporary competes with it, so only the chunk decides. A
+                // missing verification is an unfinished inspection, never an
+                // observed collision, and a valid snapshot cannot carry that
+                // combination; it is refused rather than classified.
+                throw new InvalidOperationException(
+                    "A canonical plan of this Run cannot be classified without its chunk verification.");
             }
 
             CaptureArtifactVerificationResult verification = snapshot.ChunkVerification;

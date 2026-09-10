@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Reflection;
 using NUnit.Framework;
 using Zantetsu.Observability;
 
@@ -367,18 +365,43 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void CanonicalPlanWithNoChunkVerification_IsCollision()
+        public void CanonicalPlanWithNoChunkVerification_IsRefusedNotClassified()
         {
             NvencRunPublicationRecoveryInspectionOperation operation = MakeOperation();
             CapturePublicationPlan plan = MakePlan(operation);
 
-            // A contradictory snapshot must not fail open into a recoverable
-            // Run.
+            // Only this Run's own chunk decides such an observation, so a
+            // missing verification means the inspection did not finish. That is
+            // not an observed fact about the disk and must never be recorded as
+            // a collision.
+            Assert.Throws<ArgumentException>(() => MakeSnapshot(
+                operation,
+                CaptureRunPublicationDocumentObservationStatus.Canonical,
+                plan: plan));
+        }
+
+        [Test]
+        public void ObservationsDecidedWithoutTheChunk_NeedNoVerification()
+        {
+            NvencRunPublicationRecoveryInspectionOperation operation = MakeOperation();
+            CapturePublicationPlan plan = MakePlan(operation);
+            CapturePublicationPlan foreign = MakePlan(operation, runInitializationId: ForeignInitId);
+
+            // A competing temporary and a plan outside the fixed graph are both
+            // decided without ever looking at a chunk.
             AssertDisposition(
                 MakeSnapshot(
                     operation,
                     CaptureRunPublicationDocumentObservationStatus.Canonical,
-                    plan: plan),
+                    plan: plan,
+                    temporaryPresent: true),
+                NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision);
+
+            AssertDisposition(
+                MakeSnapshot(
+                    operation,
+                    CaptureRunPublicationDocumentObservationStatus.Canonical,
+                    plan: foreign),
                 NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision);
         }
 
@@ -480,19 +503,10 @@ namespace Zantetsu.Core.Tests
                 CaptureRunPublicationDocumentObservationStatus.Absent,
                 temporaryPresent: true);
 
-            // Existence is the whole observation: the snapshot exposes no
-            // content, canonical form, Run correlation, or chunk for it.
+            // Existence is the whole observation, and it is all the snapshot
+            // needs: nothing about the temporary's content is ever supplied.
             Assert.That(snapshot.PrecommitTemporaryPresent, Is.True);
-
-            PropertyInfo[] temporaryMembers = typeof(NvencRunPublicationRecoveryInspectionSnapshot)
-                .GetProperties(BindingFlags.Instance | BindingFlags.Public
-                    | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
-                .Where(p => p.Name.IndexOf("Temporary", StringComparison.Ordinal) >= 0)
-                .ToArray();
-
-            Assert.That(temporaryMembers, Has.Length.EqualTo(1),
-                "existence must be the only thing the snapshot says about the temporary.");
-            Assert.That(temporaryMembers[0].PropertyType, Is.EqualTo(typeof(bool)));
+            Assert.That(snapshot.IsValid, Is.True);
         }
 
         [Test]

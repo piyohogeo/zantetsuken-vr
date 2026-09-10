@@ -21,8 +21,12 @@ namespace Zantetsu.Observability
     /// A canonical observation must carry the exact plan that was read, and any
     /// other status must carry none. A chunk verification is meaningful only
     /// under a canonical plan, so a non-canonical observation must carry the
-    /// default, unexecuted result. This type performs no filesystem, codec, or
-    /// hash work, owns and disposes nothing, and never throws from
+    /// default, unexecuted result. Conversely, an observation that reaches this
+    /// Run's own chunk - a canonical plan of the fixed graph with no competing
+    /// temporary - must carry that chunk's verification: without it the
+    /// inspection simply did not finish, which is not an observed fact and must
+    /// never be read as one. This type performs no filesystem, codec, or hash
+    /// work, owns and disposes nothing, and never throws from
     /// <see cref="IsValid"/>.
     /// </para>
     /// </remarks>
@@ -87,6 +91,13 @@ namespace Zantetsu.Observability
                     throw new ArgumentException(
                         "The chunk verification result must be valid.", nameof(chunkVerification));
                 }
+            }
+            else if (RequiresChunkVerification(
+                operation, publicationPlanStatus, publicationPlan, precommitTemporaryPresent))
+            {
+                throw new ArgumentException(
+                    "An observation that turns on this Run's own chunk must carry its verification.",
+                    nameof(chunkVerification));
             }
 
             _operation = operation;
@@ -155,13 +166,36 @@ namespace Zantetsu.Observability
                             && _chunkVerification.IsValid;
                     }
 
-                    return true;
+                    return !RequiresChunkVerification(
+                        _operation,
+                        _publicationPlanStatus,
+                        _publicationPlan,
+                        _precommitTemporaryPresent);
                 }
                 catch
                 {
                     return false;
                 }
             }
+        }
+
+        /// <summary>
+        /// True when the observation reaches this Run's own chunk, so a missing
+        /// verification means the inspection did not finish rather than that
+        /// anything was found on disk. A competing temporary or a plan outside
+        /// the fixed graph is already decided without the chunk, so neither
+        /// needs one.
+        /// </summary>
+        private static bool RequiresChunkVerification(
+            NvencRunPublicationRecoveryInspectionOperation operation,
+            CaptureRunPublicationDocumentObservationStatus status,
+            CapturePublicationPlan plan,
+            bool precommitTemporaryPresent)
+        {
+            return status == CaptureRunPublicationDocumentObservationStatus.Canonical
+                && !precommitTemporaryPresent
+                && NvencRunPublicationRecoveryPlanShape.IsFixedPhase011Plan(
+                    plan, operation.TestRunId, operation.RunInitializationId);
         }
 
         private static bool HasChunkVerification(CaptureArtifactVerificationResult result)
