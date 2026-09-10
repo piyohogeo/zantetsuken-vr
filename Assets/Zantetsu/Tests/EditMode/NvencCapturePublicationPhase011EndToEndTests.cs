@@ -280,7 +280,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
             Assert.That(h.RunCoordinator.TryReflectCompletion(
                 MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
-            h.SubmitDrained = true;
+
+            // The Submit Worker drains and stops on its own: the real
+            // conditions are confirmed inside a watchdog, never assumed from a
+            // settle and never forced through its private state.
+            WaitForSubmitDrain(h);
 
             h.SettledEvent.Reset();
             Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
@@ -291,6 +295,8 @@ namespace Zantetsu.Core.Tests
             WaitSettled(h.SettledEvent, "worker did not complete the teardown");
             h.WaitForPhysicalStop("worker did not physically exit after the teardown");
             Assert.That(h.Worker.TeardownCompleted, Is.True);
+
+            // Only a physically stopped Submit Worker may be disposed.
             h.SubmitWorker.Dispose();
 
             Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
@@ -298,6 +304,25 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
             Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(
                 MakeForcedDropSet(h), MakeCheckpoint(h), out _), Is.True);
+        }
+
+        /// <summary>
+        /// Confirms the Submit Worker's own drain the way the product reports
+        /// it: the requested drain completed and the worker thread physically
+        /// exited. Both are real conditions re-checked inside a bounded
+        /// watchdog, so no settle observation stands in as evidence.
+        /// </summary>
+        private static void WaitForSubmitDrain(Harness h)
+        {
+            SpinWait.SpinUntil(
+                () => h.SubmitWorker.DrainCompleted && h.SubmitWorker.IsStopped,
+                WatchdogTimeoutMs);
+
+            Assert.That(h.SubmitWorker.DrainCompleted, Is.True,
+                "the submit worker did not complete its drain");
+            Assert.That(h.SubmitWorker.IsStopped, Is.True,
+                "the submit worker did not physically stop after its drain");
+            Assert.That(h.SubmitWorker.TryGetFailure(out _), Is.False);
         }
 
         /// <summary>
@@ -448,40 +473,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
         }
 
-        private static void FinalizeOnly(Harness h)
-        {
-            StopFinalizedBackend(h);
-            Assert.That(h.RunCoordinator.TryCompleteMainThreadTextureTeardown(), Is.True);
-            Assert.That(h.RunCoordinator.TryCompleteBackendJoin(), Is.True);
-            Assert.That(h.TraceRecorder.TryTrigger(), Is.True);
-            ForcedDropFrameIdSet forced = MakeForcedDropSet(h);
-            FreezeTerminalCheckpoint checkpoint = MakeCheckpoint(h);
-            Assert.That(h.RunCoordinator.TryCompleteTraceFreeze(forced, checkpoint, out _), Is.True);
-        }
-
-        private static void StopFinalizedBackend(Harness h)
-        {
-            h.AcceptAndAppendChunk(1, 64, Seed);
-            Assert.That(h.RunCoordinator.TryBeginDrain(out _), Is.True);
-            Assert.That(h.RunCoordinator.TryReflectCompletion(
-                MakeCompletion(1, CaptureFrameCompletionStatus.Succeeded)), Is.True);
-            h.SubmitDrained = true;
-
-            h.SettledEvent.Reset();
-            Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-            CollectTerminal(h, "worker did not converge the finalize request");
-
-            h.SettledEvent.Reset();
-            Assert.That(h.RunCoordinator.TryRequestTeardown(), Is.True);
-            WaitSettled(h.SettledEvent, "worker did not complete the teardown");
-            h.WaitForPhysicalStop("worker did not physically exit after the teardown");
-
-            Assert.That(h.Worker.TeardownCompleted, Is.True);
-            Assert.That(h.Worker.IsStopped, Is.True);
-
-            h.SubmitWorker.Dispose();
-        }
-
         private static ForcedDropFrameIdSet MakeForcedDropSet(Harness h)
         {
             h.DraftQueue.BeginProducerDrain();
@@ -537,13 +528,6 @@ namespace Zantetsu.Core.Tests
         private static CaptureFrameWorkToken MakeToken(long frameId)
         {
             return new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 1, frameId);
-        }
-
-        private static void SetField(object target, string fieldName, object value)
-        {
-            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
-            field.SetValue(target, value);
         }
 
         // ---- Fakes ----
@@ -730,11 +714,6 @@ namespace Zantetsu.Core.Tests
 
             private readonly Action _settledHandler;
 
-            internal bool SubmitDrained
-            {
-                set => SetField(SubmitWorker, "_drainCompleted", value);
-            }
-
             internal Harness(CaptureRunRootLayout layout)
             {
                 Layout = layout;
@@ -845,6 +824,10 @@ namespace Zantetsu.Core.Tests
             internal static Harness Create(CaptureRunRootLayout layout)
             {
                 Harness h = new Harness(layout);
+
+                // The Submit Worker runs for real in this test: no private
+                // drain state is forced and no started thread is skipped.
+                h.SubmitWorker.Start();
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
