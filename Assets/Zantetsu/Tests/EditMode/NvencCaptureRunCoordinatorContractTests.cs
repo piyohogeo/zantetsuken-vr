@@ -4564,6 +4564,54 @@ namespace Zantetsu.Core.Tests
                 "the operation must hold no mutable static state.");
         }
 
+        [Test]
+        public void PrepareSessionOwnershipRelease_AfterPartialReleaseFailure_ReturnsSameOperation()
+        {
+            // The Run's first lock handle fails its first release, so the
+            // ordinary Dispose releases the second handle and then throws. The
+            // lease is left no longer fully retained but still releasable, which
+            // is exactly the state a retry exists for.
+            using (Harness h = Harness.Create(throwingFirstRelease: true))
+            {
+                PrepareReflectedCleanup(h, NvencRunCaptureCompleteCleanupStatus.Cleaned);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation prepared), Is.True);
+
+                Assert.Throws<AggregateException>(() => h.SessionIssue.OwnershipLease.Dispose());
+
+                Assert.That(h.SessionIssue.OwnershipLease.IsCreated, Is.False);
+                Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.True);
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.False);
+
+                // Reference correlation and releasability survive; only
+                // admission validity, which requires a fully retained lease, is
+                // gone.
+                Assert.That(prepared.IsBindingIntact, Is.True);
+                Assert.That(prepared.CanRelease, Is.True);
+                Assert.That(prepared.IsValid, Is.False);
+
+                // A re-prepare hands back the same operation without poisoning:
+                // the partial failure must not foreclose the retry.
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation again), Is.True);
+                Assert.That(ReferenceEquals(again, prepared), Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+
+                // The retry completes the release, and only then does the entry
+                // refuse - still without poisoning.
+                h.SessionIssue.OwnershipLease.Dispose();
+                Assert.That(h.SessionIssue.OwnershipLease.CanRelease, Is.False);
+                Assert.That(h.SessionIssue.OwnershipLease.IsReleaseComplete, Is.True);
+
+                Assert.That(prepared.IsBindingIntact, Is.True);
+                Assert.That(prepared.CanRelease, Is.False);
+                Assert.That(h.RunCoordinator.TryPrepareSessionOwnershipRelease(
+                    out NvencRunSessionOwnershipReleaseOperation afterRelease), Is.False);
+                Assert.That(afterRelease, Is.Null);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
         // ---- Session Ownership Lease release helpers ----
 
         /// <summary>
@@ -6139,12 +6187,14 @@ namespace Zantetsu.Core.Tests
             return new CaptureFrameCompletion(token, captureFrameId, status, true, producedArtifactCount, failure);
         }
 
-        private static CaptureRunInitializationSessionIssue MakeIssue()
+        private static CaptureRunInitializationSessionIssue MakeIssue(bool throwingFirstRelease = false)
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true) { Tag = "first" };
+            ICaptureRunLockHandle first = throwingFirstRelease
+                ? new ThrowingOnceHandle(pathSet.FirstLockPath)
+                : (ICaptureRunLockHandle)new FakeHandle(pathSet.FirstLockPath, true) { Tag = "first" };
             FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true) { Tag = "second" };
             CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first, second);
             CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
@@ -6414,6 +6464,35 @@ namespace Zantetsu.Core.Tests
                 }
 
                 return NvencRunArtifactPublicationAttemptResult.Published(this, operation);
+            }
+        }
+
+        /// <summary>
+        /// A lock handle whose first release fails and whose second succeeds.
+        /// Disposing a lease built with it as the first handle releases the
+        /// second handle and then throws, which is the ordinary API's partial
+        /// release: the Ownership Lease is no longer fully retained but its
+        /// disposal has not completed, so a retry is still possible.
+        /// </summary>
+        private sealed class ThrowingOnceHandle : ICaptureRunLockHandle
+        {
+            private int _calls;
+
+            internal ThrowingOnceHandle(string lockPath)
+            {
+                LockPath = lockPath;
+            }
+
+            public string LockPath { get; }
+
+            public bool IsCreated => true;
+
+            public void Dispose()
+            {
+                if (_calls++ == 0)
+                {
+                    throw new InvalidOperationException("First release fails.");
+                }
             }
         }
 
@@ -6781,7 +6860,7 @@ namespace Zantetsu.Core.Tests
                 set => SetField(SubmitWorker, "_drainCompleted", value);
             }
 
-            internal Harness()
+            internal Harness(bool throwingFirstRelease = false)
             {
                 State = new NvencCaptureProcessState();
 
@@ -6789,7 +6868,7 @@ namespace Zantetsu.Core.Tests
                 Writer = new FakeWriter();
                 Sink = new NvencRunChunkSink(State, Buffer, Writer);
                 FinalizationCoordinator = new NvencRunChunkFinalizationCoordinator(Writer);
-                SessionIssue = MakeIssue();
+                SessionIssue = MakeIssue(throwingFirstRelease);
                 Context = new NvencRunChunkContext(SessionIssue, Sink, FinalizationCoordinator, "chunk/0");
                 Slot = new NvencRunLocalRegistrySlot(Context);
 
@@ -6872,9 +6951,9 @@ namespace Zantetsu.Core.Tests
                 Worker.Settled += _settledHandler;
             }
 
-            internal static Harness Create()
+            internal static Harness Create(bool throwingFirstRelease = false)
             {
-                Harness h = new Harness();
+                Harness h = new Harness(throwingFirstRelease);
 
                 // Deterministically park the worker once before returning.
                 h.SettledEvent.Reset();

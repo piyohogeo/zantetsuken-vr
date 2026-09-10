@@ -3165,7 +3165,11 @@ namespace Zantetsu.Observability
         /// both released and physically stopped, a lease whose release has
         /// already completed, or a gate contention returns false with no change
         /// and never inspects any file. Poison is checked before the retained
-        /// operation. Only a published terminal whose retained cleanup result,
+        /// operation. A retained operation whose lease is still releasable is
+        /// returned again, including after a partial release failure: admission
+        /// validity is required only at first issuance, because a partially
+        /// released lease is no longer fully retained and is exactly the state a
+        /// retry exists for. Only a published terminal whose retained cleanup result,
         /// operation, cleaner authority, disposition, or lease correlation is
         /// broken is corruption and poisons. Preparation changes nothing but the
         /// retained release operation: the disposition, Registry, plan, chunk,
@@ -3205,19 +3209,17 @@ namespace Zantetsu.Observability
 
                     if (!retained.CanRelease)
                     {
-                        // The lease's release already completed after this
-                        // terminal: there is nothing left to prepare, and that
-                        // is a normal shape rather than corruption.
+                        // The lease's own disposal has completed, so there is
+                        // nothing left to prepare. That is a normal shape rather
+                        // than corruption, and the lock is never re-acquired.
                         return false;
                     }
 
-                    if (!retained.IsValid || !retained.IsIssuedFor(this))
-                    {
-                        _processState.TryPoison();
-                        throw new InvalidOperationException(
-                            "The retained Session Ownership Lease release operation is no longer admissible.");
-                    }
-
+                    // Still releasable: a first attempt, or a retry after a
+                    // partial release failure. Admission validity is required
+                    // only when the operation is first issued - re-checking it
+                    // here would reject a partially released lease, which is
+                    // exactly the state a retry exists for.
                     operation = retained;
                     return true;
                 }
