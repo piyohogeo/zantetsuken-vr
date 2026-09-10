@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -296,10 +297,9 @@ namespace Zantetsu.Core.Tests
                 h.Worker.Notify();
                 h.Worker.Notify();
 
-                WaitSettled(h.SettledEvent, "worker did not submit");
+                WaitForOutputQueueCount(h, 1, "worker did not submit");
 
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
-                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord output), Is.True);
                 Assert.That(output.WorkToken.CaptureFrameId, Is.EqualTo(7));
             }
@@ -673,8 +673,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not process the accepted work");
-                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
+                WaitForOutputQueueCount(h, 1, "worker did not process the accepted work");
                 Assert.That(h.Worker.IsStopped, Is.False);
                 Assert.That(h.Worker.DrainCompleted, Is.False);
 
@@ -686,8 +685,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not process the later work");
-                Assert.That(h.OutputQueue.Count, Is.EqualTo(2));
+                WaitForOutputQueueCount(h, 2, "worker did not process the later work");
                 Assert.That(h.Worker.IsStopped, Is.False);
             }
         }
@@ -708,8 +706,7 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
-                WaitSettled(h.SettledEvent, "worker did not process after the no-op dispose");
-                Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
+                WaitForOutputQueueCount(h, 1, "worker did not process after the no-op dispose");
             }
         }
 
@@ -768,6 +765,136 @@ namespace Zantetsu.Core.Tests
                 Assert.Throws<ObjectDisposedException>(() => h.Worker.Notify());
                 Assert.Throws<ObjectDisposedException>(() => h.Worker.BeginDrain());
             }
+        }
+
+        [Test]
+        public void OutputQueue_SettleObservedAfterEnqueue_IsNotEvidenceOfProcessedWork()
+        {
+            // The events outlive the Harness: the worker parks inside an
+            // observer, so they are released only after it has stopped.
+            using (ManualResetEventSlim insideRaise = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim proceed = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim observedSettle = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim releaseWorker = new ManualResetEventSlim(false))
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(1);
+                h.Source.MarkCompleted(record.WorkToken);
+
+                // Two ordinary Settled observers, no product change and no
+                // reflection. The first parks the worker at the very start of a
+                // raise - a point it reaches only after it has already reset its
+                // wake signal and re-checked for work - so the enqueue below
+                // lands while that raise is in flight. The second publishes the
+                // settle the way a fixture's own handler does, and then holds
+                // the worker inside the raise so it cannot process anything
+                // while the assertions run.
+                Action enterRaise = () =>
+                {
+                    insideRaise.Set();
+                    proceed.Wait(WatchdogTimeoutMs);
+                };
+                Action publishSettle = () =>
+                {
+                    observedSettle.Set();
+                    releaseWorker.Wait(WatchdogTimeoutMs);
+                };
+
+                h.Worker.Settled += enterRaise;
+                h.Worker.Settled += publishSettle;
+                try
+                {
+                    h.Worker.Start();
+                    Assert.That(insideRaise.Wait(WatchdogTimeoutMs), Is.True,
+                        "worker did not reach its settle raise");
+
+                    // The work is accepted while that raise is in flight, so the
+                    // raise carries no information about it.
+                    Assert.That(observedSettle.IsSet, Is.False);
+                    h.Enqueue(record);
+                    h.Worker.Notify();
+
+                    // Let the in-flight raise finish: the settle is now observed
+                    // strictly after the enqueue.
+                    proceed.Set();
+                    Assert.That(observedSettle.Wait(WatchdogTimeoutMs), Is.True,
+                        "the in-flight settle was not observed");
+
+                    // Treating that settle as evidence of processed work is
+                    // wrong. Nothing has been submitted and nothing has reached
+                    // the Submit-to-Output Queue, and this holds
+                    // deterministically because the worker is still held inside
+                    // the raise.
+                    Assert.That(h.OutputQueue.Count, Is.EqualTo(0));
+                    Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
+                    Assert.That(h.Worker.IsStopped, Is.False);
+                }
+                finally
+                {
+                    proceed.Set();
+                    releaseWorker.Set();
+                    h.Worker.Settled -= enterRaise;
+                    h.Worker.Settled -= publishSettle;
+                }
+
+                // Released, the same work converges, and the real condition -
+                // not a settle - is what confirms it.
+                WaitForOutputQueueCount(h, 1, "worker did not process the accepted work");
+                Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
+            }
+        }
+
+        /// <summary>
+        /// Confirms the real condition - the Submit-to-Output Queue reaching the
+        /// expected count - inside a bounded watchdog.
+        /// </summary>
+        /// <remarks>
+        /// The worker's Settled event is a best-effort park notification, so a
+        /// settle observed after an enqueue may be a raise that was already in
+        /// flight and carries no information about it. This helper therefore
+        /// never treats a settle as the condition: it checks the queue first,
+        /// then resets and notifies and re-checks against a single monotonic
+        /// deadline that is never re-granted, and only uses the settle as a wake
+        /// hint between attempts. It re-issues no enqueue, no drain request, and
+        /// no other state change - the only things repeated are the queue check
+        /// and the notification that asks the worker to re-evaluate.
+        /// </remarks>
+        private static void WaitForOutputQueueCount(Harness h, int expected, string message)
+        {
+            if (h.OutputQueue.Count >= expected)
+            {
+                Assert.That(h.OutputQueue.Count, Is.EqualTo(expected), message);
+                return;
+            }
+
+            Stopwatch watch = Stopwatch.StartNew();
+            while (true)
+            {
+                h.SettledEvent.Reset();
+                h.Worker.Notify();
+
+                if (h.OutputQueue.Count >= expected)
+                {
+                    break;
+                }
+
+                long remaining = WatchdogTimeoutMs - watch.ElapsedMilliseconds;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                // The wake hint's own result is deliberately ignored: only the
+                // re-check below decides.
+                h.SettledEvent.Wait((int)remaining);
+
+                if (h.OutputQueue.Count >= expected || watch.ElapsedMilliseconds >= WatchdogTimeoutMs)
+                {
+                    break;
+                }
+            }
+
+            Assert.That(h.OutputQueue.Count, Is.EqualTo(expected), message);
         }
 
         private static void WaitSettled(ManualResetEventSlim settled, string message)
