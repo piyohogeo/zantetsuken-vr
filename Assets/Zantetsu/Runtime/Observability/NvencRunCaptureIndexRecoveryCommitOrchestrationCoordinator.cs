@@ -24,9 +24,10 @@ namespace Zantetsu.Observability
     /// mode are all refused before the committer is contacted. The execution
     /// coordinator already requires the receipt to be issued for that exact
     /// committer and operation, so that correlation is not reimplemented here.
-    /// Inspector, committer, and execution coordinator exceptions propagate by
-    /// the same reference; nothing is retried, re-issued, re-committed,
-    /// re-inspected, or guessed.
+    /// Neither the operation issuance nor the commit execution is caught or
+    /// wrapped here: in particular a committer exception propagates by the same
+    /// reference. Nothing is retried, re-issued, or re-committed, and no
+    /// outcome is guessed.
     /// </para>
     /// <para>
     /// The decision and its snapshot stay the immutable record of the earlier
