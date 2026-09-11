@@ -114,12 +114,14 @@ failed at `Assert.That(h.Worker.TryCollectTerminal(out ... ), Is.True)`
 results XML confirms the stack trace pointed at that collect, not at the
 `IsFinalized` assertion after it.
 
-That site was not covered by `TerminalConvergence`, because it collects from
-the Worker itself rather than through the Run Coordinator: it waited for one
-`Settled` raise after `TryRequestTerminal()` and collected immediately, so a
-raise already in flight before the request was accepted let the collect
-correctly report that nothing had been published yet - the same mechanism as
-above.
+`TerminalConvergence` takes a delegate, so it could technically have driven the
+Worker's own `TryCollectTerminal` too. It was not used here because collecting
+is what this test is about: the outcome has to stay unconsumed until after the
+Poison, and converging on the direct collect would consume it beforehand and
+lose the test's purpose. So the test waited for one `Settled` raise after
+`TryRequestTerminal()` and collected immediately, and a raise already in flight
+before the request was accepted let that collect correctly report that nothing
+had been published yet - the same mechanism as above.
 
 Fixed in f5a5ff7, test-only: the test now converges on the chunk context's own
 finalization result inside a bounded watchdog, which reading does not consume,
