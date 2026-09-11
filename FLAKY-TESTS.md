@@ -106,6 +106,32 @@ watchdog.
 A failure of this assertion is now a regression to investigate, never something
 to pass by re-running.
 
+#### A further site of the same mechanism
+
+`NvencCaptureRunCoordinatorContractTests.Collect_AfterPoison_DoesNotConsumeOutcome`
+failed at `Assert.That(h.Worker.TryCollectTerminal(out ... ), Is.True)`
+(`Expected: True But was: False`) in run `20260911-093312-7d9cf9`. The raw
+results XML confirms the stack trace pointed at that collect, not at the
+`IsFinalized` assertion after it.
+
+That site was not covered by `TerminalConvergence`, because it collects from
+the Worker itself rather than through the Run Coordinator: it waited for one
+`Settled` raise after `TryRequestTerminal()` and collected immediately, so a
+raise already in flight before the request was accepted let the collect
+correctly report that nothing had been published yet - the same mechanism as
+above.
+
+Fixed in f5a5ff7, test-only: the test now converges on the chunk context's own
+finalization result inside a bounded watchdog, which reading does not consume,
+and only then awaits a fresh settle. The Worker publishes the terminal outcome
+after that finalization on its own single thread, so a settle observed from
+that point is necessarily later than the publication.
+
+The commit that immediately preceded the failure (9e8d4c7) changed only fixture
+comments and one fake observation flag in a different fixture, so no code
+dependency links them; it cannot be ruled out, though, that it shifted suite
+timing enough to expose the race.
+
 The PngJson capture index committer failures once listed here
 (`Commit_CreateTemporary_WritesAndCommits`,
 `Commit_ReplaceInvalid_DeletesOnlyInvalidTmpAndCommits`,
