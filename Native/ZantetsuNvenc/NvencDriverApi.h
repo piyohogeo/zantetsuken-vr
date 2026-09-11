@@ -65,9 +65,6 @@ namespace zantetsu
         /// means a new owner.
         NvencDriverApiLoadStatus Load();
 
-        /// Whether this owner has already made its one attempt.
-        bool IsLoadAttempted() const { return _loadAttempted; }
-
         bool IsLoaded() const { return _loaded; }
 
         /// The version the driver reported, valid once the query itself

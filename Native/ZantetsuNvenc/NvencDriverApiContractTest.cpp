@@ -67,7 +67,6 @@ int main()
     {
         zantetsu::NvencDriverApi driverApi;
         Check(!driverApi.IsLoaded(), "a fresh owner holds nothing");
-        Check(!driverApi.IsLoadAttempted(), "a fresh owner has not attempted a load");
 
         const zantetsu::NvencDriverApiLoadStatus status = driverApi.Load();
         std::printf("  load status: %s, driver maximum version: %u.%u\n",
@@ -95,8 +94,6 @@ int main()
 
         // One owner, one attempt. The refusal keeps what the first attempt
         // observed, whatever that attempt concluded.
-        Check(driverApi.IsLoadAttempted(), "the owner has made its one attempt");
-
         const uint32_t observedVersion = driverApi.MaximumSupportedVersion();
         const DWORD observedWin32Error = driverApi.LastWin32Error();
         const NVENCSTATUS observedStatus = driverApi.LastNvencStatus();
@@ -131,8 +128,6 @@ int main()
             driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::Loaded,
             "a new owner loads the driver API again");
         Check(driverApi.IsLoaded(), "the new owner holds its own function table");
-        Check(
-            driverApi.IsLoadAttempted(), "the new owner has spent its own attempt");
         Check(
             driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::ObservationFailed,
             "the new owner refuses a second load as well");
