@@ -120,6 +120,67 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Owner.IsCreated, Is.True);
         }
 
+        [Test]
+        public void Constructor_DecisionInvalidatedByAReleasedLock_Rejected()
+        {
+            Harness h = MakeHarness();
+
+            ReleaseAllLocks();
+            Assert.That(h.Decision.IsValid, Is.False);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => h.Terminal());
+
+            Assert.That(ex.ParamName, Is.EqualTo("decision"));
+            Assert.That(h.Inspector.CallCount, Is.EqualTo(0));
+            Assert.That(h.Committer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Completer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Cleaner.CallCount, Is.EqualTo(0));
+            Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Constructor_AnotherLeaseOverTheSameLayout_RejectedBeforeAnySideEffect()
+        {
+            Harness h = MakeHarness();
+
+            // A second lease over this Run's own layout: a different path set
+            // instance, so it is not the lock this classification was made
+            // under.
+            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(h.Layout);
+            CountingHandle foreignFirst = new CountingHandle(pathSet.FirstLockPath);
+            CountingHandle foreignSecond = new CountingHandle(pathSet.SecondLockPath);
+            CaptureRunLockLease lease = new CaptureRunLockLease(
+                pathSet, foreignFirst, foreignSecond);
+            CaptureRunInitializationSessionOwnershipLease foreignOwner =
+                CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
+            _owners.Add(foreignOwner);
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(
+                () => h.Terminal(foreignOwnershipLease: foreignOwner));
+
+            Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
+
+            // No stage was entered at all.
+            Assert.That(h.Inspector.CallCount, Is.EqualTo(0));
+            Assert.That(h.Committer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Completer.CallCount, Is.EqualTo(0));
+            Assert.That(h.Cleaner.CallCount, Is.EqualTo(0));
+            Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
+
+            // Neither lease was touched.
+            Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(0));
+            Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(0));
+            Assert.That(foreignFirst.DisposeCallCount, Is.EqualTo(0));
+            Assert.That(foreignSecond.DisposeCallCount, Is.EqualTo(0));
+            Assert.That(h.Owner.IsCreated, Is.True);
+            Assert.That(foreignOwner.IsCreated, Is.True);
+
+            // This boundary is filesystem-free, and the classification stands.
+            Assert.That(Directory.Exists(h.Layout.StagingRunRoot), Is.False);
+            Assert.That(Directory.Exists(h.Layout.FinalRunRoot), Is.False);
+            Assert.That(h.Decision.IsValid, Is.True);
+        }
+
         // ---- Both Capture Index arrivals reach the terminal value ----
 
         [Test]
@@ -422,6 +483,14 @@ namespace Zantetsu.Core.Tests
 
         // ---- Fixture helpers ----
 
+        private void ReleaseAllLocks()
+        {
+            foreach (CaptureRunInitializationSessionOwnershipLease owner in _owners)
+            {
+                owner.Dispose();
+            }
+        }
+
         private Harness MakeHarness(
             NvencRunCaptureIndexObservationStatus finalIndex = Matches,
             bool throwingFirstRelease = false,
@@ -643,11 +712,12 @@ namespace Zantetsu.Core.Tests
             /// nulled out.
             /// </summary>
             internal NvencRunPublicationRecoveryCaptureCompleteTerminalCoordinator Terminal(
-                string nullArgument = null)
+                string nullArgument = null,
+                CaptureRunInitializationSessionOwnershipLease foreignOwnershipLease = null)
             {
                 return new NvencRunPublicationRecoveryCaptureCompleteTerminalCoordinator(
                     nullArgument == "decision" ? null : Decision,
-                    nullArgument == "ownershipLease" ? null : Owner,
+                    nullArgument == "ownershipLease" ? null : foreignOwnershipLease ?? Owner,
                     nullArgument == "captureIndexRecovery" ? null : CaptureIndexRecovery,
                     nullArgument == "captureComplete" ? null : CaptureComplete,
                     nullArgument == "cleanup" ? null : Cleanup,

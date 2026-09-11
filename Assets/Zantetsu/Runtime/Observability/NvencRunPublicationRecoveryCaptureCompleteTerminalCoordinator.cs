@@ -47,6 +47,15 @@ namespace Zantetsu.Observability
     /// orchestration and is not restated.
     /// </para>
     /// <para>
+    /// The constructor does not re-validate the decision's graph. It checks two
+    /// things before any stage can run: that the classification is currently
+    /// valid, and - through the lock identity evidence that classification
+    /// already carries - that the exact lease it was handed is this Run's
+    /// current lock holder. That correlation would otherwise surface only when
+    /// the release operation is issued, which is after a Capture Index commit
+    /// and a cleanup have already happened.
+    /// </para>
+    /// <para>
     /// What this boundary handles is its own terminal result's validity and the
     /// results of the orchestrations it was configured with. It performs no
     /// publication recovery inspection or classification, selects no
@@ -89,19 +98,62 @@ namespace Zantetsu.Observability
             NvencRunCaptureCompleteRecoveryCleanupOrchestrationCoordinator cleanup,
             NvencRunCaptureCompleteRecoveryOwnershipReleaseExecutionCoordinator releaseExecution)
         {
-            // The recoverable disposition, the authoritative plan, the decision
-            // graph, and the lease correlation are each stage's own authority,
-            // at the moment that stage runs.
-            _decision = decision ?? throw new ArgumentNullException(nameof(decision));
-            _ownershipLease = ownershipLease
-                ?? throw new ArgumentNullException(nameof(ownershipLease));
-            _captureIndexRecovery = captureIndexRecovery
-                ?? throw new ArgumentNullException(nameof(captureIndexRecovery));
-            _captureComplete = captureComplete
-                ?? throw new ArgumentNullException(nameof(captureComplete));
-            _cleanup = cleanup ?? throw new ArgumentNullException(nameof(cleanup));
-            _releaseExecution = releaseExecution
-                ?? throw new ArgumentNullException(nameof(releaseExecution));
+            if (decision == null)
+            {
+                throw new ArgumentNullException(nameof(decision));
+            }
+
+            if (ownershipLease == null)
+            {
+                throw new ArgumentNullException(nameof(ownershipLease));
+            }
+
+            if (captureIndexRecovery == null)
+            {
+                throw new ArgumentNullException(nameof(captureIndexRecovery));
+            }
+
+            if (captureComplete == null)
+            {
+                throw new ArgumentNullException(nameof(captureComplete));
+            }
+
+            if (cleanup == null)
+            {
+                throw new ArgumentNullException(nameof(cleanup));
+            }
+
+            if (releaseExecution == null)
+            {
+                throw new ArgumentNullException(nameof(releaseExecution));
+            }
+
+            if (!decision.IsValid)
+            {
+                throw new ArgumentException(
+                    "Publication recovery decision must be valid.", nameof(decision));
+            }
+
+            // The lock identity evidence this classification already carries is
+            // the authority: it answers whether that exact lease is this Run's
+            // current lock holder, and nothing of it is re-derived here.
+            if (decision.Snapshot.Operation.LockIdentityEvidence?.IsIssuedFor(ownershipLease)
+                != true)
+            {
+                throw new ArgumentException(
+                    "The ownership lease must be the one this Run's lock identity evidence was issued for.",
+                    nameof(ownershipLease));
+            }
+
+            // The recoverable disposition, the authoritative plan, and the rest
+            // of the graph stay each stage's own authority, at the moment that
+            // stage runs.
+            _decision = decision;
+            _ownershipLease = ownershipLease;
+            _captureIndexRecovery = captureIndexRecovery;
+            _captureComplete = captureComplete;
+            _cleanup = cleanup;
+            _releaseExecution = releaseExecution;
         }
 
         internal NvencRunPublicationRecoveryDecision Decision => _decision;
