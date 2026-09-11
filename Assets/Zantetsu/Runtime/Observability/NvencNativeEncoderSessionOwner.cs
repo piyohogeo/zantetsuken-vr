@@ -134,6 +134,14 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeOutputBufferResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeCloseResultV1
         {
             internal uint AbiVersion;
@@ -168,12 +176,12 @@ namespace Zantetsu.Observability
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencPrepareSessionOutputBuffersV1(
-            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            ulong sessionOwner, ref NativeOutputBufferResultV1 destination,
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencReleaseSessionOutputBuffersV1(
-            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            ulong sessionOwner, ref NativeOutputBufferResultV1 destination,
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
@@ -517,12 +525,12 @@ namespace Zantetsu.Observability
             _outputBuffersPrepareAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            NativeCompletionEventResultV1 result = default;
+            NativeOutputBufferResultV1 result = default;
             int written = ZantetsuNvencPrepareSessionOutputBuffersV1(
                 _sessionOwner, ref result,
-                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+                (uint)Marshal.SizeOf(typeof(NativeOutputBufferResultV1)));
 
-            RequireCompletionEventResult(written, result, "prepared");
+            RequireOutputBufferResult(written, result, "prepared");
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
@@ -535,10 +543,12 @@ namespace Zantetsu.Observability
         /// Destroys that whole set.
         /// </summary>
         /// <remarks>
-        /// The completion events are released first; a session that still has
-        /// them refuses. Only a complete success clears the set: a refused
-        /// destroy leaves what it stopped at with the session, which therefore
-        /// still cannot be closed, and nothing is retried here.
+        /// The completion events are released first: a session that still has
+        /// them refuses here, before this release's one attempt is spent, so
+        /// the caller releases them and comes back. Only a complete success
+        /// clears the set: a refused destroy leaves what it stopped at with
+        /// the session, which therefore still cannot be closed, and nothing is
+        /// retried here.
         /// </remarks>
         internal void ReleaseOutputBuffers()
         {
@@ -550,6 +560,15 @@ namespace Zantetsu.Observability
                     "This session has no prepared output buffers to release.");
             }
 
+            // The completion events go first. Checked before this release's
+            // one attempt is spent, so releasing them and then the buffers is
+            // still the ordinary sequence.
+            if (_completionEventsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion events are still prepared; they are released before its output buffers.");
+            }
+
             if (_outputBuffersReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -559,12 +578,12 @@ namespace Zantetsu.Observability
             _outputBuffersReleaseAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            NativeCompletionEventResultV1 result = default;
+            NativeOutputBufferResultV1 result = default;
             int written = ZantetsuNvencReleaseSessionOutputBuffersV1(
                 _sessionOwner, ref result,
-                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+                (uint)Marshal.SizeOf(typeof(NativeOutputBufferResultV1)));
 
-            RequireCompletionEventResult(written, result, "released");
+            RequireOutputBufferResult(written, result, "released");
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
@@ -672,6 +691,26 @@ namespace Zantetsu.Observability
                     "The completion events could not be " + what + " (status "
                     + result.Status + ", win32 error " + result.LastWin32Error
                     + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+        }
+
+        private static void RequireOutputBufferResult(
+            int written, NativeOutputBufferResultV1 result, string what)
+        {
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native output-buffer call was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The output buffers could not be " + what + " (status "
+                    + result.Status + ", NVENCSTATUS " + result.LastNvencStatus + ").");
             }
         }
 

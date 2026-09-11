@@ -124,8 +124,8 @@ typedef struct ZantetsuNvencSessionInitializeResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionInitializeResultV1;
 
-/// What a completion-event or output-buffer preparation or release came to.
-/// The Win32 error is only ever set by the completion-event calls.
+/// What a completion-event preparation or release came to. Creating and
+/// closing the event handles is the OS's work, so a Win32 error belongs here.
 typedef struct ZantetsuNvencSessionCompletionEventResultV1
 {
     uint32_t abiVersion;
@@ -133,6 +133,15 @@ typedef struct ZantetsuNvencSessionCompletionEventResultV1
     uint32_t lastWin32Error;
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionCompletionEventResultV1;
+
+/// What an output bitstream buffer preparation or release came to. The driver
+/// makes and destroys these, so its status is the only failure value there is.
+typedef struct ZantetsuNvencSessionOutputBufferResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastNvencStatus;
+} ZantetsuNvencSessionOutputBufferResultV1;
 
 // Opens one retained encoder session on the D3D11 device the plugin currently
 // holds.
@@ -219,7 +228,7 @@ ZantetsuNvencReleaseSessionCompletionEventsV1(
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencPrepareSessionOutputBuffersV1(
     uint64_t sessionOwner,
-    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    ZantetsuNvencSessionOutputBufferResultV1* destination,
     uint32_t destinationSize);
 
 // Destroys that whole set, once and in reverse order.
@@ -231,7 +240,7 @@ ZantetsuNvencPrepareSessionOutputBuffersV1(
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionOutputBuffersV1(
     uint64_t sessionOwner,
-    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    ZantetsuNvencSessionOutputBufferResultV1* destination,
     uint32_t destinationSize);
 
 #ifdef __cplusplus

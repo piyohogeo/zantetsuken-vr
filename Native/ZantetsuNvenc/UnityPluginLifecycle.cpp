@@ -433,18 +433,17 @@ ZantetsuNvencReleaseSessionCompletionEventsV1(
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencPrepareSessionOutputBuffersV1(
     uint64_t sessionOwner,
-    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    ZantetsuNvencSessionOutputBufferResultV1* destination,
     uint32_t destinationSize)
 {
     if (destination == nullptr ||
-        destinationSize != sizeof(ZantetsuNvencSessionCompletionEventResultV1) ||
+        destinationSize != sizeof(ZantetsuNvencSessionOutputBufferResultV1) ||
         sessionOwner == 0)
     {
         return 0;
     }
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
-    destination->lastWin32Error = 0;
     destination->lastNvencStatus = 0;
 
     zantetsu::NvencEncoderSession* session =
@@ -466,18 +465,17 @@ ZantetsuNvencPrepareSessionOutputBuffersV1(
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionOutputBuffersV1(
     uint64_t sessionOwner,
-    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    ZantetsuNvencSessionOutputBufferResultV1* destination,
     uint32_t destinationSize)
 {
     if (destination == nullptr ||
-        destinationSize != sizeof(ZantetsuNvencSessionCompletionEventResultV1) ||
+        destinationSize != sizeof(ZantetsuNvencSessionOutputBufferResultV1) ||
         sessionOwner == 0)
     {
         return 0;
     }
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
-    destination->lastWin32Error = 0;
     destination->lastNvencStatus = 0;
 
     zantetsu::NvencEncoderSession* session =

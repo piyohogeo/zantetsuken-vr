@@ -354,7 +354,12 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.PrepareCompletionEvents());
 
-                // The events go before the buffers.
+                // The events go before the buffers, and asking too early
+                // costs nothing: the same owner still releases them after.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseOutputBuffers());
+                Assert.That(owner.IsOpen, Is.True);
+
                 owner.ReleaseCompletionEvents();
                 Assert.That(owner.IsOpen, Is.True);
 
