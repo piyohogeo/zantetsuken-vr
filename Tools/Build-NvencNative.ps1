@@ -10,7 +10,9 @@
     asserts its version, ZantetsuNvenc.dll, which binds to Unity's plugin
     lifecycle and holds the D3D11 device Unity is currently using, and the
     device ownership contract test, which is then run - its exit code is this
-    script's. Neither
+    script's. The NVENC driver API contract test is built too, but it loads the
+    driver from System32 and so is run only with -RunDriverApiContractTest: an
+    ordinary build needs no NVIDIA hardware or driver. Neither
     links an NVENC library or names an NVENC entry point, and the DLL is left
     in the build directory: nothing is copied into this repository or into a
     Unity project.
@@ -44,7 +46,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$BuildDirectory,
 
-    [string]$CMake = 'cmake'
+    [string]$CMake = 'cmake',
+
+    # Runs the NVENC driver API contract test after the build. It loads the
+    # driver's own nvEncodeAPI64.dll from System32, so it needs an NVIDIA
+    # driver on this machine and is never run unless it is asked for.
+    [switch]$RunDriverApiContractTest
 )
 
 Set-StrictMode -Version Latest
@@ -189,6 +196,30 @@ if (-not (Test-Path -LiteralPath $contractTest -PathType Leaf)) {
 if ($LASTEXITCODE -ne 0) {
     [Console]::Error.WriteLine('ERROR: The device ownership contract test failed.')
     exit $LASTEXITCODE
+}
+
+& $cmakeCommand.Source --build $buildFull --config Release `
+    --target ZantetsuNvencDriverApiContractTest
+
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine('ERROR: The driver API contract test failed to build.')
+    exit $LASTEXITCODE
+}
+
+# --- 8. Run the driver API contract test, only when asked ---
+
+if ($RunDriverApiContractTest) {
+    $driverApiTest = Join-Path $buildFull 'Release\ZantetsuNvencDriverApiContractTest.exe'
+    if (-not (Test-Path -LiteralPath $driverApiTest -PathType Leaf)) {
+        Fail "The driver API contract test was not found at '$driverApiTest'."
+    }
+
+    & $driverApiTest
+
+    if ($LASTEXITCODE -ne 0) {
+        [Console]::Error.WriteLine('ERROR: The driver API contract test failed.')
+        exit $LASTEXITCODE
+    }
 }
 
 Write-Host 'NVENC native build: PASSED'

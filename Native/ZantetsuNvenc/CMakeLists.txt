@@ -96,6 +96,8 @@ target_include_directories(ZantetsuNvencSdkVersionContract
 add_library(ZantetsuNvenc SHARED
     D3D11DeviceBinding.cpp
     D3D11DeviceBinding.h
+    NvencDriverApi.cpp
+    NvencDriverApi.h
     UnityPluginLifecycle.cpp
     ZantetsuNvencGraphicsObservationV1.h)
 
@@ -111,9 +113,14 @@ target_compile_definitions(ZantetsuNvenc
 # from the local code page.
 target_compile_options(ZantetsuNvenc PRIVATE /utf-8)
 
-# The Unity plugin headers belong to this target alone, and are not exported.
+# The Unity and SDK headers belong to this target alone, and are not exported.
+# The SDK header is compiled against; its import library is not linked, and the
+# driver module is loaded at run time by name, so nvEncodeAPI64.dll never
+# appears in this DLL's import table.
 target_include_directories(ZantetsuNvenc
-    PRIVATE "${ZANTETSU_UNITY_PLUGIN_API_DIR}")
+    PRIVATE
+        "${ZANTETSU_UNITY_PLUGIN_API_DIR}"
+        "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
 
 target_link_libraries(ZantetsuNvenc PRIVATE d3d11)
 
@@ -134,3 +141,22 @@ target_compile_definitions(ZantetsuNvencD3D11DeviceBindingContractTest
 target_compile_options(ZantetsuNvencD3D11DeviceBindingContractTest PRIVATE /utf-8)
 
 target_link_libraries(ZantetsuNvencD3D11DeviceBindingContractTest PRIVATE d3d11)
+
+# The driver API loading boundary's contract test. Building it needs only the
+# SDK header; running it needs an NVIDIA driver, so the build script runs it
+# only when asked.
+add_executable(ZantetsuNvencDriverApiContractTest
+    NvencDriverApi.cpp
+    NvencDriverApiContractTest.cpp)
+
+set_target_properties(ZantetsuNvencDriverApiContractTest PROPERTIES
+    CXX_STANDARD 14
+    CXX_STANDARD_REQUIRED ON)
+
+target_compile_definitions(ZantetsuNvencDriverApiContractTest
+    PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+target_compile_options(ZantetsuNvencDriverApiContractTest PRIVATE /utf-8)
+
+target_include_directories(ZantetsuNvencDriverApiContractTest
+    PRIVATE "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
