@@ -127,38 +127,51 @@ namespace Zantetsu.Core.Tests
 
                 NvencRunPublicationRecoveryWorkerService service = h.Service();
 
-                try
+                // Start is called from a helper thread and must return while
+                // the inspection is still blocked. No duration is asserted:
+                // the signal that it returned is what distinguishes an
+                // asynchronous start from one that waits for the recovery.
+                using (ManualResetEventSlim startReturned = new ManualResetEventSlim(false))
                 {
-                    // Start returns while the inspection is still blocked, so
-                    // it cannot have run the recovery on this thread. The
-                    // bound is an upper limit on a call that only starts a
-                    // thread, not a timing race: the inspection stays blocked
-                    // until the finally below.
-                    Stopwatch startCall = Stopwatch.StartNew();
-                    service.Start();
-                    startCall.Stop();
+                    Thread starter = new Thread(() =>
+                    {
+                        service.Start();
+                        startReturned.Set();
+                    })
+                    {
+                        IsBackground = true,
+                        Name = "Zantetsu.Test.RecoveryWorkerStarter",
+                    };
 
-                    Assert.That(startCall.ElapsedMilliseconds, Is.LessThan(2000),
-                        "Start must not wait for the recovery.");
+                    try
+                    {
+                        starter.Start();
 
-                    Assert.That(
-                        entered.Wait(WatchdogMilliseconds), Is.True,
-                        "the worker thread must reach the inspection.");
-                    Assert.That(h.Inspector.CallerThreadId, Is.Not.EqualTo(
-                        Thread.CurrentThread.ManagedThreadId),
-                        "the recovery must not run on the calling thread.");
-                    Assert.That(h.Inspector.CallerThreadName,
-                        Is.EqualTo(NvencRunPublicationRecoveryWorkerService.WorkerThreadName));
-                    Assert.That(service.State,
-                        Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Running));
-                    Assert.That(service.IsStopped, Is.False);
+                        Assert.That(
+                            entered.Wait(WatchdogMilliseconds), Is.True,
+                            "the worker thread must reach the inspection.");
+                        Assert.That(
+                            startReturned.Wait(WatchdogMilliseconds), Is.True,
+                            "Start must return while the recovery is still blocked.");
+
+                        Assert.That(h.Inspector.CallerThreadId, Is.Not.EqualTo(
+                            starter.ManagedThreadId),
+                            "the recovery must not run on the calling thread.");
+                        Assert.That(h.Inspector.CallerThreadName,
+                            Is.EqualTo(
+                                NvencRunPublicationRecoveryWorkerService.WorkerThreadName));
+                        Assert.That(service.State,
+                            Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Running));
+                        Assert.That(service.IsStopped, Is.False);
+                    }
+                    finally
+                    {
+                        release.Set();
+                        Join(starter);
+                    }
+
+                    WaitUntilStopped(service);
                 }
-                finally
-                {
-                    release.Set();
-                }
-
-                WaitUntilStopped(service);
             }
         }
 
@@ -270,15 +283,19 @@ namespace Zantetsu.Core.Tests
             WaitUntilState(
                 parkedService, NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
 
-            Assert.That(
-                parkedService.TryCollectTerminal(
-                    out NvencRunPublicationRecoveryTerminalResult whileParked),
-                Is.False);
-            Assert.That(whileParked.IsValid, Is.False);
-
-            // Let that worker finish so the fixture leaves no live thread.
-            Assert.That(parkedService.TryRequestReleaseRetry(), Is.True);
-            WaitUntilStopped(parkedService);
+            try
+            {
+                Assert.That(
+                    parkedService.TryCollectTerminal(
+                        out NvencRunPublicationRecoveryTerminalResult whileParked),
+                    Is.False);
+                Assert.That(whileParked.IsValid, Is.False);
+            }
+            finally
+            {
+                // A failure above must not leave this worker parked forever.
+                FinishParkedWorker(parkedService);
+            }
 
             // Faulted.
             Harness faulted = MakeHarness();
@@ -385,44 +402,57 @@ namespace Zantetsu.Core.Tests
             service.Start();
             WaitUntilState(service, NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
 
-            // Parked, alive, and holding the exact exception the lease's own
-            // disposal produced.
-            Assert.That(service.IsStopped, Is.False);
-            Assert.That(service.TryGetFailure(out Exception retained), Is.True);
-            Assert.That(retained, Is.TypeOf<AggregateException>());
-            Assert.That(
-                ((AggregateException)retained).InnerExceptions, Has.Count.EqualTo(1));
+            bool retryRequested = false;
+            try
+            {
+                // Parked, alive, and holding the exact exception the lease's own
+                // disposal produced.
+                Assert.That(service.IsStopped, Is.False);
+                Assert.That(service.TryGetFailure(out Exception retained), Is.True);
+                Assert.That(retained, Is.TypeOf<AggregateException>());
+                Assert.That(
+                    ((AggregateException)retained).InnerExceptions, Has.Count.EqualTo(1));
 
-            Assert.That(h.Inspector.CallCount, Is.EqualTo(1));
-            Assert.That(h.IncompleteCleaner.CallCount, Is.EqualTo(1));
-            Assert.That(h.IncompleteReleaser.CallCount, Is.EqualTo(1));
-            Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
-            Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.Inspector.CallCount, Is.EqualTo(1));
+                Assert.That(h.IncompleteCleaner.CallCount, Is.EqualTo(1));
+                Assert.That(h.IncompleteReleaser.CallCount, Is.EqualTo(1));
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
 
-            // Only a requested retry runs the second attempt.
-            Assert.That(service.TryRequestReleaseRetry(), Is.True);
-            WaitUntilStopped(service);
+                // Only a requested retry runs the second attempt.
+                Assert.That(service.TryRequestReleaseRetry(), Is.True);
+                retryRequested = true;
+                WaitUntilStopped(service);
 
-            Assert.That(service.State,
-                Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Completed));
-            Assert.That(service.TryGetFailure(out Exception cleared), Is.False);
-            Assert.That(cleared, Is.Null);
+                Assert.That(service.State,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Completed));
+                Assert.That(service.TryGetFailure(out Exception cleared), Is.False);
+                Assert.That(cleared, Is.Null);
 
-            // The upstream stages did not run again; only the release did.
-            Assert.That(h.Inspector.CallCount, Is.EqualTo(1));
-            Assert.That(h.IncompleteCleaner.CallCount, Is.EqualTo(1));
-            Assert.That(h.IncompleteReleaser.CallCount, Is.EqualTo(2));
+                // The upstream stages did not run again; only the release did.
+                Assert.That(h.Inspector.CallCount, Is.EqualTo(1));
+                Assert.That(h.IncompleteCleaner.CallCount, Is.EqualTo(1));
+                Assert.That(h.IncompleteReleaser.CallCount, Is.EqualTo(2));
 
-            // Only the handle that had not been released is disposed again.
-            Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(2));
-            Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
-            Assert.That(h.Owner.IsReleaseComplete, Is.True);
+                // Only the handle that had not been released is disposed again.
+                Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(2));
+                Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(1));
+                Assert.That(h.Owner.IsReleaseComplete, Is.True);
 
-            Assert.That(
-                service.TryCollectTerminal(
-                    out NvencRunPublicationRecoveryTerminalResult terminal),
-                Is.True);
-            Assert.That(terminal.IsIncompleteReleased, Is.True);
+                Assert.That(
+                    service.TryCollectTerminal(
+                        out NvencRunPublicationRecoveryTerminalResult terminal),
+                    Is.True);
+                Assert.That(terminal.IsIncompleteReleased, Is.True);
+            }
+            finally
+            {
+                // A failure anywhere above must not leave this worker parked.
+                if (!retryRequested)
+                {
+                    FinishParkedWorker(service);
+                }
+            }
         }
 
         [Test]
@@ -469,12 +499,24 @@ namespace Zantetsu.Core.Tests
             WaitUntilState(
                 parkedService, NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
 
-            Assert.That(parkedService.TryRequestReleaseRetry(), Is.True);
-            Assert.That(parkedService.TryRequestReleaseRetry(), Is.False,
-                "one request is one attempt.");
+            bool retryRequested = false;
+            try
+            {
+                Assert.That(parkedService.TryRequestReleaseRetry(), Is.True);
+                retryRequested = true;
+                Assert.That(parkedService.TryRequestReleaseRetry(), Is.False,
+                    "one request is one attempt.");
 
-            WaitUntilStopped(parkedService);
-            Assert.That(parked.IncompleteReleaser.CallCount, Is.EqualTo(2));
+                WaitUntilStopped(parkedService);
+                Assert.That(parked.IncompleteReleaser.CallCount, Is.EqualTo(2));
+            }
+            finally
+            {
+                if (!retryRequested)
+                {
+                    FinishParkedWorker(parkedService);
+                }
+            }
 
             // Faulted.
             Harness faulted = MakeHarness();
@@ -541,16 +583,69 @@ namespace Zantetsu.Core.Tests
             WaitUntilState(
                 parkedService, NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
 
-            Assert.Throws<InvalidOperationException>(() => parkedService.Dispose());
-            Assert.That(parkedService.State,
-                Is.EqualTo(NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry));
+            bool retryRequested = false;
+            try
+            {
+                Assert.Throws<InvalidOperationException>(() => parkedService.Dispose());
+                Assert.That(parkedService.State,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry));
 
-            Assert.That(parkedService.TryRequestReleaseRetry(), Is.True);
-            WaitUntilStopped(parkedService);
-            parkedService.Dispose();
+                Assert.That(parkedService.TryRequestReleaseRetry(), Is.True);
+                retryRequested = true;
+                WaitUntilStopped(parkedService);
+                parkedService.Dispose();
+            }
+            finally
+            {
+                if (!retryRequested)
+                {
+                    FinishParkedWorker(parkedService);
+                }
+            }
         }
 
         // ---- Fixture helpers ----
+
+        /// <summary>
+        /// Releases a parked worker and confirms its physical stop, so no test
+        /// - including one that failed an assertion - leaves a thread waiting
+        /// on a signal. Best effort: it never masks the original failure.
+        /// </summary>
+        private static void FinishParkedWorker(
+            NvencRunPublicationRecoveryWorkerService service)
+        {
+            try
+            {
+                if (service.State
+                    == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
+                {
+                    service.TryRequestReleaseRetry();
+                }
+
+                Stopwatch watchdog = Stopwatch.StartNew();
+                while (!service.IsStopped
+                    && watchdog.ElapsedMilliseconds <= WatchdogMilliseconds)
+                {
+                    Thread.Yield();
+                }
+
+                if (service.IsStopped)
+                {
+                    service.Dispose();
+                }
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        /// <summary>Bounded join for a helper thread this fixture started.</summary>
+        private static void Join(Thread thread)
+        {
+            Assert.That(
+                thread.Join(WatchdogMilliseconds), Is.True,
+                "the helper thread did not finish in time.");
+        }
 
         /// <summary>
         /// Bounded watchdog over the service's own physical stop: no sleep, and

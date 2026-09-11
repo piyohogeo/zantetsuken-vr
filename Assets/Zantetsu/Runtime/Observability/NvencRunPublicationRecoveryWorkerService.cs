@@ -53,9 +53,13 @@ namespace Zantetsu.Observability
         private readonly NvencRunPublicationRecoveryCoordinator _recovery;
         private readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
 
+        private const int LifecycleNotStarted = 0;
+        private const int LifecycleStarting = 1;
+        private const int LifecycleRunning = 2;
+        private const int LifecycleDisposed = 3;
+
         private int _state = (int)NvencRunPublicationRecoveryWorkerState.NotStarted;
-        private int _startClaimed;
-        private int _disposed;
+        private int _lifecycleState = LifecycleNotStarted;
         private Thread _workerThread;
         private volatile Exception _failure;
         private NvencRunPublicationRecoveryTerminalResult _terminalResult;
@@ -80,9 +84,17 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (Volatile.Read(ref _disposed) == 1)
+                int lifecycle = Volatile.Read(ref _lifecycleState);
+                if (lifecycle == LifecycleDisposed)
                 {
                     return true;
+                }
+
+                if (lifecycle != LifecycleRunning)
+                {
+                    // Not started, or still starting: there is no started
+                    // thread to report as stopped.
+                    return false;
                 }
 
                 Thread worker = Volatile.Read(ref _workerThread);
@@ -98,40 +110,44 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void Start()
         {
-            if (Volatile.Read(ref _disposed) == 1)
+            // Exactly-once start, mutually exclusive with disposal: only the
+            // caller that flips NotStarted to Starting owns startup. Any other
+            // caller - already starting, running, or disposed - observes no
+            // side effect and runs no part of the recovery.
+            if (Interlocked.CompareExchange(
+                    ref _lifecycleState, LifecycleStarting, LifecycleNotStarted)
+                != LifecycleNotStarted)
             {
-                throw new ObjectDisposedException(nameof(NvencRunPublicationRecoveryWorkerService));
-            }
-
-            if (Interlocked.CompareExchange(ref _startClaimed, 1, 0) != 0)
-            {
-                // Already started, or being started: no second thread, and no
-                // work on this caller's thread.
                 return;
             }
 
-            Volatile.Write(ref _state, (int)NvencRunPublicationRecoveryWorkerState.Running);
-
-            Thread thread = new Thread(Run)
-            {
-                IsBackground = true,
-                Name = WorkerThreadName,
-            };
-
             try
             {
+                Volatile.Write(ref _state, (int)NvencRunPublicationRecoveryWorkerState.Running);
+
+                Thread thread = new Thread(Run)
+                {
+                    IsBackground = true,
+                    Name = WorkerThreadName,
+                };
                 thread.Start();
+
+                // Publish the thread and leave Starting only once the physical
+                // thread exists, so a starting service is never reported as
+                // stopped and a disposal can never release the signal under a
+                // worker that is about to use it.
+                Volatile.Write(ref _workerThread, thread);
+                Volatile.Write(ref _lifecycleState, LifecycleRunning);
             }
             catch
             {
                 // Nothing ran, so this service is unstarted again rather than
                 // stuck in a state no thread will ever leave.
                 Volatile.Write(ref _state, (int)NvencRunPublicationRecoveryWorkerState.NotStarted);
-                Volatile.Write(ref _startClaimed, 0);
+                Interlocked.CompareExchange(
+                    ref _lifecycleState, LifecycleNotStarted, LifecycleStarting);
                 throw;
             }
-
-            Volatile.Write(ref _workerThread, thread);
         }
 
         /// <summary>
@@ -145,7 +161,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal bool TryRequestReleaseRetry()
         {
-            if (Volatile.Read(ref _disposed) == 1)
+            if (Volatile.Read(ref _lifecycleState) == LifecycleDisposed)
             {
                 return false;
             }
@@ -225,19 +241,40 @@ namespace Zantetsu.Observability
         /// </summary>
         public void Dispose()
         {
-            if (Volatile.Read(ref _disposed) == 1)
+            // NotStarted to Disposed must be a CAS so disposal is mutually
+            // exclusive with Start's claim: exactly one of the two wins, and
+            // Start never creates a thread after the signal is released.
+            if (Interlocked.CompareExchange(
+                    ref _lifecycleState, LifecycleDisposed, LifecycleNotStarted)
+                == LifecycleNotStarted)
             {
+                _signal.Dispose();
                 return;
             }
 
+            int lifecycle = Volatile.Read(ref _lifecycleState);
+            if (lifecycle == LifecycleDisposed)
+            {
+                // Another disposer already finished; idempotent.
+                return;
+            }
+
+            if (lifecycle == LifecycleStarting)
+            {
+                throw new InvalidOperationException(
+                    "The recovery worker is starting; dispose is allowed only before Start or after the worker thread has physically stopped.");
+            }
+
             Thread worker = Volatile.Read(ref _workerThread);
-            if (worker != null && worker.IsAlive)
+            if (worker == null || worker.IsAlive)
             {
                 throw new InvalidOperationException(
                     "The recovery worker thread has not physically stopped; dispose is allowed only before it starts or after it exits.");
             }
 
-            if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 0)
+            if (Interlocked.CompareExchange(
+                    ref _lifecycleState, LifecycleDisposed, LifecycleRunning)
+                == LifecycleRunning)
             {
                 _signal.Dispose();
             }
@@ -267,17 +304,17 @@ namespace Zantetsu.Observability
 
                     _failure = ex;
 
-                    // Reset before the parked state is published, so a retry
-                    // accepted from here on is never a lost wake.
+                    // One park is one wait. Reset first, publish the parked
+                    // state, then wait unconditionally: a retry accepted
+                    // between those two sets the signal this park consumes,
+                    // and a set from an earlier request cannot survive this
+                    // park's reset to wake the next one.
                     _signal.Reset();
                     Volatile.Write(
                         ref _state,
                         (int)NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
 
-                    while (State == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
-                    {
-                        _signal.Wait();
-                    }
+                    _signal.Wait();
 
                     continue;
                 }
