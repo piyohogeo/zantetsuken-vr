@@ -28,7 +28,12 @@ namespace Zantetsu.Core.Tests
             bool activeAdapterSupportsAsyncEncode = true,
             bool activeAdapterSupportsCompletionEvent = true,
             bool isActiveAdapterTcc = false,
-            bool activeAdapterCanUseOutputInVidmemZero = true)
+            bool activeAdapterCanUseOutputInVidmemZero = true,
+            bool activeAdapterSupportsH264Encode = true,
+            bool activeAdapterSupportsH264HighProfile = true,
+            bool activeAdapterSupportsNv12Input = true,
+            int maximumEncodeWidth = 4096,
+            int maximumEncodeHeight = 4096)
         {
             return new NvencBringUpCapabilityV1(
                 isWindows10OrNewer,
@@ -38,7 +43,12 @@ namespace Zantetsu.Core.Tests
                 activeAdapterSupportsAsyncEncode,
                 activeAdapterSupportsCompletionEvent,
                 isActiveAdapterTcc,
-                activeAdapterCanUseOutputInVidmemZero);
+                activeAdapterCanUseOutputInVidmemZero,
+                activeAdapterSupportsH264Encode,
+                activeAdapterSupportsH264HighProfile,
+                activeAdapterSupportsNv12Input,
+                maximumEncodeWidth,
+                maximumEncodeHeight);
         }
 
         private static NvencBringUpInputLayoutV1 MakeInput(
@@ -128,6 +138,110 @@ namespace Zantetsu.Core.Tests
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsCompletionEvent: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(isActiveAdapterTcc: true), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterCanUseOutputInVidmemZero: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsH264Encode: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsH264HighProfile: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsNv12Input: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+        }
+
+        /// <summary>
+        /// The fixed 1280x720 must fit inside the observed maximums: one pixel
+        /// short in either dimension is not admitted, an exact fit is, and a
+        /// larger maximum is too.
+        /// </summary>
+        [Test]
+        public void Evaluate_MaximumEncodeDimensions_AreComparedAgainstTheFixedSize()
+        {
+            NvencBringUpProfileV1 profile = MakeProfile(7);
+            NvencBringUpInputLayoutV1 input = MakeInput(7);
+
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(maximumEncodeWidth: NvencBringUpProfileV1.Width - 1),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(maximumEncodeHeight: NvencBringUpProfileV1.Height - 1),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+
+            // An observation that found no usable dimension at all.
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(maximumEncodeWidth: 0, maximumEncodeHeight: 0),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(maximumEncodeWidth: -1, maximumEncodeHeight: -1),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+
+            // Exactly the fixed size.
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(
+                        maximumEncodeWidth: NvencBringUpProfileV1.Width,
+                        maximumEncodeHeight: NvencBringUpProfileV1.Height),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+
+            // Larger than the fixed size.
+            Assert.That(
+                Evaluate(
+                    profile,
+                    MakeCapability(
+                        maximumEncodeWidth: NvencBringUpProfileV1.Width + 1,
+                        maximumEncodeHeight: NvencBringUpProfileV1.Height + 1),
+                    input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+            Assert.That(
+                Evaluate(profile, MakeCapability(maximumEncodeWidth: 8192, maximumEncodeHeight: 8192), input),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+        }
+
+        /// <summary>
+        /// A snapshot reporting no encoder support at all is still an
+        /// initialized snapshot: the constructor keeps the observed values and
+        /// the admission boundary is what refuses them.
+        /// </summary>
+        [Test]
+        public void Capability_UnsupportedEncoderFacts_AreStillAnInitializedSnapshot()
+        {
+            NvencBringUpCapabilityV1 capability = MakeCapability(
+                activeAdapterSupportsH264Encode: false,
+                activeAdapterSupportsH264HighProfile: false,
+                activeAdapterSupportsNv12Input: false,
+                maximumEncodeWidth: 0,
+                maximumEncodeHeight: -1);
+
+            Assert.That(capability.IsInitialized, Is.True);
+            Assert.That(capability.ActiveAdapterSupportsH264Encode, Is.False);
+            Assert.That(capability.ActiveAdapterSupportsH264HighProfile, Is.False);
+            Assert.That(capability.ActiveAdapterSupportsNv12Input, Is.False);
+            Assert.That(capability.MaximumEncodeWidth, Is.Zero);
+            Assert.That(capability.MaximumEncodeHeight, Is.EqualTo(-1));
+
+            Assert.That(
+                Evaluate(MakeProfile(7), capability, MakeInput(7)),
+                Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
+
+            // The values a supported observation reports are kept as observed
+            // too.
+            NvencBringUpCapabilityV1 supported = MakeCapability(
+                maximumEncodeWidth: 4096, maximumEncodeHeight: 2160);
+
+            Assert.That(supported.IsInitialized, Is.True);
+            Assert.That(supported.ActiveAdapterSupportsH264Encode, Is.True);
+            Assert.That(supported.ActiveAdapterSupportsH264HighProfile, Is.True);
+            Assert.That(supported.ActiveAdapterSupportsNv12Input, Is.True);
+            Assert.That(supported.MaximumEncodeWidth, Is.EqualTo(4096));
+            Assert.That(supported.MaximumEncodeHeight, Is.EqualTo(2160));
         }
 
         [Test]

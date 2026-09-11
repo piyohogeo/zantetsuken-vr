@@ -13,6 +13,17 @@ namespace Zantetsu.Observability
     /// never contacts Unity static APIs, the OS, the filesystem, NVENC, or a
     /// D3D handle.
     /// </summary>
+    /// <remarks>
+    /// The encoder conditions are compared the same way as every other fixed
+    /// condition: H.264 encode, its High Profile, and NV12 input must all be
+    /// reported as supported, and the observed maximum dimensions must cover
+    /// the profile's fixed 1280x720 - an exact fit is admitted, and so is any
+    /// larger maximum. Nothing is derived from a maximum beyond that
+    /// comparison: no minimum, alignment, macroblock, or Level is computed, no
+    /// alternative codec or degraded configuration is chosen, and a Supported
+    /// decision is not a promise that an NVENC session will initialize, which
+    /// remains the real session's own answer.
+    /// </remarks>
     internal static class NvencBringUpAdmissionValidatorV1
     {
         internal static NvencBringUpAdmissionDecision Evaluate(
@@ -43,6 +54,11 @@ namespace Zantetsu.Observability
             if (!capability.ActiveAdapterSupportsCompletionEvent) return NvencBringUpAdmissionDecision.Unsupported;
             if (capability.IsActiveAdapterTcc) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.ActiveAdapterCanUseOutputInVidmemZero) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsH264Encode) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsH264HighProfile) return NvencBringUpAdmissionDecision.Unsupported;
+            if (!capability.ActiveAdapterSupportsNv12Input) return NvencBringUpAdmissionDecision.Unsupported;
+            if (capability.MaximumEncodeWidth < NvencBringUpProfileV1.Width) return NvencBringUpAdmissionDecision.Unsupported;
+            if (capability.MaximumEncodeHeight < NvencBringUpProfileV1.Height) return NvencBringUpAdmissionDecision.Unsupported;
 
             if (input.ProfileId != profile.ProfileId) return NvencBringUpAdmissionDecision.Unsupported;
             if (input.Width != NvencBringUpProfileV1.Width) return NvencBringUpAdmissionDecision.Unsupported;
