@@ -18,14 +18,17 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// Until then every call goes through the same retained release
-    /// coordinator, which is what makes a retry after a partial release
-    /// possible: the terminal result is assigned only after the terminal
-    /// factory has returned, so a disposal failure leaves this coordinator
-    /// unfinished and the next call becomes another release attempt on that
-    /// same operation. A release that finished the lock but produced an
-    /// unusable receipt is not turned into a terminal value either: the
-    /// exception propagates, nothing is retained, and no success is inferred
-    /// from the lease's state or from the decision.
+    /// coordinator, and the terminal result is assigned only after the
+    /// terminal factory has returned. The two ways that can fail are not the
+    /// same. A partial release - the disposal threw with the lease still
+    /// releasable - leaves this coordinator unfinished and the next call
+    /// becomes another release attempt on that same retained operation. A call
+    /// that fully released the ownership lease but produced an unusable
+    /// receipt also leaves it unfinished, but there is nothing left to retry:
+    /// the exception propagates, nothing is retained, and every later call
+    /// stops at the retention coordinator's own admission without reaching the
+    /// releaser again, because neither the lease's state nor the decision is
+    /// read as success.
     /// </para>
     /// <para>
     /// The collision and deferred shapes are never branched on here; which one
@@ -83,9 +86,10 @@ namespace Zantetsu.Observability
             NvencRunPublicationRecoveryTerminalResult terminal =
                 NvencRunPublicationRecoveryTerminalResult.Stopped(receipt);
 
-            // Assigned only after a returned factory, so a failed release or an
-            // unusable receipt leaves the retry to the next call through that
-            // same release coordinator.
+            // Assigned only after a returned factory. A partial release
+            // leaves the retry to the next call through that same release
+            // coordinator; an unusable receipt after a completed release
+            // leaves this unfinished with nothing left to retry.
             _terminalResult = terminal;
             return _terminalResult;
         }
