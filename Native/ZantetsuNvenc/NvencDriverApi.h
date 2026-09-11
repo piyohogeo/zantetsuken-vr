@@ -58,9 +58,15 @@ namespace zantetsu
         NvencDriverApi& operator=(const NvencDriverApi&) = delete;
 
         /// Loads the driver module and obtains the function table, exactly
-        /// once per owner. A second call on a loaded owner fails as an
-        /// observation that was not made.
+        /// once per owner. One attempt is all an owner makes: whatever the
+        /// first call concluded - loaded, unsupported, or unobservable - a
+        /// second call touches no module and no entry point, keeps the first
+        /// attempt's observations, and reports that it made none. Retrying
+        /// means a new owner.
         NvencDriverApiLoadStatus Load();
+
+        /// Whether this owner has already made its one attempt.
+        bool IsLoadAttempted() const { return _loadAttempted; }
 
         bool IsLoaded() const { return _loaded; }
 
@@ -83,6 +89,7 @@ namespace zantetsu
         HMODULE _module = nullptr;
         NV_ENCODE_API_FUNCTION_LIST _functionList = {};
         uint32_t _maximumSupportedVersion = 0;
+        bool _loadAttempted = false;
         DWORD _lastWin32Error = 0;
         NVENCSTATUS _lastNvencStatus = NV_ENC_SUCCESS;
         bool _loaded = false;

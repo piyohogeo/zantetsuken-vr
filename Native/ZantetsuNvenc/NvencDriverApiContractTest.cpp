@@ -67,6 +67,7 @@ int main()
     {
         zantetsu::NvencDriverApi driverApi;
         Check(!driverApi.IsLoaded(), "a fresh owner holds nothing");
+        Check(!driverApi.IsLoadAttempted(), "a fresh owner has not attempted a load");
 
         const zantetsu::NvencDriverApiLoadStatus status = driverApi.Load();
         std::printf("  load status: %s, driver maximum version: %u.%u\n",
@@ -92,11 +93,34 @@ int main()
             driverApi.FunctionList().version == NV_ENCODE_API_FUNCTION_LIST_VER,
             "the function table carries the version this build asked for");
 
-        // One owner, one load.
+        // One owner, one attempt. The refusal keeps what the first attempt
+        // observed, whatever that attempt concluded.
+        Check(driverApi.IsLoadAttempted(), "the owner has made its one attempt");
+
+        const uint32_t observedVersion = driverApi.MaximumSupportedVersion();
+        const DWORD observedWin32Error = driverApi.LastWin32Error();
+        const NVENCSTATUS observedStatus = driverApi.LastNvencStatus();
+
         Check(
             driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::ObservationFailed,
             "a second load on the same owner is refused");
         Check(driverApi.IsLoaded(), "the refused second load left the owner loaded");
+        Check(
+            driverApi.MaximumSupportedVersion() == observedVersion,
+            "the refused second load kept the observed maximum version");
+        Check(
+            driverApi.LastWin32Error() == observedWin32Error &&
+                driverApi.LastNvencStatus() == observedStatus,
+            "the refused second load kept the first attempt's raw failure values");
+        Check(
+            driverApi.FunctionList().version == NV_ENCODE_API_FUNCTION_LIST_VER,
+            "the refused second load left the function table untouched");
+
+        // A third refusal behaves the same way: the attempt is spent, not
+        // counted down.
+        Check(
+            driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::ObservationFailed,
+            "a third load on the same owner is refused too");
     }
 
     // The first owner is gone, module reference and all. A new one loads the
@@ -107,6 +131,11 @@ int main()
             driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::Loaded,
             "a new owner loads the driver API again");
         Check(driverApi.IsLoaded(), "the new owner holds its own function table");
+        Check(
+            driverApi.IsLoadAttempted(), "the new owner has spent its own attempt");
+        Check(
+            driverApi.Load() == zantetsu::NvencDriverApiLoadStatus::ObservationFailed,
+            "the new owner refuses a second load as well");
     }
 
     if (g_failures != 0)

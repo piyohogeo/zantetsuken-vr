@@ -31,15 +31,15 @@ namespace zantetsu
 
     NvencDriverApiLoadStatus NvencDriverApi::Load()
     {
-        if (_loaded)
+        // One owner, one attempt - settled before the module is touched, so a
+        // load that failed anywhere is not retried here either. What the first
+        // attempt observed is left exactly as it was.
+        if (_loadAttempted)
         {
-            // One owner, one load.
             return NvencDriverApiLoadStatus::ObservationFailed;
         }
 
-        _maximumSupportedVersion = 0;
-        _lastWin32Error = 0;
-        _lastNvencStatus = NV_ENC_SUCCESS;
+        _loadAttempted = true;
 
         // The driver's own module, from System32 alone: no ordinary search
         // path, working directory, PATH entry, or module shipped beside this
