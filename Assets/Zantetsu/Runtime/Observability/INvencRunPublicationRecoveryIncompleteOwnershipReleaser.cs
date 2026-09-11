@@ -32,10 +32,10 @@ namespace Zantetsu.Observability
     /// This boundary belongs to the orphan cleanup graph alone; it is
     /// deliberately not merged with the CaptureComplete recovery release or the
     /// stopping one, whose authority graphs are different. An implementation
-    /// touches no file, re-runs no cleanup, re-inspects and re-classifies
-    /// nothing, and leaves the Registry, the disposition, the Service, and
-    /// every process state alone, owning no thread, queue, task, or wait
-    /// primitive.
+    /// touches no file, performs no filesystem re-inspection, does not rerun
+    /// the cleanup, and does not reclassify the publication recovery; it
+    /// leaves the Registry, the disposition, the Service, and every process
+    /// state alone, owning no thread, queue, task, or wait primitive.
     /// </para>
     /// </remarks>
     internal interface INvencRunPublicationRecoveryIncompleteOwnershipReleaser

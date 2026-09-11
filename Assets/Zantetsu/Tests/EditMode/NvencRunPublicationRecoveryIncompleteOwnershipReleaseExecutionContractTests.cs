@@ -170,8 +170,9 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
             Assert.That(ReferenceEquals(receipt.CleanupOperation, h.CleanupOperation), Is.True);
-            // The cleanup result is carried by reference; its own validity
-            // lapses with the released lock, which the receipt never rests on.
+            // The result's own references are forwarded rather than rebuilt,
+            // and its validity lapses with the released lock - which the
+            // receipt never rests on.
             Assert.That(ReferenceEquals(receipt.CleanupResult.Cleaner, h.Cleaner), Is.True);
             Assert.That(
                 ReferenceEquals(receipt.CleanupResult.CleanupOperation, h.CleanupOperation),
