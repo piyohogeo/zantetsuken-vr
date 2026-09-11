@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 using NUnit.Framework;
 using Zantetsu.Observability;
@@ -29,12 +30,22 @@ namespace Zantetsu.Core.Tests
     /// nothing.
     /// </para>
     /// <para>
-    /// Only two recovery shapes are used, as vehicles for reaching a terminal
-    /// and a fault: a plan the opener reports as an unreadable finished
-    /// document, which stops without changing anything, and a plan whose open
-    /// fails. The four dispositions, the filesystem cleanup, and the partial
-    /// release retry belong to the existing worker fixture and managed
-    /// end-to-end tests and are not repeated here.
+    /// The contract tests use two recovery shapes as vehicles for reaching a
+    /// terminal and a fault: a plan the opener reports as an unreadable
+    /// finished document, which stops without changing anything, and a plan
+    /// whose open fails. The classification table, the cleaner's own delete and
+    /// flush order, and the partial release retry's failure shapes belong to
+    /// the existing worker, cleaner, and managed end-to-end fixtures and are
+    /// not repeated here.
+    /// </para>
+    /// <para>
+    /// Two integration sentinels at the end run over a real temporary tree with
+    /// the production no-follow opener, commit and cleanup filesystem, and OS
+    /// lock backend, so the owner's two remaining terminal branches are
+    /// connected end to end: an Incomplete Run that is cleaned up and released,
+    /// and a Deferred verification that stops without touching the tree. The
+    /// collision branch is covered above and the CaptureComplete branch by the
+    /// managed end-to-end fixture.
     /// </para>
     /// </remarks>
     public class NvencRunPublicationRecoveryStartupCoordinatorContractTests
@@ -42,6 +53,28 @@ namespace Zantetsu.Core.Tests
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
         private const string FreshInitId = "fedcba9876543210fedcba9876543210";
+
+        private const string WriterHash =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        private const string ArtifactId = "nvenc-chunk-0";
+
+        private const string CaptureIndexName = "capture.index";
+
+        private const string CaptureIndexTemporaryName = "capture.index.tmp";
+
+        private const string PublicationPlanName = "publication.plan";
+
+        private const string PrecommitTemporaryName =
+            "publication.plan.nvenc-precommit.tmp";
+
+        private const string ChunksDirectoryName = "chunks";
+
+        private const string RunReadyMarkerName = "run.ready";
+
+        private const string RunInitializationMarkerName = "run.init";
+
+        private const string PartialChunkName = "chunk-0.nvenc-idr-chunk-v1.h264.partial";
 
         private const int VerificationBufferLength = 64 * 1024;
 
@@ -55,6 +88,8 @@ namespace Zantetsu.Core.Tests
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
         private readonly List<IDisposable> _ownedDisposables = new List<IDisposable>();
+
+        private readonly List<string> _sandboxes = new List<string>();
 
         [TearDown]
         public void TearDown()
@@ -71,6 +106,25 @@ namespace Zantetsu.Core.Tests
             }
 
             _ownedDisposables.Clear();
+
+            foreach (string sandbox in _sandboxes)
+            {
+                try
+                {
+                    if (Directory.Exists(sandbox))
+                    {
+                        Directory.Delete(sandbox, true);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            _sandboxes.Clear();
         }
 
         // ---- Construction ----
@@ -687,7 +741,333 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.SecondHandle.DisposeCount, Is.EqualTo(0));
         }
 
+        // ---- The two remaining terminal branches, over a real tree ----
+
+        /// <summary>
+        /// An Incomplete Run opened through the owner is cleaned up by the
+        /// production cleaner and its lock released, all without this fixture
+        /// touching the worker.
+        /// </summary>
+        [Test]
+        public void Incomplete_IsCleanedUpAndReleasedThroughTheOwner()
+        {
+            RequireRealTreeCapabilities();
+
+            SandboxHarness h = MakeSandboxHarness(SandboxShape.Incomplete);
+            h.AssertIncompleteTreeSeeded();
+
+            CaptureRunInitializationOpenOutcome outcome = null;
+            CaptureRunInitializationSessionOwnershipLease callerLease = null;
+            bool checksPassed = false;
+
+            try
+            {
+                Assert.That(
+                    h.Startup.TryOpen(
+                        h.Layout, MaximumRootEntryCount, out outcome, out callerLease),
+                    Is.True);
+
+                Assert.That(callerLease, Is.Null,
+                    "a started recovery owns the lease, so none is handed back.");
+                Assert.That(outcome.Status,
+                    Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
+                Assert.That(h.Startup.HasActiveRecovery, Is.True);
+                Assert.That(
+                    ReferenceEquals(h.Startup.ActiveRecoveryOpenOutcome, outcome), Is.True);
+
+                CaptureRunInitializationSessionOwnershipLease recoveryLease =
+                    h.Startup.ActiveRecoveryOwnershipLease;
+                Assert.That(recoveryLease, Is.Not.Null);
+                Assert.That(
+                    outcome.LockIdentityEvidence.IsBoundTo(recoveryLease), Is.True);
+
+                CaptureRunLockPathSet pathSet = outcome.LockPathSet;
+                Assert.That(pathSet, Is.Not.Null);
+
+                NvencRunPublicationRecoveryTerminalResult terminal =
+                    CollectTerminal(h.Startup);
+
+                Assert.That(terminal.IsIncompleteReleased, Is.True);
+                Assert.That(terminal.PublicationRecoveryDecision.Disposition,
+                    Is.EqualTo(NvencRunPublicationRecoveryDisposition.Incomplete));
+                Assert.That(ReferenceEquals(terminal.OpenOutcome, outcome), Is.True);
+                Assert.That(
+                    ReferenceEquals(terminal.OwnershipLease, recoveryLease), Is.True);
+
+                // The orphan cleanup ran to its existing contract: both Run
+                // roots are gone with everything they held, and the trusted
+                // bases remain.
+                h.AssertBothRunRootsDiscarded();
+
+                // The lease is fully released and the same lock paths are free.
+                Assert.That(recoveryLease.IsReleaseComplete, Is.True);
+                Assert.That(recoveryLease.CanRelease, Is.False);
+                AssertBothLocksCanBeAcquiredAgain(h.LockBackend, pathSet);
+
+                // The slot is empty again.
+                AssertSlotIsEmpty(h.Startup);
+
+                checksPassed = true;
+            }
+            finally
+            {
+                Exception cleanupFailure = FinishActiveRecovery(h.Startup);
+                Exception leaseFailure = ReleaseQuietly(callerLease);
+
+                if (checksPassed && (cleanupFailure ?? leaseFailure) != null)
+                {
+                    throw new AssertionException(
+                        "the recovery could not be finished at teardown.",
+                        cleanupFailure ?? leaseFailure);
+                }
+            }
+        }
+
+        /// <summary>
+        /// A Deferred verification - the one verification buffer is already
+        /// rented - stops the recovery without changing a single file and
+        /// releases only the ownership lease.
+        /// </summary>
+        [Test]
+        public void DeferredVerification_StopsWithoutChangingTheTreeThroughTheOwner()
+        {
+            RequireRealTreeCapabilities();
+
+            SandboxHarness h = MakeSandboxHarness(SandboxShape.Deferred);
+
+            // The exact pool the factory was given hands out its only buffer to
+            // this fixture, so the production inspector takes its own
+            // BufferUnavailable path.
+            CaptureArtifactVerificationBufferPool.Lease held = h.BufferPool.TryRent();
+
+            try
+            {
+                Assert.That(held, Is.Not.Null, "the pool must hand out its only buffer.");
+                Assert.That(h.BufferPool.OutstandingRentCount, Is.EqualTo(1));
+
+                // The Run's own two roots, which are the file set this
+                // recovery observes. The lock namespace lives beside them
+                // under the trusted bases and is created by opening the Run.
+                TreeSnapshot beforeStaging = TreeSnapshot.Of(h.Layout.StagingRunRoot);
+                TreeSnapshot beforeFinal = TreeSnapshot.Of(h.Layout.FinalRunRoot);
+
+                CaptureRunInitializationOpenOutcome outcome = null;
+                CaptureRunInitializationSessionOwnershipLease callerLease = null;
+                bool checksPassed = false;
+
+                try
+                {
+                    Assert.That(
+                        h.Startup.TryOpen(
+                            h.Layout, MaximumRootEntryCount, out outcome, out callerLease),
+                        Is.True);
+
+                    Assert.That(callerLease, Is.Null);
+                    Assert.That(outcome.Status,
+                        Is.EqualTo(
+                            CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
+                    Assert.That(h.Startup.HasActiveRecovery, Is.True);
+
+                    CaptureRunInitializationSessionOwnershipLease recoveryLease =
+                        h.Startup.ActiveRecoveryOwnershipLease;
+                    Assert.That(recoveryLease, Is.Not.Null);
+                    Assert.That(
+                        outcome.LockIdentityEvidence.IsBoundTo(recoveryLease), Is.True);
+
+                    CaptureRunLockPathSet pathSet = outcome.LockPathSet;
+
+                    NvencRunPublicationRecoveryTerminalResult terminal =
+                        CollectTerminal(h.Startup);
+
+                    Assert.That(terminal.IsStopped, Is.True);
+                    Assert.That(terminal.PublicationRecoveryDecision.Disposition,
+                        Is.EqualTo(NvencRunPublicationRecoveryDisposition.Deferred));
+                    Assert.That(terminal.PublicationRecoveryDecision.AuthoritativePlan, Is.Null,
+                        "a deferred verification settles no authoritative plan.");
+                    Assert.That(ReferenceEquals(terminal.OpenOutcome, outcome), Is.True);
+                    Assert.That(
+                        ReferenceEquals(terminal.OwnershipLease, recoveryLease), Is.True);
+
+                    // Nothing on disk moved, and the Capture Index was never
+                    // created.
+                    beforeStaging.AssertUnchanged("after the deferred recovery stopped");
+                    beforeFinal.AssertUnchanged("after the deferred recovery stopped");
+                    Assert.That(File.Exists(h.CaptureIndexPath), Is.False);
+                    Assert.That(File.Exists(h.CaptureIndexTemporaryPath), Is.False);
+
+                    // The buffer is still this fixture's only rent: neither the
+                    // owner nor the release returned or replaced it.
+                    Assert.That(h.BufferPool.OutstandingRentCount, Is.EqualTo(1));
+
+                    // Only the ownership lease was released.
+                    Assert.That(recoveryLease.IsReleaseComplete, Is.True);
+                    Assert.That(recoveryLease.CanRelease, Is.False);
+                    AssertBothLocksCanBeAcquiredAgain(h.LockBackend, pathSet);
+
+                    AssertSlotIsEmpty(h.Startup);
+
+                    checksPassed = true;
+                }
+                finally
+                {
+                    Exception cleanupFailure = FinishActiveRecovery(h.Startup);
+                    Exception leaseFailure = ReleaseQuietly(callerLease);
+
+                    if (checksPassed && (cleanupFailure ?? leaseFailure) != null)
+                    {
+                        throw new AssertionException(
+                            "the recovery could not be finished at teardown.",
+                            cleanupFailure ?? leaseFailure);
+                    }
+                }
+            }
+            finally
+            {
+                h.BufferPool.Return(held);
+            }
+
+            Assert.That(h.BufferPool.OutstandingRentCount, Is.Zero);
+        }
+
         // ---- Fixture helpers ----
+
+        private static void RequireRealTreeCapabilities()
+        {
+            if (!IsWindows)
+            {
+                Assert.Ignore("Phase 0.11 recovery requires Windows no-follow file handles.");
+            }
+
+            if (!CaptureArtifactNoFollowOpen.Create().IsSupported)
+            {
+                Assert.Ignore("No-follow artifact open is not available on this platform.");
+            }
+
+            CaptureIndexCommitFileSystem fileSystem = CaptureIndexCommitFileSystem.Create();
+            if (!fileSystem.IsSupported || !fileSystem.IsDirectoryFlushSupported)
+            {
+                Assert.Ignore(
+                    "No-follow commit and directory flush are not available on this platform.");
+            }
+        }
+
+        /// <summary>
+        /// Nothing is retained after a collected terminal, and the owner is
+        /// back in the state that admits the next open.
+        /// </summary>
+        private static void AssertSlotIsEmpty(
+            NvencRunPublicationRecoveryStartupCoordinator startup)
+        {
+            Assert.That(startup.HasActiveRecovery, Is.False);
+            Assert.That(startup.ActiveRecoveryOpenOutcome, Is.Null);
+            Assert.That(startup.ActiveRecoveryOwnershipLease, Is.Null);
+            Assert.That(startup.RecoveryWorkerState,
+                Is.EqualTo(NvencRunPublicationRecoveryWorkerState.NotStarted));
+            Assert.That(startup.TryGetRecoveryFailure(out Exception failure), Is.False,
+                failure?.ToString());
+            Assert.That(startup.TryRequestRecoveryReleaseRetry(), Is.False);
+            Assert.That(
+                startup.TryCollectRecoveryTerminal(
+                    out NvencRunPublicationRecoveryTerminalResult again),
+                Is.False);
+            Assert.That(again.IsValid, Is.False);
+        }
+
+        /// <summary>
+        /// Both of the Run's real locks are free again: each is acquired
+        /// through the production backend and released here, whatever the
+        /// assertions find.
+        /// </summary>
+        private static void AssertBothLocksCanBeAcquiredAgain(
+            CaptureRunLockOsBackend backend, CaptureRunLockPathSet pathSet)
+        {
+            CaptureRunLockAcquisitionCoordinator coordinator =
+                new CaptureRunLockAcquisitionCoordinator(backend);
+
+            bool acquired = coordinator.TryAcquire(pathSet, out CaptureRunLockLease lease);
+
+            try
+            {
+                Assert.That(acquired, Is.True,
+                    "the released Run locks must be acquirable again.");
+                Assert.That(lease, Is.Not.Null);
+                Assert.That(lease.IsCreated, Is.True);
+            }
+            finally
+            {
+                ReleaseQuietly(lease);
+            }
+        }
+
+        /// <summary>
+        /// Releases what this fixture owns and returns the failure instead of
+        /// throwing it, so a teardown can never replace an earlier failure.
+        /// </summary>
+        private static Exception ReleaseQuietly(IDisposable resource)
+        {
+            try
+            {
+                resource?.Dispose();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
+        }
+
+        /// <summary>
+        /// Finishes a recovery the owner may still hold, using only what the
+        /// owner offers: a bounded convergence on the terminal and one explicit
+        /// release-retry request each time it is parked. Nothing is forced or
+        /// unlocked, a faulted recovery is left exactly as it is, and the
+        /// failure this could not resolve is returned rather than thrown.
+        /// </summary>
+        private static Exception FinishActiveRecovery(
+            NvencRunPublicationRecoveryStartupCoordinator startup)
+        {
+            try
+            {
+                Stopwatch watchdog = Stopwatch.StartNew();
+                while (startup.HasActiveRecovery)
+                {
+                    if (startup.TryCollectRecoveryTerminal(
+                            out NvencRunPublicationRecoveryTerminalResult collected))
+                    {
+                        return null;
+                    }
+
+                    if (startup.RecoveryWorkerState
+                        == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
+                    {
+                        startup.TryRequestRecoveryReleaseRetry();
+                    }
+                    else if (startup.RecoveryWorkerState
+                        == NvencRunPublicationRecoveryWorkerState.Faulted)
+                    {
+                        // The owner keeps a faulted recovery, and this fixture
+                        // does not work around that.
+                        return null;
+                    }
+
+                    if (watchdog.ElapsedMilliseconds > WatchdogMilliseconds)
+                    {
+                        return new TimeoutException(
+                            "the recovery did not reach a terminal within "
+                            + WatchdogMilliseconds + " ms; it is "
+                            + startup.RecoveryWorkerState + ".");
+                    }
+
+                    Thread.Yield();
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
+        }
 
         private void Own(IDisposable resource)
         {
@@ -758,6 +1138,373 @@ namespace Zantetsu.Core.Tests
                 }
 
                 Thread.Yield();
+            }
+        }
+
+        private enum SandboxShape
+        {
+            /// <summary>No finished plan: uncommitted NVENC artifacts only.</summary>
+            Incomplete,
+
+            /// <summary>A canonical plan and the chunk it declares.</summary>
+            Deferred,
+        }
+
+        /// <summary>
+        /// One Run's real tree with the production opener, filesystem, OS lock
+        /// backend, process state, buffer pool, factory, and owner. The only
+        /// fixture seam is the initialization recovery inspector.
+        /// </summary>
+        private sealed class SandboxHarness
+        {
+            internal SandboxHarness(
+                string root,
+                CaptureRunRootLayout layout,
+                CaptureRunLockOsBackend lockBackend,
+                CaptureArtifactVerificationBufferPool bufferPool,
+                NvencRunPublicationRecoveryStartupCoordinator startup)
+            {
+                Root = root;
+                Layout = layout;
+                LockBackend = lockBackend;
+                BufferPool = bufferPool;
+                Startup = startup;
+            }
+
+            internal string Root { get; }
+
+            internal CaptureRunRootLayout Layout { get; }
+
+            internal CaptureRunLockOsBackend LockBackend { get; }
+
+            internal CaptureArtifactVerificationBufferPool BufferPool { get; }
+
+            internal NvencRunPublicationRecoveryStartupCoordinator Startup { get; }
+
+            internal string ChunksPath =>
+                Path.Combine(Layout.StagingRunRoot, ChunksDirectoryName);
+
+            internal string CaptureIndexPath =>
+                Path.Combine(Layout.FinalRunRoot, CaptureIndexName);
+
+            internal string CaptureIndexTemporaryPath =>
+                Path.Combine(Layout.FinalRunRoot, CaptureIndexTemporaryName);
+
+            /// <summary>
+            /// The Incomplete shape as a file set: canonical markers in both
+            /// roots, no finished plan, uncommitted NVENC entries, and a final
+            /// side holding nothing but its markers.
+            /// </summary>
+            internal void AssertIncompleteTreeSeeded()
+            {
+                Assert.That(
+                    File.Exists(Path.Combine(Layout.StagingRunRoot, PublicationPlanName)),
+                    Is.False);
+                Assert.That(
+                    File.Exists(Path.Combine(Layout.StagingRunRoot, PrecommitTemporaryName)),
+                    Is.True);
+                Assert.That(File.Exists(Path.Combine(ChunksPath, PartialChunkName)), Is.True);
+                Assert.That(
+                    File.Exists(Path.Combine(Layout.StagingRunRoot, RunReadyMarkerName)),
+                    Is.True);
+                Assert.That(
+                    File.Exists(Path.Combine(Layout.FinalRunRoot, RunReadyMarkerName)),
+                    Is.True);
+                Assert.That(File.Exists(CaptureIndexPath), Is.False);
+                Assert.That(File.Exists(CaptureIndexTemporaryPath), Is.False);
+            }
+
+            /// <summary>
+            /// Both Run roots are gone with everything they held, and the
+            /// trusted bases remain.
+            /// </summary>
+            internal void AssertBothRunRootsDiscarded()
+            {
+                Assert.That(Directory.Exists(Layout.StagingRunRoot), Is.False);
+                Assert.That(Directory.Exists(Layout.FinalRunRoot), Is.False);
+                Assert.That(Directory.Exists(ChunksPath), Is.False);
+                Assert.That(
+                    Directory.Exists(Path.GetDirectoryName(Layout.StagingRunRoot)), Is.True);
+                Assert.That(
+                    Directory.Exists(Path.GetDirectoryName(Layout.FinalRunRoot)), Is.True);
+            }
+        }
+
+        /// <summary>
+        /// A whole temporary tree recorded by relative path, byte length, exact
+        /// bytes, and SHA-256, so "unchanged" means unchanged in content and
+        /// shape rather than in modification time.
+        /// </summary>
+        private sealed class TreeSnapshot
+        {
+            private readonly string _root;
+            private readonly List<string> _directories;
+            private readonly Dictionary<string, Entry> _files;
+
+            private TreeSnapshot(
+                string root, List<string> directories, Dictionary<string, Entry> files)
+            {
+                _root = root;
+                _directories = directories;
+                _files = files;
+            }
+
+            internal static TreeSnapshot Of(string root)
+            {
+                List<string> directories = new List<string>();
+                foreach (string directory in Directory.GetDirectories(
+                    root, "*", SearchOption.AllDirectories))
+                {
+                    directories.Add(Relative(root, directory));
+                }
+
+                directories.Sort(StringComparer.Ordinal);
+
+                Dictionary<string, Entry> files = new Dictionary<string, Entry>(
+                    StringComparer.Ordinal);
+                foreach (string file in Directory.GetFiles(
+                    root, "*", SearchOption.AllDirectories))
+                {
+                    byte[] bytes = File.ReadAllBytes(file);
+                    files[Relative(root, file)] = new Entry(bytes, Sha256Hex(bytes));
+                }
+
+                return new TreeSnapshot(root, directories, files);
+            }
+
+            internal void AssertUnchanged(string message)
+            {
+                TreeSnapshot now = Of(_root);
+
+                Assert.That(now._directories, Is.EqualTo(_directories), message);
+                Assert.That(now._files.Count, Is.EqualTo(_files.Count), message);
+
+                foreach (KeyValuePair<string, Entry> expected in _files)
+                {
+                    Assert.That(now._files.ContainsKey(expected.Key), Is.True,
+                        expected.Key + " " + message);
+
+                    Entry observed = now._files[expected.Key];
+                    Assert.That(observed.Bytes.Length, Is.EqualTo(expected.Value.Bytes.Length),
+                        expected.Key + " " + message);
+                    Assert.That(observed.Bytes, Is.EqualTo(expected.Value.Bytes),
+                        expected.Key + " " + message);
+                    Assert.That(observed.Sha256, Is.EqualTo(expected.Value.Sha256),
+                        expected.Key + " " + message);
+                    Assert.That(
+                        new FileInfo(Path.Combine(_root, expected.Key)).Length,
+                        Is.EqualTo(expected.Value.Bytes.LongLength),
+                        expected.Key + " " + message);
+                }
+            }
+
+            private static string Relative(string root, string path)
+            {
+                return path.Substring(root.Length + 1);
+            }
+
+            private readonly struct Entry
+            {
+                internal Entry(byte[] bytes, string sha256)
+                {
+                    Bytes = bytes;
+                    Sha256 = sha256;
+                }
+
+                internal byte[] Bytes { get; }
+
+                internal string Sha256 { get; }
+            }
+        }
+
+        private static string Sha256Hex(byte[] bytes)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                char[] hex = new char[hash.Length * 2];
+                const string Digits = "0123456789abcdef";
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    hex[i * 2] = Digits[hash[i] >> 4];
+                    hex[(i * 2) + 1] = Digits[hash[i] & 0xF];
+                }
+
+                return new string(hex);
+            }
+        }
+
+        private static CaptureFrameEvidenceEntry[] MakeFrameEvidence()
+        {
+            CaptureFrameEvidenceEntry[] entries = new CaptureFrameEvidenceEntry[3];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                entries[i] = new CaptureFrameEvidenceEntry(i + 1, new[] { ArtifactId });
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// Builds one Run's real tree in the requested shape and the production
+        /// owner over it.
+        /// </summary>
+        private SandboxHarness MakeSandboxHarness(SandboxShape shape)
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "zantetsuken-phase011-startup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            _sandboxes.Add(root);
+
+            CaptureRunRootLayout layout = new CaptureRunRootLayout(
+                Path.Combine(root, "staging"), Path.Combine(root, "final"), 1);
+
+            CaptureRunInitializationDocumentSet documents =
+                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+
+            string chunksDirectory = Path.Combine(layout.StagingRunRoot, ChunksDirectoryName);
+            Directory.CreateDirectory(chunksDirectory);
+            Directory.CreateDirectory(layout.FinalRunRoot);
+
+            File.WriteAllBytes(
+                Path.Combine(layout.StagingRunRoot, RunInitializationMarkerName),
+                documents.GetStagingInitializationBytes());
+            File.WriteAllBytes(
+                Path.Combine(layout.StagingRunRoot, RunReadyMarkerName),
+                documents.GetStagingReadyBytes());
+            File.WriteAllBytes(
+                Path.Combine(layout.FinalRunRoot, RunInitializationMarkerName),
+                documents.GetFinalInitializationBytes());
+            File.WriteAllBytes(
+                Path.Combine(layout.FinalRunRoot, RunReadyMarkerName),
+                documents.GetFinalReadyBytes());
+
+            if (shape == SandboxShape.Incomplete)
+            {
+                // Uncommitted NVENC entries at their fixed paths. Their content
+                // is never read by this path, so any small bytes will do.
+                File.WriteAllBytes(
+                    Path.Combine(layout.StagingRunRoot, PrecommitTemporaryName),
+                    new byte[] { 0x7b, 0x22, 0x3f, 0x01 });
+                File.WriteAllBytes(
+                    Path.Combine(chunksDirectory, PartialChunkName),
+                    new byte[] { 0x00, 0x00, 0x00, 0x01, 0x65, 0x88 });
+            }
+            else
+            {
+                byte[] chunkBytes = new byte[4096];
+                for (int i = 0; i < chunkBytes.Length; i++)
+                {
+                    chunkBytes[i] = (byte)((i * 17) + 3);
+                }
+
+                CapturePublicationPlan plan = new CapturePublicationPlan(
+                    layout.TestRunId,
+                    InitId,
+                    WriterHash,
+                    new[]
+                    {
+                        NvencRunChunkArtifactDescriptorFactory.Create(
+                            ArtifactId, chunkBytes.LongLength, Sha256Hex(chunkBytes)),
+                    },
+                    MakeFrameEvidence());
+
+                File.WriteAllBytes(
+                    Path.Combine(layout.StagingRunRoot, PublicationPlanName),
+                    CapturePublicationPlanCodec.SerializeCanonical(plan));
+
+                string finalChunkPath = Path.Combine(
+                    layout.FinalRunRoot,
+                    NvencRunChunkArtifactDescriptorFactory.FinalRelativePath.Replace(
+                        '/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(finalChunkPath));
+                File.WriteAllBytes(finalChunkPath, chunkBytes);
+            }
+
+            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+                layout.TestRunId,
+                InitId,
+                layout.StagingRunRootSha256,
+                layout.FinalRunRootSha256);
+
+            FakeInitializationInspector inspector = new FakeInitializationInspector(
+                MakeObservation(
+                    CaptureRunRootRole.Staging,
+                    binding.StagingInitialization,
+                    binding.StagingReady,
+                    hasNonMarkerEntries: true),
+                MakeObservation(
+                    CaptureRunRootRole.Final,
+                    binding.FinalInitialization,
+                    binding.FinalReady,
+                    hasNonMarkerEntries: false));
+
+            RecordingFreshStart freshStart = new RecordingFreshStart();
+            CaptureRunLockOsBackend lockBackend = CaptureRunLockOsBackend.Create();
+
+            CaptureRunInitializationEntryCoordinator entry =
+                new CaptureRunInitializationEntryCoordinator(
+                    new CaptureRunLockAcquisitionCoordinator(lockBackend),
+                    new CaptureRunInitializationRecoveryOrchestrationCoordinator(
+                        inspector,
+                        new CaptureRunInitializationRecoveryExecutionCoordinator(
+                            freshStart, freshStart, freshStart)),
+                    new CaptureRunInitializationRecoverySessionRoutingCoordinator(
+                        new CaptureRunInitializationRecoveryStartFreshCoordinator(
+                            freshStart,
+                            new CaptureRunInitializationExecutionCoordinator(
+                                freshStart, freshStart))));
+
+            CaptureArtifactVerificationBufferPool bufferPool =
+                new CaptureArtifactVerificationBufferPool(VerificationBufferLength);
+
+            return new SandboxHarness(
+                root,
+                layout,
+                lockBackend,
+                bufferPool,
+                new NvencRunPublicationRecoveryStartupCoordinator(
+                    entry,
+                    new NvencRunPublicationRecoveryWorkerFactory(
+                        new NvencCaptureProcessState(), bufferPool)));
+        }
+
+        /// <summary>
+        /// The collaborators a publication recovery must never reach: the
+        /// initialization cleanup, provisioning, marker writing, and fresh
+        /// initialization ID.
+        /// </summary>
+        private sealed class RecordingFreshStart
+            : ICaptureRunInitializationRecoveryCleanupBackend,
+              ICaptureRunRootProvisioner,
+              ICaptureRunMarkerAtomicWriter,
+              ICaptureRunInitializationIdSource
+        {
+            public CaptureRunInitializationRecoveryCleanupReceipt Execute(
+                CaptureRunInitializationRecoveryCleanupOperation operation)
+            {
+                throw new NotSupportedException(
+                    "A publication recovery performs no initialization cleanup.");
+            }
+
+            public CaptureRunRootProvisionReceipt ProvisionNew(
+                CaptureRunRootProvisionOperation operation)
+            {
+                throw new NotSupportedException(
+                    "A publication recovery provisions no Run root.");
+            }
+
+            public CaptureRunMarkerWriteReceipt WriteAtomic(
+                CaptureRunMarkerWriteOperation operation)
+            {
+                throw new NotSupportedException("A publication recovery writes no marker.");
+            }
+
+            public string Create()
+            {
+                throw new NotSupportedException(
+                    "A publication recovery issues no fresh initialization ID.");
             }
         }
 
