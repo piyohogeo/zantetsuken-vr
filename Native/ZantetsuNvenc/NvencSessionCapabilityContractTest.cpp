@@ -170,11 +170,9 @@ int main()
     request.enableEncodeAsync = 1;
     request.enableOutputInVideoMemory = 0;
 
-    Check(!session.IsEncoderInitialized(), "the encoder is not initialized yet");
     Check(
         session.TryInitializeEncoder(request),
         "the encoder initializes with the fixed request");
-    Check(session.IsEncoderInitialized(), "the encoder reports itself initialized");
     Check(session.IsOpen(), "the initialized session is still open");
 
     // One owner, one initialization.

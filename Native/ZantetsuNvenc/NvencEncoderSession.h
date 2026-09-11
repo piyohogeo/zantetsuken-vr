@@ -154,9 +154,6 @@ namespace zantetsu
 
         bool IsOpen() const { return _encoder != nullptr; }
 
-        /// True once the encoder has been initialized with the fixed request.
-        bool IsEncoderInitialized() const { return _encoderInitialized; }
-
         DWORD LastWin32Error() const { return _lastWin32Error; }
         NVENCSTATUS LastNvencStatus() const { return _lastNvencStatus; }
 
@@ -179,6 +176,8 @@ namespace zantetsu
         bool _closeAttempted = false;
         bool _capabilityObservationAttempted = false;
         bool _initializationAttempted = false;
+        // Kept as internal state: the completion-event registration that
+        // follows admits itself against it.
         bool _encoderInitialized = false;
     };
 }
