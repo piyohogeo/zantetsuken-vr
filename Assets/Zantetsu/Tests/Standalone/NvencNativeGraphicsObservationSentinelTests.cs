@@ -298,19 +298,20 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
-        /// The initialized session prepares its fixed set of completion
-        /// events, refuses to close while they are prepared, and closes once
-        /// they are released.
+        /// The initialized session prepares its fixed sets of output bitstream
+        /// buffers and completion events, refuses to close while either is
+        /// prepared, and closes once both are released in order.
         /// </summary>
         /// <remarks>
-        /// Nothing waits on the events, and no handle, slot, or count reaches
-        /// managed code: what is pinned here is the ownership order - prepare,
-        /// release, close - and that each step happens once. How many events
-        /// the set holds is the profile's fixed encode sample slot count, and
-        /// the later encode sentinel is what shows all of them in use.
+        /// Nothing waits on an event or reads a buffer, and no handle,
+        /// pointer, slot, or count reaches managed code: what is pinned here
+        /// is the order - buffers, then events, then events released, then
+        /// buffers - and that each step happens once. This is not yet a
+        /// prepared Run: the input resources belong to a later unit, and the
+        /// encode sentinel after that is what shows all eight slots in use.
         /// </remarks>
         [Test]
-        public void Player_PreparesAndReleasesItsCompletionEventSet()
+        public void Player_PreparesAndReleasesItsSlotResources()
         {
             Assert.That(
                 NvencNativeEncoderSessionOwner.TryOpen(
@@ -332,25 +333,40 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 owner.InitializeEncoder(profile);
 
-                owner.PrepareCompletionEvents();
+                owner.PrepareOutputBuffers();
                 Assert.That(owner.IsOpen, Is.True);
 
-                // The prepared set holds the session open, and refusing the
+                // Prepared buffers hold the session open, and refusing the
                 // close leaves it closable later.
                 Assert.Throws<InvalidOperationException>(() => owner.Dispose());
                 Assert.That(owner.IsOpen, Is.True);
 
                 // One session, one preparation.
                 Assert.Throws<InvalidOperationException>(
-                    () => owner.PrepareCompletionEvents());
+                    () => owner.PrepareOutputBuffers());
+
+                owner.PrepareCompletionEvents();
                 Assert.That(owner.IsOpen, Is.True);
 
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareCompletionEvents());
+
+                // The events go before the buffers.
                 owner.ReleaseCompletionEvents();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseCompletionEvents());
+
+                owner.ReleaseOutputBuffers();
                 Assert.That(owner.IsOpen, Is.True);
 
                 // One session, one release.
                 Assert.Throws<InvalidOperationException>(
-                    () => owner.ReleaseCompletionEvents());
+                    () => owner.ReleaseOutputBuffers());
                 Assert.That(owner.IsOpen, Is.True);
             }
             finally

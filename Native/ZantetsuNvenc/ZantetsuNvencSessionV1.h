@@ -1,9 +1,10 @@
 // Phase 0.11 native encoder session ABI, version 1.
 //
-// Six calls: open one retained session, observe that session's encoder
+// Eight calls: open one retained session, observe that session's encoder
 // capabilities once, initialize that encoder once with the fixed request,
-// prepare and release its fixed set of completion events, and close that exact
-// session. The event handles themselves never cross this boundary. What crosses the boundary is
+// prepare and release its fixed set of completion events, prepare and release
+// its fixed set of output bitstream buffers, and close that exact session.
+// Neither the event handles nor the buffers ever cross this boundary. What crosses the boundary is
 // fixed-width and opaque - a status, an opaque owner handle, the observed
 // capability values, and the raw failure values behind a Failed - and never a
 // device pointer, an encoder handle, a function table pointer, a GUID, an
@@ -123,7 +124,8 @@ typedef struct ZantetsuNvencSessionInitializeResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionInitializeResultV1;
 
-/// What a completion-event preparation or release came to.
+/// What a completion-event or output-buffer preparation or release came to.
+/// The Win32 error is only ever set by the completion-event calls.
 typedef struct ZantetsuNvencSessionCompletionEventResultV1
 {
     uint32_t abiVersion;
@@ -202,6 +204,32 @@ ZantetsuNvencPrepareSessionCompletionEventsV1(
 // keeping what is still held, so the session is not yet closable.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionCompletionEventsV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize);
+
+// Creates the fixed set of output bitstream buffers on that exact session's
+// initialized encoder, once. All of them are prepared or none are.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when the destination is null, its size is not exactly the struct's, or the
+// owner handle is zero. A preparation that fails reports FAILED with its raw
+// NVENCSTATUS; it destroys what it made, and the session is closable again
+// unless a destroy was itself refused. The buffers stay on the native side.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencPrepareSessionOutputBuffersV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize);
+
+// Destroys that whole set, once and in reverse order.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// preparation. The completion events are released first: a session that still
+// has them reports FAILED. A refused destroy stops there, keeping what is
+// still held, so the session is not yet closable.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionOutputBuffersV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize);

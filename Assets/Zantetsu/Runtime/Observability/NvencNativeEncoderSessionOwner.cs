@@ -167,6 +167,16 @@ namespace Zantetsu.Observability
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencPrepareSessionOutputBuffersV1(
+            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencReleaseSessionOutputBuffersV1(
+            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencCloseSessionV1(
             ulong sessionOwner, ref NativeCloseResultV1 destination, uint destinationSize);
 #endif
@@ -176,6 +186,9 @@ namespace Zantetsu.Observability
         private bool _completionEventsPrepareAttempted;
         private bool _completionEventsReleaseAttempted;
         private bool _completionEventsPrepared;
+        private bool _outputBuffersPrepareAttempted;
+        private bool _outputBuffersReleaseAttempted;
+        private bool _outputBuffersPrepared;
 
         private NvencNativeEncoderSessionOwner(ulong sessionOwner)
         {
@@ -482,6 +495,85 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Creates this session's fixed set of output bitstream buffers - all
+        /// of them, or none.
+        /// </summary>
+        /// <remarks>
+        /// The buffers are the native side's: no pointer, slot index, count,
+        /// or size is exposed here, and nothing is locked or read from them
+        /// yet. One owner prepares once, whatever the first attempt concluded,
+        /// and a failure destroys what it made.
+        /// </remarks>
+        internal void PrepareOutputBuffers()
+        {
+            RequireUsableSession("prepare output buffers on");
+
+            if (_outputBuffersPrepareAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffer preparation was already attempted; it is not attempted again.");
+            }
+
+            _outputBuffersPrepareAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeCompletionEventResultV1 result = default;
+            int written = ZantetsuNvencPrepareSessionOutputBuffersV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+
+            RequireCompletionEventResult(written, result, "prepared");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _outputBuffersPrepared = true;
+        }
+
+        /// <summary>
+        /// Destroys that whole set.
+        /// </summary>
+        /// <remarks>
+        /// The completion events are released first; a session that still has
+        /// them refuses. Only a complete success clears the set: a refused
+        /// destroy leaves what it stopped at with the session, which therefore
+        /// still cannot be closed, and nothing is retried here.
+        /// </remarks>
+        internal void ReleaseOutputBuffers()
+        {
+            RequireUsableSession("release output buffers from");
+
+            if (!_outputBuffersPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session has no prepared output buffers to release.");
+            }
+
+            if (_outputBuffersReleaseAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffer release was already attempted; it is not attempted again.");
+            }
+
+            _outputBuffersReleaseAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeCompletionEventResultV1 result = default;
+            int written = ZantetsuNvencReleaseSessionOutputBuffersV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+
+            RequireCompletionEventResult(written, result, "released");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _outputBuffersPrepared = false;
+        }
+
+        /// <summary>
         /// Closes the session once. A refused close leaves this owner holding
         /// the same still-open session and spends the attempt, so disposing
         /// again throws instead of asking the native side to destroy that
@@ -494,13 +586,19 @@ namespace Zantetsu.Observability
                 return;
             }
 
-            // Prepared completion events hold this session open. Refused
-            // before the close attempt is spent, so the caller can still close
-            // after releasing them.
+            // Prepared completion events and output buffers hold this session
+            // open. Refused before the close attempt is spent, so the caller
+            // can still close after releasing them.
             if (_completionEventsPrepared)
             {
                 throw new InvalidOperationException(
                     "This session's completion events are still prepared; they are released before the session is closed.");
+            }
+
+            if (_outputBuffersPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffers are still prepared; they are released before the session is closed.");
             }
 
             // One owner, one close attempt - settled before the native side is

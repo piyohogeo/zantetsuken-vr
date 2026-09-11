@@ -48,12 +48,13 @@ namespace zantetsu
 
     NvencEncoderSession::~NvencEncoderSession()
     {
-        // Destroying an owner that still holds an encoder or any
-        // completion-event handle or registration is a contract violation, not
-        // a state this handles: the caller releases and closes first, and an
-        // owner whose release or close was refused is kept. Nothing is
-        // unregistered, closed, or destroyed implicitly here.
+        // Destroying an owner that still holds an encoder, a completion-event
+        // handle or registration, or an output bitstream buffer is a contract
+        // violation, not a state this handles: the caller releases and closes
+        // first, and an owner whose release or close was refused is kept.
+        // Nothing is unregistered, closed, or destroyed implicitly here.
         assert(!AnyCompletionEventHeld());
+        assert(!AnyOutputBitstreamBufferHeld());
         assert(_encoder == nullptr);
 
         ReleaseDeviceAndDriver();
@@ -508,9 +509,10 @@ namespace zantetsu
 
     bool NvencEncoderSession::AnyCompletionEventHeld() const
     {
-        for (uint32_t i = 0; i < kCompletionEventCount; ++i)
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
         {
-            if (_completionEvents[i].handle != nullptr || _completionEvents[i].registered)
+            if (_slots[i].completionEvent != nullptr ||
+                _slots[i].completionEventRegistered)
             {
                 return true;
             }
@@ -522,11 +524,11 @@ namespace zantetsu
     /// Unregisters one slot if the driver has it, then closes its handle. Each
     /// fact is cleared only once the step that undoes it has succeeded, so a
     /// refusal leaves the slot exactly as truthful as it was.
-    bool NvencEncoderSession::TryReleaseCompletionEventSlot(CompletionEventSlot& slot)
+    bool NvencEncoderSession::TryReleaseCompletionEventSlot(EncodeSampleSlot& slot)
     {
         const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
 
-        if (slot.registered)
+        if (slot.completionEventRegistered)
         {
             if (api.nvEncUnregisterAsyncEvent == nullptr)
             {
@@ -535,7 +537,7 @@ namespace zantetsu
 
             NV_ENC_EVENT_PARAMS params = {};
             params.version = NV_ENC_EVENT_PARAMS_VER;
-            params.completionEvent = slot.handle;
+            params.completionEvent = slot.completionEvent;
 
             const NVENCSTATUS status = api.nvEncUnregisterAsyncEvent(_encoder, &params);
             if (status != NV_ENC_SUCCESS)
@@ -544,18 +546,169 @@ namespace zantetsu
                 return false;
             }
 
-            slot.registered = false;
+            slot.completionEventRegistered = false;
         }
 
-        if (slot.handle != nullptr)
+        if (slot.completionEvent != nullptr)
         {
-            if (!::CloseHandle(slot.handle))
+            if (!::CloseHandle(slot.completionEvent))
             {
                 _lastWin32Error = ::GetLastError();
                 return false;
             }
 
-            slot.handle = nullptr;
+            slot.completionEvent = nullptr;
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::AnyOutputBitstreamBufferHeld() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].outputBitstreamBuffer != nullptr)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// Destroys one slot's output buffer, clearing it only once the driver has
+    /// accepted.
+    bool NvencEncoderSession::TryDestroyOutputBitstreamBuffer(EncodeSampleSlot& slot)
+    {
+        if (slot.outputBitstreamBuffer == nullptr)
+        {
+            return true;
+        }
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+        if (api.nvEncDestroyBitstreamBuffer == nullptr)
+        {
+            return false;
+        }
+
+        const NVENCSTATUS status =
+            api.nvEncDestroyBitstreamBuffer(_encoder, slot.outputBitstreamBuffer);
+        if (status != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = status;
+            return false;
+        }
+
+        slot.outputBitstreamBuffer = nullptr;
+        return true;
+    }
+
+    /// Unwinds the buffers this preparation made, in reverse. A destroy that is
+    /// itself refused stops the unwinding: that buffer and the ones before it
+    /// stay held rather than being released on an assumption.
+    void NvencEncoderSession::RollBackPreparedOutputBitstreamBuffers(uint32_t count)
+    {
+        for (uint32_t i = count; i > 0; --i)
+        {
+            if (!TryDestroyOutputBitstreamBuffer(_slots[i - 1]))
+            {
+                return;
+            }
+        }
+    }
+
+    bool NvencEncoderSession::TryPrepareOutputBitstreamBuffers()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // Buffers belong to an encoder that has been initialized, and the set
+        // is prepared only while nothing is held.
+        if (!_encoderInitialized || AnyOutputBitstreamBufferHeld())
+        {
+            return false;
+        }
+
+        // One owner, one preparation - settled before anything is created.
+        if (_outputBitstreamBuffersPrepareAttempted)
+        {
+            return false;
+        }
+
+        _outputBitstreamBuffersPrepareAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        // The way to destroy is confirmed before anything is created, so a
+        // buffer is never left with no way to give it back.
+        if (api.nvEncCreateBitstreamBuffer == nullptr ||
+            api.nvEncDestroyBitstreamBuffer == nullptr)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            // The ordinary system-memory output buffer: the deprecated size
+            // and heap fields are left at zero rather than turned into
+            // settings of this project's own.
+            NV_ENC_CREATE_BITSTREAM_BUFFER createBitstreamBuffer = {};
+            createBitstreamBuffer.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+
+            const NVENCSTATUS status =
+                api.nvEncCreateBitstreamBuffer(_encoder, &createBitstreamBuffer);
+            if (status != NV_ENC_SUCCESS ||
+                createBitstreamBuffer.bitstreamBuffer == nullptr)
+            {
+                _lastNvencStatus = status;
+                RollBackPreparedOutputBitstreamBuffers(i);
+                return false;
+            }
+
+            // Held from the moment it exists.
+            _slots[i].outputBitstreamBuffer = createBitstreamBuffer.bitstreamBuffer;
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryReleaseOutputBitstreamBuffers()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        if (!AnyOutputBitstreamBufferHeld())
+        {
+            return false;
+        }
+
+        // The completion events go first: a slot's event is not left
+        // registered against an encoder whose output buffers are already gone.
+        if (AnyCompletionEventHeld())
+        {
+            return false;
+        }
+
+        // One owner, one release - settled before the driver is touched.
+        if (_outputBitstreamBuffersReleaseAttempted)
+        {
+            return false;
+        }
+
+        _outputBitstreamBuffersReleaseAttempted = true;
+
+        for (uint32_t i = kEncodeSampleSlotCount; i > 0; --i)
+        {
+            if (!TryDestroyOutputBitstreamBuffer(_slots[i - 1]))
+            {
+                // Stopped here: this buffer and everything before it stay with
+                // the session.
+                return false;
+            }
         }
 
         return true;
@@ -594,7 +747,7 @@ namespace zantetsu
             return false;
         }
 
-        for (uint32_t i = 0; i < kCompletionEventCount; ++i)
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
         {
             // Unnamed, auto-reset, initially non-signalled.
             HANDLE completionEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -606,7 +759,7 @@ namespace zantetsu
             }
 
             // Owned from the moment it exists, registered or not.
-            _completionEvents[i].handle = completionEvent;
+            _slots[i].completionEvent = completionEvent;
 
             NV_ENC_EVENT_PARAMS params = {};
             params.version = NV_ENC_EVENT_PARAMS_VER;
@@ -620,7 +773,7 @@ namespace zantetsu
                 return false;
             }
 
-            _completionEvents[i].registered = true;
+            _slots[i].completionEventRegistered = true;
         }
 
         return true;
@@ -633,7 +786,7 @@ namespace zantetsu
     {
         for (uint32_t i = count; i > 0; --i)
         {
-            if (!TryReleaseCompletionEventSlot(_completionEvents[i - 1]))
+            if (!TryReleaseCompletionEventSlot(_slots[i - 1]))
             {
                 return;
             }
@@ -660,9 +813,9 @@ namespace zantetsu
 
         _completionEventsReleaseAttempted = true;
 
-        for (uint32_t i = kCompletionEventCount; i > 0; --i)
+        for (uint32_t i = kEncodeSampleSlotCount; i > 0; --i)
         {
-            if (!TryReleaseCompletionEventSlot(_completionEvents[i - 1]))
+            if (!TryReleaseCompletionEventSlot(_slots[i - 1]))
             {
                 // Stopped here: this slot and everything before it stay with
                 // the session.
@@ -676,10 +829,11 @@ namespace zantetsu
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
         // An encoder is not destroyed while this session still holds any
-        // completion-event handle or registration - prepared, half-prepared,
-        // or half-released. Refused before the close attempt is spent, so the
-        // caller can still close once the set is gone.
-        if (AnyCompletionEventHeld())
+        // completion-event handle or registration, or any output bitstream
+        // buffer - prepared, half-prepared, or half-released. Refused before
+        // the close attempt is spent, so the caller can still close once
+        // everything is gone.
+        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld())
         {
             return NvencEncoderSessionCloseStatus::Failed;
         }

@@ -181,10 +181,27 @@ int main()
         "a second initialization on the same session is refused");
     Check(session.IsOpen(), "the refused second initialization left the session open");
 
+    // The fixed set of output bitstream buffers, owned by the session.
+    Check(
+        session.TryPrepareOutputBitstreamBuffers(),
+        "the fixed output bitstream buffer set prepares on the initialized encoder");
+    Check(
+        !session.TryPrepareOutputBitstreamBuffers(),
+        "a second output buffer preparation is refused");
+    Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with prepared output buffers refuses to close");
+    Check(session.IsOpen(), "the refused close left the session open");
+
     // The fixed set of completion events, owned by the session.
     Check(
         session.TryPrepareCompletionEvents(),
         "the fixed completion event set prepares on the initialized encoder");
+
+    // The events go before the buffers.
+    Check(
+        !session.TryReleaseOutputBitstreamBuffers(),
+        "the output buffers are not released while completion events are held");
 
     // A prepared set holds the session open, and refusing the close does not
     // spend the close attempt.
@@ -208,8 +225,21 @@ int main()
         "a second release on the same session is refused");
 
     Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with prepared output buffers still refuses to close");
+
+    Check(
+        session.TryReleaseOutputBitstreamBuffers(),
+        "the output bitstream buffer set is destroyed once the events are gone");
+
+    // One owner, one release.
+    Check(
+        !session.TryReleaseOutputBitstreamBuffers(),
+        "a second output buffer release on the same session is refused");
+
+    Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the session closes once its completion events are gone");
+        "the session closes once its slot resources are gone");
     Check(!session.IsOpen(), "the closed session holds no encoder");
 
     binding.Clear();

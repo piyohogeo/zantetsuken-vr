@@ -51,15 +51,15 @@ namespace zantetsu
         Failed,
     };
 
-    /// The fixed number of completion events a Phase 0.11 session prepares,
-    /// one per encode sample slot. It is a constant of the design: nothing
-    /// here grows, shrinks, or adds one later.
-    constexpr uint32_t kCompletionEventCount = 8;
+    /// The fixed number of encode sample slots a Phase 0.11 session prepares,
+    /// each with its own completion event and output bitstream buffer. It is a
+    /// constant of the design: nothing here grows, shrinks, or adds one later.
+    constexpr uint32_t kEncodeSampleSlotCount = 8;
 
-    /// An owner must not be destroyed while it still holds an encoder or any
-    /// completion-event handle: the events have to be released and the session
-    /// closed successfully first, and an owner whose release or close was
-    /// refused stays alive with what it holds.
+    /// An owner must not be destroyed while it still holds an encoder, a
+    /// completion-event handle, or an output bitstream buffer: everything has
+    /// to be released and the session closed successfully first, and an owner
+    /// whose release or close was refused stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -173,6 +173,20 @@ namespace zantetsu
         /// have happened, and nothing is retried here.
         bool TryReleaseCompletionEvents();
 
+        /// Creates the fixed set of output bitstream buffers, one per slot and
+        /// exactly once per owner. The encoder must already be initialized.
+        /// All of the slots must succeed; a failure part of the way through
+        /// destroys what it made in reverse, and a destroy that is itself
+        /// refused stops there, leaving that buffer and the ones before it
+        /// with this session.
+        bool TryPrepareOutputBitstreamBuffers();
+
+        /// Destroys the whole set in reverse order, exactly once per owner.
+        /// The completion events are released first: a session that still has
+        /// them refuses. A refused destroy stops the release with that buffer
+        /// and the ones before it still held.
+        bool TryReleaseOutputBitstreamBuffers();
+
         bool IsOpen() const { return _encoder != nullptr; }
 
         DWORD LastWin32Error() const { return _lastWin32Error; }
@@ -201,25 +215,38 @@ namespace zantetsu
         // itself against it.
         bool _encoderInitialized = false;
 
-        /// One slot of the fixed set. Holding a handle means the session is
-        /// responsible for it; whether the driver also has it registered is
-        /// the separate fact beside it, so a partial failure is never
-        /// mistaken for either state.
-        struct CompletionEventSlot
+        /// One encode sample slot's resources, as far as they exist. Holding
+        /// a completion-event handle means the session is responsible for it;
+        /// whether the driver also has it registered is the separate fact
+        /// beside it, so a partial failure is never mistaken for either state.
+        /// The output bitstream buffer is held the same way: non-null means
+        /// this session must destroy it.
+        ///
+        /// This is not a finished slot - the input resource belongs to a later
+        /// unit - and none of it is exposed: there is no getter and no slot in
+        /// the ABI.
+        struct EncodeSampleSlot
         {
-            HANDLE handle;
-            bool registered;
+            HANDLE completionEvent;
+            bool completionEventRegistered;
+            NV_ENC_OUTPUT_PTR outputBitstreamBuffer;
         };
 
-        bool TryReleaseCompletionEventSlot(CompletionEventSlot& slot);
+        bool TryReleaseCompletionEventSlot(EncodeSampleSlot& slot);
         void RollBackPreparedCompletionEvents(uint32_t count);
         bool AnyCompletionEventHeld() const;
 
-        // The fixed set this session owns, and the two attempts that may touch
-        // it.
-        CompletionEventSlot _completionEvents[kCompletionEventCount] = {};
+        bool TryDestroyOutputBitstreamBuffer(EncodeSampleSlot& slot);
+        void RollBackPreparedOutputBitstreamBuffers(uint32_t count);
+        bool AnyOutputBitstreamBufferHeld() const;
+
+        // The fixed set of slots this session owns, and the attempts that may
+        // touch each kind of resource in them.
+        EncodeSampleSlot _slots[kEncodeSampleSlotCount] = {};
         bool _completionEventsPrepareAttempted = false;
         bool _completionEventsReleaseAttempted = false;
+        bool _outputBitstreamBuffersPrepareAttempted = false;
+        bool _outputBitstreamBuffersReleaseAttempted = false;
     };
 }
 
