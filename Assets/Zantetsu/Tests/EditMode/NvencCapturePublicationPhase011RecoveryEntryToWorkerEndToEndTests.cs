@@ -12,20 +12,22 @@ namespace Zantetsu.Core.Tests
 {
     /// <summary>
     /// Managed end-to-end test from the regular Capture Run initialization
-    /// entry to the Phase 0.11 recovery worker: the exact open outcome and
-    /// ownership lease the entry returns are handed to the recovery worker
-    /// factory, and once that recovery finishes the Run's two real OS locks can
-    /// be acquired again.
+    /// entry to the Phase 0.11 recovery worker, driven only through the
+    /// application-side owner: opening the Run starts the recovery, the
+    /// terminal is collected from that owner, and once the recovery finishes
+    /// the Run's two real OS locks can be acquired again.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The lock acquisition, the initialization entry, and everything from the
-    /// recovery factory onwards are the production concretes over a real
-    /// temporary tree, with one process state and one verification buffer pool.
-    /// Unlike the other recovery end-to-end tests, the lock here is the real one
-    /// the entry acquired - there is no lock-handle seam - so the release is
-    /// shown by re-acquiring both locks through the production backend
-    /// afterwards.
+    /// The lock acquisition, the initialization entry, the startup coordinator,
+    /// and everything from the recovery factory onwards are the production
+    /// concretes over a real temporary tree, with one process state and one
+    /// verification buffer pool. Nothing is wired by hand here: the owner is
+    /// what opens the Run, composes the worker, starts it, and hands back the
+    /// terminal, and this fixture never reaches the worker itself. Unlike the
+    /// other recovery end-to-end tests, the lock is the real one the entry
+    /// acquired - there is no lock-handle seam - so the release is shown by
+    /// re-acquiring both locks through the production backend afterwards.
     /// </para>
     /// <para>
     /// The one fixture-local fake is the generic initialization recovery
@@ -98,12 +100,15 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void OpenedRun_RecoversThroughItsWorkerAndItsRealLockCanBeTakenAgain()
+        public void OpenedRun_RecoversThroughItsOwnerAndItsRealLockCanBeTakenAgain()
         {
             RequireCapabilities();
 
             Sandbox sandbox = MakeSandbox();
             byte[] canonicalPlan = CapturePublicationPlanCodec.SerializeCanonical(sandbox.Plan);
+
+            // The representative recoverable shape, before anything runs.
+            sandbox.AssertSeededTreeIntact();
 
             FakeInitializationRecoveryInspector inspector =
                 new FakeInitializationRecoveryInspector(sandbox.Layout);
@@ -123,35 +128,56 @@ namespace Zantetsu.Core.Tests
                             new CaptureRunInitializationExecutionCoordinator(
                                 freshStart, freshStart))));
 
-            // 1-2. The regular entry opens the Run: locks acquired, inspected,
-            // and routed to a publication recovery the caller holds.
-            Assert.That(
-                entry.TryOpen(
-                    sandbox.Layout,
-                    MaximumRootEntryCount,
-                    out CaptureRunInitializationOpenOutcome outcome,
-                    out CaptureRunInitializationSessionOwnershipLease ownershipLease),
-                Is.True);
+            // This process may recover, and it shares one process state, one
+            // verification buffer pool, and one factory.
+            NvencCaptureProcessState processState = new NvencCaptureProcessState();
+            Assert.That(processState.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+
+            NvencRunPublicationRecoveryStartupCoordinator startup =
+                new NvencRunPublicationRecoveryStartupCoordinator(
+                    entry,
+                    new NvencRunPublicationRecoveryWorkerFactory(
+                        processState,
+                        new CaptureArtifactVerificationBufferPool(VerificationBufferLength)));
+
+            CaptureRunInitializationOpenOutcome outcome = null;
+            CaptureRunInitializationSessionOwnershipLease callerLease = null;
+            bool checksPassed = false;
 
             try
             {
+                // The owner opens the Run through the regular entry and starts
+                // the recovery itself.
+                Assert.That(
+                    startup.TryOpen(
+                        sandbox.Layout,
+                        MaximumRootEntryCount,
+                        out outcome,
+                        out callerLease),
+                    Is.True);
+
                 Assert.That(outcome, Is.Not.Null);
-                Assert.That(ownershipLease, Is.Not.Null);
                 Assert.That(outcome.Status,
                     Is.EqualTo(CaptureRunInitializationOpenStatus.PublicationRecoveryRequired));
                 Assert.That(outcome.Session, Is.Null);
-                Assert.That(outcome.IsValid, Is.True);
                 Assert.That(ReferenceEquals(outcome.RootLayout, sandbox.Layout), Is.True);
-
-                // The evidence the entry produced is the one this lease was
-                // issued for.
-                Assert.That(outcome.LockIdentityEvidence, Is.Not.Null);
-                Assert.That(
-                    outcome.LockIdentityEvidence.IsIssuedFor(ownershipLease), Is.True);
-                Assert.That(ownershipLease.IsCreated, Is.True);
-                Assert.That(ownershipLease.CanRelease, Is.True);
+                Assert.That(callerLease, Is.Null,
+                    "a started recovery owns the lease, so none is handed back.");
                 Assert.That(freshStart.CallCount, Is.EqualTo(0),
                     "a publication recovery starts nothing fresh.");
+
+                // The owner holds that exact Run's recovery.
+                Assert.That(startup.HasActiveRecovery, Is.True);
+                Assert.That(
+                    ReferenceEquals(startup.ActiveRecoveryOpenOutcome, outcome), Is.True);
+
+                CaptureRunInitializationSessionOwnershipLease recoveryLease =
+                    startup.ActiveRecoveryOwnershipLease;
+                Assert.That(recoveryLease, Is.Not.Null);
+                Assert.That(outcome.LockIdentityEvidence, Is.Not.Null);
+                Assert.That(
+                    outcome.LockIdentityEvidence.IsBoundTo(recoveryLease), Is.True,
+                    "the active lease is the one this Run's lock identity evidence was issued for.");
 
                 // The exact lock path set the entry acquired; kept here
                 // because the outcome stops being valid once its lock is
@@ -159,102 +185,76 @@ namespace Zantetsu.Core.Tests
                 CaptureRunLockPathSet pathSet = outcome.LockPathSet;
                 Assert.That(pathSet, Is.Not.Null);
 
-                // While the Run holds its locks, nobody else can take them.
+                // While the recovery holds the Run's locks, nobody else can
+                // take them.
+                AssertBothLocksAreHeld(lockBackend, pathSet);
+
+                // The main thread polls the owner; it never waits on the
+                // worker and never reaches it.
+                NvencRunPublicationRecoveryTerminalResult terminal =
+                    CollectTerminal(startup);
+
+                Assert.That(terminal.IsCaptureCompleted, Is.True);
+                Assert.That(ReferenceEquals(terminal.OpenOutcome, outcome), Is.True);
+                Assert.That(ReferenceEquals(terminal.OwnershipLease, recoveryLease), Is.True);
+
+                // The published side: the index is the canonical plan and the
+                // staging Run root is gone.
+                Assert.That(File.Exists(sandbox.CaptureIndexPath), Is.True);
+                Assert.That(File.ReadAllBytes(sandbox.CaptureIndexPath),
+                    Is.EqualTo(canonicalPlan));
+                Assert.That(File.Exists(sandbox.CaptureIndexTemporaryPath), Is.False);
+                sandbox.AssertPublishedSideIntact();
+
+                Assert.That(Directory.Exists(sandbox.Layout.StagingRunRoot), Is.False);
                 Assert.That(
-                    lockBackend.TryAcquire(
-                        pathSet.FirstLockPath, out ICaptureRunLockHandle contended),
-                    Is.False,
-                    "the entry still holds the first lock.");
-                Assert.That(contended, Is.Null);
+                    Directory.Exists(Path.GetDirectoryName(sandbox.Layout.StagingRunRoot)),
+                    Is.True);
 
-                // 3. This process may recover.
-                NvencCaptureProcessState processState = new NvencCaptureProcessState();
-                Assert.That(processState.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+                // The lease is fully released, and the Run's two real locks can
+                // be taken again.
+                Assert.That(recoveryLease.IsReleaseComplete, Is.True);
+                Assert.That(recoveryLease.CanRelease, Is.False);
+                AssertBothLocksCanBeAcquiredAgain(lockBackend, pathSet);
 
-                // 4. Composition alone changes nothing.
-                NvencRunPublicationRecoveryWorkerService worker =
-                    new NvencRunPublicationRecoveryWorkerFactory(
-                            processState,
-                            new CaptureArtifactVerificationBufferPool(VerificationBufferLength))
-                        .Create(outcome, ownershipLease);
+                // The collection freed the slot: nothing is retained, and the
+                // owner is back in the state that admits the next open.
+                Assert.That(startup.HasActiveRecovery, Is.False);
+                Assert.That(startup.ActiveRecoveryOpenOutcome, Is.Null);
+                Assert.That(startup.ActiveRecoveryOwnershipLease, Is.Null);
+                Assert.That(startup.RecoveryWorkerState,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.NotStarted));
+                Assert.That(startup.TryGetRecoveryFailure(out Exception failure), Is.False,
+                    failure?.ToString());
+                Assert.That(failure, Is.Null);
+                Assert.That(startup.TryRequestRecoveryReleaseRetry(), Is.False);
 
-                bool workerChecksPassed = false;
+                // At most once.
+                Assert.That(
+                    startup.TryCollectRecoveryTerminal(
+                        out NvencRunPublicationRecoveryTerminalResult again),
+                    Is.False);
+                Assert.That(again.IsValid, Is.False);
 
-                try
-                {
-                    Assert.That(worker.State,
-                        Is.EqualTo(NvencRunPublicationRecoveryWorkerState.NotStarted));
-                    sandbox.AssertSeededTreeIntact();
-                    Assert.That(ownershipLease.IsCreated, Is.True);
-                    Assert.That(ownershipLease.IsReleaseComplete, Is.False);
-
-                    // 5-8. The worker runs the whole recovery on its own
-                    // thread and stops.
-                    worker.Start();
-                    WaitUntilStopped(worker);
-
-                    Assert.That(worker.TryGetFailure(out Exception failure), Is.False,
-                        failure?.ToString());
-                    Assert.That(worker.State,
-                        Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Completed));
-
-                    Assert.That(
-                        worker.TryCollectTerminal(
-                            out NvencRunPublicationRecoveryTerminalResult terminal),
-                        Is.True);
-                    Assert.That(terminal.IsCaptureCompleted, Is.True);
-                    Assert.That(ReferenceEquals(terminal.OpenOutcome, outcome), Is.True);
-                    Assert.That(
-                        ReferenceEquals(terminal.OwnershipLease, ownershipLease), Is.True);
-
-                    // 9-10. The published side: the index is the canonical plan
-                    // and the staging Run root is gone.
-                    Assert.That(File.Exists(sandbox.CaptureIndexPath), Is.True);
-                    Assert.That(File.ReadAllBytes(sandbox.CaptureIndexPath),
-                        Is.EqualTo(canonicalPlan));
-                    Assert.That(File.Exists(sandbox.CaptureIndexTemporaryPath), Is.False);
-                    sandbox.AssertPublishedSideIntact();
-
-                    Assert.That(Directory.Exists(sandbox.Layout.StagingRunRoot), Is.False);
-                    Assert.That(
-                        Directory.Exists(Path.GetDirectoryName(sandbox.Layout.StagingRunRoot)),
-                        Is.True);
-
-                    // 11-13. The lease is fully released, and the Run's two
-                    // real locks can be taken again.
-                    Assert.That(ownershipLease.IsReleaseComplete, Is.True);
-                    Assert.That(ownershipLease.CanRelease, Is.False);
-                    AssertBothLocksCanBeAcquiredAgain(lockBackend, pathSet);
-
-                    // 14. At most once.
-                    Assert.That(
-                        worker.TryCollectTerminal(
-                            out NvencRunPublicationRecoveryTerminalResult again),
-                        Is.False);
-                    Assert.That(again.IsValid, Is.False);
-
-                    workerChecksPassed = true;
-                }
-                finally
-                {
-                    // 15. The worker is disposed once it has physically
-                    // stopped - at once if it never started. What the teardown
-                    // could not finish is reported only when there is no
-                    // earlier failure it would hide.
-                    Exception cleanupFailure = ShutDownWorker(worker);
-                    if (workerChecksPassed && cleanupFailure != null)
-                    {
-                        throw new AssertionException(
-                            "the recovery worker could not be shut down.", cleanupFailure);
-                    }
-                }
+                checksPassed = true;
             }
             finally
             {
-                // The lease is the caller's to release; after a completed
-                // recovery this is a no-op, and after a failure it is what
-                // frees the real lock.
-                ReleaseQuietly(ownershipLease);
+                // Anything the owner still holds is finished the only way it
+                // offers - a bounded convergence and the explicit release
+                // retry - and a lease that was handed back to this fixture is
+                // this fixture's to release. What the teardown could not finish
+                // is reported only when there is no earlier failure it would
+                // hide.
+                Exception cleanupFailure = FinishActiveRecovery(startup);
+                Exception leaseFailure = ReleaseQuietly(callerLease);
+
+                if (checksPassed && (cleanupFailure ?? leaseFailure) != null)
+                {
+                    throw new AssertionException(
+                        "the recovery could not be finished at teardown.",
+                        cleanupFailure ?? leaseFailure);
+                }
             }
         }
 
@@ -278,6 +278,28 @@ namespace Zantetsu.Core.Tests
                 Assert.Ignore(
                     "No-follow commit and directory flush are not available on this platform.");
             }
+        }
+
+        /// <summary>
+        /// Neither of the Run's real locks can be taken while the recovery
+        /// holds them. Contention is an ordinary false, never an exception, so
+        /// no handle is left with this fixture.
+        /// </summary>
+        private static void AssertBothLocksAreHeld(
+            CaptureRunLockOsBackend backend, CaptureRunLockPathSet pathSet)
+        {
+            Assert.That(
+                backend.TryAcquire(
+                    pathSet.FirstLockPath, out ICaptureRunLockHandle first),
+                Is.False,
+                "the recovery still holds the first lock.");
+            Assert.That(first, Is.Null);
+            Assert.That(
+                backend.TryAcquire(
+                    pathSet.SecondLockPath, out ICaptureRunLockHandle second),
+                Is.False,
+                "the recovery still holds the second lock.");
+            Assert.That(second, Is.Null);
         }
 
         /// <summary>
@@ -307,64 +329,15 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static void ReleaseQuietly(IDisposable resource)
+        /// <summary>
+        /// Releases what this fixture owns and returns the failure instead of
+        /// throwing it, so a teardown can never replace an earlier failure.
+        /// </summary>
+        private static Exception ReleaseQuietly(IDisposable resource)
         {
             try
             {
                 resource?.Dispose();
-            }
-            catch (AggregateException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
-            catch (IOException)
-            {
-            }
-        }
-
-        /// <summary>
-        /// Releases a worker from whatever state a test left it in: an
-        /// unstarted one is disposed at once, a parked one is first asked to
-        /// finish its release retry, and a started one is disposed only once a
-        /// bounded wait has seen it physically stop. Nothing here waits without
-        /// a bound, forces a stop, or asserts - what it could not finish is
-        /// returned, so the caller decides whether reporting it would hide an
-        /// earlier failure.
-        /// </summary>
-        private static Exception ShutDownWorker(
-            NvencRunPublicationRecoveryWorkerService worker)
-        {
-            try
-            {
-                if (worker.State == NvencRunPublicationRecoveryWorkerState.NotStarted)
-                {
-                    worker.Dispose();
-                    return null;
-                }
-
-                if (worker.State
-                    == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
-                {
-                    worker.TryRequestReleaseRetry();
-                }
-
-                Stopwatch watchdog = Stopwatch.StartNew();
-                while (!worker.IsStopped
-                    && watchdog.ElapsedMilliseconds <= WatchdogMilliseconds)
-                {
-                    Thread.Yield();
-                }
-
-                if (!worker.IsStopped)
-                {
-                    return new TimeoutException(
-                        "the recovery worker did not physically stop within "
-                        + WatchdogMilliseconds + " ms.");
-                }
-
-                worker.Dispose();
                 return null;
             }
             catch (Exception ex)
@@ -373,17 +346,96 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static void WaitUntilStopped(NvencRunPublicationRecoveryWorkerService worker)
+        /// <summary>
+        /// Polls the owner the way a main thread would, with a bound, until the
+        /// terminal is collectable. It never waits on the worker, and a failure
+        /// is reported rather than waited out.
+        /// </summary>
+        private static NvencRunPublicationRecoveryTerminalResult CollectTerminal(
+            NvencRunPublicationRecoveryStartupCoordinator startup)
         {
             Stopwatch watchdog = Stopwatch.StartNew();
-            while (!worker.IsStopped)
+            while (true)
             {
+                if (startup.TryCollectRecoveryTerminal(
+                        out NvencRunPublicationRecoveryTerminalResult terminal))
+                {
+                    return terminal;
+                }
+
+                if (startup.TryGetRecoveryFailure(out Exception failure))
+                {
+                    Assert.Fail(
+                        "the recovery reported a failure instead of a terminal ("
+                        + startup.RecoveryWorkerState + "): " + failure);
+                }
+
                 if (watchdog.ElapsedMilliseconds > WatchdogMilliseconds)
                 {
-                    Assert.Fail("the recovery worker did not physically stop in time.");
+                    Assert.Fail(
+                        "no terminal was collectable in time; the recovery is "
+                        + startup.RecoveryWorkerState + ".");
                 }
 
                 Thread.Yield();
+            }
+        }
+
+        /// <summary>
+        /// Finishes a recovery the owner may still hold, using only what the
+        /// owner offers: a bounded convergence on the terminal, and one
+        /// explicit release-retry request each time it is parked. Nothing is
+        /// forced or unlocked, a faulted recovery is left exactly as it is, and
+        /// the failure this could not resolve is returned rather than thrown.
+        /// </summary>
+        private static Exception FinishActiveRecovery(
+            NvencRunPublicationRecoveryStartupCoordinator startup)
+        {
+            try
+            {
+                if (!startup.HasActiveRecovery)
+                {
+                    return null;
+                }
+
+                Stopwatch watchdog = Stopwatch.StartNew();
+                while (startup.HasActiveRecovery)
+                {
+                    if (startup.TryCollectRecoveryTerminal(
+                            out NvencRunPublicationRecoveryTerminalResult collected))
+                    {
+                        return null;
+                    }
+
+                    if (startup.RecoveryWorkerState
+                        == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
+                    {
+                        startup.TryRequestRecoveryReleaseRetry();
+                    }
+                    else if (startup.RecoveryWorkerState
+                        == NvencRunPublicationRecoveryWorkerState.Faulted)
+                    {
+                        // The owner keeps a faulted recovery, and this fixture
+                        // does not work around that.
+                        return null;
+                    }
+
+                    if (watchdog.ElapsedMilliseconds > WatchdogMilliseconds)
+                    {
+                        return new TimeoutException(
+                            "the recovery did not reach a terminal within "
+                            + WatchdogMilliseconds + " ms; it is "
+                            + startup.RecoveryWorkerState + ".");
+                    }
+
+                    Thread.Yield();
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
             }
         }
 
