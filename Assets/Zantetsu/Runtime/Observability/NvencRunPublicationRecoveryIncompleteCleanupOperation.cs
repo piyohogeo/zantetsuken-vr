@@ -32,10 +32,11 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="IsValid"/> recomputes the same minimal admission conditions
     /// without throwing, so it is false once the lease has been released, in
-    /// part or completely. No binding or releasability predicate is offered
-    /// yet: the release authority that follows a finished cleanup is a later
-    /// design step, and this type will grow one only when that step shows it
-    /// is needed.
+    /// part or completely. This type stays first-cleanup admission only, and
+    /// offers no binding or releasability predicate: the historical binding
+    /// that has to survive a partial or completed release belongs to the
+    /// ownership release operation issued from the cleanup's terminal result,
+    /// not here.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryIncompleteCleanupOperation
