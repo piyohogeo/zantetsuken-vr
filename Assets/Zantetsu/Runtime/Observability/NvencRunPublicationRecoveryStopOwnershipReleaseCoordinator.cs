@@ -29,14 +29,15 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The collision and deferred shapes are never branched on here. It owns no
-    /// lease and disposes nothing, never disposes the lock itself, inspects,
-    /// classifies, and re-checks nothing, re-classifies neither stopping shape,
-    /// runs no cleanup, Capture Index, or CaptureComplete work, changes no
-    /// process state, Poison, Registry, disposition, or Service, publishes no
-    /// Run terminal status or completion result, owns no thread, queue, task,
-    /// wait, or monitor gate, and is not an <see cref="IDisposable"/>. The
-    /// decision and the lease are reachable through the operation and are not
-    /// duplicated here.
+    /// lease and disposes nothing, never disposes the lock itself, performs no
+    /// filesystem re-inspection or reclassification, runs no cleanup, Capture
+    /// Index, or CaptureComplete work, changes no process state, Poison,
+    /// Registry, disposition, or Service, publishes no Run terminal status or
+    /// completion result, owns no thread, queue, task, wait, or monitor gate,
+    /// and is not an <see cref="IDisposable"/>. What it does re-check is only
+    /// in memory: the retained receipt's correlation and the shared admission.
+    /// The decision and the lease are reachable through the operation and are
+    /// not duplicated here.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryStopOwnershipReleaseCoordinator
