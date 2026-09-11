@@ -12,16 +12,18 @@ namespace Zantetsu.Core.Tests
     /// Managed end-to-end test of the Phase 0.11 NVENC recovery happy path over
     /// a real filesystem: from the publication recovery inspection through the
     /// Capture Index commit, CaptureComplete, the staging cleanup, and the
-    /// release of the Run's OS lock.
+    /// release of the Run's Session Ownership Lease.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Every stage from the publication recovery onwards is the production
     /// concrete over the production no-follow backend and a real temporary
-    /// tree; only the Run lock handles come from the same small test seam the
-    /// contract fixtures use, because a real lock acquisition is not what this
-    /// path is about. No private field is rewritten and no NVENC, GPU, Worker,
-    /// Publication Service, or process state is involved.
+    /// tree. The lock handles behind the Session Ownership Lease are the same
+    /// small test seam the contract fixtures use, so what the release step
+    /// shows is the production releaser driving that lease and its handles to
+    /// a completed release - not the release of a real OS lock, which is not
+    /// what this path is about. No private field is rewritten and no NVENC,
+    /// GPU, Worker, Publication Service, or process state is involved.
     /// </para>
     /// <para>
     /// One representative healthy path is covered here - a Run whose Capture
@@ -215,7 +217,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(Directory.Exists(sandbox.StagingRunRootParent), Is.True);
             sandbox.AssertPublishedSideIntact(canonicalPlan);
 
-            // ---- 5. Release the Run's OS lock ----
+            // ---- 5. Release the Run's Session Ownership Lease ----
             NvencRunCaptureCompleteRecoveryOwnershipReleaser releaser =
                 new NvencRunCaptureCompleteRecoveryOwnershipReleaser();
             NvencRunCaptureCompleteRecoveryOwnershipReleaseCoordinator releaseCoordinator =
@@ -232,6 +234,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(
                 releaseReceipt.IsIssuedFor(releaser, releaseCoordinator.Operation), Is.True);
             Assert.That(releaseCoordinator.IsReleased, Is.True);
+
+            // The lease and its handles, which is what this seam holds.
             Assert.That(sandbox.Owner.IsReleaseComplete, Is.True);
             Assert.That(sandbox.Owner.CanRelease, Is.False);
             Assert.That(sandbox.FirstHandle.DisposeCallCount, Is.EqualTo(1));
@@ -375,9 +379,11 @@ namespace Zantetsu.Core.Tests
 
         /// <summary>
         /// Drives the existing initialization recovery orchestration to a
-        /// publication-recovery outcome that still holds its lock, through the
+        /// publication-recovery outcome that still holds its lease, through the
         /// ordinary constructors and the same lock-handle seam the contract
-        /// fixtures use.
+        /// fixtures use. Both roots are described as they actually are on
+        /// disk: canonical markers plus the non-marker entries the staging
+        /// chunks directory and the published chunk are.
         /// </summary>
         private CaptureRunInitializationOpenOutcome MakeRecoveryOutcome(
             CaptureRunRootLayout layout,
@@ -397,7 +403,7 @@ namespace Zantetsu.Core.Tests
                 CaptureRunRootRole.Final,
                 binding.FinalInitialization,
                 binding.FinalReady,
-                hasNonMarkerEntry: false);
+                hasNonMarkerEntry: true);
 
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator =
                 new CaptureRunInitializationRecoveryOrchestrationCoordinator(
@@ -543,8 +549,8 @@ namespace Zantetsu.Core.Tests
 
         /// <summary>
         /// A lock handle that counts its own releases: the one test seam this
-        /// end-to-end path keeps, since acquiring a real OS lock is not what it
-        /// is about.
+        /// end-to-end path keeps, since acquiring and releasing a real OS lock
+        /// is not what it is about.
         /// </summary>
         private sealed class CountingHandle : ICaptureRunLockHandle
         {
