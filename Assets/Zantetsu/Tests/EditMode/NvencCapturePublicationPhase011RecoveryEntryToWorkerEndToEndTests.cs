@@ -178,6 +178,8 @@ namespace Zantetsu.Core.Tests
                             new CaptureArtifactVerificationBufferPool(VerificationBufferLength))
                         .Create(outcome, ownershipLease);
 
+                bool workerChecksPassed = false;
+
                 try
                 {
                     Assert.That(worker.State,
@@ -230,12 +232,21 @@ namespace Zantetsu.Core.Tests
                             out NvencRunPublicationRecoveryTerminalResult again),
                         Is.False);
                     Assert.That(again.IsValid, Is.False);
+
+                    workerChecksPassed = true;
                 }
                 finally
                 {
-                    // 15. Dispose only after the physical stop.
-                    WaitUntilStopped(worker);
-                    worker.Dispose();
+                    // 15. The worker is disposed once it has physically
+                    // stopped - at once if it never started. What the teardown
+                    // could not finish is reported only when there is no
+                    // earlier failure it would hide.
+                    Exception cleanupFailure = ShutDownWorker(worker);
+                    if (workerChecksPassed && cleanupFailure != null)
+                    {
+                        throw new AssertionException(
+                            "the recovery worker could not be shut down.", cleanupFailure);
+                    }
                 }
             }
             finally
@@ -310,6 +321,55 @@ namespace Zantetsu.Core.Tests
             }
             catch (IOException)
             {
+            }
+        }
+
+        /// <summary>
+        /// Releases a worker from whatever state a test left it in: an
+        /// unstarted one is disposed at once, a parked one is first asked to
+        /// finish its release retry, and a started one is disposed only once a
+        /// bounded wait has seen it physically stop. Nothing here waits without
+        /// a bound, forces a stop, or asserts - what it could not finish is
+        /// returned, so the caller decides whether reporting it would hide an
+        /// earlier failure.
+        /// </summary>
+        private static Exception ShutDownWorker(
+            NvencRunPublicationRecoveryWorkerService worker)
+        {
+            try
+            {
+                if (worker.State == NvencRunPublicationRecoveryWorkerState.NotStarted)
+                {
+                    worker.Dispose();
+                    return null;
+                }
+
+                if (worker.State
+                    == NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry)
+                {
+                    worker.TryRequestReleaseRetry();
+                }
+
+                Stopwatch watchdog = Stopwatch.StartNew();
+                while (!worker.IsStopped
+                    && watchdog.ElapsedMilliseconds <= WatchdogMilliseconds)
+                {
+                    Thread.Yield();
+                }
+
+                if (!worker.IsStopped)
+                {
+                    return new TimeoutException(
+                        "the recovery worker did not physically stop within "
+                        + WatchdogMilliseconds + " ms.");
+                }
+
+                worker.Dispose();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
             }
         }
 
@@ -500,11 +560,12 @@ namespace Zantetsu.Core.Tests
         }
 
         /// <summary>
-        /// The one fixture-local fake: it reports the observation pair that
-        /// routes this Run to a publication recovery - both roots initialized
-        /// and ready for the same Run, with a non-marker entry on the staging
-        /// side - derived from the markers this sandbox was seeded with. It
-        /// reads no file and infers no history.
+        /// The one fixture-local fake: it returns a canonical observation pair
+        /// matching this sandbox - both roots initialized and ready for the
+        /// same Run, with non-marker entries present - which routes this Run to
+        /// a publication recovery. It builds that pair from the layout and this
+        /// fixture's initialization ID; it opens, enumerates, and reads nothing,
+        /// and infers no history.
         /// </summary>
         private sealed class FakeInitializationRecoveryInspector
             : ICaptureRunInitializationRecoveryInspector
