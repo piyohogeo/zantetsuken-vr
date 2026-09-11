@@ -246,10 +246,11 @@ namespace zantetsu
         /// whether the driver also has it registered is the separate fact
         /// beside it, so a partial failure is never mistaken for either state.
         /// The output bitstream buffer is held the same way: non-null means
-        /// this session must destroy it. The NV12 input surface is two facts
-        /// again - the texture this session must release, and the registration
-        /// the driver must be told to forget - so a half-prepared slot is
-        /// never mistaken for either.
+        /// this session must destroy it. The NV12 input surface is four facts
+        /// again - the texture this session must release, the two plane render
+        /// target views the conversion will draw through, and the registration
+        /// the driver must be told to forget - so a half-prepared slot is never
+        /// mistaken for a finished or an empty one.
         ///
         /// This is not a finished slot - the input resource belongs to a later
         /// unit - and none of it is exposed: there is no getter and no slot in
@@ -260,6 +261,8 @@ namespace zantetsu
             bool completionEventRegistered;
             NV_ENC_OUTPUT_PTR outputBitstreamBuffer;
             ID3D11Texture2D* inputTexture;
+            ID3D11RenderTargetView* inputLumaRenderTargetView;
+            ID3D11RenderTargetView* inputChromaRenderTargetView;
             NV_ENC_REGISTERED_PTR registeredInputResource;
         };
 
@@ -274,6 +277,10 @@ namespace zantetsu
         bool TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot);
         void RollBackPreparedInputSurfaces(uint32_t count);
         bool AnyInputSurfaceHeld() const;
+
+        /// Whether every slot holds its texture, both plane views, and its
+        /// registration. Anything less is not a prepared input set.
+        bool AreInputSurfacesFullyPrepared() const;
 
         // The fixed set of slots this session owns, and the attempts that may
         // touch each kind of resource in them.

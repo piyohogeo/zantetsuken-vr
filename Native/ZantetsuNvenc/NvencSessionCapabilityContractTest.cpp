@@ -189,7 +189,7 @@ int main()
     // The fixed set of NV12 input surfaces, owned by the session.
     Check(
         session.TryPrepareInputSurfaces(),
-        "the fixed NV12 input surface set prepares and registers");
+        "the fixed NV12 input surface set prepares: textures, both plane views, and registrations");
     Check(
         !session.TryPrepareInputSurfaces(),
         "a second input surface preparation is refused");

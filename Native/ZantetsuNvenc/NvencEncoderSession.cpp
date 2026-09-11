@@ -623,8 +623,11 @@ namespace zantetsu
     {
         for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
         {
-            if (_slots[i].inputTexture != nullptr ||
-                _slots[i].registeredInputResource != nullptr)
+            const EncodeSampleSlot& slot = _slots[i];
+            if (slot.inputTexture != nullptr ||
+                slot.inputLumaRenderTargetView != nullptr ||
+                slot.inputChromaRenderTargetView != nullptr ||
+                slot.registeredInputResource != nullptr)
             {
                 return true;
             }
@@ -633,9 +636,28 @@ namespace zantetsu
         return false;
     }
 
+    bool NvencEncoderSession::AreInputSurfacesFullyPrepared() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            const EncodeSampleSlot& slot = _slots[i];
+            if (slot.inputTexture == nullptr ||
+                slot.inputLumaRenderTargetView == nullptr ||
+                slot.inputChromaRenderTargetView == nullptr ||
+                slot.registeredInputResource == nullptr)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// Unregisters one slot's input surface if the driver has it, then releases
-    /// the texture. Each fact is cleared only once the step that undoes it has
-    /// succeeded.
+    /// the two plane views and the texture, in the reverse of the order they
+    /// were taken. Each fact is cleared only once the step that undoes it has
+    /// succeeded; a COM release reports nothing worth checking, so its count is
+    /// never read as evidence.
     bool NvencEncoderSession::TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot)
     {
         const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
@@ -656,6 +678,20 @@ namespace zantetsu
             }
 
             slot.registeredInputResource = nullptr;
+        }
+
+        if (slot.inputChromaRenderTargetView != nullptr)
+        {
+            ID3D11RenderTargetView* view = slot.inputChromaRenderTargetView;
+            slot.inputChromaRenderTargetView = nullptr;
+            view->Release();
+        }
+
+        if (slot.inputLumaRenderTargetView != nullptr)
+        {
+            ID3D11RenderTargetView* view = slot.inputLumaRenderTargetView;
+            slot.inputLumaRenderTargetView = nullptr;
+            view->Release();
         }
 
         if (slot.inputTexture != nullptr)
@@ -746,8 +782,46 @@ namespace zantetsu
                 return false;
             }
 
-            // Owned from the moment it exists, registered or not.
+            // Owned from the moment it exists, viewed and registered or
+            // not.
             _slots[i].inputTexture = texture;
+
+            // The two plane views the conversion will draw through. Nothing
+            // beyond the format, the dimension, and the mip slice is set, and
+            // no GPU command is issued to make them.
+            D3D11_RENDER_TARGET_VIEW_DESC lumaViewDesc = {};
+            lumaViewDesc.Format = DXGI_FORMAT_R8_UNORM;
+            lumaViewDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+            lumaViewDesc.Texture2D.MipSlice = 0;
+
+            ID3D11RenderTargetView* lumaView = nullptr;
+            const HRESULT lumaHr =
+                _device->CreateRenderTargetView(texture, &lumaViewDesc, &lumaView);
+            if (FAILED(lumaHr) || lumaView == nullptr)
+            {
+                _lastHResult = lumaHr;
+                RollBackPreparedInputSurfaces(i + 1);
+                return false;
+            }
+
+            _slots[i].inputLumaRenderTargetView = lumaView;
+
+            D3D11_RENDER_TARGET_VIEW_DESC chromaViewDesc = {};
+            chromaViewDesc.Format = DXGI_FORMAT_R8G8_UNORM;
+            chromaViewDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+            chromaViewDesc.Texture2D.MipSlice = 0;
+
+            ID3D11RenderTargetView* chromaView = nullptr;
+            const HRESULT chromaHr =
+                _device->CreateRenderTargetView(texture, &chromaViewDesc, &chromaView);
+            if (FAILED(chromaHr) || chromaView == nullptr)
+            {
+                _lastHResult = chromaHr;
+                RollBackPreparedInputSurfaces(i + 1);
+                return false;
+            }
+
+            _slots[i].inputChromaRenderTargetView = chromaView;
 
             NV_ENC_REGISTER_RESOURCE registerResource = {};
             registerResource.version = NV_ENC_REGISTER_RESOURCE_VER;
@@ -769,7 +843,7 @@ namespace zantetsu
             _slots[i].registeredInputResource = registerResource.registeredResource;
         }
 
-        return true;
+        return AreInputSurfacesFullyPrepared();
     }
 
     bool NvencEncoderSession::TryReleaseInputSurfaces()
@@ -828,13 +902,9 @@ namespace zantetsu
             return false;
         }
 
-        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        if (!AreInputSurfacesFullyPrepared())
         {
-            if (_slots[i].inputTexture == nullptr ||
-                _slots[i].registeredInputResource == nullptr)
-            {
-                return false;
-            }
+            return false;
         }
 
         // One owner, one preparation - settled before anything is created.
