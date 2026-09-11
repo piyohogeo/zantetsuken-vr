@@ -92,8 +92,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Create_FromAnIncompleteRun_Rejected()
         {
-            // An incomplete Run may still own orphaned roots, and whether it
-            // can be released without removing them is not settled here.
+            // An incomplete Run is orphan cleanup's subject: its lease is not
+            // released through this stopping operation before that separate
+            // cleanup path has finished.
             Harness h = MakeHarness();
             NvencRunPublicationRecoveryDecision incomplete = h.Incomplete();
 

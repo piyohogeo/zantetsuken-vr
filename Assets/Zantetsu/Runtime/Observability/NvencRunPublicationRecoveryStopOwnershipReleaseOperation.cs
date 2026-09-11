@@ -11,13 +11,13 @@ namespace Zantetsu.Observability
     /// <para>
     /// Only the two stopping dispositions are accepted.
     /// <see cref="NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision"/>
-    /// has found another writer's evidence and
-    /// <see cref="NvencRunPublicationRecoveryDisposition.Deferred"/> could not
-    /// verify the chunk; in both the Run goes no further and nothing more is
-    /// owed to the filesystem, so the lock can be let go.
+    /// and <see cref="NvencRunPublicationRecoveryDisposition.Deferred"/> both
+    /// mean this attempt stopped without changing a file and left what it found
+    /// to a later recovery, so the lease can be handed back.
     /// <see cref="NvencRunPublicationRecoveryDisposition.Incomplete"/> is
-    /// refused: whether such a Run may be released without first removing or
-    /// quarantining its orphaned roots is not settled, and
+    /// refused because such a Run is orphan cleanup's subject: its lease is not
+    /// released through this stopping operation before that separate cleanup
+    /// path has finished. And
     /// <see cref="NvencRunPublicationRecoveryDisposition.PublicationRecoveryRequired"/>
     /// is refused because that Run continues into the Capture Index recovery
     /// the CaptureComplete cleanup path owns.
