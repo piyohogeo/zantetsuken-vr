@@ -98,8 +98,11 @@ add_library(ZantetsuNvenc SHARED
     D3D11DeviceBinding.h
     NvencDriverApi.cpp
     NvencDriverApi.h
+    NvencEncoderSession.cpp
+    NvencEncoderSession.h
     UnityPluginLifecycle.cpp
-    ZantetsuNvencGraphicsObservationV1.h)
+    ZantetsuNvencGraphicsObservationV1.h
+    ZantetsuNvencSessionV1.h)
 
 set_target_properties(ZantetsuNvenc PROPERTIES
     OUTPUT_NAME "ZantetsuNvenc"

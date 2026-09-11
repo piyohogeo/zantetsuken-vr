@@ -21,11 +21,17 @@
 // sleeps, starts a thread or queue, touches the filesystem, logs, or calls
 // back into managed code.
 //
-// The one export reports those two facts - plugin loaded, device held - as
-// fixed-width values. It never dereferences, addrefs, or releases the device
+// The observation export reports those two facts - plugin loaded, device held -
+// as fixed-width values. It never dereferences, addrefs, or releases the device
 // it reports on.
+//
+// The session exports open and close one retained encoder session against that
+// same device. The session owner keeps its own reference, so it is not affected
+// by what the graphics lifecycle does next, and only an opaque handle to it
+// crosses the boundary.
 
 #include <atomic>
+#include <new>
 
 #include <d3d11.h>
 
@@ -33,7 +39,9 @@
 #include "IUnityGraphics.h"
 #include "IUnityGraphicsD3D11.h"
 #include "IUnityInterface.h"
+#include "NvencEncoderSession.h"
 #include "ZantetsuNvencGraphicsObservationV1.h"
+#include "ZantetsuNvencSessionV1.h"
 
 namespace
 {
@@ -150,6 +158,86 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
     // Published last: the callback is unregistered and the device is released
     // before this plugin stops reporting itself as loaded.
     g_loaded.store(false, std::memory_order_release);
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencOpenSessionV1(
+    ZantetsuNvencSessionOpenResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionOpenResultV1))
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->sessionOwner = 0;
+    destination->lastWin32Error = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        new (std::nothrow) zantetsu::NvencEncoderSession();
+    if (session == nullptr)
+    {
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    const zantetsu::NvencEncoderSessionOpenStatus status =
+        session->Open(g_deviceBinding);
+
+    if (status == zantetsu::NvencEncoderSessionOpenStatus::Opened)
+    {
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+        destination->sessionOwner = reinterpret_cast<uint64_t>(session);
+        return 1;
+    }
+
+    destination->lastWin32Error = session->LastWin32Error();
+    destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+    destination->status =
+        status == zantetsu::NvencEncoderSessionOpenStatus::Unsupported
+            ? ZANTETSU_NVENC_SESSION_V1_STATUS_UNSUPPORTED
+            : ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+
+    // An open that did not succeed holds nothing: the owner released the
+    // device reference and the module itself.
+    delete session;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencCloseSessionV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCloseResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionCloseResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastWin32Error = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (session->Close() != zantetsu::NvencEncoderSessionCloseStatus::Closed)
+    {
+        // The owner stays alive and still holds its session, so the caller's
+        // handle remains the same one.
+        destination->lastWin32Error = session->LastWin32Error();
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    delete session;
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
 }
 
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencGetGraphicsObservationV1(
