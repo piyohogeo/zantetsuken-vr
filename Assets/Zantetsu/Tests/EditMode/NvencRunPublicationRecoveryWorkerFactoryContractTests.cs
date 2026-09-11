@@ -14,14 +14,16 @@ namespace Zantetsu.Core.Tests
     /// Contract tests for the recovery worker composition factory: what it
     /// refuses before building anything, that a built worker is unstarted and
     /// has done nothing, that two calls share nothing, and one representative
-    /// real-tree pass proving the composed graph actually recovers a Run.
+    /// real-tree pass proving the composed graph actually recovers a Run, and
+    /// that only a Running process admits one at all.
     /// </summary>
     /// <remarks>
     /// The composition tests use recording collaborators to show that building
     /// opens no file; the sandbox test uses the production wiring over a real
-    /// temporary tree. The classification table and the branch semantics belong
-    /// to the existing end-to-end tests and worker fixture and are not repeated
-    /// here.
+    /// temporary tree. Process states are reached only through the ordinary
+    /// TryBeginDrain and TryPoison transitions - nothing here resets or rewrites
+    /// one. The classification table and the branch semantics belong to the
+    /// existing end-to-end tests and worker fixture and are not repeated here.
     /// </remarks>
     public class NvencRunPublicationRecoveryWorkerFactoryContractTests
     {
@@ -105,29 +107,42 @@ namespace Zantetsu.Core.Tests
             RecordingCommitFileSystem commit = new RecordingCommitFileSystem();
             RecordingCleanupFileSystem cleanup = new RecordingCleanupFileSystem();
 
+            NvencCaptureProcessState processState = new NvencCaptureProcessState();
+
             Assert.That(
                 Assert.Throws<ArgumentNullException>(
                     () => new NvencRunPublicationRecoveryWorkerFactory(
-                        null, pool, commit, cleanup)).ParamName,
+                        null, opener, pool, commit, cleanup)).ParamName,
+                Is.EqualTo("processState"));
+            Assert.That(
+                Assert.Throws<ArgumentNullException>(
+                    () => new NvencRunPublicationRecoveryWorkerFactory(
+                        processState, null, pool, commit, cleanup)).ParamName,
                 Is.EqualTo("opener"));
             Assert.That(
                 Assert.Throws<ArgumentNullException>(
                     () => new NvencRunPublicationRecoveryWorkerFactory(
-                        opener, null, commit, cleanup)).ParamName,
+                        processState, opener, null, commit, cleanup)).ParamName,
                 Is.EqualTo("verificationBufferPool"));
             Assert.That(
                 Assert.Throws<ArgumentNullException>(
                     () => new NvencRunPublicationRecoveryWorkerFactory(
-                        opener, pool, null, cleanup)).ParamName,
+                        processState, opener, pool, null, cleanup)).ParamName,
                 Is.EqualTo("commitFileSystem"));
             Assert.That(
                 Assert.Throws<ArgumentNullException>(
                     () => new NvencRunPublicationRecoveryWorkerFactory(
-                        opener, pool, commit, null)).ParamName,
+                        processState, opener, pool, commit, null)).ParamName,
                 Is.EqualTo("cleanupFileSystem"));
+
             Assert.That(
                 Assert.Throws<ArgumentNullException>(
-                    () => new NvencRunPublicationRecoveryWorkerFactory(null)).ParamName,
+                    () => new NvencRunPublicationRecoveryWorkerFactory(null, pool)).ParamName,
+                Is.EqualTo("processState"));
+            Assert.That(
+                Assert.Throws<ArgumentNullException>(
+                    () => new NvencRunPublicationRecoveryWorkerFactory(processState, null))
+                    .ParamName,
                 Is.EqualTo("verificationBufferPool"));
         }
 
@@ -204,6 +219,7 @@ namespace Zantetsu.Core.Tests
         public void Create_ReturnsAnUnstartedWorkerThatHasDoneNothing()
         {
             Harness h = MakeHarness();
+            Assert.That(h.ProcessState.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
 
             NvencRunPublicationRecoveryWorkerService worker =
                 h.Factory.Create(h.OpenOutcome, h.Owner);
@@ -240,6 +256,8 @@ namespace Zantetsu.Core.Tests
                 h.Factory.Create(h.OpenOutcome, h.Owner);
 
             Assert.That(ReferenceEquals(first, second), Is.False);
+            Assert.That(h.ProcessState.State, Is.EqualTo(NvencCaptureProcessStatus.Running),
+                "both compositions shared this one Running process state.");
 
             // Starting nothing, the two are independent observations.
             Assert.That(first.State,
@@ -276,11 +294,80 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(types, Is.EquivalentTo(new[]
             {
+                typeof(NvencCaptureProcessState),
                 typeof(ICaptureArtifactNoFollowOpener),
                 typeof(CaptureArtifactVerificationBufferPool),
                 typeof(ICaptureIndexCommitFileSystem),
                 typeof(ICaptureCompleteCleanupFileSystem),
             }));
+        }
+
+        // ---- Only a Running process admits a recovery ----
+
+        [Test]
+        public void Create_WhileDraining_RejectedBeforeAnythingIsBuilt()
+        {
+            Harness h = MakeHarness();
+
+            Assert.That(h.ProcessState.TryBeginDrain(), Is.True);
+            Assert.That(h.ProcessState.State, Is.EqualTo(NvencCaptureProcessStatus.Draining));
+
+            Assert.Throws<InvalidOperationException>(
+                () => h.Factory.Create(h.OpenOutcome, h.Owner));
+
+            h.AssertNothingTouched("while draining");
+
+            // The refusal leaves the process where it was.
+            Assert.That(h.ProcessState.State, Is.EqualTo(NvencCaptureProcessStatus.Draining));
+        }
+
+        [Test]
+        public void Create_AfterPoison_RejectedBeforeAnythingIsBuilt()
+        {
+            Harness h = MakeHarness();
+
+            Assert.That(h.ProcessState.TryPoison(), Is.True);
+            Assert.That(h.ProcessState.IsPoisoned, Is.True);
+
+            Assert.Throws<InvalidOperationException>(
+                () => h.Factory.Create(h.OpenOutcome, h.Owner));
+
+            h.AssertNothingTouched("after poison");
+
+            // D-143: this process does not recover again, and nothing here
+            // moves it back to Running.
+            Assert.That(h.ProcessState.State,
+                Is.EqualTo(NvencCaptureProcessStatus.PoisonedUntilProcessRestart));
+            Assert.Throws<InvalidOperationException>(
+                () => h.Factory.Create(h.OpenOutcome, h.Owner));
+            h.AssertNothingTouched("after a second refusal");
+        }
+
+        [Test]
+        public void Create_WithAnotherFactoryOverAFreshRunningState_IsAdmittedAgain()
+        {
+            Harness poisoned = MakeHarness();
+
+            Assert.That(poisoned.ProcessState.TryPoison(), Is.True);
+            Assert.Throws<InvalidOperationException>(
+                () => poisoned.Factory.Create(poisoned.OpenOutcome, poisoned.Owner));
+
+            // A separate factory over a separate Running state - the poisoned
+            // one is neither reset nor unpoisoned.
+            Harness running = MakeHarness();
+            Assert.That(running.ProcessState.State,
+                Is.EqualTo(NvencCaptureProcessStatus.Running));
+
+            NvencRunPublicationRecoveryWorkerService worker =
+                running.Factory.Create(running.OpenOutcome, running.Owner);
+
+            Assert.That(worker, Is.Not.Null);
+            Assert.That(worker.State,
+                Is.EqualTo(NvencRunPublicationRecoveryWorkerState.NotStarted));
+            Assert.That(poisoned.ProcessState.IsPoisoned, Is.True);
+            running.AssertNothingTouched("after composing over a fresh Running state");
+
+            worker.Dispose();
         }
 
         // ---- One representative real-tree pass ----
@@ -292,8 +379,12 @@ namespace Zantetsu.Core.Tests
 
             Sandbox sandbox = MakeSandbox();
 
+            NvencCaptureProcessState processState = new NvencCaptureProcessState();
+            Assert.That(processState.State, Is.EqualTo(NvencCaptureProcessStatus.Running));
+
             NvencRunPublicationRecoveryWorkerFactory factory =
                 new NvencRunPublicationRecoveryWorkerFactory(
+                    processState,
                     new CaptureArtifactVerificationBufferPool(VerificationBufferLength));
 
             NvencRunPublicationRecoveryWorkerService worker =
@@ -605,6 +696,7 @@ namespace Zantetsu.Core.Tests
                 SecondHandle = secondHandle;
 
                 Factory = new NvencRunPublicationRecoveryWorkerFactory(
+                    ProcessState,
                     Opener,
                     new CaptureArtifactVerificationBufferPool(VerificationBufferLength),
                     CommitFileSystem,
@@ -620,6 +712,13 @@ namespace Zantetsu.Core.Tests
             internal CountingHandle FirstHandle { get; }
 
             internal CountingHandle SecondHandle { get; }
+
+            /// <summary>
+            /// This process's state, Running until a test transitions it
+            /// through the ordinary API.
+            /// </summary>
+            internal NvencCaptureProcessState ProcessState { get; } =
+                new NvencCaptureProcessState();
 
             internal RecordingOpener Opener { get; } = new RecordingOpener();
 

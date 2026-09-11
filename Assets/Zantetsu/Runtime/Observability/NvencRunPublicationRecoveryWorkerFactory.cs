@@ -18,13 +18,26 @@ namespace Zantetsu.Observability
     /// was configured with, which every Run it composes shares.
     /// </para>
     /// <para>
-    /// The only checks made before anything is built are that the open outcome
-    /// is currently valid and that its own lock identity evidence was issued
-    /// for the exact lease it was handed. Those are the same two the entry
-    /// coordinator makes when it runs; the root layout, Run identity, and
-    /// disposition are left to the boundaries that already own them, and no new
-    /// admission type is introduced. Composition itself touches no file:
-    /// building an inspector, committer, cleaner, or releaser opens nothing.
+    /// The checks made before anything is built are that the open outcome is
+    /// currently valid and that its own lock identity evidence was issued for
+    /// the exact lease it was handed - the same two the entry coordinator makes
+    /// when it runs - and that this process is still Running. The root layout,
+    /// Run identity, and disposition are left to the boundaries that already
+    /// own them, and no new admission type is introduced. Composition itself
+    /// touches no file: building an inspector, committer, cleaner, or releaser
+    /// opens nothing.
+    /// </para>
+    /// <para>
+    /// Only <see cref="NvencCaptureProcessStatus.Running"/> admits a recovery.
+    /// Draining and PoisonedUntilProcessRestart are refused, because a recovery
+    /// begun then would read and change a Run's tree while this process is
+    /// already tearing down or has lost the right to act on it at all - a
+    /// rename whose result is unknown is left to the next process instead. The
+    /// refusal changes nothing: no file, no opener or buffer pool, no lease, no
+    /// open outcome, and not the process state, which is never moved back to
+    /// Running, reset, unpoisoned, or given a recovery-specific value here.
+    /// The state is not injected into the worker either, and no correlation
+    /// receipt is added to the recovery graph.
     /// </para>
     /// <para>
     /// The ordinary constructor creates the production no-follow opener and one
@@ -43,14 +56,17 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryWorkerFactory
     {
+        private readonly NvencCaptureProcessState _processState;
         private readonly ICaptureArtifactNoFollowOpener _opener;
         private readonly CaptureArtifactVerificationBufferPool _verificationBufferPool;
         private readonly ICaptureIndexCommitFileSystem _commitFileSystem;
         private readonly ICaptureCompleteCleanupFileSystem _cleanupFileSystem;
 
         internal NvencRunPublicationRecoveryWorkerFactory(
+            NvencCaptureProcessState processState,
             CaptureArtifactVerificationBufferPool verificationBufferPool)
             : this(
+                processState,
                 CaptureArtifactNoFollowOpen.Create(),
                 verificationBufferPool,
                 CaptureIndexCommitFileSystem.Create())
@@ -63,19 +79,22 @@ namespace Zantetsu.Observability
         /// backend.
         /// </summary>
         private NvencRunPublicationRecoveryWorkerFactory(
+            NvencCaptureProcessState processState,
             ICaptureArtifactNoFollowOpener opener,
             CaptureArtifactVerificationBufferPool verificationBufferPool,
             CaptureIndexCommitFileSystem fileSystem)
-            : this(opener, verificationBufferPool, fileSystem, fileSystem)
+            : this(processState, opener, verificationBufferPool, fileSystem, fileSystem)
         {
         }
 
         internal NvencRunPublicationRecoveryWorkerFactory(
+            NvencCaptureProcessState processState,
             ICaptureArtifactNoFollowOpener opener,
             CaptureArtifactVerificationBufferPool verificationBufferPool,
             ICaptureIndexCommitFileSystem commitFileSystem,
             ICaptureCompleteCleanupFileSystem cleanupFileSystem)
         {
+            _processState = processState ?? throw new ArgumentNullException(nameof(processState));
             _opener = opener ?? throw new ArgumentNullException(nameof(opener));
             _verificationBufferPool = verificationBufferPool
                 ?? throw new ArgumentNullException(nameof(verificationBufferPool));
@@ -118,6 +137,18 @@ namespace Zantetsu.Observability
                 throw new ArgumentException(
                     "The ownership lease must be the one this Run's lock identity evidence was issued for.",
                     nameof(ownershipLease));
+            }
+
+            // D-143: a recovery belongs to a process that is still Running.
+            // Once this one is Draining or Poisoned it must not read or change
+            // a Run's tree at all; what a rename left behind is the next
+            // process's to observe.
+            NvencCaptureProcessStatus processStatus = _processState.State;
+            if (processStatus != NvencCaptureProcessStatus.Running)
+            {
+                throw new InvalidOperationException(
+                    "A recovery worker is composed only while the process is Running; this process is "
+                    + processStatus + ".");
             }
 
             CaptureRunRootLayout rootLayout = openOutcome.RootLayout;
