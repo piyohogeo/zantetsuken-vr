@@ -242,6 +242,61 @@ namespace Zantetsu.Observability.StandaloneTests
             Assert.That(owner.IsOpen, Is.False);
         }
 
+        /// <summary>
+        /// The admitted session is initialized with the fixed encoder request,
+        /// once, and still closes normally afterwards.
+        /// </summary>
+        /// <remarks>
+        /// The capability snapshot and the canonical input are checked first,
+        /// as the caller's own admission; the initialization does not
+        /// re-evaluate them. Nothing is encoded here: no completion event,
+        /// texture, input buffer, or bitstream buffer is created.
+        /// </remarks>
+        [Test]
+        public void Player_InitializesItsEncoderOnceWithTheFixedRequest()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            try
+            {
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+
+                // Admission first, from this very session.
+                NvencBringUpCapabilityV1 capability =
+                    new NvencBringUpCapabilityProbeExecutionCoordinator(
+                        new NvencBringUpCapabilityProbe(owner)).Execute();
+
+                Assert.That(
+                    NvencBringUpAdmissionValidatorV1.Evaluate(
+                        profile, capability, MakeCanonicalInput(profile)),
+                    Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+
+                owner.InitializeEncoder(profile);
+                Assert.That(owner.IsOpen, Is.True,
+                    "the initialized session is still open.");
+
+                // One session, one initialization - and the refusal keeps the
+                // session.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.InitializeEncoder(profile));
+                Assert.That(owner.IsOpen, Is.True);
+            }
+            finally
+            {
+                owner.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+
+            // Closed once; disposing again asks the native side for nothing.
+            owner.Dispose();
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
         /// <summary>The input layout the fixed profile describes.</summary>
         private static NvencBringUpInputLayoutV1 MakeCanonicalInput(
             NvencBringUpProfileV1 profile)

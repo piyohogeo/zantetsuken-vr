@@ -26,7 +26,8 @@
 // it reports on.
 //
 // The session exports open one retained encoder session against that same
-// device, observe what that session's encoder supports, and close it. The session owner keeps its own reference, so it is not affected
+// device, observe what that session's encoder supports, initialize that encoder
+// with the fixed request, and close it. The session owner keeps its own reference, so it is not affected
 // by what the graphics lifecycle does next, and only an opaque handle to it
 // crosses the boundary.
 
@@ -94,6 +95,74 @@ namespace
         // The exact pointer Unity handed back is the one that is published;
         // the binding takes its own reference to it.
         g_deviceBinding.PublishBorrowed(device);
+    }
+
+    /// The one place the project's canonical identifiers become the SDK's own
+    /// GUIDs and enumerations. Anything this build does not name is rejected
+    /// rather than guessed.
+    bool TryMapInitializeRequest(
+        const ZantetsuNvencSessionInitializeRequestV1& request,
+        zantetsu::NvencEncoderInitializationRequest& mapped)
+    {
+        if (request.abiVersion != ZANTETSU_NVENC_SESSION_V1_VERSION ||
+            request.codecId != ZANTETSU_NVENC_CODEC_V1_H264 ||
+            request.profileId != ZANTETSU_NVENC_PROFILE_V1_HIGH ||
+            request.presetId != ZANTETSU_NVENC_PRESET_V1_P1 ||
+            request.tuningId != ZANTETSU_NVENC_TUNING_V1_LOW_LATENCY ||
+            request.rateControlId != ZANTETSU_NVENC_RATE_CONTROL_V1_CONSTANT_QP ||
+            request.chromaFormatId != ZANTETSU_NVENC_CHROMA_FORMAT_V1_420 ||
+            request.levelId != ZANTETSU_NVENC_LEVEL_V1_AUTO)
+        {
+            return false;
+        }
+
+        if (request.enablePictureTypeDecision > 1 ||
+            request.repeatSequenceAndPictureParameterSets > 1 ||
+            request.outputAccessUnitDelimiter > 1 ||
+            request.disableSequenceAndPictureParameterSets > 1 ||
+            request.progressiveEncoding > 1 ||
+            request.enableEncodeAsync > 1 ||
+            request.enableOutputInVideoMemory > 1)
+        {
+            return false;
+        }
+
+        mapped.encodeGuid = NV_ENC_CODEC_H264_GUID;
+        mapped.presetGuid = NV_ENC_PRESET_P1_GUID;
+        mapped.profileGuid = NV_ENC_H264_PROFILE_HIGH_GUID;
+        mapped.tuningInfo = NV_ENC_TUNING_INFO_LOW_LATENCY;
+        mapped.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+
+        // yuv420.
+        mapped.chromaFormatIdc = 1;
+        mapped.level = NV_ENC_LEVEL_AUTOSELECT;
+
+        mapped.encodeWidth = request.encodeWidth;
+        mapped.encodeHeight = request.encodeHeight;
+        mapped.maximumEncodeWidth = request.maximumEncodeWidth;
+        mapped.maximumEncodeHeight = request.maximumEncodeHeight;
+        mapped.frameRateNumerator = request.frameRateNumerator;
+        mapped.frameRateDenominator = request.frameRateDenominator;
+
+        mapped.enablePictureTypeDecision = request.enablePictureTypeDecision;
+        mapped.gopLength = request.gopLength;
+        mapped.idrPeriod = request.idrPeriod;
+        mapped.frameIntervalP = request.frameIntervalP;
+
+        mapped.qpIntra = request.qpIntra;
+        mapped.qpInterP = request.qpInterP;
+        mapped.qpInterB = request.qpInterB;
+
+        mapped.repeatSequenceAndPictureParameterSets =
+            request.repeatSequenceAndPictureParameterSets;
+        mapped.outputAccessUnitDelimiter = request.outputAccessUnitDelimiter;
+        mapped.disableSequenceAndPictureParameterSets =
+            request.disableSequenceAndPictureParameterSets;
+
+        mapped.progressiveEncoding = request.progressiveEncoding;
+        mapped.enableEncodeAsync = request.enableEncodeAsync;
+        mapped.enableOutputInVideoMemory = request.enableOutputInVideoMemory;
+        return true;
     }
 
     void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
@@ -245,6 +314,48 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencObserveSessionCapabi
     destination->supportsNv12Input = observation.supportsNv12Input ? 1u : 0u;
     destination->maximumEncodeWidth = observation.maximumEncodeWidth;
     destination->maximumEncodeHeight = observation.maximumEncodeHeight;
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencInitializeSessionEncoderV1(
+    uint64_t sessionOwner,
+    const ZantetsuNvencSessionInitializeRequestV1* request,
+    uint32_t requestSize,
+    ZantetsuNvencSessionInitializeResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionInitializeResultV1) ||
+        request == nullptr ||
+        requestSize != sizeof(ZantetsuNvencSessionInitializeRequestV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    // Mapped before anything is written or attempted: a request this build
+    // does not recognise spends no initialization.
+    zantetsu::NvencEncoderInitializationRequest mapped = {};
+    if (!TryMapInitializeRequest(*request, mapped))
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryInitializeEncoder(mapped))
+    {
+        // The session remains open and is still the caller's to close.
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
     destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
     return 1;
 }

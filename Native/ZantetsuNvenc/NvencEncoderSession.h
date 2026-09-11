@@ -73,6 +73,43 @@ namespace zantetsu
         int32_t maximumEncodeHeight;
     };
 
+    /// The fixed encoder request, already mapped from the project's canonical
+    /// identifiers to the SDK's own GUIDs and enumerations. Every field is one
+    /// this initialization actually sets; nothing is carried "just in case".
+    struct NvencEncoderInitializationRequest
+    {
+        GUID encodeGuid;
+        GUID presetGuid;
+        GUID profileGuid;
+        NV_ENC_TUNING_INFO tuningInfo;
+        NV_ENC_PARAMS_RC_MODE rateControlMode;
+
+        uint32_t encodeWidth;
+        uint32_t encodeHeight;
+        uint32_t maximumEncodeWidth;
+        uint32_t maximumEncodeHeight;
+        uint32_t frameRateNumerator;
+        uint32_t frameRateDenominator;
+
+        uint32_t enablePictureTypeDecision;
+        uint32_t gopLength;
+        uint32_t idrPeriod;
+        int32_t frameIntervalP;
+
+        uint32_t qpIntra;
+        uint32_t qpInterP;
+        uint32_t qpInterB;
+
+        uint32_t repeatSequenceAndPictureParameterSets;
+        uint32_t outputAccessUnitDelimiter;
+        uint32_t disableSequenceAndPictureParameterSets;
+        uint32_t chromaFormatIdc;
+        uint32_t level;
+        uint32_t progressiveEncoding;
+        uint32_t enableEncodeAsync;
+        uint32_t enableOutputInVideoMemory;
+    };
+
     class NvencEncoderSession
     {
     public:
@@ -102,7 +139,23 @@ namespace zantetsu
         /// call while the other runs.
         bool TryObserveCapabilities(NvencEncoderCapabilityObservation* observation);
 
+        /// Applies the fixed request to this session's encoder, exactly once
+        /// per owner: the preset configuration is fetched once, the fixed
+        /// values are written over it, and the encoder is initialized once.
+        ///
+        /// The session stays open whatever the answer is - a failed
+        /// initialization retries nothing, reopens nothing, and falls back to
+        /// no other preset, tuning, device, or API - and a second call makes no
+        /// attempt and touches no driver entry point.
+        ///
+        /// The caller serializes this against the other calls, as it does for
+        /// the capability observation.
+        bool TryInitializeEncoder(const NvencEncoderInitializationRequest& request);
+
         bool IsOpen() const { return _encoder != nullptr; }
+
+        /// True once the encoder has been initialized with the fixed request.
+        bool IsEncoderInitialized() const { return _encoderInitialized; }
 
         DWORD LastWin32Error() const { return _lastWin32Error; }
         NVENCSTATUS LastNvencStatus() const { return _lastNvencStatus; }
@@ -125,6 +178,8 @@ namespace zantetsu
         bool _openAttempted = false;
         bool _closeAttempted = false;
         bool _capabilityObservationAttempted = false;
+        bool _initializationAttempted = false;
+        bool _encoderInitialized = false;
     };
 }
 

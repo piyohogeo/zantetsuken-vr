@@ -404,6 +404,105 @@ namespace zantetsu
         return true;
     }
 
+    bool NvencEncoderSession::TryInitializeEncoder(
+        const NvencEncoderInitializationRequest& request)
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // One owner, one initialization - settled before the driver is called,
+        // so neither a success nor a failure is attempted twice.
+        if (_initializationAttempted)
+        {
+            return false;
+        }
+
+        _initializationAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+        if (api.nvEncGetEncodePresetConfigEx == nullptr ||
+            api.nvEncInitializeEncoder == nullptr)
+        {
+            return false;
+        }
+
+        // What the driver recommends for this preset and tuning is the base;
+        // only the fixed request is written over it, and everything the preset
+        // decided that the request does not name is kept.
+        NV_ENC_PRESET_CONFIG presetConfig = {};
+        presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
+        presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
+
+        NVENCSTATUS status = api.nvEncGetEncodePresetConfigEx(
+            _encoder,
+            request.encodeGuid,
+            request.presetGuid,
+            request.tuningInfo,
+            &presetConfig);
+        if (status != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = status;
+            return false;
+        }
+
+        NV_ENC_CONFIG config = presetConfig.presetCfg;
+        config.version = NV_ENC_CONFIG_VER;
+        config.profileGUID = request.profileGuid;
+        config.gopLength = request.gopLength;
+        config.frameIntervalP = request.frameIntervalP;
+        config.frameFieldMode = request.progressiveEncoding != 0
+            ? NV_ENC_PARAMS_FRAME_FIELD_MODE_FRAME
+            : config.frameFieldMode;
+
+        config.rcParams.rateControlMode = request.rateControlMode;
+        config.rcParams.constQP.qpIntra = request.qpIntra;
+        config.rcParams.constQP.qpInterP = request.qpInterP;
+        config.rcParams.constQP.qpInterB = request.qpInterB;
+
+        NV_ENC_CONFIG_H264& h264 = config.encodeCodecConfig.h264Config;
+        h264.idrPeriod = request.idrPeriod;
+        h264.repeatSPSPPS = request.repeatSequenceAndPictureParameterSets;
+        h264.outputAUD = request.outputAccessUnitDelimiter;
+        h264.disableSPSPPS = request.disableSequenceAndPictureParameterSets;
+        h264.chromaFormatIDC = request.chromaFormatIdc;
+        h264.level = request.level;
+
+        NV_ENC_INITIALIZE_PARAMS params = {};
+        params.version = NV_ENC_INITIALIZE_PARAMS_VER;
+        params.encodeGUID = request.encodeGuid;
+        params.presetGUID = request.presetGuid;
+        params.tuningInfo = request.tuningInfo;
+        params.encodeWidth = request.encodeWidth;
+        params.encodeHeight = request.encodeHeight;
+        params.maxEncodeWidth = request.maximumEncodeWidth;
+        params.maxEncodeHeight = request.maximumEncodeHeight;
+
+        // The display aspect ratio follows the one encoded size; it is not a
+        // separate decision.
+        params.darWidth = request.encodeWidth;
+        params.darHeight = request.encodeHeight;
+
+        params.frameRateNum = request.frameRateNumerator;
+        params.frameRateDen = request.frameRateDenominator;
+        params.enableEncodeAsync = request.enableEncodeAsync;
+        params.enablePTD = request.enablePictureTypeDecision;
+        params.enableOutputInVidmem = request.enableOutputInVideoMemory;
+        params.encodeConfig = &config;
+
+        status = api.nvEncInitializeEncoder(_encoder, &params);
+        if (status != NV_ENC_SUCCESS)
+        {
+            // The session is still open and still the caller's to close.
+            _lastNvencStatus = status;
+            return false;
+        }
+
+        _encoderInitialized = true;
+        return true;
+    }
+
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
         // One owner, one close attempt - settled before the driver is called,

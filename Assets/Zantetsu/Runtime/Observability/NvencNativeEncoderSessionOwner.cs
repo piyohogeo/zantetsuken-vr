@@ -67,6 +67,63 @@ namespace Zantetsu.Observability
             internal int LastNvencStatus;
         }
 
+        // The project's own category identifiers. What they mean in NVENC's
+        // terms is the native side's business; no GUID or SDK enumeration is
+        // defined here.
+        private const uint CodecH264 = 1;
+        private const uint ProfileHigh = 1;
+        private const uint PresetP1 = 1;
+        private const uint TuningLowLatency = 1;
+        private const uint RateControlConstantQp = 1;
+        private const uint ChromaFormat420 = 1;
+        private const uint LevelAuto = 1;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeInitializeRequestV1
+        {
+            internal uint AbiVersion;
+
+            internal uint CodecId;
+            internal uint ProfileId;
+            internal uint PresetId;
+            internal uint TuningId;
+            internal uint RateControlId;
+            internal uint ChromaFormatId;
+            internal uint LevelId;
+
+            internal uint EncodeWidth;
+            internal uint EncodeHeight;
+            internal uint MaximumEncodeWidth;
+            internal uint MaximumEncodeHeight;
+            internal uint FrameRateNumerator;
+            internal uint FrameRateDenominator;
+
+            internal uint EnablePictureTypeDecision;
+            internal uint GopLength;
+            internal uint IdrPeriod;
+            internal int FrameIntervalP;
+
+            internal uint QpIntra;
+            internal uint QpInterP;
+            internal uint QpInterB;
+
+            internal uint RepeatSequenceAndPictureParameterSets;
+            internal uint OutputAccessUnitDelimiter;
+            internal uint DisableSequenceAndPictureParameterSets;
+
+            internal uint ProgressiveEncoding;
+            internal uint EnableEncodeAsync;
+            internal uint EnableOutputInVideoMemory;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeInitializeResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastNvencStatus;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         private struct NativeCloseResultV1
         {
@@ -84,6 +141,11 @@ namespace Zantetsu.Observability
         private static extern int ZantetsuNvencObserveSessionCapabilityV1(
             ulong sessionOwner, ref NativeCapabilityResultV1 destination,
             uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencInitializeSessionEncoderV1(
+            ulong sessionOwner, ref NativeInitializeRequestV1 request, uint requestSize,
+            ref NativeInitializeResultV1 destination, uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencCloseSessionV1(
@@ -210,6 +272,109 @@ namespace Zantetsu.Observability
                 ToBoolean(result.SupportsNv12Input, "supportsNv12Input"),
                 result.MaximumEncodeWidth,
                 result.MaximumEncodeHeight);
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+        }
+
+        /// <summary>
+        /// Initializes this session's encoder with the profile's fixed
+        /// request, once.
+        /// </summary>
+        /// <remarks>
+        /// The request carries exactly what the initialization sets, built
+        /// from the profile's own constants. Whether the capability snapshot
+        /// and the input layout admit this profile is the caller's to settle
+        /// beforehand; nothing is re-evaluated here. A refused initialization
+        /// throws and leaves the session open for the caller to close, and
+        /// nothing is retried, cached, or answered from a new session.
+        /// </remarks>
+        internal void InitializeEncoder(NvencBringUpProfileV1 profile)
+        {
+            if (profile == null)
+            {
+                throw new ArgumentNullException(nameof(profile));
+            }
+
+            if (_sessionOwner == 0)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session is not open; there is nothing to initialize.");
+            }
+
+            if (_closeAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session's close was already attempted; it is not initialized after that.");
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeInitializeRequestV1 request = new NativeInitializeRequestV1
+            {
+                AbiVersion = AbiVersion,
+
+                CodecId = CodecH264,
+                ProfileId = ProfileHigh,
+                PresetId = PresetP1,
+                TuningId = TuningLowLatency,
+                RateControlId = RateControlConstantQp,
+                ChromaFormatId = ChromaFormat420,
+                LevelId = LevelAuto,
+
+                EncodeWidth = (uint)profile.EncodeWidth,
+                EncodeHeight = (uint)profile.EncodeHeight,
+                MaximumEncodeWidth = (uint)profile.MaximumEncodeWidth,
+                MaximumEncodeHeight = (uint)profile.MaximumEncodeHeight,
+                FrameRateNumerator = NvencBringUpProfileV1.FrameRateNumerator,
+                FrameRateDenominator = NvencBringUpProfileV1.FrameRateDenominator,
+
+                EnablePictureTypeDecision =
+                    NvencBringUpProfileV1.EnablePictureTypeDecision ? 1u : 0u,
+                GopLength = NvencBringUpProfileV1.GopLength,
+                IdrPeriod = NvencBringUpProfileV1.IdrPeriod,
+                FrameIntervalP = NvencBringUpProfileV1.FrameIntervalP,
+
+                QpIntra = NvencBringUpProfileV1.QpIntra,
+                QpInterP = NvencBringUpProfileV1.QpInterP,
+                QpInterB = NvencBringUpProfileV1.QpInterB,
+
+                RepeatSequenceAndPictureParameterSets =
+                    NvencBringUpProfileV1.RepeatSequenceAndPictureParameterSets ? 1u : 0u,
+                OutputAccessUnitDelimiter =
+                    NvencBringUpProfileV1.OutputAccessUnitDelimiter ? 1u : 0u,
+                DisableSequenceAndPictureParameterSets =
+                    NvencBringUpProfileV1.DisableSequenceAndPictureParameterSets ? 1u : 0u,
+
+                ProgressiveEncoding = NvencBringUpProfileV1.ProgressiveEncoding ? 1u : 0u,
+                EnableEncodeAsync = NvencBringUpProfileV1.EnableEncodeAsync ? 1u : 0u,
+                EnableOutputInVideoMemory =
+                    NvencBringUpProfileV1.EnableOutputInVideoMemory ? 1u : 0u,
+            };
+
+            NativeInitializeResultV1 result = default;
+            int written = ZantetsuNvencInitializeSessionEncoderV1(
+                _sessionOwner,
+                ref request,
+                (uint)Marshal.SizeOf(typeof(NativeInitializeRequestV1)),
+                ref result,
+                (uint)Marshal.SizeOf(typeof(NativeInitializeResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native encoder initialization was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The native encoder could not be initialized (status "
+                    + result.Status + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");

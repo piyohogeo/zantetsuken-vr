@@ -2,7 +2,8 @@
 //
 // It opens a real D3D11 device on the default hardware adapter, publishes it
 // through the same binding the plugin uses, opens one encoder session on it,
-// observes that session's capabilities once, and closes the session. It needs
+// observes that session's capabilities once, initializes its encoder with the
+// fixed request once, and closes the session. It needs
 // an NVIDIA driver and an encode-capable default adapter, so it is run only
 // when asked for.
 //
@@ -140,9 +141,51 @@ int main()
         "a second observation on the same session is refused");
     Check(session.IsOpen(), "the refused second observation left the session open");
 
+    // The fixed request, mapped the way the plugin's export maps it.
+    zantetsu::NvencEncoderInitializationRequest request = {};
+    request.encodeGuid = NV_ENC_CODEC_H264_GUID;
+    request.presetGuid = NV_ENC_PRESET_P1_GUID;
+    request.profileGuid = NV_ENC_H264_PROFILE_HIGH_GUID;
+    request.tuningInfo = NV_ENC_TUNING_INFO_LOW_LATENCY;
+    request.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+    request.encodeWidth = 1280;
+    request.encodeHeight = 720;
+    request.maximumEncodeWidth = 1280;
+    request.maximumEncodeHeight = 720;
+    request.frameRateNumerator = 30;
+    request.frameRateDenominator = 1;
+    request.enablePictureTypeDecision = 0;
+    request.gopLength = 1;
+    request.idrPeriod = 1;
+    request.frameIntervalP = 1;
+    request.qpIntra = 28;
+    request.qpInterP = 28;
+    request.qpInterB = 28;
+    request.repeatSequenceAndPictureParameterSets = 1;
+    request.outputAccessUnitDelimiter = 0;
+    request.disableSequenceAndPictureParameterSets = 0;
+    request.chromaFormatIdc = 1;
+    request.level = NV_ENC_LEVEL_AUTOSELECT;
+    request.progressiveEncoding = 1;
+    request.enableEncodeAsync = 1;
+    request.enableOutputInVideoMemory = 0;
+
+    Check(!session.IsEncoderInitialized(), "the encoder is not initialized yet");
+    Check(
+        session.TryInitializeEncoder(request),
+        "the encoder initializes with the fixed request");
+    Check(session.IsEncoderInitialized(), "the encoder reports itself initialized");
+    Check(session.IsOpen(), "the initialized session is still open");
+
+    // One owner, one initialization.
+    Check(
+        !session.TryInitializeEncoder(request),
+        "a second initialization on the same session is refused");
+    Check(session.IsOpen(), "the refused second initialization left the session open");
+
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the session closes after the observation");
+        "the initialized session closes");
     Check(!session.IsOpen(), "the closed session holds no encoder");
 
     binding.Clear();
