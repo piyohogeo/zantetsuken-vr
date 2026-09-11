@@ -22,12 +22,12 @@ namespace Zantetsu.Observability
     /// The disposition and that graph's validity are the authority.
     /// </para>
     /// <para>
-    /// The operation holds those two references only. It enumerates, opens,
-    /// reads, deletes, and flushes nothing, decides no deletion order, analyses
-    /// and promotes no temporary, never disposes the lease, and adds no status,
-    /// attempt result, receipt, proof, token, nonce, generation, latch, or
-    /// coordinator. It is not an <see cref="IDisposable"/>, MonoBehaviour, or
-    /// ScriptableObject.
+    /// The operation holds those two references only. It performs no
+    /// filesystem enumeration, open, read, deletion, or flush, decides no
+    /// deletion order, analyses and promotes no temporary, never disposes the
+    /// lease, and adds no status, attempt result, receipt, proof, token,
+    /// nonce, generation, latch, or coordinator. It is not an
+    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> recomputes the same minimal admission conditions
