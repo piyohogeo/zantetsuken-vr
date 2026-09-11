@@ -51,6 +51,9 @@ namespace zantetsu
         Failed,
     };
 
+    /// An owner must not be destroyed while it still holds an encoder: the
+    /// session has to be closed successfully first, and an owner whose close
+    /// the driver refused stays alive with its session.
     class NvencEncoderSession
     {
     public:
@@ -65,8 +68,9 @@ namespace zantetsu
         NvencEncoderSessionOpenStatus Open(const D3D11DeviceBinding& binding);
 
         /// Destroys the session and releases what it was opened against, in
-        /// reverse order. A refused destroy releases nothing and does not retry
-        /// itself; the owner stays as it was and the caller decides.
+        /// reverse order, exactly once per owner. A refused destroy releases
+        /// nothing and is never repeated - neither by this owner nor by a
+        /// second call, which makes no attempt at all.
         NvencEncoderSessionCloseStatus Close();
 
         bool IsOpen() const { return _encoder != nullptr; }
@@ -84,6 +88,7 @@ namespace zantetsu
         DWORD _lastWin32Error = 0;
         NVENCSTATUS _lastNvencStatus = NV_ENC_SUCCESS;
         bool _openAttempted = false;
+        bool _closeAttempted = false;
     };
 }
 

@@ -25,8 +25,10 @@ namespace Zantetsu.Observability
     /// <para>
     /// Disposing closes the session exactly once. A close the driver refuses
     /// throws and keeps the handle, because the session is still open and still
-    /// this owner's; it is not retried here, and there is no finalizer, safe
-    /// handle, registry, or generation counter behind it.
+    /// this owner's - and the attempt is spent, so a later dispose throws
+    /// without asking the native side to destroy that encoder again. A dispose
+    /// after a successful close does nothing. There is no finalizer, safe
+    /// handle, registry, or generation counter behind any of it.
     /// </para>
     /// </remarks>
     internal sealed class NvencNativeEncoderSessionOwner : IDisposable
@@ -70,6 +72,7 @@ namespace Zantetsu.Observability
 #endif
 
         private ulong _sessionOwner;
+        private bool _closeAttempted;
 
         private NvencNativeEncoderSessionOwner(ulong sessionOwner)
         {
@@ -135,7 +138,9 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Closes the session once. A refused close leaves this owner holding
-        /// the same still-open session.
+        /// the same still-open session and spends the attempt, so disposing
+        /// again throws instead of asking the native side to destroy that
+        /// encoder a second time.
         /// </summary>
         public void Dispose()
         {
@@ -143,6 +148,16 @@ namespace Zantetsu.Observability
             {
                 return;
             }
+
+            // One owner, one close attempt - settled before the native side is
+            // called, so a destroy it refused is never asked for again.
+            if (_closeAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session's close was already attempted and refused; it is not closed again.");
+            }
+
+            _closeAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             NativeCloseResultV1 result = default;

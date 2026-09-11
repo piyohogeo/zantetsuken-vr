@@ -1,17 +1,15 @@
 #include "NvencEncoderSession.h"
 
+#include <cassert>
+
 namespace zantetsu
 {
     NvencEncoderSession::~NvencEncoderSession()
     {
-        if (_encoder != nullptr)
-        {
-            // A session that was never closed, or whose destroy the driver
-            // refused, is left exactly as it is: destroying it a second time
-            // silently would be a guess, and releasing the device and the
-            // module underneath a live encoder would be a worse one.
-            return;
-        }
+        // Destroying an owner that still holds an encoder is a contract
+        // violation, not a state this handles: the caller closes the session
+        // first, and an owner whose close was refused is kept.
+        assert(_encoder == nullptr);
 
         ReleaseDeviceAndDriver();
     }
@@ -111,17 +109,27 @@ namespace zantetsu
 
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
+        // One owner, one close attempt - settled before the driver is called,
+        // so a destroy the driver refused is never issued again.
+        if (_closeAttempted)
+        {
+            return NvencEncoderSessionCloseStatus::Failed;
+        }
+
         if (_encoder == nullptr || _destroyEncoder == nullptr)
         {
             return NvencEncoderSessionCloseStatus::Failed;
         }
 
+        _closeAttempted = true;
+
         const NVENCSTATUS status = _destroyEncoder(_encoder);
         if (status != NV_ENC_SUCCESS)
         {
-            // Nothing is released on a refused destroy, and nothing is retried
-            // here: the encoder handle, the device reference, the function
-            // table, and the module all stay exactly where they were.
+            // Nothing is released on a refused destroy, and the attempt is
+            // spent: the encoder handle, the device reference, the function
+            // table, and the module all stay exactly where they were, and this
+            // owner will not call destroy again.
             _lastNvencStatus = status;
             return NvencEncoderSessionCloseStatus::Failed;
         }
