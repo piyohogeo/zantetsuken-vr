@@ -401,29 +401,26 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 注1、3～6は契約内の向き構成、注2は入力拒否、注7はカウント範囲外、注8はColor統合、注9はCamera近傍だけの取扱いである。共用Geometry契約に反する入力を通常経路へ投入する許可や、通常の正向き閉Shellでの欠落・混入の一般許容へ拡張しない。仮Capの品質例外は共用Geometryの生成、検証、Commit契約を緩和しない。
 
-### 5.3 断面マテリアルとデバッグ表示
+### 5.3 断面色と最小デバッグ表示
 
-通常断面は、全体のポップなトゥーン表現と同じ共通シェーダーへ、粘土を思わせる彩度の低いグレーをBase Colorとして渡す。断面専用のトライプラナー、ノイズ、凹凸、内部グラデーション、写実的な特殊シェーダーは使用しない。仮断面と実断面は生成方法が異なるが、通常表示時の陰影段数、輪郭、ライト応答、グレー色を一致させ、差し替えを目立たせない。
+通常表示では、即時仮断面とGeometry Commit済みの実Capを、共通トゥーンシェーダーの固定`CutSurfaceColor`（低彩度グレー）で描画する。陰影段数、輪郭、ライト応答を揃え、断面専用Texture、Texture atlas領域、Texture Mapping用UV展開、特殊陰影、色選択用Material／submeshを追加しない。
 
-デバッグモードでは同じトゥーンシェーダーのBase Colorだけを処理経路に応じて上書きする。Unlit化はせず、断面の向きと立体感を維持する。
+実Capの新規Render Vertexには生成時に`uv0 = (-0.5, 0)`を設定する。ShaderはMaterialのUV Transformと通常Texture Sampleより前にraw `uv0.x < 0`を判定し、負の場合は通常Textureを使わず断面色をBase Colorとして共通トゥーン陰影へ渡す。marker成分の格納形式は負値を保持できるものとする。専用Vertex field、Vertex Color、別UV channel、複数の負UV帯域を断面識別へ追加しない。
 
-| 断面色／表示 | 意味 |
-| --- | --- |
-| 赤 | 即時レンダラの仮断面が現在表示中 |
-| 青 | 命中前に完成した先行切断成果物が、実Segment Hit時の検証に成功してCommit済み |
-| 緑 | SlashWave Segment命中後に切断計算を開始し、VP GeometryへCommit済み |
-| 水色 | 先行成果物の一部を再利用し、命中後に残りを完成してCommit済み |
-| 黄（工程情報） | 表示切断CPU成果物は完成したが、必要転送・現在の参照／frameの確定・表示Commitを待っている。表示採用済みを意味しない |
-| オレンジ | 計算予算超過、タイムアウト、簡易形状など品質低下フォールバック |
-| 紫の点滅 | 予測不一致またはGeneration不一致で先行成果物をReject |
-| 黒い縞／縁 | 表示形状とColliderが一時的に不一致 |
-| 通常グレー | 通常表示。Temporary Renderer対象がないStable表示にも使用 |
+元Assetの負UVによって元surfaceが断面色と誤認され、通常表示ではTextureが出ずグレー、デバッグ表示では緑になることを許容する。Triangle内でUVの符号が混在する場合の部分的な誤表示も許容する。このためのUV検査・修正・登録拒否・代替markerを要求しない。UV markerは表示色の選択だけに使い、Topology、切断、物理、Hitの判定には使わない。
 
-黄の待機中も仮Capの主色は赤とし、黄の工程情報は既存の縁表示または選択対象パネルで識別できればよい。黄色表示用の中間Geometry転送や専用Rendererを作らない。
+デバッグ表示は全対象共通の有効／無効だけとし、描画する断面ごとに次を適用する。
 
-赤は現在の仮表示状態、青／緑／水色は最終成果物の計算経路を表すため、典型的には`赤 -> 青／緑／水色 -> 通常グレー`と遷移する。経路解析モードではStable後も青／緑／水色を保持できるようにし、通常の状態確認モードではStable移行後に色上書きを解除する。通常グレーは「静止」を意味せず、破片が運動中でも表示と物理が確定していれば使用する。
+| 描画対象 | 通常表示 | デバッグ表示 |
+| --- | --- | --- |
+| `TemporaryRenderCapRecordSet`から描く即時仮断面 | 固定グレー | 赤 |
+| Geometry Commit済みの共用Geometryに含まれる実Cap | 固定グレー | 緑 |
 
-色だけへ依存せず、Reject、Pending Physics Split、品質低下には点滅、縞、縁取りを併用する。詳細文字は全断面へ常時描画せず、選択中の1対象だけを単一の画面／手首固定デバッグパネルへ5～10Hz程度で表示する。全件の詳細はEditor Timelineと保存Traceを正本とする。
+CPU成果物がReadyでもGeometry Commit前は仮断面のままとし、Commit後は計算経路やPhysics完了状態によらず実断面とする。デバッグ有効時は再切断中も既存実Capは緑、新しい仮Capは赤として共存できる。Stable移行による色解除・色保持モードは設けない。
+
+色値とデバッグ有効状態はGlobal Shader Constantまたは既存のDraw／Fragment Descriptorで指定する。色変更だけを目的とする既存Vertex／Indexの書換え、VB／IB再生成・SetData、Geometry複製は行わない。切断成果物自体の生成・転送・Commitは従来どおり行う。
+
+計算経路、待機、Reject／Fallback理由、Physics状態の詳細は既存Trace／Profilerで確認し、断面色へ割り当てない。断面専用の点滅・縞・縁取り、常時テキスト、固定パネル、色覚補助表示、公開schema・状態機械を追加しない。Exact RGB、色遷移Animation、表示保持時間は固定しない。
 
 ### 5.4 即時切断中のShadow Map
 
@@ -447,7 +444,7 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 - 目標到達時は未Commit切断を含むStable VP Geometryを背景で生成する。4.5.6の両用途の参照公開とCommitted遷移の成功後だけ対応Cap Recordを外し、切断履歴は保持する。
 
-- `RasterClipPlaneCount`、`PixelClipPlaneCount`、`IgnoredTemporaryClipBoundaryCount`をProfiler Counterと選択対象のデバッグ表示へ出す。Plane overflowによってGeometry Jobの優先度、依存関係、cancel／再発行規則を変更せず、Frame内の待機や同期Commitを禁止する。
+- `RasterClipPlaneCount`、`PixelClipPlaneCount`、`IgnoredTemporaryClipBoundaryCount`をProfiler Counterと既存の選択対象診断へ出す。断面専用パネルは要求しない。Plane overflowによってGeometry Jobの優先度、依存関係、cancel／再発行規則を変更せず、Frame内の待機や同期Commitを禁止する。
 
 - 画面外・遠距離・停止中の物体を優先的に確定する。
 
@@ -455,7 +452,7 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 
 ### 5.6 スクリーンスペースStencil Batch
 
-Stencil Bufferは画面座標ごとに共有されるため、すべての即時切断物体を無条件に同じ通常Colorへ蓄積しない。現在の全World Cut Plane、各PlaneのFragment Side／半空間、分離Offset、Cap Material、法線、デバッグ色が一致する対象を`CapCompatibilityKey`で同じ互換Groupへまとめる。6章の共通入力Gateに合格したGeometryは正、負、混合符号を分離条件にせず、入力Geometryの向きを保存して符号付き加算する。互換Groupの意味は厳密な幾何Unionではなく`sum(W_i) > 0`であり、各寄与が正しく得られて最終値が符号判定範囲内なら`{sum(W_i) > 0} ⊆ union_i {W_i > 0}`となる。正逆相殺やColor分割によるMask差は5.2の品質例外へ限定する。
+Stencil Bufferは画面座標ごとに共有されるため、すべての即時切断物体を無条件に同じ通常Colorへ蓄積しない。現在の全World Cut Plane、各PlaneのFragment Side／半空間、分離Offsetが一致する対象を`CapCompatibilityKey`で同じ互換Groupへまとめる。可視色は5.3で共通とし、色違いによるGroup分割を行わない。6章の共通入力Gateに合格したGeometryは正、負、混合符号を分離条件にせず、入力Geometryの向きを保存して符号付き加算する。互換Groupの意味は厳密な幾何Unionではなく`sum(W_i) > 0`であり、各寄与が正しく得られて最終値が符号判定範囲内なら`{sum(W_i) > 0} ⊆ union_i {W_i > 0}`となる。正逆相殺やColor分割によるMask差は5.2の品質例外へ限定する。
 
 StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合格したGeometryのFront／Back Faceに対する`IncrementWrap／DecrementWrap`からなる8bit Winding Count方式を使う。基準値を`B = 128`、符号付きWindingを`W`、格納値を`S = (B + W) mod 256`とし、各Color開始時とColor間で専用Stencil Byteの全8bitを128へ初期化する。Rect描画で初期化する場合は`Ref 128`と`Replace`を使う。Capは`S > 128`だけを描画し、Unity ShaderLabでは`Ref 128 / Comp Less / ReadMask 255`とする。Counterは`ReadMask 255 / WriteMask 255`、Cap側のStencil書込みは無効とし、`S <= 128`のsampleはColorもDepthも書かない。裏面透明という通常Color方針をStencil集計からBack Faceを除外する意味にせず、Front／Back双方を対称なclip／Depth条件で扱う。Rasterizer／Transform補正は通常Colorのfront-face規約と一致させ、Geometryの向きをPositiveへ直す補正や二重補正を行わない。
 
@@ -469,7 +466,7 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
 
 - Broadphaseでは分離Offsetと安全Marginを含む物体OBBの左右眼投影矩形を使う。重なる組だけ、表向きのOBB切断面から得たCap Bounds Polygonを左右眼へ投影して再判定する。どちらの判定も非交差なら安全という悲観的な証明として扱い、Near Plane交差、Raster／MSAA、頭部移動誤差を考慮してBoundsを保守的に拡張する。
 
-- `CapCompatibilityKey`は順序を正規化した表示対象`CutPlaneId`列、Side Mask、Offset、Material／Debug状態から作り、Raw floatだけをHashの正本にしない。同じSlash由来でも、19.5.1の対象別リベースまたは対象の移動・回転によってWorld Planeが異なり得るため、現在の操作World Planeをepsilon比較し、一致しなければ別Groupへ分離する。片方だけに追加Temporary Render Boundaryがある場合も互換ではない。符号分類とWinding容量はKeyへ含めない。
+- `CapCompatibilityKey`は順序を正規化した表示対象`CutPlaneId`列、Side Mask、Offsetから作り、Raw floatだけをHashの正本にしない。同じSlash由来でも、19.5.1の対象別リベースまたは対象の移動・回転によってWorld Planeが異なり得るため、現在の操作World Planeをepsilon比較し、一致しなければ別Groupへ分離する。片方だけに追加Temporary Render Boundaryがある場合も互換ではない。符号分類とWinding容量はKeyへ含めない。
 
 - `LogicalCutOperation`公開前の即時Capは、親`RenderFragment × Pending Cutの採用面`から導出し、確定した論理子や境界を先取りしない。公開後のキャップの幾何可視性は元Object単位ではなく、`論理破片 × 切断面`の`CapRecord`単位で判定する。同じ切断面でも正負破片の断面Normalは逆向きになるため、片側が裏向きでも反対側を自動的に省略しない。支持による描画省略を行わない。
 
@@ -511,13 +508,15 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
 | --- | --- |
 | 入力 | posed頂点、法線、接線、UV、色、submesh、index、切断平面、`RenderCutTopologyMap`、論理破片ID、世代番号、`RenderCutRobustnessProfile` |
 | 処理 | Topology Vertex単位の分類、Original Edge単位の交点共有、元surface順序を保つTriangle clip、Topology由来Contour接続、有向Cap生成 |
-| 出力 | 正負の共用Geometry、断面submesh、Bounds、幾何切断に必要なTopology Metadata、Commit Metadata |
+| 出力 | 正負の共用Geometry、Bounds、幾何切断に必要なTopology Metadata、Commit Metadata |
 
-複数Renderer、submesh、閉Componentを一つの巨大Geometryへ結合する義務はない。幾何処理に必要なComponent識別を保ち、Geometry参照と描画集約、LogicalFragment、物理所有単位を分離する（4.5.1）。属性seamによるRender Vertex分裂、非同期Jobのための世代保持、CPU／GPU表現、物理Convexも別Geometryとは扱わない。
+元surfaceの既存submesh対応を保持し、実CapのIndexは本体の既存Draw rangeへ含める。実Capはその本体と同じMaterial・同じShader Pass・同じDraw callで描き、5.3のraw UV判定で通常Textureの取得と固定断面色の選択だけを分岐し、以後の陰影処理を共用する。複数の既存Draw rangeがある場合のCap配分は実装詳細とし、Cap用のsubmesh・Drawは追加しない。この同一Draw規則は実Capを対象とし、即時仮断面のStencil Volume／Cap描画は5章に従う。複数Renderer、submesh、閉Componentを一つの巨大Geometryへ結合する義務はない。幾何処理に必要なComponent識別を保ち、Geometry参照と描画集約、LogicalFragment、物理所有単位を分離する（4.5.1）。属性seamによるRender Vertex分裂、非同期Jobのための世代保持、CPU／GPU表現、物理Convexも別Geometryとは扱わない。
 
 ### 6.2 共通入力契約
 
 `RenderCutTopologyMap`が表すTopologyについて、各Edgeへちょうど2面が接続し、その2面が共有Edgeを互いに逆方向へたどること、各Topology Vertexの周囲の面が一つの閉じたfanを作ることを要求する。使用するposition／属性はfinite、index／submesh／Topology参照は有効とし、同じTopology Vertexのposed positionと同じOriginal Edgeの交点positionは一度生成したcanonical値を共有する。
+
+元surfaceのUV符号は入力Gateに含めず、5.3の誤表示許容を適用する。UVを含む使用属性のfinite条件は維持する。
 
 Disconnectedな閉Component、全体反転した閉Component、bind pose／skinning後のSelf-intersection、別Topology Component間のIntersection／Overlap、Internal／Nested Shell、別Topologyとして表現されたCoincident／Duplicate Componentを許容する。物体全体を単一連結成分にせず、座標一致を理由に別Componentをweldしない。一方、Boundary Edge、3面以上が共有するEdge、一つのTopology Vertexを共有する複数fan、局所winding不整合は共用入力として受理しない。
 
@@ -542,7 +541,7 @@ C(入力Geometry) かつ 切断処理成功
 
 これはRuntime証明器や全Mesh再走査を追加する要求ではない。切断・出力生成工程内で変更したOriginal Edge、生成Edge、Cap、finite性、件数を確認し、未変更領域は前世代の不変条件を継承する。Topology Vertex単位のsigned distanceを一度だけ確定し、OnPlaneはPositive側へ所有させて同じ分類を全incident Triangleで共有する。全頂点OnPlaneのTriangleはPositive側へ1回だけ保持し、そのTriangleからCap segmentを生成しない。平面がvertex／edge／faceを通る場合、同一点に複数のcut portが生じる場合、極小／面積0 Triangle、契約内Self-intersectionを通常ケースとして扱い、別Topology由来のportを位置近傍だけで接続しない。
 
-各出力の元surfaceが持つ切断境界Half-edgeに対し、Capは逆方向の境界Half-edgeを持つ。切断Boundary EdgeにはCap側の面をちょうど1枚接続し、Cap内部Edgeには互いに逆方向の2面を接続して、頂点周囲も閉じた単一fanにする。非退化CapのNormal／Tangentはこのwindingと一致させる。切断平面は位置、signed distance、射影、UV basis等へ使用できるが、実Capの表裏は元surfaceの有向境界から決め、全体反転した入力の向きを作り直さない。
+各出力の元surfaceが持つ切断境界Half-edgeに対し、Capは逆方向の境界Half-edgeを持つ。切断Boundary EdgeにはCap側の面をちょうど1枚接続し、Cap内部Edgeには互いに逆方向の2面を接続して、頂点周囲も閉じた単一fanにする。非退化CapのNormal／Tangentはこのwindingと一致させる。切断平面は位置、signed distance、射影等へ使用できるが、実Capの表裏は元surfaceの有向境界から決め、全体反転した入力の向きを作り直さない。生成Cap Triangleの全Render Vertexには5.3の固定負UV markerを設定し、元surfaceとの属性seamは既存のRender Vertex分裂で扱う。既存実Capの再切断では通常の属性補間で負markerを継承する。Texture Mapping用のCap UV生成は行わず、幾何処理とNormal／Tangent生成は維持する。
 
 Half-edge、edge hash、圧縮adjacency、Contour表現、三角形化、局所交差処理は、共通契約を満たす範囲で実装と実測から選ぶ。単純なContourへfan等を使うことは禁止しないが、不正入力や不正出力を重複Cap、逆向き重複面、Open Chain封鎖、Non-manifold lane分解で救済する段階列は要求しない。異なる閉ComponentやTrackをBoolean Unionせず、契約内の自己交差処理に必要なら局所Arrangementを共通Kernel内で使用できる。
 
@@ -1631,7 +1630,7 @@ Voxel／SDF Union、内部Flood Fill、制約付きSurface Projection、Global W
 
 公開可能な空の`.blend`テンプレートにGeometry Nodes、入力Collection、封鎖Collection、出力Collection、検証用設定を保持できる。Pythonはファイル入出力、Recipe適用、パラメータ設定、処理実行、検証、終了コードを担当する。これにより、失敗AssetだけをGUIで開いて中間状態を確認できる。
 
-Voxel RemeshではUVや元の頂点属性を保持する必要はない。製品用Global Solidは生成しない。断面はUVやトライプラナー質感へ依存せず、Unity側の共通トゥーンシェーダーへ粘土色グレーまたはデバッグBase Colorを渡して描画する。
+Voxel RemeshではUVや元の頂点属性を保持する必要はない。製品用Global Solidは生成しない。断面はTexture Mapping用UV展開や断面Textureへ依存せず、Runtimeでは5.3のraw UV markerで固定断面色を選ぶ。Blender側で断面用UV展開、断面Texture Bake、色別Geometryを生成しない。元Assetの負UVに対する修正も要求しない。
 
 ### 10.7 キャッシュとUnity連携
 
@@ -1721,9 +1720,6 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-045 | 遠距離モブ | Far／Dormantモブはキネマティックな経路と`ExplicitAnimationStateV1`全体を先行確定し、切断計算の猶予へ利用する。粗い時空間予約は初期成立条件に含めない任意の後段拡張とし、D-134の段階導入に従う | 技術検証付き確定 |
 | D-046 | MobPlan Commit | 未来モブ姿勢に基づく切断成果物は、実命中、ObjectGeneration、PlanGeneration、姿勢許容誤差の一致時だけCommitする | 確定 |
 | D-052 | 候補範囲 | 候補範囲は投機専用で、実HitはSlashWave Segment Sweepだけで確定する。有限包絡がなければ全Hitを含まない先行準備範囲を使い、範囲外は現在状態経路へ進む | 確定。19.1.10／Phase 4.53 |
-| D-053 | 通常断面 | 全体と同じ共通トゥーンシェーダーへ粘土色グレーを渡し、断面専用の写実質感や特殊陰影は使用しない | 確定 |
-| D-054 | 断面デバッグ色 | 赤＝即時仮断面、青＝先行Commit、緑＝命中後計算Commit、通常グレー＝Stableを基本とし、補助状態は水色／黄／オレンジ／紫／縞で表す | 確定 |
-| D-055 | デバッグ文字 | 全断面への常時テキストを避け、選択中1対象の単一パネルとEditor Timeline／Traceへ詳細を集約する | 確定 |
 | D-059 | 映像キャプチャ段階導入 | PoC初期はUnity側の選択的キャプチャを使用し、切断PoC成立後にOpenXR API Layer方式を追加検証する | 確定 |
 | D-060 | PoC録画負荷 | 通常は片眼・30／45fps・必要に応じ縮小解像度のGPUエンコードを基本とし、異常時リングバッファと限定的な両眼原解像度静止画を保存する | 技術検証付き確定 |
 | D-061 | OpenXR Capture責務 | Windows PCVRのD3D11（D-137の`OpenXrProjectionCaptureProfileV1`）だけから開始し、Projection Swapchain ImageをRelease前に専用GPU TextureへCopyしてTraceと同期する | 技術検証付き確定 |
@@ -1819,6 +1815,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-168 | 現在採用Convexと系譜Hit消費 | 19.1.7／19.1.9の4端点の閉凸包Sweep（退化を含む）と現在採用Convexを正本とし、直接消費したLogicalFragmentRefだけを一時保持、既存Operation履歴をO(N)走査する | 人間承認済み、2026-09-11。受付見送りでも同Slashでは再試行せず、無関係Fragmentは個別Hitできる。親API・Cache・通知・恒久履歴を追加しない |
 | D-169 | 基本Playable先行Phase | 0.55でUX、4.50～4.52でWaveと現在状態切断を先行完成し、Predictionを後段へ分ける。4.1は性能曲線、Slash Deadlineへの適用は4.53とする | 人間承認済み、2026-09-11。15章の依存・省略条件を正本とし、4.55／4.60の内部方式は変更しない。Traceは現行Runtime／v2だけを更新し、21.16.6のv1読込みを維持する |
 | D-170 | 第一候補のGuide Ray交点 | 19.1.5.1のBegin剣先方向T、Begin→Latch Emitter chordのS、Live／Frozen Guide交点r／q、Invalid保持とClose後勾配を第一候補とする | 人間承認済み、2026-09-11。具体epsilon・q許容等はUI調整。Clamp、別交点Fallback、軸回転を追加せず、比較方式は同じ出力境界内で交換できる |
+| D-171 | 断面色と最小デバッグ | 5.3に従い通常は仮断面と実断面を共通トゥーンの固定グレー、デバッグ有効時は仮断面を赤、実断面を緑とする。実Capの固定負UV markerは表示色選択だけに使い、処理経路色と専用表示契約を撤去する | 人間承認済み、2026-09-11。元Assetの負UVによる通常表示・デバッグ表示の誤表示を許容し、UV検査・修正・登録拒否を追加しない。O-004を解決 |
 
 ## 13. 未決事項
 
@@ -1827,7 +1824,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | O-001 | 初期ターゲット | 解決済み：PCVRを採用（D-011） | Quest単体は当面スコープ外 | 2026-08-21 |
 | O-002 | 目標FPS | 解決済み：両眼描画90fpsを基準（D-012） | 再投影は安全網として扱う | 2026-08-21 |
 | O-003 | Temporary Renderer上限 | 同一物体の`TemporaryRenderCapRecordSet`について、固定側も含む実Cap 2、3、4枚のどれを標準上限とするか | 描画コストと連続斬り感 | T-003後 |
-| O-004 | 断面表現 | 共通トゥーン＋粘土色グレーは確定。機械内部や人体で追加記号・部品表現を使う範囲 | 年齢区分とアート制作 | アート検証時 |
+| O-004 | 断面表現 | 解決済み：初期仕様ではカテゴリ別の断面色・模様・追加記号・内部部品表現を設けず、全対象を同じ固定グレーとする（D-171） | 専用アート、Material、Vertex属性を追加しない | 2026-09-11 |
 | O-005 | 切断可能範囲 | 解決済み：人間判断により建物は切断対象、道路は非対象（D-165） | 建物対応をロードマップに含め、道路切断は実装範囲に含めない | 2026-09-10 |
 | O-006 | 破片寿命 | 最大動的破片数、消去時間、スリープ規則。7.9の確定空物理GCとその接触・質量消失の許容は確定し、巡回頻度・製品予算・効果の実測は実装時に決める | 物理CPUと視覚密度。GCへのSleep必須化や期限保証はしない | T-010後／任意Phase 5.7 |
 | O-007 | Collider仮状態 | 旧Collider維持時間と周辺破片の例外判定。Player Body／Handと刀は物理接触せず、刀は論理Sweepのみ | 違和感と実装複雑度 | T-005後 |
@@ -1881,7 +1878,7 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-003 | 複数Pending | 2〜4切断で画質と性能が許容範囲 | 切断数別にCPU/GPU、Draw、overdrawを比較 |
 | T-004 | Stencil断面 | 正常な正向きの共用Geometryで、5.2の明示的品質例外を除き穴・はみ出し・片眼ずれがない | 箱、凹形、人形の共用Geometryを通常の外部視点で両眼確認する。符号・Color・Plane overflowの扱いはT-066／T-067／T-089に従い、この試験へ重複展開しない。Camera内部／Near Plane近傍は5.2／D-131の品質例外に従う |
 | T-005 | Convex切断 | 7.2の上限内の閉凸出力を生成し、同節の接触変化の許容と既存の物理Commit条件を満たす | 少数合成Fixtureで上限内は削減なし、有効なL以下入力を切って129頂点以上になる削除可能例は128以下へ削減する。2回以上の削除を含め、重複統合後の継承頂点の保護、残存座標不変、閉凸性・内接性・非退化性と同じ実装・入力条件での決定性を確認し、特定の削除順との一致は合格条件にしない。候補不足は既存終端・回収、表示張り出しへのNo-opは許容結果として確認する。完了時間・接触変化・速度継承を既存計測で確認し、成功例を既存物理正式採用だけで代替して合格にしない |
-| T-006 | 共用Geometry切断 | 断面が閉じ、UV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる | 代表10プロップを多方向に連続切断 |
+| T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表10プロップを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
 | T-007 | 世代競合／公開前受付制限 | 先行Operation未公開の親と仮表示領域への後続切断を見送り、Operation公開後はGeometry／cook／Physics未完了でも、4.5.3のCPU読取り公開で確定子を再切断できる。GPU転送・集約完了を待たない。終端失敗した未公開Operationの後着成果物を公開しない | AのOperation公開を遅らせ、仮表示領域へのBが状態、世代、未完了件数、Aの仕事を変えず見送られ、A公開後もBが再生されず新しいCを受付けることを確認する。別FixtureではAをOperation未公開のまま既存規則で終端失敗させ、A由来のPending Cut／仮表示だけが退役し、親の現在有効な共用Geometry、A以前の未Commit祖先制約、履歴、物理姿勢／速度が残ること、未完了件数が安全な回収後に一度だけ減ること、最新世代でCを受付けること、世代一致のA後着結果でも状態が戻らないことを確認する。無関係な確定済み対象はAの公開待ち中も受付可能とし、A公開後のCと既存Jobの完了順を反転して従来のGeneration Rejectも維持する |
 | T-008 | Skinned切断 | 姿勢固定から静的破片への切替が見えない | Phase 4.52。歩行・走行・腕振り中に各部位を切断 |
 | T-009 | 入力モデル耐性 | 契約内モデルは自動前処理で切断可能になる | 変換検査とエラーレポートを確認 |
@@ -1925,8 +1922,8 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-047 | 時空間予約 | Farモブ同士が粗い予約下で目立って重ならず、予約計算が局所的に完了する | 密度別に競合数、再計画数、CPU時間、見た目を測定 |
 | T-048 | モブ先行切断 | 遠距離モブの計画済み明示Animation Stateから必要候補だけをPose評価し、命中前のMesh／Convex完了率を改善する | 距離、Tier、Horizon、Pose Evaluator Backend別にCommit率、破棄率、Pending時間、評価Bone数を比較し、全Mob／全Sampleの全骨Pose先行生成が実行されないことを確認する |
 | T-049 | Mob Trace完全性 | MobPlan生成から利用、無効化、再計画、切断Commitまで因果を追跡できる | MobId、PlanGeneration、SlashId、TaskIdで保存Traceを自動照合 |
-| T-050 | 断面表示一貫性 | 仮断面から実断面、Stableグレーへの移行で陰影や輪郭が目立って変化しない | 共通トゥーン設定下で箱、凹形、人物を多方向に切断し、両眼映像とフレーム差分を確認 |
-| T-051 | 断面デバッグ表示 | 赤／青／緑等が実際の処理経路と一致し、色覚補助表示を含めても90fps予算を阻害しない | 各Commit／Reject／Pending経路を強制し、Traceとの一致、GPU時間、Draw、選択パネル更新負荷を測定 |
+| T-050 | 断面表示一貫性 | 通常表示で仮断面と実断面が同じグレー・同じトゥーン応答となり、差し替えで陰影や輪郭が目立って変化しない | 共通トゥーン設定下で箱、凹形、人物を多方向に切断し、両眼映像とフレーム差分を確認する。既存FixtureでBase Texture／Material UV Transformを変更しても実断面色が変わらないことを確認する |
+| T-051 | 断面デバッグ表示 | 5.3の通常グレー／仮断面赤／実断面緑が描画対象に対応し、デバッグ切替でGeometryを書き換えない | Readyだが未Commit、Geometry Commit済みかつPhysics未完了、Physics完了を一連で確認し、再切断では既存実Capの緑と新しい仮Capの赤を維持する。色変更だけを目的とするVertex／Index書換え・VB／IB転送・Geometry複製がないことを確認する。処理経路別の色行列、色覚補助、専用パネル、独立性能SLAを要求しない |
 | T-054 | Unity選択的録画 | 片眼映像、異常前後リング、限定静止画がFrameId／Traceと一致し、録画有効時も性能予算内 | 最新のTier C Phase 0.11 qualification成功を入口証拠とし、Phase 0.11ではWDDM非同期NVENC、固定2 WorkerのAccepted FIFO順submit／Output回収、reorderなし、Capture専用のSource／GPU同期／Encode Sample／Work固定8 in-flight、固定memory streaming verification、Fresh final全file hash 1回、CaptureCompleteでのReceipt再利用、Main／Render Thread非待機を前提にする。Phase 4.8で解像度、30／45fps、リング長、正式chunk長、GOP、Container、segment、durability頻度、index、seek、保持期間別のGPU／CPU時間、Dropped Frame、保存遅延を比較する。上限を外す場合はRegistry／Publication Planの計算量、payload copy／hash回数、停止時Publication時間を先に実測・改善し、必要な場合だけ代替EncoderまたはCapture経路を再評価する。Phase 0.11のchunk形式を製品用連続録画形式へそのまま昇格しない。T-054はPhase 0を再オープンせず、Phase 0.1／0.11のTier A～DへPhase 4.8の性能matrixを混入させず、両Phaseの完了条件にも含めない |
 | T-055 | OpenXR Projection Capture | D3D11固定ProfileでRelease前CopyがSwapchain所有権、Texture Array、左眼SubImage Rect／Array Indexを正しく扱い、提出画像を破損しない。MSAA、別API、想定外LayerはFail Fast | 正常Profileで非録画時との画像・Frame timing差を比較し、MSAA、D3D12、別Array Size、追加App Layerを故意に与えて録画停止とTrace理由を検査 |
 | T-056 | Capture相関と限界 | predictedDisplayTime、Pose、TestRunId、ゲーム内ID、画像が一意に対応し、Projection正常／最終HMD異常を区別できる | 意図的な描画不具合、Dropped Frame、Reprojection、Link品質低下を発生させ、Unity Capture、API Layer Capture、HMD観察を比較 |
@@ -1938,7 +1935,7 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-064 | 全体低重力プレイ | 一般プレイヤーが空中物体を狙いやすく、世界全体の浮遊感とゲームテンポが許容でき、全軌道系で重力が一致する | 0.35G／0.5G／0.7G／1.0Gを同一投擲・切断Scenarioで比較し、滞空時間、斬撃成功率、主観評価、Physics／予測／VFXの軌道差を記録 |
 | T-065 | 即時切断Shadow | Stencil Capなしの両面Shadowが即時状態で許容でき、clip／Offsetがカラー像と一致し、片面／両面群分割が90fps予算を阻害しない | 箱、薄板、凹形、非閉形状を床／壁近傍で切り、単一Directionalの各Cascade、Bias条件について実Capとの差分、漏れ、peter-panning、Shadow Draw、GPU時間を比較 |
 | T-066 | Stencil Color割当て | 通常Colorでは左右眼いずれかでResidual Stencil Supportが重なる非互換対象を分離し、実行Color数を`MaxStencilColors`以下に保つ。配置できない対象は最後のColorへ入り、各Colorで全Volume後に全Capを描く | 左右眼だけでCapが重なる配置、OBBは重なるがCapは非交差の配置、全Cap重複、非重複、小さいColor上限を確認し、CPU分類、Color数、統合Color比率、Clear／Volume／Cap GPU時間、Drawを測定する。全Graph／全Edge、特定のColor番号、方式間で同じ彩色結果、統合Colorの画像正解を要求しない |
-| T-067 | 正符号Stencil／互換Group | 128初期化とWrap加減算から得る`S>128`が範囲内の`W>0`と一致し、共通契約を満たすGeometryを符号保存のまま共有できる。通常Colorでは非互換Residual Supportの分離条件を守る。描画結果には5.2の明示的品質例外を適用し、最後の統合Colorでは非互換対象の分離を要求しない | 正向き箱、凹形、同方向重複と、生のCount `-1／0／+1／+2`が`127／128／129／130`になる小さいFixtureで`Ref 128 / Comp Less`、Read／Write Mask、IncrementWrap／DecrementWrap、Color／Depth writeを確認する。全体反転閉Mesh、正逆重複、別TopologyのCoincident／Nested／Self-intersection、負determinant Transform、World Plane／Material差、左右眼を試し、向き正規化や二重Transform補正がないことを確認する。範囲外Winding、入力Gateの不合格行列、削除済みの符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupをこの描画試験へ追加しない。8bit排他不能構成はゲーム開始を拒否する |
+| T-067 | 正符号Stencil／互換Group | 128初期化とWrap加減算から得る`S>128`が範囲内の`W>0`と一致し、共通契約を満たすGeometryを符号保存のまま共有できる。通常Colorでは非互換Residual Supportの分離条件を守る。描画結果には5.2の明示的品質例外を適用し、最後の統合Colorでは非互換対象の分離を要求しない | 正向き箱、凹形、同方向重複と、生のCount `-1／0／+1／+2`が`127／128／129／130`になる小さいFixtureで`Ref 128 / Comp Less`、Read／Write Mask、IncrementWrap／DecrementWrap、Color／Depth writeを確認する。全体反転閉Mesh、正逆重複、別TopologyのCoincident／Nested／Self-intersection、負determinant Transform、World Plane差、左右眼を試し、向き正規化や二重Transform補正がないことを確認する。範囲外Winding、入力Gateの不合格行列、削除済みの符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupをこの描画試験へ追加しない。8bit排他不能構成はゲーム開始を拒否する |
 | T-068 | 両眼Cap可視性Cull | 両眼とも裏向きの互換Groupだけが安全に早期除外され、片眼可視、面近傍、正負破片でCap欠落や点滅を起こさずStencil仕事を削減する | 左右眼でFacingが一致／不一致となる配置、面横断、頭部微動、正負Cap、Frustum外を再生し、Cull判定、ヒステリシス、Stencil Draw／GPU時間、左右眼画像差を比較 |
 | T-069 | Convex Job Pipeline | Convex分割と複数`Physics.BakeMesh`がメインスレッドを停止させず、世代不一致成果物を適用せず、Pending物理共有から安全に分裂できる | 破片数、面数、同時Slash数、Fast Cook／Fast Simulationを変え、各Job段階時間、Schedule数、Worker占有、Main Thread Commit時間、Bake P50／P95／P99、Generation Reject、物理差し替え時Impulseを測定。同一Mesh同時Bakeを不変条件として検出する |
 | T-071 | Global Solid Reconstruction研究 | Voxel／SDF Union、内部充填、Surface Projectionから自己交差のないGlobal Solidを再構成できるかを将来研究する。製品Phase、代表Asset合格条件、Fallbackには使用しない | 開始時期未定。研究を開始する場合だけ独立DatasetとArtifact Schemaを新設し、標準Closed Component／Stencil／Compound Convex経路へ影響しない比較として実施する |
@@ -2031,7 +2028,7 @@ Phase IDは文字列とし、4.50を旧4.5と同一視しない。0.5→0.55は�
 | Phase 0.93 | 消去と範囲アロケーション | 表示Instance／Geometry参照退役、4.5.3の予約・公開・寿命管理、退役Indexと未使用・失敗予約のbest-effort再利用。Published Vertex再利用・コンパクションなし | 少数の合成Jobで共通入力読取りと非重複出力への並行書込み、完了後公開、未使用予約回収、参照中Indexの再利用抑止、退役後再利用、予約不足後の再実行、完了回収後のReserved所有権引継ぎ、必要時のCPU読取り公開と別Reservedへの仕上げを確認する。切断器へ依存しない |
 | Phase 0.94 | VP Stage 2 | Stage 1のGeometry表現・アロケータを維持してIndirect・非indexed＋shader-side indexing／属性Pullingを実装し、描画要求の集約・引数管理・個別発行を見直す。正負連続Index配置による粒度削減をIndirect APIの自動融合とみなさない | Stage 1と同じ小規模代表Sceneで機能を維持し、実際の発行経路とMain Threadへの効果を比較して採用を判断する。固定改善率・全Scene高速化は要求せず、効果が乏しければ人間判断でStage 1を採用して進める |
 | Phase 1 | 即時切断／Dispatch境界 | Phase 0.9～0.94のVP基盤、合成Geometryと点Anchor、正負論理子・切断履歴の公開、単一clip・仮分離・簡易断面、対象ごとの低頂点1 Hull Placeholder、片側空No-op・受付上限、V1 Dispatcher API・固定Queue・予約枠・取消・Completion | 少数の合成入力と選抜済みFixtureで即時表示とT-074の純粋データ公開・Anchor配分を確認する。実Convex切断・Rigidbody・cookと固定物理の結合はPhase 4へ置く。支持を理由に描画を省略しない。未公開親への受付制限、No-op／混雑時の非変更、公開前の子先取り禁止を確認する。製品Preprocessorを前倒しせず、合成Workで後続PhaseがQueue実装型へ依存しないDispatch境界を固定する |
-| Phase 2 | 仮断面・影強化 | 表示／Stencil共用基底Geometry、6.2の入力Gate、`RenderCutTopologyMap`、T-084、ゼロKerf、LogicalCutOperation、TemporaryRenderCapRecordSet、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、128初期化の正符号8bit IncrementWrap／DecrementWrap Stencil、Residual Stencil Supportの保守的投影競合、符号保存のCapCompatibility Group、`MaxStencilColors`と最後の統合Color、Color単位Volume／Cap Batch、`TemporaryClipConstraintCandidateSet`、`SV_ClipDistance` 8面＋PS `clip()` 4面＋Renderer-only overflow無視、共通トゥーンの粘土色グレー、処理経路デバッグ色、ShadowCaster用同一Hybrid Clip／Offset、XR両眼対応、Pending Cut／Stable履歴管理、T-067／T-089 | 2～4連続切断と複数対象で、表示とStencil Volumeが同じ合格済み基底／Stable Geometry、Topology、windingを参照し、用途別Geometryや描画時のGeometry再検証を持たない。通常Colorは左右眼の非互換Residual Supportを分離し、Color数を固定上限内に保ち、同じColorでは全Volume後に全Capを描く。Self-intersection、別Topologyの重複／Coincident、Internal／Nested、全体反転を向き保存で受理し、共通入力Gate不合格は切断対象へ登録しない。符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupは作らない。`S=(128+W) mod 256`と`S>128`を使い、範囲外は5.2の品質例外とする。最後のColorでは混入、欠落、余計なCap、誤Depthを許容し、GPU時間は測定対象に留める。8bitを排他利用できない構成ではゲーム開始を拒否し、部分Bitや代替経路を持たない。候補面は古い未Commit祖先制約を優先するdependency-closedなstable順で全Pass／両眼へ共有し、8面をRaster、続く4面をPixelで処理する。超過した後発面は即時Stencil VolumeをsubmitせずCap板と論理／背景処理を残す。Cap pair／Coverage探索、Cap単位Buffer compaction、Mesh部分更新、多段Fallbackを行わない。Color割当ては5.6の実装自由度に従い、全Graph構築を必須としない。Camera内部／Near Plane近傍では5.2の品質例外を許容する。Shadow MapではStencil Capなしの影近似を使用する |
+| Phase 2 | 仮断面・影強化 | 表示／Stencil共用基底Geometry、6.2の入力Gate、`RenderCutTopologyMap`、T-084、ゼロKerf、LogicalCutOperation、TemporaryRenderCapRecordSet、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、128初期化の正符号8bit IncrementWrap／DecrementWrap Stencil、Residual Stencil Supportの保守的投影競合、符号保存のCapCompatibility Group、`MaxStencilColors`と最後の統合Color、Color単位Volume／Cap Batch、`TemporaryClipConstraintCandidateSet`、`SV_ClipDistance` 8面＋PS `clip()` 4面＋Renderer-only overflow無視、共通トゥーンの粘土色グレー、Temporary／Committed断面デバッグ色、ShadowCaster用同一Hybrid Clip／Offset、XR両眼対応、Pending Cut／Stable履歴管理、T-067／T-089 | 2～4連続切断と複数対象で、表示とStencil Volumeが同じ合格済み基底／Stable Geometry、Topology、windingを参照し、用途別Geometryや描画時のGeometry再検証を持たない。通常Colorは左右眼の非互換Residual Supportを分離し、Color数を固定上限内に保ち、同じColorでは全Volume後に全Capを描く。Self-intersection、別Topologyの重複／Coincident、Internal／Nested、全体反転を向き保存で受理し、共通入力Gate不合格は切断対象へ登録しない。符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupは作らない。`S=(128+W) mod 256`と`S>128`を使い、範囲外は5.2の品質例外とする。最後のColorでは混入、欠落、余計なCap、誤Depthを許容し、GPU時間は測定対象に留める。8bitを排他利用できない構成ではゲーム開始を拒否し、部分Bitや代替経路を持たない。候補面は古い未Commit祖先制約を優先するdependency-closedなstable順で全Pass／両眼へ共有し、8面をRaster、続く4面をPixelで処理する。超過した後発面は即時Stencil VolumeをsubmitせずCap板と論理／背景処理を残す。Cap pair／Coverage探索、Cap単位Buffer compaction、Mesh部分更新、多段Fallbackを行わない。Color割当ては5.6の実装自由度に従い、全Graph構築を必須としない。Camera内部／Near Plane近傍では5.2の品質例外を許容する。Shadow MapではStencil Capなしの影近似を使用する |
 | Phase 3 | 共用表示／Stencilジオメトリ | Job＋Burstの一つの三角形切断系列、4.5のVPプール入力・出力と範囲所有権、`RenderCutTopologyMap`、Topology系譜の交点共有、共通signed-distance分類、有向境界と整合するCap、閉鎖・edge／vertex manifold・局所winding整合の出力継承、Runtime面積0 Triangle許容、正負各最大1のGeometry範囲、単一予約内の正負Index直接出力、CPU完成後の必要転送と現在frameでの表示Commit、GPU範囲更新とメインスレッドGeometry参照公開、両用途の原子的Geometry Commit、空出力の非生成、V1 Dispatcher Class 2接続、T-083 | 少数Fixtureで正負連続Indexと転送1回／再利用時0回を確認し、現在の追従先を使った表示をPhase 4の実cookなしで成立させる。仮表示から共用VP Geometryへ置換し、切断Kernelの重い頂点処理がMain Threadへ戻らない。通常更新で全Job／GPUを待たず、容量拡張時の停止・容量限界での終了だけ4.5.4に従う。箱、凹形、複数閉Component、全体反転、Self-intersection、別Topologyの重複／Coincident／Nested、vertex／edge／face通過、同一点複数port、面積0を含む契約内Fixtureで、生成Capを含む各非空出力が入力と同じ共通契約を継承して再切断できる。表示とStencilが同じ世代・Triangle集合を使用し、用途別の切断、Cap生成、適否、修復、簡易表示Proxyを持たない。Triangle数0の側にはdummy Mesh／Cap／Rendererを作らない。不正結果、世代不一致、出力予約不足は両用途とも公開せず、最後の共用GeometryとPending Clipを維持する。出力予約不足だけは4.5.3の再予約・再実行を許容する。全Mesh self-intersection／inside-outside／shell分類をRuntimeへ追加しない |
 | Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingAnchoredSplit／ProvisionalPhysicsSplit／ProvisionalAnchoredSplit／StableUnsplit、Phase 1の正負子・点Anchorモデルとの接続、仮描画と物理運動の分離、固定側Impulse禁止、自由側解析仮運動、旧Cooked Convex Resource Lease、Provisional Actor／Shape／Separation Constraint、全外界Collision／Sibling抑止、OBB Provisional質量配分、CanonicalMassBudget、FragmentRenderAnchor初回分裂／物理優先Final handoff、正負各最大1所有者、Native Convex B-rep、Compound内Overlap許容、Count／Write／Validation Job、7.2のRuntime頂点上限・新規交点の内接削減（次数3＋ΔV順は初期実装方針）、7.6のSide集合による物理所属、物理のみの正常な空表示出力、Temporary Physics Proxy生成Kernel／Validation、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、Sibling Collider一時衝突抑止、別Mesh差し替え、Upgrade Scheduler、`PhysicsConvexMassWeight`、Convex由来の体積／重心／慣性とOBB／AABB近似、質量保存、速度継承、Generation Reject、既存物理の正式採用、保守的な仮予算管理、Phase 0.2 Convex Fixture回帰、T-077／T-085／T-086／T-091との差分再確認 | T-005の内接削減成功・不成立と再切断を成立させ、T-061／T-091で削減後形状の再cook・handoffを確認する。7.2の縮小に伴う品質変化を許容し、14章の完了順確認を実際のAnchor配分・所属・物理採否へ接続し、物理先行／表示先行と既存物理正式採用を確認する。物理は表示転送を待たず、cook遅延中も仮表示を維持し、点Anchor配分が完了して所有者単位の固定／動的が定まり、容量内では再cookなしのProvisional Rigidbodyへ原子的に分裂して外界Collisionと連続運動を先行する。交差する独立ComponentをUnionせず、凹形状でも同Sideの島を一所有者へまとめる。専用Convexを持たない非空共用Geometryも7.6のSide規則へ従い、Containment／Coverage／最良適合や後追い精密化を要求しない。Geometryが空でPhysics Convexが非空の出力はRendererなしの通常物理Objectとし、専用型・復旧metadataを作らず通常のObject／Level lifetimeまで保持できる。重複Compoundでも生体積を質量として二重計上せず、Weight継承で切断前後の質量和を保存する。形状、質量またはFinal handoffを成立させられない場合は、利用可能な既存物理表現を正式採用した`Stable Unsplit`へ終端し、時間だけの再試行、小破片消去、質量移送を行わない。Temporary Physics Proxyの実装済み品質がT-077を通り、不正結果は物理へ公開しない。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリ、`MaxIncompleteCutOperationCount`へ保守的な試験値を設定する。分類後は固定側を動かさず自由側だけを安全に分離する。公開合成Fixtureと選抜済みLicensed Convex Fixtureの両方で、Convex分割／質量特性／BakeがMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
 | Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Phase 0.2 LicensedRepresentative補助Dataset、Single-Thread Kernel Harness、Job Batch Harness、共用Geometry／Convex／T-077検証済みTemporary Physics Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装をT-076に従い、公開合成Datasetをcanonical正本、選抜済みLicensed Fixtureを別の非公開補助Suiteとして測定する。各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039へ使う再利用可能なLatency／Throughput／P95／P99容量式を根拠付きで得る。Slash速度・寿命・Span・候補数と到達Deadlineへの適用はPhase 4.53へ分ける |
@@ -2098,7 +2095,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 両眼とも裏向きのCap GroupはStencil処理ごと省略され、片眼だけ可視または切断面近傍では省略されず、頭部微動で仮断面が点滅しない。
 
-- デバッグモードでは赤＝即時仮断面、青＝先行Commit、緑＝命中後計算CommitをTraceと一致して識別でき、Stable後は通常グレーへ戻せる。
+- 5.3に従い、デバッグ有効時は仮断面が赤、公開済み実断面が緑となり、無効時は両者が通常グレーとなる。元Assetの負UVによる通常表示を含む誤表示は許容する。
 
 - 表示CPU出力と必要転送が揃い、現在有効なframe／参照へ追従できれば描画境界で共用VP Geometryを公開し、対応Temporary描画を回収する。Final cook・物理所属待ちで転送を止めず、後着物理への参照切替でIndexを再配置しない。物理も必要なCPU情報と適用条件が揃えば表示転送を待たずCommitし、仮表示は現在物理に追従する。既存の容量処理と明示的品質例外は維持する。
 
@@ -2283,7 +2280,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | Pending Two-Sided Shadow | 即時切断中だけ、開いた外殻の裏面をShadow Mapへ書いて断面キャップの遮蔽を近似する両面ShadowCaster経路 |
 | Cap Bounds Polygon | 対象のローカルOBBと切断平面の交差から生成し、他のTemporary Render Boundary半空間でclipする3～6頂点の有限な仮キャップ板 |
 | Stencil Conflict Graph | 通常Colorで分離が必要な対象間の関係を表す論理モデル。全Graph、全Edge、特定の構築・彩色手順を要求しない |
-| CapCompatibilityKey | 全World Cut Plane、Side／半空間、分離Offset、Cap Material／Debug状態を表すStencil共有互換Key。符号分類とWinding容量を含めない |
+| CapCompatibilityKey | 全World Cut Plane、Side／半空間、分離Offsetを表すStencil共有互換Key。可視色、符号分類とWinding容量を含めない |
 | Winding Count Stencil | 共用Cut GeometryのFront／Backで排他的に予約したStencil Byte全8bitを128へ初期化してIncrementWrap／DecrementWrapし、`S=(128+W) mod 256`のうち`S>128`だけを描画する方式。Saturateおよび部分Bit Counterは使用しない |
 | Residual Stencil Support | Front／Back集計後に`S != 128`となる画面領域を表す論理概念。実Stencilから検出せず、可視Cap Boundsを通常Colorの保守的な投影重複判定に使う |
 | Cap Visibility Cull | 論理破片×切断面のCapRecordを左右眼で判定し、全Capが両眼とも裏向きの互換GroupをStencil彩色前に除外する処理 |
@@ -3130,7 +3127,7 @@ mutableな`TraceEnqueueFailureCount`、immutableな`SealedTraceEnqueueFailureCou
 
 #### 21.7.1 目的と証拠の優先順位
 
-映像はTraceLoggerを置換せず、処理経路デバッグ色、切断面、VFX、左右眼差、表示の巻戻りを人間が確認する補助証拠とする。ゲーム状態と因果関係の正本はTrace、CPU／GPU時間の正本はProfiler／XRDisplaySubsystem、画像の正本はCapture Recordが指すフレームとする。
+映像はTraceLoggerを置換せず、Temporary／Committed断面デバッグ色、切断面、VFX、左右眼差、表示の巻戻りを人間が確認する補助証拠とする。ゲーム状態と因果関係の正本はTrace、CPU／GPU時間の正本はProfiler／XRDisplaySubsystem、画像の正本はCapture Recordが指すフレームとする。
 
 ```text
 Trace Event／Profiler
