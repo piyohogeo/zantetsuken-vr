@@ -547,30 +547,40 @@ namespace zantetsu
             return false;
         }
 
+        // Owned from the moment it exists: whatever happens next, this handle
+        // is the session's to account for.
+        _completionEvent = completionEvent;
+
         NV_ENC_EVENT_PARAMS params = {};
         params.version = NV_ENC_EVENT_PARAMS_VER;
-        params.completionEvent = completionEvent;
+        params.completionEvent = _completionEvent;
 
         const NVENCSTATUS status = api.nvEncRegisterAsyncEvent(_encoder, &params);
         if (status != NV_ENC_SUCCESS)
         {
             _lastNvencStatus = status;
 
-            // Nothing was registered, so the event this call created is the
-            // only thing to undo; the session stays initialized, open, and
-            // closable.
-            if (!::CloseHandle(completionEvent))
+            // The driver registered nothing, so only this handle has to go.
+            if (!::CloseHandle(_completionEvent))
             {
+                // The OS refused to close it, so the handle is still held
+                // rather than assumed gone - and a session that still holds
+                // one does not close.
                 _lastWin32Error = ::GetLastError();
+                return false;
             }
 
+            _completionEvent = nullptr;
             return false;
         }
 
-        _completionEvent = completionEvent;
         return true;
     }
 
+    /// Unregisters the held handle and closes it. A held handle is not
+    /// necessarily a registered one - a registration whose handle could not be
+    /// closed leaves one behind - and the driver, not this code, decides what
+    /// to do with an event it never took.
     bool NvencEncoderSession::TryUnregisterCompletionEvent()
     {
         if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
@@ -625,9 +635,11 @@ namespace zantetsu
 
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
-        // An encoder with a registered event is not destroyed: the event is
-        // unregistered first. Refused before the close attempt is spent, so
-        // the caller can still close after unregistering.
+        // An encoder is not destroyed while this session still owns a
+        // completion-event handle - registered or merely left over from a
+        // registration that could not clean up after itself. Refused before
+        // the close attempt is spent, so the caller can still close once the
+        // handle is gone.
         if (_completionEvent != nullptr)
         {
             return NvencEncoderSessionCloseStatus::Failed;

@@ -383,8 +383,9 @@ ZantetsuNvencRegisterSessionCompletionEventV1(
 
     if (!session->TryRegisterCompletionEvent())
     {
-        // No event is held, so the session is still initialized, open, and
-        // the caller's to close.
+        // The session is still initialized and open. It is closable unless the
+        // failure left a handle it could not close, which the raw Win32 error
+        // reports.
         destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
@@ -417,7 +418,7 @@ ZantetsuNvencUnregisterSessionCompletionEventV1(
 
     if (!session->TryUnregisterCompletionEvent())
     {
-        // The event is still the session's, so the session is not yet
+        // The handle is still the session's, so the session is not yet
         // closable.
         destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());

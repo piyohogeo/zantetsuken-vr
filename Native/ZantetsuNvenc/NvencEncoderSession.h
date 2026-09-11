@@ -52,9 +52,9 @@ namespace zantetsu
     };
 
     /// An owner must not be destroyed while it still holds an encoder or a
-    /// registered completion event: the event has to be unregistered and the
-    /// session closed successfully first, and an owner whose unregister or
-    /// close the driver refused stays alive with what it holds.
+    /// completion-event handle: the event has to be unregistered and closed
+    /// and the session closed successfully first, and an owner whose
+    /// unregister or close was refused stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -155,9 +155,12 @@ namespace zantetsu
 
         /// Creates one completion event and registers it with this session's
         /// encoder, exactly once per owner. The encoder must already be
-        /// initialized. A registration that fails anywhere leaves the session
-        /// as it was - initialized, open, and closable - and a second call
-        /// makes no attempt, touching neither the OS nor the driver.
+        /// initialized, and the handle becomes this session's as soon as it
+        /// exists. A refused registration closes that handle again and leaves
+        /// the session initialized, open, and closable - unless the OS also
+        /// refuses to close it, in which case the handle stays owned and the
+        /// session stays unclosable. A second call makes no attempt, touching
+        /// neither the OS nor the driver.
         bool TryRegisterCompletionEvent();
 
         /// Unregisters that exact event and closes its handle, exactly once
@@ -194,8 +197,9 @@ namespace zantetsu
         // itself against it.
         bool _encoderInitialized = false;
 
-        // The one completion event this session owns, and the two attempts
-        // that may touch it.
+        // The one completion-event handle this session owns, and the two
+        // attempts that may touch it. A held handle means the session is
+        // responsible for it, not that the driver has it registered.
         HANDLE _completionEvent = nullptr;
         bool _completionEventRegistrationAttempted = false;
         bool _completionEventUnregistrationAttempted = false;
