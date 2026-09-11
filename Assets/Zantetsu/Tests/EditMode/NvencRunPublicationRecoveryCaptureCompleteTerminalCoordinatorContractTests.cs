@@ -287,7 +287,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Execute_AfterACaptureCompleteException_RepeatsNeitherStage()
         {
-            Harness h = MakeHarness();
+            // The arrival that has to commit the Capture Index first, so the
+            // completer's failure genuinely follows a committed index.
+            Harness h = MakeHarness(finalIndex: Absent);
             IOException failure = new IOException("completer faulted");
             h.Completer.Throw = failure;
             NvencRunPublicationRecoveryCaptureCompleteTerminalCoordinator coordinator =
@@ -296,19 +298,24 @@ namespace Zantetsu.Core.Tests
             IOException thrown = Assert.Throws<IOException>(() => coordinator.Execute());
 
             Assert.That(ReferenceEquals(thrown, failure), Is.True);
+            Assert.That(h.Committer.CallCount, Is.EqualTo(1),
+                "the index was committed before the completer threw.");
             Assert.That(coordinator.CaptureCompleteReceipt, Is.Null);
             Assert.That(coordinator.IsCaptureCompletePrepared, Is.False);
             Assert.That(h.Cleaner.CallCount, Is.EqualTo(0), "the cleanup was never reached.");
 
-            // The commit may already have happened, so nothing is repeated.
+            // That commit already happened, so the stage is not repeated: no
+            // second inspection, no second commit, no second completion.
             h.Completer.Throw = null;
             Assert.Throws<InvalidOperationException>(() => coordinator.Execute());
 
-            Assert.That(h.Completer.CallCount, Is.EqualTo(1));
             Assert.That(h.Inspector.CallCount, Is.EqualTo(1));
+            Assert.That(h.Committer.CallCount, Is.EqualTo(1));
+            Assert.That(h.Completer.CallCount, Is.EqualTo(1));
             Assert.That(h.Cleaner.CallCount, Is.EqualTo(0));
             Assert.That(h.Releaser.CallCount, Is.EqualTo(0));
             Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(0));
+            Assert.That(h.SecondHandle.DisposeCallCount, Is.EqualTo(0));
             Assert.That(coordinator.IsComplete, Is.False);
         }
 
