@@ -94,6 +94,8 @@ target_include_directories(ZantetsuNvencSdkVersionContract
 # library, no delay-loaded or run-time-loaded nvEncodeAPI64.dll - and is neither
 # copied nor installed anywhere: the build directory is where it stays.
 add_library(ZantetsuNvenc SHARED
+    D3D11DeviceBinding.cpp
+    D3D11DeviceBinding.h
     UnityPluginLifecycle.cpp
     ZantetsuNvencGraphicsObservationV1.h)
 
@@ -114,3 +116,21 @@ target_include_directories(ZantetsuNvenc
     PRIVATE "${ZANTETSU_UNITY_PLUGIN_API_DIR}")
 
 target_link_libraries(ZantetsuNvenc PRIVATE d3d11)
+
+# The ownership boundary's own contract test: a small executable that runs
+# against real WARP devices. It is built and run from the build directory and
+# is never installed, copied, or shipped.
+add_executable(ZantetsuNvencD3D11DeviceBindingContractTest
+    D3D11DeviceBinding.cpp
+    D3D11DeviceBindingContractTest.cpp)
+
+set_target_properties(ZantetsuNvencD3D11DeviceBindingContractTest PROPERTIES
+    CXX_STANDARD 14
+    CXX_STANDARD_REQUIRED ON)
+
+target_compile_definitions(ZantetsuNvencD3D11DeviceBindingContractTest
+    PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+target_compile_options(ZantetsuNvencD3D11DeviceBindingContractTest PRIVATE /utf-8)
+
+target_link_libraries(ZantetsuNvencD3D11DeviceBindingContractTest PRIVATE d3d11)

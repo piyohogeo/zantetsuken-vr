@@ -7,8 +7,10 @@
 .DESCRIPTION
     Configures and builds Native/ZantetsuNvenc as x64 Release: the SDK version
     contract, which compiles one translation unit against the SDK header and
-    asserts its version, and ZantetsuNvenc.dll, which binds to Unity's plugin
-    lifecycle and holds the D3D11 device Unity is currently using. Neither
+    asserts its version, ZantetsuNvenc.dll, which binds to Unity's plugin
+    lifecycle and holds the D3D11 device Unity is currently using, and the
+    device ownership contract test, which is then run - its exit code is this
+    script's. Neither
     links an NVENC library or names an NVENC entry point, and the DLL is left
     in the build directory: nothing is copied into this repository or into a
     Unity project.
@@ -151,7 +153,7 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# --- 6. Build both targets ---
+# --- 6. Build every target ---
 
 & $cmakeCommand.Source --build $buildFull --config Release --target ZantetsuNvencSdkVersionContract
 
@@ -164,6 +166,28 @@ if ($LASTEXITCODE -ne 0) {
 
 if ($LASTEXITCODE -ne 0) {
     [Console]::Error.WriteLine('ERROR: The Unity plugin failed to build.')
+    exit $LASTEXITCODE
+}
+
+& $cmakeCommand.Source --build $buildFull --config Release `
+    --target ZantetsuNvencD3D11DeviceBindingContractTest
+
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine('ERROR: The device ownership contract test failed to build.')
+    exit $LASTEXITCODE
+}
+
+# --- 7. Run the native contract test ---
+
+$contractTest = Join-Path $buildFull 'Release\ZantetsuNvencD3D11DeviceBindingContractTest.exe'
+if (-not (Test-Path -LiteralPath $contractTest -PathType Leaf)) {
+    Fail "The device ownership contract test was not found at '$contractTest'."
+}
+
+& $contractTest
+
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine('ERROR: The device ownership contract test failed.')
     exit $LASTEXITCODE
 }
 

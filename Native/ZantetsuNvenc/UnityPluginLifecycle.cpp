@@ -1,9 +1,11 @@
 // Phase 0.11 Unity plugin lifecycle and current D3D11 device binding.
 //
 // This translation unit does one thing: while Unity's current renderer is
-// D3D11, it holds a COM reference to the exact ID3D11Device that Unity is
-// using, taken from IUnityGraphicsD3D11 at the device events Unity raises, and
-// releases it again when Unity is about to reset or shut that device down.
+// D3D11, it publishes the exact ID3D11Device that Unity is using - taken from
+// IUnityGraphicsD3D11 at the device events Unity raises - into the one device
+// binding, and clears that binding again when Unity is about to reset or shut
+// the device down. The binding owns the reference and the locking; this file
+// owns only when to publish and when to clear.
 //
 // Holding that device proves three things and no more:
 //   * Unity's current renderer was D3D11 at that event,
@@ -27,6 +29,7 @@
 
 #include <d3d11.h>
 
+#include "D3D11DeviceBinding.h"
 #include "IUnityGraphics.h"
 #include "IUnityGraphicsD3D11.h"
 #include "IUnityInterface.h"
@@ -39,34 +42,16 @@ namespace
     IUnityInterfaces* g_unityInterfaces = nullptr;
     IUnityGraphics* g_unityGraphics = nullptr;
 
-    // The one device reference this plugin owns. Published and cleared by a
-    // single exchange, so a reader never sees a half-written pointer and the
-    // reference is released exactly once by whoever takes it out.
-    std::atomic<ID3D11Device*> g_device{nullptr};
+    // The one place this plugin holds the current device. Publishing,
+    // clearing, and handing out independent references all go through it, so a
+    // later owner can take a reference that outlives the next clear.
+    zantetsu::D3D11DeviceBinding g_deviceBinding;
 
     // True from the moment UnityPluginLoad has finished its work until
     // UnityPluginUnload has finished undoing it.
     std::atomic<bool> g_loaded{false};
 
-    /// Publishes a device reference and releases whatever it replaced, exactly
-    /// once. The incoming pointer is already addref'd by the caller.
-    void PublishDevice(ID3D11Device* device)
-    {
-        ID3D11Device* previous = g_device.exchange(device, std::memory_order_acq_rel);
-        if (previous != nullptr)
-        {
-            previous->Release();
-        }
-    }
-
-    /// Takes the held device out and releases it exactly once. A second call
-    /// finds nothing to release.
-    void ClearDevice()
-    {
-        PublishDevice(nullptr);
-    }
-
-    /// Acquires the device Unity is currently using, but only while the
+    /// Observes the device Unity is currently using, but only while the
     /// current renderer is D3D11.
     void AcquireCurrentDevice()
     {
@@ -77,7 +62,7 @@ namespace
 
         if (g_unityGraphics->GetRenderer() != kUnityGfxRendererD3D11)
         {
-            ClearDevice();
+            g_deviceBinding.Clear();
             return;
         }
 
@@ -87,20 +72,20 @@ namespace
             g_unityInterfaces->Get<IUnityGraphicsD3D11>();
         if (d3d11 == nullptr)
         {
-            ClearDevice();
+            g_deviceBinding.Clear();
             return;
         }
 
         ID3D11Device* device = d3d11->GetDevice();
         if (device == nullptr)
         {
-            ClearDevice();
+            g_deviceBinding.Clear();
             return;
         }
 
-        // The exact pointer Unity handed back is the one that is kept.
-        device->AddRef();
-        PublishDevice(device);
+        // The exact pointer Unity handed back is the one that is published;
+        // the binding takes its own reference to it.
+        g_deviceBinding.PublishBorrowed(device);
     }
 
     void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
@@ -117,7 +102,7 @@ namespace
                 // Nothing but an ordinary device reference exists yet: no
                 // session, registered resource, event, or buffer has to be
                 // unwound before it is let go.
-                ClearDevice();
+                g_deviceBinding.Clear();
                 break;
 
             default:
@@ -157,7 +142,7 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
         g_unityGraphics->UnregisterDeviceEventCallback(OnGraphicsDeviceEvent);
     }
 
-    ClearDevice();
+    g_deviceBinding.Clear();
 
     g_unityGraphics = nullptr;
     g_unityInterfaces = nullptr;
@@ -181,10 +166,9 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencGetGraphicsObservati
     destination->isUnityPluginLoaded =
         g_loaded.load(std::memory_order_acquire) ? 1u : 0u;
 
-    // Presence only: the device is never dereferenced, addrefed, or released
-    // here, and its address never leaves this function.
-    destination->hasCurrentD3D11Device =
-        g_device.load(std::memory_order_acquire) != nullptr ? 1u : 0u;
+    // Presence only: no reference is taken, and no address leaves this
+    // function.
+    destination->hasCurrentD3D11Device = g_deviceBinding.HasDevice() ? 1u : 0u;
 
     return 1;
 }
