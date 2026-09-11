@@ -40,12 +40,13 @@ namespace Zantetsu.Observability
     /// The type holds no instance field and no mutable static state, owns no
     /// thread, queue, task, wait primitive, filesystem, buffer, or handle, and
     /// is not an <see cref="IDisposable"/>. It evaluates that shared admission
-    /// and nothing else: it performs no filesystem re-observation, does not
-    /// rerun the cleanup, does not reclassify the publication recovery, and
-    /// touches no Registry, disposition, Service, or process state. It reaches
-    /// the lock only through the lease's own public disposal, never through a
-    /// raw handle, and shares no base or generalization with the other
-    /// recovery releasers, whose authority graphs differ.
+    /// before touching the lease; it performs no filesystem re-observation,
+    /// does not rerun the cleanup, does not reclassify the publication
+    /// recovery, and touches no Registry, disposition, Service, or process
+    /// state. It reaches the lock only through the lease's own public
+    /// disposal, never through a raw handle, and shares no base or
+    /// generalization with the other recovery releasers, whose authority
+    /// graphs differ.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryIncompleteOwnershipReleaser
