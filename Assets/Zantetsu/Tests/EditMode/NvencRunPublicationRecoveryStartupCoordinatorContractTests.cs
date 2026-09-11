@@ -1152,9 +1152,14 @@ namespace Zantetsu.Core.Tests
 
         /// <summary>
         /// One Run's real tree with the production opener, filesystem, OS lock
-        /// backend, process state, buffer pool, factory, and owner. The only
-        /// fixture seam is the initialization recovery inspector.
+        /// backend, process state, buffer pool, factory, and owner.
         /// </summary>
+        /// <remarks>
+        /// The initialization recovery inspector is the only seam standing in
+        /// for a filesystem observation, and what it reports matches the tree
+        /// that was seeded. The fresh-start collaborators are recording doubles
+        /// for a path a publication recovery must never reach: any call throws.
+        /// </remarks>
         private sealed class SandboxHarness
         {
             internal SandboxHarness(
@@ -1438,7 +1443,7 @@ namespace Zantetsu.Core.Tests
                     CaptureRunRootRole.Final,
                     binding.FinalInitialization,
                     binding.FinalReady,
-                    hasNonMarkerEntries: false));
+                    hasNonMarkerEntries: shape == SandboxShape.Deferred));
 
             RecordingFreshStart freshStart = new RecordingFreshStart();
             CaptureRunLockOsBackend lockBackend = CaptureRunLockOsBackend.Create();
