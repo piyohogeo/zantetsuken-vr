@@ -46,6 +46,73 @@ namespace Zantetsu.Core.Tests
             Assert.That(profile.MipLevel, Is.EqualTo(0));
         }
 
+        /// <summary>
+        /// The one fixed encoder request: H.264 High, all-IDR, constant QP 28,
+        /// NV12 in and Annex B out, at the fixed size and rate. These are the
+        /// values this bring-up asks for - the category strings are
+        /// project-owned identifiers, not NVIDIA GUID names or ABI values, and
+        /// none of this says what a session will accept.
+        /// </summary>
+        [Test]
+        public void Profile_FixedEncoderRequestMatchesDesign()
+        {
+            NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+
+            Assert.That(NvencBringUpProfileV1.CodecId, Is.EqualTo("h264"));
+            Assert.That(NvencBringUpProfileV1.EncodeProfileId, Is.EqualTo("high"));
+            Assert.That(NvencBringUpProfileV1.PresetId, Is.EqualTo("p1"));
+            Assert.That(NvencBringUpProfileV1.TuningId, Is.EqualTo("low-latency"));
+            Assert.That(NvencBringUpProfileV1.RateControlId, Is.EqualTo("constant-qp"));
+            Assert.That(NvencBringUpProfileV1.InputFormatId, Is.EqualTo("nv12"));
+            Assert.That(NvencBringUpProfileV1.ChromaFormatId, Is.EqualTo("4:2:0"));
+            Assert.That(NvencBringUpProfileV1.LevelId, Is.EqualTo("auto"));
+            Assert.That(NvencBringUpProfileV1.OutputFormatId, Is.EqualTo("annex-b"));
+
+            // The rate the encoder is asked for is the profile's own frame
+            // rate, expressed as a fraction.
+            Assert.That(NvencBringUpProfileV1.FrameRateNumerator, Is.EqualTo(30));
+            Assert.That(NvencBringUpProfileV1.FrameRateDenominator, Is.EqualTo(1));
+            Assert.That(NvencBringUpProfileV1.FrameRateNumerator,
+                Is.EqualTo(NvencBringUpProfileV1.TargetFramesPerSecond));
+
+            // The encoded size and the largest size requested are the fixed
+            // input size: nothing scales, crops, or changes resolution.
+            Assert.That(profile.EncodeWidth, Is.EqualTo(1280));
+            Assert.That(profile.EncodeHeight, Is.EqualTo(720));
+            Assert.That(profile.EncodeWidth, Is.EqualTo(NvencBringUpProfileV1.Width));
+            Assert.That(profile.EncodeHeight, Is.EqualTo(NvencBringUpProfileV1.Height));
+            Assert.That(profile.MaximumEncodeWidth, Is.EqualTo(NvencBringUpProfileV1.Width));
+            Assert.That(profile.MaximumEncodeHeight, Is.EqualTo(NvencBringUpProfileV1.Height));
+
+            // All-IDR: the caller decides each picture type, every picture is
+            // an IDR, and a GOP is one picture long.
+            Assert.That(NvencBringUpProfileV1.EnablePictureTypeDecision, Is.False);
+            Assert.That(NvencBringUpProfileV1.GopLength, Is.EqualTo(1));
+            Assert.That(NvencBringUpProfileV1.IdrPeriod, Is.EqualTo(1));
+            Assert.That(NvencBringUpProfileV1.FrameIntervalP, Is.EqualTo(1));
+            Assert.That(NvencBringUpProfileV1.ForceIdrEveryFrame, Is.True);
+
+            // One complete constant-QP request. The inter-picture values do
+            // not ask for a P or B picture.
+            Assert.That(NvencBringUpProfileV1.QpIntra, Is.EqualTo(28));
+            Assert.That(NvencBringUpProfileV1.QpInterP, Is.EqualTo(28));
+            Assert.That(NvencBringUpProfileV1.QpInterB, Is.EqualTo(28));
+
+            // Parameter-set repetition is requested here and nowhere else.
+            Assert.That(
+                NvencBringUpProfileV1.RepeatSequenceAndPictureParameterSets, Is.True);
+            Assert.That(NvencBringUpProfileV1.OutputAccessUnitDelimiter, Is.False);
+            Assert.That(
+                NvencBringUpProfileV1.DisableSequenceAndPictureParameterSets, Is.False);
+
+            Assert.That(NvencBringUpProfileV1.ProgressiveEncoding, Is.True);
+            Assert.That(NvencBringUpProfileV1.EnableEncodeAsync, Is.True);
+            Assert.That(NvencBringUpProfileV1.EnableOutputInVideoMemory, Is.False);
+
+            // Still the only constructor input.
+            Assert.That(profile.ProfileId, Is.EqualTo(7));
+        }
+
         [Test]
         public void Profile_AllCapacitiesAreEight()
         {
