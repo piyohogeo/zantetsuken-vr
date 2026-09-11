@@ -47,16 +47,16 @@ namespace Zantetsu.Observability
     /// carry this Run's identity and both peer bindings - is a failure.
     /// </para>
     /// <para>
-    /// Each step ends with a flush of the directory that actually holds its
-    /// entry - the Run root for a root entry, the staging <c>chunks</c>
-    /// directory for a chunk file, and <c>&lt;trusted base&gt;/runs</c> for a
-    /// Run root itself - and that flush happens whether this attempt deleted
-    /// the entry or found it already gone. An earlier attempt may have deleted
-    /// an entry and then failed to flush, so a step is only "processed" once
-    /// its own flush has succeeded here; nothing relies on some other call
-    /// flushing that directory as a side effect. The one case with nothing to
-    /// flush is a Run root that is itself already gone, since the directory
-    /// those entries lived in no longer exists.
+    /// While the directory that holds a step's entry is there, the step ends
+    /// with a flush of it - the Run root for a root entry, the staging
+    /// <c>chunks</c> directory for a chunk file, and
+    /// <c>&lt;trusted base&gt;/runs</c> for a Run root itself - whether this
+    /// attempt deleted the entry or found it already gone. An earlier attempt
+    /// may have deleted an entry and then failed to flush, so such a step is
+    /// only "processed" once its own flush has succeeded here. If that
+    /// directory is itself already absent there is nothing to flush and
+    /// nothing left in it to delete, and the step that removes that directory
+    /// flushes its parent instead.
     /// </para>
     /// <para>
     /// One call is one attempt. There is no retry, rollback, re-creation,
