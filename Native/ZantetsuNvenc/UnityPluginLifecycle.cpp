@@ -27,7 +27,8 @@
 //
 // The session exports open one retained encoder session against that same
 // device, observe what that session's encoder supports, initialize that encoder
-// with the fixed request, and close it. The session owner keeps its own reference, so it is not affected
+// with the fixed request, register and unregister its one completion event, and
+// close it. The session owner keeps its own reference, so it is not affected
 // by what the graphics lifecycle does next, and only an opaque handle to it
 // crosses the boundary.
 
@@ -351,6 +352,74 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencInitializeSessionEnc
     if (!session->TryInitializeEncoder(mapped))
     {
         // The session remains open and is still the caller's to close.
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencRegisterSessionCompletionEventV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionCompletionEventResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastWin32Error = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryRegisterCompletionEvent())
+    {
+        // No event is held, so the session is still initialized, open, and
+        // the caller's to close.
+        destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencUnregisterSessionCompletionEventV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionCompletionEventResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastWin32Error = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryUnregisterCompletionEvent())
+    {
+        // The event is still the session's, so the session is not yet
+        // closable.
+        destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;

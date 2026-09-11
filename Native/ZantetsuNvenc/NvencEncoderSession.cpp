@@ -48,9 +48,12 @@ namespace zantetsu
 
     NvencEncoderSession::~NvencEncoderSession()
     {
-        // Destroying an owner that still holds an encoder is a contract
-        // violation, not a state this handles: the caller closes the session
-        // first, and an owner whose close was refused is kept.
+        // Destroying an owner that still holds an encoder or a registered
+        // completion event is a contract violation, not a state this handles:
+        // the caller unregisters and closes first, and an owner whose
+        // unregister or close was refused is kept. Nothing is unregistered,
+        // closed, or destroyed implicitly here.
+        assert(_completionEvent == nullptr);
         assert(_encoder == nullptr);
 
         ReleaseDeviceAndDriver();
@@ -503,8 +506,133 @@ namespace zantetsu
         return true;
     }
 
+    bool NvencEncoderSession::TryRegisterCompletionEvent()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // An event belongs to an encoder that has been initialized, and only
+        // one event is ever held.
+        if (!_encoderInitialized || _completionEvent != nullptr)
+        {
+            return false;
+        }
+
+        // One owner, one registration - settled before anything is created or
+        // registered.
+        if (_completionEventRegistrationAttempted)
+        {
+            return false;
+        }
+
+        _completionEventRegistrationAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        // The way to unregister is confirmed before an event is registered, so
+        // a registered event is never left with no way to take it back.
+        if (api.nvEncRegisterAsyncEvent == nullptr ||
+            api.nvEncUnregisterAsyncEvent == nullptr)
+        {
+            return false;
+        }
+
+        // Unnamed, auto-reset, initially non-signalled.
+        HANDLE completionEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (completionEvent == nullptr)
+        {
+            _lastWin32Error = ::GetLastError();
+            return false;
+        }
+
+        NV_ENC_EVENT_PARAMS params = {};
+        params.version = NV_ENC_EVENT_PARAMS_VER;
+        params.completionEvent = completionEvent;
+
+        const NVENCSTATUS status = api.nvEncRegisterAsyncEvent(_encoder, &params);
+        if (status != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = status;
+
+            // Nothing was registered, so the event this call created is the
+            // only thing to undo; the session stays initialized, open, and
+            // closable.
+            if (!::CloseHandle(completionEvent))
+            {
+                _lastWin32Error = ::GetLastError();
+            }
+
+            return false;
+        }
+
+        _completionEvent = completionEvent;
+        return true;
+    }
+
+    bool NvencEncoderSession::TryUnregisterCompletionEvent()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        if (_completionEvent == nullptr)
+        {
+            return false;
+        }
+
+        // One owner, one unregistration - settled before the driver is
+        // touched.
+        if (_completionEventUnregistrationAttempted)
+        {
+            return false;
+        }
+
+        _completionEventUnregistrationAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+        if (api.nvEncUnregisterAsyncEvent == nullptr)
+        {
+            return false;
+        }
+
+        NV_ENC_EVENT_PARAMS params = {};
+        params.version = NV_ENC_EVENT_PARAMS_VER;
+        params.completionEvent = _completionEvent;
+
+        const NVENCSTATUS status = api.nvEncUnregisterAsyncEvent(_encoder, &params);
+        if (status != NV_ENC_SUCCESS)
+        {
+            // The driver still knows this event, so it stays this session's.
+            _lastNvencStatus = status;
+            return false;
+        }
+
+        if (!::CloseHandle(_completionEvent))
+        {
+            // Unregistered but not closed: the handle is still held rather
+            // than assumed gone.
+            _lastWin32Error = ::GetLastError();
+            return false;
+        }
+
+        // Cleared only once both steps have succeeded.
+        _completionEvent = nullptr;
+        return true;
+    }
+
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
+        // An encoder with a registered event is not destroyed: the event is
+        // unregistered first. Refused before the close attempt is spent, so
+        // the caller can still close after unregistering.
+        if (_completionEvent != nullptr)
+        {
+            return NvencEncoderSessionCloseStatus::Failed;
+        }
+
         // One owner, one close attempt - settled before the driver is called,
         // so a destroy the driver refused is never issued again.
         if (_closeAttempted)

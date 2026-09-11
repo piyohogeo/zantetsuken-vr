@@ -297,6 +297,66 @@ namespace Zantetsu.Observability.StandaloneTests
             Assert.That(owner.IsOpen, Is.False);
         }
 
+        /// <summary>
+        /// The initialized session registers one completion event, refuses to
+        /// close while it is registered, and closes once it is unregistered.
+        /// </summary>
+        /// <remarks>
+        /// Nothing waits on the event, and its handle never reaches managed
+        /// code: what is pinned here is the ownership order - register,
+        /// unregister, close - and that each step happens once.
+        /// </remarks>
+        [Test]
+        public void Player_RegistersAndUnregistersOneCompletionEvent()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            try
+            {
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+
+                NvencBringUpCapabilityV1 capability =
+                    new NvencBringUpCapabilityProbeExecutionCoordinator(
+                        new NvencBringUpCapabilityProbe(owner)).Execute();
+                Assert.That(
+                    NvencBringUpAdmissionValidatorV1.Evaluate(
+                        profile, capability, MakeCanonicalInput(profile)),
+                    Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+
+                owner.InitializeEncoder(profile);
+
+                owner.RegisterCompletionEvent();
+                Assert.That(owner.IsOpen, Is.True);
+
+                // The registered event holds the session open, and refusing
+                // the close leaves it closable later.
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                owner.UnregisterCompletionEvent();
+                Assert.That(owner.IsOpen, Is.True);
+
+                // One session, one unregistration.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.UnregisterCompletionEvent());
+                Assert.That(owner.IsOpen, Is.True);
+            }
+            finally
+            {
+                owner.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+
+            // Closed once; disposing again asks the native side for nothing.
+            owner.Dispose();
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
         /// <summary>The input layout the fixed profile describes.</summary>
         private static NvencBringUpInputLayoutV1 MakeCanonicalInput(
             NvencBringUpProfileV1 profile)

@@ -125,6 +125,15 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeCompletionEventResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal uint LastWin32Error;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeCloseResultV1
         {
             internal uint AbiVersion;
@@ -148,12 +157,25 @@ namespace Zantetsu.Observability
             ref NativeInitializeResultV1 destination, uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencRegisterSessionCompletionEventV1(
+            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencUnregisterSessionCompletionEventV1(
+            ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencCloseSessionV1(
             ulong sessionOwner, ref NativeCloseResultV1 destination, uint destinationSize);
 #endif
 
         private ulong _sessionOwner;
         private bool _closeAttempted;
+        private bool _completionEventRegistrationAttempted;
+        private bool _completionEventUnregistrationAttempted;
+        private bool _completionEventRegistered;
 
         private NvencNativeEncoderSessionOwner(ulong sessionOwner)
         {
@@ -382,6 +404,84 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Creates and registers this session's one completion event.
+        /// </summary>
+        /// <remarks>
+        /// The event is the native side's: no handle is exposed here, and
+        /// nothing waits on it yet. One owner registers once, whatever the
+        /// first attempt concluded, and a failure leaves the session
+        /// initialized, open, and closable.
+        /// </remarks>
+        internal void RegisterCompletionEvent()
+        {
+            RequireUsableSession("register a completion event on");
+
+            if (_completionEventRegistrationAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion-event registration was already attempted; it is not attempted again.");
+            }
+
+            _completionEventRegistrationAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeCompletionEventResultV1 result = default;
+            int written = ZantetsuNvencRegisterSessionCompletionEventV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+
+            RequireCompletionEventResult(written, result, "registered");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _completionEventRegistered = true;
+        }
+
+        /// <summary>
+        /// Unregisters that event and closes its handle.
+        /// </summary>
+        /// <remarks>
+        /// Only a complete success clears the registration: a refused
+        /// unregister or a refused handle close leaves the event with the
+        /// session, which therefore still cannot be closed, and nothing is
+        /// retried here.
+        /// </remarks>
+        internal void UnregisterCompletionEvent()
+        {
+            RequireUsableSession("unregister a completion event from");
+
+            if (!_completionEventRegistered)
+            {
+                throw new InvalidOperationException(
+                    "This session has no registered completion event to unregister.");
+            }
+
+            if (_completionEventUnregistrationAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion-event unregistration was already attempted; it is not attempted again.");
+            }
+
+            _completionEventUnregistrationAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeCompletionEventResultV1 result = default;
+            int written = ZantetsuNvencUnregisterSessionCompletionEventV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
+
+            RequireCompletionEventResult(written, result, "unregistered");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _completionEventRegistered = false;
+        }
+
+        /// <summary>
         /// Closes the session once. A refused close leaves this owner holding
         /// the same still-open session and spends the attempt, so disposing
         /// again throws instead of asking the native side to destroy that
@@ -392,6 +492,15 @@ namespace Zantetsu.Observability
             if (_sessionOwner == 0)
             {
                 return;
+            }
+
+            // A registered event holds this session open. Refused before the
+            // close attempt is spent, so the caller can still close after
+            // unregistering.
+            if (_completionEventRegistered)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion event is still registered; it is unregistered before the session is closed.");
             }
 
             // One owner, one close attempt - settled before the native side is
@@ -430,7 +539,44 @@ namespace Zantetsu.Observability
             _sessionOwner = 0;
         }
 
+        private void RequireUsableSession(string what)
+        {
+            if (_sessionOwner == 0)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session is not open; there is nothing to " + what + ".");
+            }
+
+            if (_closeAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session's close was already attempted; it is too late to "
+                    + what + " it.");
+            }
+        }
+
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        private static void RequireCompletionEventResult(
+            int written, NativeCompletionEventResultV1 result, string what)
+        {
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native completion-event call was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The completion event could not be " + what + " (status "
+                    + result.Status + ", win32 error " + result.LastWin32Error
+                    + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+        }
+
         private static bool ToBoolean(uint value, string name)
         {
             if (value > 1)

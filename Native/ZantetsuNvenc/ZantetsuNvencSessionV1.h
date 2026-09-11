@@ -1,8 +1,9 @@
 // Phase 0.11 native encoder session ABI, version 1.
 //
-// Four calls: open one retained session, observe that session's encoder
-// capabilities once, initialize that encoder once with the fixed request, and
-// close that exact session. What crosses the boundary is
+// Six calls: open one retained session, observe that session's encoder
+// capabilities once, initialize that encoder once with the fixed request,
+// register and unregister one completion event on it, and close that exact
+// session. The event handle itself never crosses this boundary. What crosses the boundary is
 // fixed-width and opaque - a status, an opaque owner handle, the observed
 // capability values, and the raw failure values behind a Failed - and never a
 // device pointer, an encoder handle, a function table pointer, a GUID, an
@@ -122,6 +123,15 @@ typedef struct ZantetsuNvencSessionInitializeResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionInitializeResultV1;
 
+/// What a completion-event registration or unregistration came to.
+typedef struct ZantetsuNvencSessionCompletionEventResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    uint32_t lastWin32Error;
+    int32_t lastNvencStatus;
+} ZantetsuNvencSessionCompletionEventResultV1;
+
 // Opens one retained encoder session on the D3D11 device the plugin currently
 // holds.
 //
@@ -168,6 +178,31 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencInitializeSessionEnc
     const ZantetsuNvencSessionInitializeRequestV1* request,
     uint32_t requestSize,
     ZantetsuNvencSessionInitializeResultV1* destination,
+    uint32_t destinationSize);
+
+// Creates one completion event and registers it with that exact session's
+// initialized encoder, once.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when the destination is null, its size is not exactly the struct's, or the
+// owner handle is zero. A registration that fails reports FAILED with its raw
+// Win32 error or NVENCSTATUS and leaves the session initialized, open, and
+// closable. The event handle stays on the native side.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencRegisterSessionCompletionEventV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize);
+
+// Unregisters that event and closes its handle, once and in that order.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// registration. A refused unregister or a refused close reports FAILED and
+// keeps the event, so the session is not yet closable.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencUnregisterSessionCompletionEventV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize);
 
 #ifdef __cplusplus

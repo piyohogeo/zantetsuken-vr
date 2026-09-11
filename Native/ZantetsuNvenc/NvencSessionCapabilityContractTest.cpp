@@ -181,9 +181,35 @@ int main()
         "a second initialization on the same session is refused");
     Check(session.IsOpen(), "the refused second initialization left the session open");
 
+    // One completion event, owned by the session.
+    Check(
+        session.TryRegisterCompletionEvent(),
+        "a completion event registers on the initialized encoder");
+
+    // A registered event holds the session open, and refusing the close does
+    // not spend the close attempt.
+    Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with a registered event refuses to close");
+    Check(session.IsOpen(), "the refused close left the session open");
+
+    // One owner, one registration.
+    Check(
+        !session.TryRegisterCompletionEvent(),
+        "a second registration on the same session is refused");
+
+    Check(
+        session.TryUnregisterCompletionEvent(),
+        "the completion event unregisters and its handle closes");
+
+    // One owner, one unregistration.
+    Check(
+        !session.TryUnregisterCompletionEvent(),
+        "a second unregistration on the same session is refused");
+
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the initialized session closes");
+        "the session closes once its event is gone");
     Check(!session.IsOpen(), "the closed session holds no encoder");
 
     binding.Clear();

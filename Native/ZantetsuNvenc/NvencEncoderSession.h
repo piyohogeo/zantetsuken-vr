@@ -51,9 +51,10 @@ namespace zantetsu
         Failed,
     };
 
-    /// An owner must not be destroyed while it still holds an encoder: the
-    /// session has to be closed successfully first, and an owner whose close
-    /// the driver refused stays alive with its session.
+    /// An owner must not be destroyed while it still holds an encoder or a
+    /// registered completion event: the event has to be unregistered and the
+    /// session closed successfully first, and an owner whose unregister or
+    /// close the driver refused stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -152,6 +153,19 @@ namespace zantetsu
         /// the capability observation.
         bool TryInitializeEncoder(const NvencEncoderInitializationRequest& request);
 
+        /// Creates one completion event and registers it with this session's
+        /// encoder, exactly once per owner. The encoder must already be
+        /// initialized. A registration that fails anywhere leaves the session
+        /// as it was - initialized, open, and closable - and a second call
+        /// makes no attempt, touching neither the OS nor the driver.
+        bool TryRegisterCompletionEvent();
+
+        /// Unregisters that exact event and closes its handle, exactly once
+        /// per owner and in that order. A refused unregister or a refused
+        /// close keeps the event: nothing is assumed to have happened, and
+        /// nothing is retried here.
+        bool TryUnregisterCompletionEvent();
+
         bool IsOpen() const { return _encoder != nullptr; }
 
         DWORD LastWin32Error() const { return _lastWin32Error; }
@@ -176,9 +190,15 @@ namespace zantetsu
         bool _closeAttempted = false;
         bool _capabilityObservationAttempted = false;
         bool _initializationAttempted = false;
-        // Kept as internal state: the completion-event registration that
-        // follows admits itself against it.
+        // Kept as internal state: the completion-event registration admits
+        // itself against it.
         bool _encoderInitialized = false;
+
+        // The one completion event this session owns, and the two attempts
+        // that may touch it.
+        HANDLE _completionEvent = nullptr;
+        bool _completionEventRegistrationAttempted = false;
+        bool _completionEventUnregistrationAttempted = false;
     };
 }
 
