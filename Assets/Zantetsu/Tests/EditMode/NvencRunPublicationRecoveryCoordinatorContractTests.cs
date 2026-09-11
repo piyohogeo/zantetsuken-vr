@@ -160,8 +160,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(coordinator.IsRoutingPrepared, Is.False);
             Assert.That(coordinator.IsComplete, Is.False);
 
-            // A branch may already have started changing this Run, so the tree
-            // is not read again.
+            // One coordinator is one inspection attempt: the failed
+            // observation is not re-read and re-classified under this lock.
             h.Inspector.Throw = null;
             Assert.Throws<InvalidOperationException>(() => coordinator.Execute());
 

@@ -10,14 +10,15 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The two stages are latched differently on purpose. The entry is entered
-    /// at most once - the flag is set before the call, so an inspection that
-    /// threw is never repeated and a later call stops with an
-    /// <see cref="InvalidOperationException"/> instead of re-reading a tree a
-    /// branch may already have started changing. The routing coordinator, once
-    /// retained, is the only thing later calls use, so a stage exception or a
-    /// partial release resumes inside the branch that was already chosen rather
-    /// than returning to the entry.
+    /// The two stages are latched differently on purpose. One coordinator is
+    /// one inspection attempt: the flag is set before the call, so an
+    /// observation that failed under this lock is never implicitly re-read and
+    /// re-classified, and a later call stops with an
+    /// <see cref="InvalidOperationException"/> instead. The routing
+    /// coordinator, once retained, is the only thing later calls use, so a
+    /// stage exception or a partial release resumes inside the branch that was
+    /// already chosen - which matters because by then that branch may have
+    /// begun changing this Run - rather than returning to the entry.
     /// </para>
     /// <para>
     /// Completion is the held terminal result's own validity, assigned only
@@ -105,9 +106,9 @@ namespace Zantetsu.Observability
             {
                 if (_entryStarted)
                 {
-                    // The inspection was entered and produced no routing, so a
-                    // branch may already have begun changing this Run; reading
-                    // the tree again here is exactly what must not happen.
+                    // One coordinator is one inspection attempt: an
+                    // observation that failed under this lock is not silently
+                    // re-read and re-classified here.
                     throw new InvalidOperationException(
                         "The recovery entry was already started and produced no routing; it is not run again here.");
                 }
