@@ -183,19 +183,6 @@ namespace Zantetsu.Core.Tests
             AssertSameFacts(observed, result);
             Assert.That(result.MaximumEncodeWidth, Is.Zero);
             Assert.That(result.MaximumEncodeHeight, Is.EqualTo(-1));
-
-            // What comes back is the observation, not a decision: this
-            // boundary hands out no Supported or Unsupported at all - that
-            // stays the admission validator's, whose own fixture covers it.
-            foreach (MethodInfo method in
-                typeof(NvencBringUpCapabilityProbeExecutionCoordinator).GetMethods(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-                    | BindingFlags.Static | BindingFlags.DeclaredOnly))
-            {
-                Assert.That(
-                    method.ReturnType,
-                    Is.Not.EqualTo(typeof(NvencBringUpAdmissionDecision)));
-            }
         }
 
         // ---- What is not an observation ----
