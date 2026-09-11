@@ -167,5 +167,98 @@ namespace Zantetsu.Observability.StandaloneTests
             owner.Dispose();
             Assert.That(owner.IsOpen, Is.False);
         }
+
+        /// <summary>
+        /// The production probe reads one bring-up capability snapshot out of
+        /// a session this test owns, and that snapshot admits the fixed
+        /// bring-up profile.
+        /// </summary>
+        /// <remarks>
+        /// The session is observed only through the probe: observing it
+        /// directly first would spend the one observation it has. The probe
+        /// neither opens nor closes it - this test does both - and the encoder
+        /// values are checked against what the bring-up requires rather than
+        /// against this device's actual limits.
+        /// </remarks>
+        [Test]
+        public void Player_ProbesTheBringUpCapabilityFromItsOpenSession()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            try
+            {
+                NvencBringUpCapabilityProbe probe = new NvencBringUpCapabilityProbe(owner);
+                NvencBringUpCapabilityProbeExecutionCoordinator coordinator =
+                    new NvencBringUpCapabilityProbeExecutionCoordinator(probe);
+
+                NvencBringUpCapabilityV1 capability = coordinator.Execute();
+
+                Assert.That(capability.IsInitialized, Is.True);
+
+                // Settled by this session existing at all.
+                Assert.That(capability.IsWindows10OrNewer, Is.True);
+                Assert.That(capability.IsActiveAdapterNvidia, Is.True);
+                Assert.That(capability.IsCurrentGraphicsApiD3D11, Is.True);
+
+                // The session's own observation, as the bring-up needs it.
+                Assert.That(capability.ActiveAdapterSupportsAsyncEncode, Is.True);
+                Assert.That(capability.ActiveAdapterSupportsH264Encode, Is.True);
+                Assert.That(capability.ActiveAdapterSupportsH264HighProfile, Is.True);
+                Assert.That(capability.ActiveAdapterSupportsNv12Input, Is.True);
+                Assert.That(
+                    capability.MaximumEncodeWidth,
+                    Is.GreaterThanOrEqualTo(NvencBringUpProfileV1.Width));
+                Assert.That(
+                    capability.MaximumEncodeHeight,
+                    Is.GreaterThanOrEqualTo(NvencBringUpProfileV1.Height));
+
+                // What the snapshot is for: the fixed profile is admitted on
+                // this machine.
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+                Assert.That(
+                    NvencBringUpAdmissionValidatorV1.Evaluate(
+                        profile, capability, MakeCanonicalInput(profile)),
+                    Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
+
+                // The session observes once, so a second execution fails -
+                // and nothing is reopened or closed to make it succeed.
+                Assert.Throws<InvalidOperationException>(() => coordinator.Execute());
+                Assert.That(owner.IsOpen, Is.True,
+                    "the probe neither closed nor replaced the session.");
+            }
+            finally
+            {
+                // The session is this test's to close, not the probe's.
+                owner.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
+        /// <summary>The input layout the fixed profile describes.</summary>
+        private static NvencBringUpInputLayoutV1 MakeCanonicalInput(
+            NvencBringUpProfileV1 profile)
+        {
+            return new NvencBringUpInputLayoutV1(
+                profile.ProfileId,
+                NvencBringUpProfileV1.Width,
+                NvencBringUpProfileV1.Height,
+                profile.ImageRect,
+                profile.Eye,
+                profile.PixelFormat,
+                profile.GraphicsFormat,
+                profile.ColorSpace,
+                profile.SampleCount,
+                profile.HasMipmaps,
+                profile.HasDynamicResolution,
+                profile.IsTextureArray,
+                profile.ArrayIndex,
+                profile.MipLevel,
+                profile.Orientation);
+        }
     }
 }
