@@ -199,8 +199,11 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 Assert.That(capability.IsInitialized, Is.True);
 
-                // Settled by this session existing at all.
+                // Compared independently from the version this process
+                // reports.
                 Assert.That(capability.IsWindows10OrNewer, Is.True);
+
+                // Established by the opened session.
                 Assert.That(capability.IsActiveAdapterNvidia, Is.True);
                 Assert.That(capability.IsCurrentGraphicsApiD3D11, Is.True);
 

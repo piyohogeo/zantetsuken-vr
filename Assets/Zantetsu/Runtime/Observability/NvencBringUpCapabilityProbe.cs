@@ -15,15 +15,16 @@ namespace Zantetsu.Observability
     /// because this type counts.
     /// </para>
     /// <para>
-    /// Three of the snapshot's facts are settled by that session existing
-    /// rather than asked for again. The session was opened on the exact D3D11
-    /// device the native plugin holds as Unity's current one, which is what
-    /// makes the current graphics API D3D11; and NVENC accepted that device and
-    /// opened an encoder on it, which is what makes the active adapter an
-    /// NVIDIA one. Neither is re-derived from a device vendor string, a GPU
-    /// name, a PCI ID, NVML, NVAPI, or a second adapter enumeration. The
-    /// Windows version is compared as this process reports it. The remaining
-    /// six values are the session's own observation, copied through unchanged.
+    /// Two of the snapshot's facts are established by the opened session rather
+    /// than asked for again. The session was opened on the exact D3D11 device
+    /// the native plugin holds as Unity's current one, which is what makes the
+    /// current graphics API D3D11; and NVENC accepted that device and opened an
+    /// encoder on it, which is what makes the active adapter an NVIDIA one.
+    /// Neither is re-derived from a device vendor string, a GPU name, a PCI ID,
+    /// NVML, NVAPI, or a second adapter enumeration. The OS fact is
+    /// independent: the Windows version is compared from what this process
+    /// reports. The remaining six values are the session's own observation,
+    /// copied through unchanged.
     /// </para>
     /// <para>
     /// What the snapshot is for is admission before the encoder is
