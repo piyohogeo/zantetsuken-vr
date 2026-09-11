@@ -27,10 +27,13 @@ namespace Zantetsu.Core.Tests
     /// process state is involved.
     /// </para>
     /// <para>
-    /// One representative healthy path is covered here: a Run whose publication
-    /// never reached its plan commit, cleaned and released. The failed cleanup,
-    /// partial release, collision, deferred, and recoverable shapes belong to
-    /// the contract fixtures that own them.
+    /// One representative healthy path is covered here: a representative
+    /// incomplete tree, with no finished plan, cleaned and released. Why that
+    /// plan is absent - an explicit abort, a failed pre-commit, or a crash - is
+    /// neither observed nor asserted anywhere here; the classification rests on
+    /// the file set alone. The failed cleanup, partial release, collision,
+    /// deferred, and recoverable shapes belong to the contract fixtures that
+    /// own them.
     /// </para>
     /// </remarks>
     public class NvencCapturePublicationPhase011IncompleteRecoveryEndToEndTests
@@ -266,10 +269,11 @@ namespace Zantetsu.Core.Tests
         }
 
         /// <summary>
-        /// A real staging and final tree for one Run left exactly as a crash
-        /// before the publication plan commit leaves it: no finished plan, the
-        /// NVENC precommit temporary and both fixed staging chunk entries
-        /// still there, and nothing committed on the final side.
+        /// A real staging and final tree in a representative incomplete
+        /// shape: no finished plan, the NVENC precommit temporary and both
+        /// fixed staging chunk entries still there, and nothing committed on
+        /// the final side. What left it this way is not part of the fixture's
+        /// claim.
         /// </summary>
         private Sandbox MakeSandbox()
         {
@@ -315,8 +319,8 @@ namespace Zantetsu.Core.Tests
                 Path.Combine(layout.FinalRunRoot, RunReadyMarkerName),
                 documents.GetFinalReadyBytes());
 
-            // The state this recovery is about: the plan commit never
-            // happened, and the final side holds nothing but its markers.
+            // The state this recovery is about, as a file set: no finished
+            // plan, and a final side holding nothing but its markers.
             Assert.That(
                 File.Exists(Path.Combine(layout.StagingRunRoot, PublicationPlanName)), Is.False);
             Assert.That(
