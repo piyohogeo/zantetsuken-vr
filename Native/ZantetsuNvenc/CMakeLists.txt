@@ -94,7 +94,8 @@ target_include_directories(ZantetsuNvencSdkVersionContract
 # library, no delay-loaded or run-time-loaded nvEncodeAPI64.dll - and is neither
 # copied nor installed anywhere: the build directory is where it stays.
 add_library(ZantetsuNvenc SHARED
-    UnityPluginLifecycle.cpp)
+    UnityPluginLifecycle.cpp
+    ZantetsuNvencGraphicsObservationV1.h)
 
 set_target_properties(ZantetsuNvenc PROPERTIES
     OUTPUT_NAME "ZantetsuNvenc"

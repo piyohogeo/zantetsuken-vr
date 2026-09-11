@@ -18,6 +18,10 @@
 // session, queries a capability, registers a GPU command, waits, polls,
 // sleeps, starts a thread or queue, touches the filesystem, logs, or calls
 // back into managed code.
+//
+// The one export reports those two facts - plugin loaded, device held - as
+// fixed-width values. It never dereferences, addrefs, or releases the device
+// it reports on.
 
 #include <atomic>
 
@@ -26,6 +30,7 @@
 #include "IUnityGraphics.h"
 #include "IUnityGraphicsD3D11.h"
 #include "IUnityInterface.h"
+#include "ZantetsuNvencGraphicsObservationV1.h"
 
 namespace
 {
@@ -38,6 +43,10 @@ namespace
     // single exchange, so a reader never sees a half-written pointer and the
     // reference is released exactly once by whoever takes it out.
     std::atomic<ID3D11Device*> g_device{nullptr};
+
+    // True from the moment UnityPluginLoad has finished its work until
+    // UnityPluginUnload has finished undoing it.
+    std::atomic<bool> g_loaded{false};
 
     /// Publishes a device reference and releases whatever it replaced, exactly
     /// once. The incoming pointer is already addref'd by the caller.
@@ -68,19 +77,24 @@ namespace
 
         if (g_unityGraphics->GetRenderer() != kUnityGfxRendererD3D11)
         {
+            ClearDevice();
             return;
         }
 
+        // A device that cannot be obtained now must not leave an older one
+        // standing as if it were still the current device.
         IUnityGraphicsD3D11* d3d11 =
             g_unityInterfaces->Get<IUnityGraphicsD3D11>();
         if (d3d11 == nullptr)
         {
+            ClearDevice();
             return;
         }
 
         ID3D11Device* device = d3d11->GetDevice();
         if (device == nullptr)
         {
+            ClearDevice();
             return;
         }
 
@@ -132,6 +146,8 @@ UnityPluginLoad(IUnityInterfaces* unityInterfaces)
     // The initialize event is already past when a plugin loads late, so the
     // current device is taken here as well.
     AcquireCurrentDevice();
+
+    g_loaded.store(true, std::memory_order_release);
 }
 
 extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
@@ -145,4 +161,30 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
 
     g_unityGraphics = nullptr;
     g_unityInterfaces = nullptr;
+
+    // Published last: the callback is unregistered and the device is released
+    // before this plugin stops reporting itself as loaded.
+    g_loaded.store(false, std::memory_order_release);
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencGetGraphicsObservationV1(
+    ZantetsuNvencGraphicsObservationV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencGraphicsObservationV1))
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_GRAPHICS_OBSERVATION_V1_VERSION;
+    destination->isUnityPluginLoaded =
+        g_loaded.load(std::memory_order_acquire) ? 1u : 0u;
+
+    // Presence only: the device is never dereferenced, addrefed, or released
+    // here, and its address never leaves this function.
+    destination->hasCurrentD3D11Device =
+        g_device.load(std::memory_order_acquire) != nullptr ? 1u : 0u;
+
+    return 1;
 }
