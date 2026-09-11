@@ -455,7 +455,20 @@ namespace Zantetsu.Core.Tests
 
                 h.SettledEvent.Reset();
                 Assert.That(h.RunCoordinator.TryRequestTerminal(), Is.True);
-                WaitSettled(h.SettledEvent, "worker did not converge the finalize request");
+
+                // A single settle is only a wake hint and may have been raised
+                // before the request was accepted, so converge on the real
+                // condition first: the chunk context reports a finalization
+                // result, which reading does not consume.
+                WaitContextFinalized(h, "worker did not finalize the chunk context");
+
+                // The Worker publishes the terminal outcome after that
+                // finalization on its own single thread, so a settle observed
+                // from here on is necessarily later than the publication.
+                h.SettledEvent.Reset();
+                h.Worker.Notify();
+                WaitSettled(
+                    h.SettledEvent, "worker did not settle after the context finalization");
 
                 // Poison after the outcome is published; the coordinator must
                 // refuse collection without consuming the published outcome.
@@ -6865,6 +6878,52 @@ namespace Zantetsu.Core.Tests
         private static void WaitSettled(ManualResetEventSlim settled, string message)
         {
             Assert.That(settled.Wait(WatchdogTimeoutMs), Is.True, message);
+        }
+
+        /// <summary>
+        /// Converges on the chunk context's own finalization inside one bounded
+        /// watchdog. The read is non-consuming, so nothing the test is about is
+        /// taken away, and <c>Settled</c> is used only as a wake hint: every
+        /// decision comes from re-reading the real condition.
+        /// </summary>
+        private static void WaitContextFinalized(Harness h, string message)
+        {
+            if (h.Context.TryGetFinalizationResult(out _))
+            {
+                return;
+            }
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                // Drop any settle observed before this attempt, then ask the
+                // Worker to re-evaluate. Notify only sets the wake signal; it
+                // requests nothing.
+                h.SettledEvent.Reset();
+                h.Worker.Notify();
+
+                if (h.Context.TryGetFinalizationResult(out _))
+                {
+                    return;
+                }
+
+                long remaining = WatchdogTimeoutMs - watch.ElapsedMilliseconds;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                // The wake hint's own result is deliberately ignored: only the
+                // re-check below decides.
+                h.SettledEvent.Wait((int)remaining);
+
+                if (h.Context.TryGetFinalizationResult(out _))
+                {
+                    return;
+                }
+            }
+
+            Assert.Fail(message);
         }
 
         private static void StopFinalizedBackend(Harness h, bool disposeSubmitWorker = true)
