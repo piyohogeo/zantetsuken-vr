@@ -233,8 +233,7 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencObserveSessionCapabi
     zantetsu::NvencEncoderCapabilityObservation observation = {};
     if (!session->TryObserveCapabilities(&observation))
     {
-        // The session is untouched by a failed observation: it is still open
-        // and still the caller's to close.
+        // The session remains open and is still the caller's to close.
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;

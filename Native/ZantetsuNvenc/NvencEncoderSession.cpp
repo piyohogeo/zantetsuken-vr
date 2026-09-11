@@ -236,8 +236,10 @@ namespace zantetsu
         const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
 
         uint32_t count = 0;
-        if (api.nvEncGetEncodeGUIDCount(_encoder, &count) != NV_ENC_SUCCESS)
+        NVENCSTATUS status = api.nvEncGetEncodeGUIDCount(_encoder, &count);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
@@ -255,9 +257,10 @@ namespace zantetsu
         }
 
         uint32_t written = 0;
-        if (api.nvEncGetEncodeGUIDs(_encoder, guids.Get(), count, &written)
-            != NV_ENC_SUCCESS)
+        status = api.nvEncGetEncodeGUIDs(_encoder, guids.Get(), count, &written);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
@@ -285,9 +288,11 @@ namespace zantetsu
         const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
 
         uint32_t count = 0;
-        if (api.nvEncGetEncodeProfileGUIDCount(
-                _encoder, NV_ENC_CODEC_H264_GUID, &count) != NV_ENC_SUCCESS)
+        NVENCSTATUS status = api.nvEncGetEncodeProfileGUIDCount(
+            _encoder, NV_ENC_CODEC_H264_GUID, &count);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
@@ -303,10 +308,11 @@ namespace zantetsu
         }
 
         uint32_t written = 0;
-        if (api.nvEncGetEncodeProfileGUIDs(
-                _encoder, NV_ENC_CODEC_H264_GUID, guids.Get(), count, &written)
-            != NV_ENC_SUCCESS)
+        status = api.nvEncGetEncodeProfileGUIDs(
+            _encoder, NV_ENC_CODEC_H264_GUID, guids.Get(), count, &written);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
@@ -334,9 +340,11 @@ namespace zantetsu
         const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
 
         uint32_t count = 0;
-        if (api.nvEncGetInputFormatCount(_encoder, NV_ENC_CODEC_H264_GUID, &count)
-            != NV_ENC_SUCCESS)
+        NVENCSTATUS status =
+            api.nvEncGetInputFormatCount(_encoder, NV_ENC_CODEC_H264_GUID, &count);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
@@ -352,10 +360,11 @@ namespace zantetsu
         }
 
         uint32_t written = 0;
-        if (api.nvEncGetInputFormats(
-                _encoder, NV_ENC_CODEC_H264_GUID, formats.Get(), count, &written)
-            != NV_ENC_SUCCESS)
+        status = api.nvEncGetInputFormats(
+            _encoder, NV_ENC_CODEC_H264_GUID, formats.Get(), count, &written);
+        if (status != NV_ENC_SUCCESS)
         {
+            _lastNvencStatus = status;
             return false;
         }
 
