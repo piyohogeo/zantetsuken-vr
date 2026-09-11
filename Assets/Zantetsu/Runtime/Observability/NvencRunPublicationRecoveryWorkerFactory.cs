@@ -30,12 +30,15 @@ namespace Zantetsu.Observability
     /// The ordinary constructor creates the production no-follow opener and one
     /// <see cref="CaptureIndexCommitFileSystem"/>, which serves as both the
     /// commit and the cleanup filesystem, and takes the verification buffer
-    /// pool the process shares. The same opener goes to both inspectors and the
-    /// same cleanup filesystem to both cleaners, so a Run never observes itself
-    /// through two different backends. No new bundle, factory interface,
-    /// filesystem interface, receipt, status, or proof is added here, and the
-    /// worker's own start control - including anything about process state -
-    /// belongs to the composition root above.
+    /// pool the process shares. As wiring, the same opener instance is supplied
+    /// to both inspectors and the same cleanup filesystem instance to both
+    /// cleaners; nothing beyond that sharing is claimed here - the inspectors
+    /// and the commit and cleanup surfaces are different interfaces making
+    /// their own open attempts, and neither a shared snapshot nor a continuing
+    /// file identity follows from passing one reference. No new bundle, factory
+    /// interface, filesystem interface, receipt, status, or proof is added
+    /// here, and the worker's own start control - including anything about
+    /// process state - belongs to the composition root above.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryWorkerFactory

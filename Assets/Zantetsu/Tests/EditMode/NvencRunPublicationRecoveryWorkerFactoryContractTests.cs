@@ -404,9 +404,10 @@ namespace Zantetsu.Core.Tests
         }
 
         /// <summary>
-        /// A real staging and final tree for one Run left as a crash after the
-        /// artifact publication leaves it: a finished plan, the published
-        /// chunk, and no Capture Index.
+        /// A real staging and final tree in a representative recoverable
+        /// shape: a canonical finished plan, the published chunk it declares,
+        /// and no Capture Index. Why the tree looks this way is not part of
+        /// this fixture's claim.
         /// </summary>
         private Sandbox MakeSandbox()
         {

@@ -7,12 +7,14 @@ using Microsoft.Win32.SafeHandles;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Immutable, per-committer filesystem collaborator for Capture Index
-    /// commits. It pins the final run root directory to a no-follow-verified
-    /// handle and performs every file operation — open, create, flush, rename,
-    /// and delete — through file identities or that stable directory handle, so
-    /// a path or parent-directory swap cannot redirect an operation after
-    /// verification. The rename is a single non-overwriting
+    /// Immutable, stateless filesystem collaborator for Capture Index commits.
+    /// It holds no per-committer state, so one instance may be shared by
+    /// several committers or cleaners. It pins the final run root directory to
+    /// a no-follow-verified handle and performs every file operation — open,
+    /// create, flush, rename, and delete — through file identities or that
+    /// stable directory handle, so a path or parent-directory swap cannot
+    /// redirect an operation after verification. The rename is a single
+    /// non-overwriting
     /// <c>NtSetInformationFile(FileRenameInformation)</c> whose destination is
     /// the verified directory handle plus a relative basename, never a
     /// reconstructed absolute path; delete stays a handle-bound
