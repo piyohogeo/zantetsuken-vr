@@ -94,9 +94,6 @@ namespace Zantetsu.Observability
                 ?? throw new ArgumentNullException(nameof(stopReleaseExecution));
         }
 
-        internal NvencRunPublicationRecoveryOrchestrationCoordinator PublicationRecovery =>
-            _publicationRecovery;
-
         /// <summary>
         /// Inspects and classifies this Run once, and returns the routing
         /// coordinator for the branch that classification selects. Nothing
