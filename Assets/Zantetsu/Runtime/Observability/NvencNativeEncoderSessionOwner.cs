@@ -54,6 +54,20 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeCapabilityResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal uint SupportsAsyncEncode;
+            internal uint SupportsH264Encode;
+            internal uint SupportsH264HighProfile;
+            internal uint SupportsNv12Input;
+            internal int MaximumEncodeWidth;
+            internal int MaximumEncodeHeight;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeCloseResultV1
         {
             internal uint AbiVersion;
@@ -65,6 +79,11 @@ namespace Zantetsu.Observability
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencOpenSessionV1(
             ref NativeOpenResultV1 destination, uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencObserveSessionCapabilityV1(
+            ulong sessionOwner, ref NativeCapabilityResultV1 destination,
+            uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencCloseSessionV1(
@@ -137,6 +156,67 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Observes this session's encoder capabilities, once. The session
+        /// stays open whatever the answer is, and a second call - or one after
+        /// the close was attempted - is refused by the native side and throws
+        /// here.
+        /// </summary>
+        /// <remarks>
+        /// An observation the native side could not complete, an ABI version
+        /// this build does not speak, and a boolean that is neither zero nor
+        /// one are all broken contracts and throw. Nothing is retried, cached,
+        /// polled, or answered from a second session.
+        /// </remarks>
+        internal NvencEncoderCapabilityObservationV1 ObserveCapabilities()
+        {
+            if (_sessionOwner == 0)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session is not open; there is nothing to observe.");
+            }
+
+            if (_closeAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This encoder session's close was already attempted; it is not observed after that.");
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeCapabilityResultV1 result = default;
+            int written = ZantetsuNvencObserveSessionCapabilityV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeCapabilityResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native encoder capability observation was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The native encoder capabilities could not be observed (status "
+                    + result.Status + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+
+            return new NvencEncoderCapabilityObservationV1(
+                ToBoolean(result.SupportsAsyncEncode, "supportsAsyncEncode"),
+                ToBoolean(result.SupportsH264Encode, "supportsH264Encode"),
+                ToBoolean(result.SupportsH264HighProfile, "supportsH264HighProfile"),
+                ToBoolean(result.SupportsNv12Input, "supportsNv12Input"),
+                result.MaximumEncodeWidth,
+                result.MaximumEncodeHeight);
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+        }
+
+        /// <summary>
         /// Closes the session once. A refused close leaves this owner holding
         /// the same still-open session and spends the attempt, so disposing
         /// again throws instead of asking the native side to destroy that
@@ -186,6 +266,18 @@ namespace Zantetsu.Observability
         }
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+        private static bool ToBoolean(uint value, string name)
+        {
+            if (value > 1)
+            {
+                throw new InvalidOperationException(
+                    "The native encoder capability observation returned " + value
+                    + " for " + name + "; the ABI allows only zero or one.");
+            }
+
+            return value == 1;
+        }
+
         private static void RequireAbiVersion(uint abiVersion)
         {
             if (abiVersion != AbiVersion)

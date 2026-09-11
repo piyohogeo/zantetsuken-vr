@@ -25,8 +25,8 @@
 // as fixed-width values. It never dereferences, addrefs, or releases the device
 // it reports on.
 //
-// The session exports open and close one retained encoder session against that
-// same device. The session owner keeps its own reference, so it is not affected
+// The session exports open one retained encoder session against that same
+// device, observe what that session's encoder supports, and close it. The session owner keeps its own reference, so it is not affected
 // by what the graphics lifecycle does next, and only an opaque handle to it
 // crosses the boundary.
 
@@ -203,6 +203,50 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencOpenSessionV1(
     // An open that did not succeed holds nothing: the owner released the
     // device reference and the module itself.
     delete session;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencObserveSessionCapabilityV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionCapabilityResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionCapabilityResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->supportsAsyncEncode = 0;
+    destination->supportsH264Encode = 0;
+    destination->supportsH264HighProfile = 0;
+    destination->supportsNv12Input = 0;
+    destination->maximumEncodeWidth = 0;
+    destination->maximumEncodeHeight = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    zantetsu::NvencEncoderCapabilityObservation observation = {};
+    if (!session->TryObserveCapabilities(&observation))
+    {
+        // The session is untouched by a failed observation: it is still open
+        // and still the caller's to close.
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->supportsAsyncEncode = observation.supportsAsyncEncode ? 1u : 0u;
+    destination->supportsH264Encode = observation.supportsH264Encode ? 1u : 0u;
+    destination->supportsH264HighProfile = observation.supportsH264HighProfile ? 1u : 0u;
+    destination->supportsNv12Input = observation.supportsNv12Input ? 1u : 0u;
+    destination->maximumEncodeWidth = observation.maximumEncodeWidth;
+    destination->maximumEncodeHeight = observation.maximumEncodeHeight;
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
     return 1;
 }
 

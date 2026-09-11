@@ -163,3 +163,25 @@ target_compile_options(ZantetsuNvencDriverApiContractTest PRIVATE /utf-8)
 
 target_include_directories(ZantetsuNvencDriverApiContractTest
     PRIVATE "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
+
+# The retained session's capability observation, against a real device and the
+# real driver. Like the driver test, it is run only when asked.
+add_executable(ZantetsuNvencSessionCapabilityContractTest
+    D3D11DeviceBinding.cpp
+    NvencDriverApi.cpp
+    NvencEncoderSession.cpp
+    NvencSessionCapabilityContractTest.cpp)
+
+set_target_properties(ZantetsuNvencSessionCapabilityContractTest PROPERTIES
+    CXX_STANDARD 14
+    CXX_STANDARD_REQUIRED ON)
+
+target_compile_definitions(ZantetsuNvencSessionCapabilityContractTest
+    PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+target_compile_options(ZantetsuNvencSessionCapabilityContractTest PRIVATE /utf-8)
+
+target_include_directories(ZantetsuNvencSessionCapabilityContractTest
+    PRIVATE "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
+
+target_link_libraries(ZantetsuNvencSessionCapabilityContractTest PRIVATE d3d11)

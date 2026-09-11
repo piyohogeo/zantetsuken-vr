@@ -1,9 +1,51 @@
 #include "NvencEncoderSession.h"
 
 #include <cassert>
+#include <new>
 
 namespace zantetsu
 {
+    namespace
+    {
+        bool IsSameGuid(const GUID& left, const GUID& right)
+        {
+            return left.Data1 == right.Data1 &&
+                left.Data2 == right.Data2 &&
+                left.Data3 == right.Data3 &&
+                left.Data4[0] == right.Data4[0] &&
+                left.Data4[1] == right.Data4[1] &&
+                left.Data4[2] == right.Data4[2] &&
+                left.Data4[3] == right.Data4[3] &&
+                left.Data4[4] == right.Data4[4] &&
+                left.Data4[5] == right.Data4[5] &&
+                left.Data4[6] == right.Data4[6] &&
+                left.Data4[7] == right.Data4[7];
+        }
+
+        /// An array sized to what the driver reported, released with the
+        /// scope. A refused allocation is a failed observation, not an absent
+        /// capability, so the caller checks the pointer.
+        template <typename T>
+        class ScopedArray
+        {
+        public:
+            explicit ScopedArray(uint32_t count)
+                : _values(count == 0 ? nullptr : new (std::nothrow) T[count]())
+            {
+            }
+
+            ~ScopedArray() { delete[] _values; }
+
+            ScopedArray(const ScopedArray&) = delete;
+            ScopedArray& operator=(const ScopedArray&) = delete;
+
+            T* Get() const { return _values; }
+
+        private:
+            T* _values;
+        };
+    }
+
     NvencEncoderSession::~NvencEncoderSession()
     {
         // Destroying an owner that still holds an encoder is a contract
@@ -24,6 +66,7 @@ namespace zantetsu
         }
 
         _destroyEncoder = nullptr;
+        _functionList = nullptr;
 
         // The driver owner releases its module when it is destroyed; this
         // session's is destroyed with the session itself.
@@ -73,6 +116,7 @@ namespace zantetsu
         }
 
         _destroyEncoder = functionList.nvEncDestroyEncoder;
+        _functionList = &functionList;
 
         NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS params = {};
         params.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
@@ -105,6 +149,250 @@ namespace zantetsu
 
         _encoder = encoder;
         return NvencEncoderSessionOpenStatus::Opened;
+    }
+
+    bool NvencEncoderSession::TryObserveCapabilities(
+        NvencEncoderCapabilityObservation* observation)
+    {
+        if (observation == nullptr)
+        {
+            return false;
+        }
+
+        // Nothing is observed unless there is an open session to observe, and
+        // an owner that has already tried to close is finished with the
+        // driver.
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // One owner, one observation - settled before any entry point is
+        // called, so neither a success nor a failure is repeated against the
+        // driver.
+        if (_capabilityObservationAttempted)
+        {
+            return false;
+        }
+
+        _capabilityObservationAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+        if (api.nvEncGetEncodeGUIDCount == nullptr ||
+            api.nvEncGetEncodeGUIDs == nullptr ||
+            api.nvEncGetEncodeProfileGUIDCount == nullptr ||
+            api.nvEncGetEncodeProfileGUIDs == nullptr ||
+            api.nvEncGetInputFormatCount == nullptr ||
+            api.nvEncGetInputFormats == nullptr ||
+            api.nvEncGetEncodeCaps == nullptr)
+        {
+            return false;
+        }
+
+        NvencEncoderCapabilityObservation result = {};
+
+        if (!TryObserveH264Support(result.supportsH264Encode))
+        {
+            return false;
+        }
+
+        // Without H.264 there is nothing further to ask about: the rest of the
+        // observation is the false and zero it was observed to be.
+        if (!result.supportsH264Encode)
+        {
+            *observation = result;
+            return true;
+        }
+
+        if (!TryObserveH264HighProfileSupport(result.supportsH264HighProfile) ||
+            !TryObserveNv12InputSupport(result.supportsNv12Input))
+        {
+            return false;
+        }
+
+        int asyncEncodeSupport = 0;
+        int maximumWidth = 0;
+        int maximumHeight = 0;
+
+        if (!TryQueryCap(NV_ENC_CAPS_ASYNC_ENCODE_SUPPORT, asyncEncodeSupport) ||
+            !TryQueryCap(NV_ENC_CAPS_WIDTH_MAX, maximumWidth) ||
+            !TryQueryCap(NV_ENC_CAPS_HEIGHT_MAX, maximumHeight))
+        {
+            return false;
+        }
+
+        result.supportsAsyncEncode = asyncEncodeSupport != 0;
+        result.maximumEncodeWidth = static_cast<int32_t>(maximumWidth);
+        result.maximumEncodeHeight = static_cast<int32_t>(maximumHeight);
+
+        *observation = result;
+        return true;
+    }
+
+    bool NvencEncoderSession::TryObserveH264Support(bool& supported)
+    {
+        supported = false;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        uint32_t count = 0;
+        if (api.nvEncGetEncodeGUIDCount(_encoder, &count) != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            return true;
+        }
+
+        // The array is as large as the driver said it needs to be; no fixed
+        // upper bound or per-GPU count is assumed.
+        ScopedArray<GUID> guids(count);
+        if (guids.Get() == nullptr)
+        {
+            return false;
+        }
+
+        uint32_t written = 0;
+        if (api.nvEncGetEncodeGUIDs(_encoder, guids.Get(), count, &written)
+            != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (written > count)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            if (IsSameGuid(guids.Get()[i], NV_ENC_CODEC_H264_GUID))
+            {
+                supported = true;
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryObserveH264HighProfileSupport(bool& supported)
+    {
+        supported = false;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        uint32_t count = 0;
+        if (api.nvEncGetEncodeProfileGUIDCount(
+                _encoder, NV_ENC_CODEC_H264_GUID, &count) != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            return true;
+        }
+
+        ScopedArray<GUID> guids(count);
+        if (guids.Get() == nullptr)
+        {
+            return false;
+        }
+
+        uint32_t written = 0;
+        if (api.nvEncGetEncodeProfileGUIDs(
+                _encoder, NV_ENC_CODEC_H264_GUID, guids.Get(), count, &written)
+            != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (written > count)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            if (IsSameGuid(guids.Get()[i], NV_ENC_H264_PROFILE_HIGH_GUID))
+            {
+                supported = true;
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryObserveNv12InputSupport(bool& supported)
+    {
+        supported = false;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        uint32_t count = 0;
+        if (api.nvEncGetInputFormatCount(_encoder, NV_ENC_CODEC_H264_GUID, &count)
+            != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            return true;
+        }
+
+        ScopedArray<NV_ENC_BUFFER_FORMAT> formats(count);
+        if (formats.Get() == nullptr)
+        {
+            return false;
+        }
+
+        uint32_t written = 0;
+        if (api.nvEncGetInputFormats(
+                _encoder, NV_ENC_CODEC_H264_GUID, formats.Get(), count, &written)
+            != NV_ENC_SUCCESS)
+        {
+            return false;
+        }
+
+        if (written > count)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            if (formats.Get()[i] == NV_ENC_BUFFER_FORMAT_NV12)
+            {
+                supported = true;
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryQueryCap(NV_ENC_CAPS cap, int& value)
+    {
+        value = 0;
+
+        NV_ENC_CAPS_PARAM params = {};
+        params.version = NV_ENC_CAPS_PARAM_VER;
+        params.capsToQuery = cap;
+
+        const NVENCSTATUS status = _functionList->nvEncGetEncodeCaps(
+            _encoder, NV_ENC_CODEC_H264_GUID, &params, &value);
+        if (status != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = status;
+            return false;
+        }
+
+        return true;
     }
 
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()

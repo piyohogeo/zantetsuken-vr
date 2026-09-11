@@ -1,3 +1,4 @@
+using System;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -107,6 +108,64 @@ namespace Zantetsu.Observability.StandaloneTests
             Assert.That(second.IsOpen, Is.False);
 
             Assert.That(NvencNativeEncoderSessionOwner.AbiVersion, Is.EqualTo(1u));
+        }
+
+        /// <summary>
+        /// The session this Player opened reports what its encoder supports,
+        /// once, and closes normally afterwards.
+        /// </summary>
+        /// <remarks>
+        /// The reported maximums are only required to cover the fixed
+        /// 1280x720 this bring-up encodes; the device's actual limits, its
+        /// model, its driver, and the number or order of the GUIDs behind the
+        /// answer are not part of this contract. Nothing is initialized,
+        /// registered, or allocated on the encoder here.
+        /// </remarks>
+        [Test]
+        public void Player_ObservesItsEncoderCapabilitiesOnceThenClosesTheSession()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            try
+            {
+                NvencEncoderCapabilityObservationV1 observation =
+                    owner.ObserveCapabilities();
+
+                Assert.That(observation.IsInitialized, Is.True);
+                Assert.That(observation.SupportsH264Encode, Is.True);
+                Assert.That(observation.SupportsH264HighProfile, Is.True);
+                Assert.That(observation.SupportsNv12Input, Is.True);
+                Assert.That(observation.SupportsAsyncEncode, Is.True);
+
+                // Enough for the fixed size this bring-up encodes; the actual
+                // limit is the device's business.
+                Assert.That(
+                    observation.MaximumEncodeWidth,
+                    Is.GreaterThanOrEqualTo(NvencBringUpProfileV1.Width));
+                Assert.That(
+                    observation.MaximumEncodeHeight,
+                    Is.GreaterThanOrEqualTo(NvencBringUpProfileV1.Height));
+
+                // One session, one observation - and the refusal leaves the
+                // session open rather than reopening anything.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ObserveCapabilities());
+                Assert.That(owner.IsOpen, Is.True);
+            }
+            finally
+            {
+                owner.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+
+            // Closed once; disposing again asks the native side for nothing.
+            owner.Dispose();
+            Assert.That(owner.IsOpen, Is.False);
         }
     }
 }

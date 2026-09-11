@@ -54,6 +54,25 @@ namespace zantetsu
     /// An owner must not be destroyed while it still holds an encoder: the
     /// session has to be closed successfully first, and an owner whose close
     /// the driver refused stays alive with its session.
+    /// What the encoder session reports about itself, as observed. Every value
+    /// comes from the session that is currently open on the current device;
+    /// that a session opened at all is not taken as a substitute for any of
+    /// them.
+    ///
+    /// When H.264 is not among the codecs the encoder enumerates, the profile,
+    /// input format, and capability queries are not made at all and the whole
+    /// observation reads as unsupported - false and zero - which is a
+    /// completed observation, not a failure.
+    struct NvencEncoderCapabilityObservation
+    {
+        bool supportsAsyncEncode;
+        bool supportsH264Encode;
+        bool supportsH264HighProfile;
+        bool supportsNv12Input;
+        int32_t maximumEncodeWidth;
+        int32_t maximumEncodeHeight;
+    };
+
     class NvencEncoderSession
     {
     public:
@@ -73,6 +92,16 @@ namespace zantetsu
         /// second call, which makes no attempt at all.
         NvencEncoderSessionCloseStatus Close();
 
+        /// Observes this session's encoder capabilities, exactly once per
+        /// owner. The session stays open whatever the answer is - a failed
+        /// observation closes nothing, reopens nothing, and falls back to no
+        /// other device or API - and a second call makes no attempt and
+        /// touches no driver entry point.
+        ///
+        /// The caller serializes this against Close; neither is made safe to
+        /// call while the other runs.
+        bool TryObserveCapabilities(NvencEncoderCapabilityObservation* observation);
+
         bool IsOpen() const { return _encoder != nullptr; }
 
         DWORD LastWin32Error() const { return _lastWin32Error; }
@@ -81,7 +110,13 @@ namespace zantetsu
     private:
         void ReleaseDeviceAndDriver();
 
+        bool TryObserveH264Support(bool& supported);
+        bool TryObserveH264HighProfileSupport(bool& supported);
+        bool TryObserveNv12InputSupport(bool& supported);
+        bool TryQueryCap(NV_ENC_CAPS cap, int& value);
+
         NvencDriverApi _driverApi;
+        const NV_ENCODE_API_FUNCTION_LIST* _functionList = nullptr;
         ID3D11Device* _device = nullptr;
         void* _encoder = nullptr;
         PNVENCDESTROYENCODER _destroyEncoder = nullptr;
@@ -89,6 +124,7 @@ namespace zantetsu
         NVENCSTATUS _lastNvencStatus = NV_ENC_SUCCESS;
         bool _openAttempted = false;
         bool _closeAttempted = false;
+        bool _capabilityObservationAttempted = false;
     };
 }
 

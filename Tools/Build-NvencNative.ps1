@@ -48,9 +48,11 @@ param(
 
     [string]$CMake = 'cmake',
 
-    # Runs the NVENC driver API contract test after the build. It loads the
-    # driver's own nvEncodeAPI64.dll from System32, so it needs an NVIDIA
-    # driver on this machine and is never run unless it is asked for.
+    # Runs the contract tests that need the real driver after the build: the
+    # driver API loading boundary, which loads nvEncodeAPI64.dll from System32,
+    # and the retained session's capability observation, which opens a session
+    # on the default hardware adapter. Both need an NVIDIA driver on this
+    # machine and are never run unless they are asked for.
     [switch]$RunDriverApiContractTest
 )
 
@@ -206,6 +208,15 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+& $cmakeCommand.Source --build $buildFull --config Release `
+    --target ZantetsuNvencSessionCapabilityContractTest
+
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine(
+        'ERROR: The session capability contract test failed to build.')
+    exit $LASTEXITCODE
+}
+
 # --- 8. Run the driver API contract test, only when asked ---
 
 if ($RunDriverApiContractTest) {
@@ -218,6 +229,19 @@ if ($RunDriverApiContractTest) {
 
     if ($LASTEXITCODE -ne 0) {
         [Console]::Error.WriteLine('ERROR: The driver API contract test failed.')
+        exit $LASTEXITCODE
+    }
+
+    $sessionCapabilityTest =
+        Join-Path $buildFull 'Release\ZantetsuNvencSessionCapabilityContractTest.exe'
+    if (-not (Test-Path -LiteralPath $sessionCapabilityTest -PathType Leaf)) {
+        Fail "The session capability contract test was not found at '$sessionCapabilityTest'."
+    }
+
+    & $sessionCapabilityTest
+
+    if ($LASTEXITCODE -ne 0) {
+        [Console]::Error.WriteLine('ERROR: The session capability contract test failed.')
         exit $LASTEXITCODE
     }
 }
