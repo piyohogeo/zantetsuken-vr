@@ -56,10 +56,16 @@ namespace zantetsu
     /// constant of the design: nothing here grows, shrinks, or adds one later.
     constexpr uint32_t kEncodeSampleSlotCount = 8;
 
+    /// The one encoded size, which is also the one input surface size: this
+    /// bring-up neither scales nor crops.
+    constexpr uint32_t kInputSurfaceWidth = 1280;
+    constexpr uint32_t kInputSurfaceHeight = 720;
+
     /// An owner must not be destroyed while it still holds an encoder, a
-    /// completion-event handle, or an output bitstream buffer: everything has
-    /// to be released and the session closed successfully first, and an owner
-    /// whose release or close was refused stays alive with what it holds.
+    /// completion-event handle, an output bitstream buffer, or an input
+    /// surface: everything has to be released and the session closed
+    /// successfully first, and an owner whose release or close was refused
+    /// stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -173,12 +179,27 @@ namespace zantetsu
         /// have happened, and nothing is retried here.
         bool TryReleaseCompletionEvents();
 
+        /// Creates the fixed set of NV12 input surfaces, one per slot and
+        /// exactly once per owner, and registers each with the encoder. The
+        /// encoder must already be initialized and no other slot resource may
+        /// be prepared yet. All of the slots must succeed; a failure part of
+        /// the way through unwinds what it took in reverse, and a step of that
+        /// unwinding which itself fails leaves that slot and every slot still
+        /// held with this session.
+        bool TryPrepareInputSurfaces();
+
+        /// Unregisters and releases the whole set in reverse order, exactly
+        /// once per owner. The completion events and output buffers go first:
+        /// a session that still has either refuses. A refused unregister stops
+        /// the release with that slot and the ones before it still held.
+        bool TryReleaseInputSurfaces();
+
         /// Creates the fixed set of output bitstream buffers, one per slot and
-        /// exactly once per owner. The encoder must already be initialized.
-        /// All of the slots must succeed; a failure part of the way through
-        /// destroys what it made in reverse, and a destroy that is itself
-        /// refused stops there, leaving that buffer and the ones before it
-        /// with this session.
+        /// exactly once per owner. The encoder must already be initialized and
+        /// the input surfaces already prepared. All of the slots must succeed;
+        /// a failure part of the way through destroys what it made in reverse,
+        /// and a destroy that is itself refused stops there, leaving that
+        /// buffer and the ones before it with this session.
         bool TryPrepareOutputBitstreamBuffers();
 
         /// Destroys the whole set in reverse order, exactly once per owner.
@@ -191,6 +212,10 @@ namespace zantetsu
 
         DWORD LastWin32Error() const { return _lastWin32Error; }
         NVENCSTATUS LastNvencStatus() const { return _lastNvencStatus; }
+
+        /// The last HRESULT a D3D11 call failed with. Only a D3D11 failure
+        /// ever sets it; an NVENC failure never invents one.
+        HRESULT LastHResult() const { return _lastHResult; }
 
     private:
         void ReleaseDeviceAndDriver();
@@ -206,6 +231,7 @@ namespace zantetsu
         void* _encoder = nullptr;
         PNVENCDESTROYENCODER _destroyEncoder = nullptr;
         DWORD _lastWin32Error = 0;
+        HRESULT _lastHResult = S_OK;
         NVENCSTATUS _lastNvencStatus = NV_ENC_SUCCESS;
         bool _openAttempted = false;
         bool _closeAttempted = false;
@@ -220,7 +246,10 @@ namespace zantetsu
         /// whether the driver also has it registered is the separate fact
         /// beside it, so a partial failure is never mistaken for either state.
         /// The output bitstream buffer is held the same way: non-null means
-        /// this session must destroy it.
+        /// this session must destroy it. The NV12 input surface is two facts
+        /// again - the texture this session must release, and the registration
+        /// the driver must be told to forget - so a half-prepared slot is
+        /// never mistaken for either.
         ///
         /// This is not a finished slot - the input resource belongs to a later
         /// unit - and none of it is exposed: there is no getter and no slot in
@@ -230,6 +259,8 @@ namespace zantetsu
             HANDLE completionEvent;
             bool completionEventRegistered;
             NV_ENC_OUTPUT_PTR outputBitstreamBuffer;
+            ID3D11Texture2D* inputTexture;
+            NV_ENC_REGISTERED_PTR registeredInputResource;
         };
 
         bool TryReleaseCompletionEventSlot(EncodeSampleSlot& slot);
@@ -240,6 +271,10 @@ namespace zantetsu
         void RollBackPreparedOutputBitstreamBuffers(uint32_t count);
         bool AnyOutputBitstreamBufferHeld() const;
 
+        bool TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot);
+        void RollBackPreparedInputSurfaces(uint32_t count);
+        bool AnyInputSurfaceHeld() const;
+
         // The fixed set of slots this session owns, and the attempts that may
         // touch each kind of resource in them.
         EncodeSampleSlot _slots[kEncodeSampleSlotCount] = {};
@@ -247,6 +282,8 @@ namespace zantetsu
         bool _completionEventsReleaseAttempted = false;
         bool _outputBitstreamBuffersPrepareAttempted = false;
         bool _outputBitstreamBuffersReleaseAttempted = false;
+        bool _inputSurfacesPrepareAttempted = false;
+        bool _inputSurfacesReleaseAttempted = false;
     };
 }
 

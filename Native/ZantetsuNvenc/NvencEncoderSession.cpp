@@ -49,12 +49,14 @@ namespace zantetsu
     NvencEncoderSession::~NvencEncoderSession()
     {
         // Destroying an owner that still holds an encoder, a completion-event
-        // handle or registration, or an output bitstream buffer is a contract
-        // violation, not a state this handles: the caller releases and closes
-        // first, and an owner whose release or close was refused is kept.
-        // Nothing is unregistered, closed, or destroyed implicitly here.
+        // handle or registration, an output bitstream buffer, or an input
+        // surface is a contract violation, not a state this handles: the caller
+        // releases and closes first, and an owner whose release or close was
+        // refused is kept. Nothing is unregistered, closed, released, or
+        // destroyed implicitly here.
         assert(!AnyCompletionEventHeld());
         assert(!AnyOutputBitstreamBufferHeld());
+        assert(!AnyInputSurfaceHeld());
         assert(_encoder == nullptr);
 
         ReleaseDeviceAndDriver();
@@ -617,6 +619,200 @@ namespace zantetsu
         }
     }
 
+    bool NvencEncoderSession::AnyInputSurfaceHeld() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].inputTexture != nullptr ||
+                _slots[i].registeredInputResource != nullptr)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// Unregisters one slot's input surface if the driver has it, then releases
+    /// the texture. Each fact is cleared only once the step that undoes it has
+    /// succeeded.
+    bool NvencEncoderSession::TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot)
+    {
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        if (slot.registeredInputResource != nullptr)
+        {
+            if (api.nvEncUnregisterResource == nullptr)
+            {
+                return false;
+            }
+
+            const NVENCSTATUS status =
+                api.nvEncUnregisterResource(_encoder, slot.registeredInputResource);
+            if (status != NV_ENC_SUCCESS)
+            {
+                _lastNvencStatus = status;
+                return false;
+            }
+
+            slot.registeredInputResource = nullptr;
+        }
+
+        if (slot.inputTexture != nullptr)
+        {
+            ID3D11Texture2D* texture = slot.inputTexture;
+            slot.inputTexture = nullptr;
+            texture->Release();
+        }
+
+        return true;
+    }
+
+    /// Unwinds the surfaces this preparation took, in reverse. An unregister
+    /// that is itself refused stops the unwinding: that slot and the ones
+    /// before it stay held rather than being released on an assumption.
+    void NvencEncoderSession::RollBackPreparedInputSurfaces(uint32_t count)
+    {
+        for (uint32_t i = count; i > 0; --i)
+        {
+            if (!TryReleaseInputSurfaceSlot(_slots[i - 1]))
+            {
+                return;
+            }
+        }
+    }
+
+    bool NvencEncoderSession::TryPrepareInputSurfaces()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // Input surfaces are the first slot resource: the encoder must be
+        // initialized, nothing else may be prepared yet, and nothing may be
+        // held.
+        if (!_encoderInitialized ||
+            AnyCompletionEventHeld() ||
+            AnyOutputBitstreamBufferHeld() ||
+            AnyInputSurfaceHeld())
+        {
+            return false;
+        }
+
+        // One owner, one preparation - settled before D3D11 or NVENC is
+        // touched.
+        if (_inputSurfacesPrepareAttempted)
+        {
+            return false;
+        }
+
+        _inputSurfacesPrepareAttempted = true;
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        // The way to unregister is confirmed before anything is registered, so
+        // a registered resource is never left with no way to take it back.
+        if (api.nvEncRegisterResource == nullptr ||
+            api.nvEncUnregisterResource == nullptr)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            // The fixed NV12 destination. Its one bind flag is what the plane
+            // shader needs to write Y and UV; the views themselves belong to
+            // the conversion unit, not here.
+            D3D11_TEXTURE2D_DESC textureDesc = {};
+            textureDesc.Width = kInputSurfaceWidth;
+            textureDesc.Height = kInputSurfaceHeight;
+            textureDesc.MipLevels = 1;
+            textureDesc.ArraySize = 1;
+            textureDesc.Format = DXGI_FORMAT_NV12;
+            textureDesc.SampleDesc.Count = 1;
+            textureDesc.SampleDesc.Quality = 0;
+            textureDesc.Usage = D3D11_USAGE_DEFAULT;
+            textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
+            textureDesc.CPUAccessFlags = 0;
+            textureDesc.MiscFlags = 0;
+
+            ID3D11Texture2D* texture = nullptr;
+            const HRESULT hr = _device->CreateTexture2D(&textureDesc, nullptr, &texture);
+            if (FAILED(hr) || texture == nullptr)
+            {
+                _lastHResult = hr;
+                RollBackPreparedInputSurfaces(i);
+                return false;
+            }
+
+            // Owned from the moment it exists, registered or not.
+            _slots[i].inputTexture = texture;
+
+            NV_ENC_REGISTER_RESOURCE registerResource = {};
+            registerResource.version = NV_ENC_REGISTER_RESOURCE_VER;
+            registerResource.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX;
+            registerResource.width = kInputSurfaceWidth;
+            registerResource.height = kInputSurfaceHeight;
+            registerResource.resourceToRegister = texture;
+            registerResource.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
+            registerResource.bufferUsage = NV_ENC_INPUT_IMAGE;
+
+            const NVENCSTATUS status = api.nvEncRegisterResource(_encoder, &registerResource);
+            if (status != NV_ENC_SUCCESS || registerResource.registeredResource == nullptr)
+            {
+                _lastNvencStatus = status;
+                RollBackPreparedInputSurfaces(i + 1);
+                return false;
+            }
+
+            _slots[i].registeredInputResource = registerResource.registeredResource;
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryReleaseInputSurfaces()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        if (!AnyInputSurfaceHeld())
+        {
+            return false;
+        }
+
+        // The completion events and the output buffers go first: an input
+        // surface is not taken out from under resources that were prepared on
+        // top of it.
+        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld())
+        {
+            return false;
+        }
+
+        // One owner, one release - settled before the driver is touched.
+        if (_inputSurfacesReleaseAttempted)
+        {
+            return false;
+        }
+
+        _inputSurfacesReleaseAttempted = true;
+
+        for (uint32_t i = kEncodeSampleSlotCount; i > 0; --i)
+        {
+            if (!TryReleaseInputSurfaceSlot(_slots[i - 1]))
+            {
+                // Stopped here: this slot and everything before it stay with
+                // the session.
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     bool NvencEncoderSession::TryPrepareOutputBitstreamBuffers()
     {
         if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
@@ -624,11 +820,21 @@ namespace zantetsu
             return false;
         }
 
-        // Buffers belong to an encoder that has been initialized, and the set
-        // is prepared only while nothing is held.
+        // Buffers belong to an encoder that has been initialized and whose
+        // input surfaces are already prepared, and the set is prepared only
+        // while nothing is held.
         if (!_encoderInitialized || AnyOutputBitstreamBufferHeld())
         {
             return false;
+        }
+
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].inputTexture == nullptr ||
+                _slots[i].registeredInputResource == nullptr)
+            {
+                return false;
+            }
         }
 
         // One owner, one preparation - settled before anything is created.
@@ -829,11 +1035,12 @@ namespace zantetsu
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
         // An encoder is not destroyed while this session still holds any
-        // completion-event handle or registration, or any output bitstream
-        // buffer - prepared, half-prepared, or half-released. Refused before
-        // the close attempt is spent, so the caller can still close once
+        // completion-event handle or registration, output bitstream buffer, or
+        // input surface - prepared, half-prepared, or half-released. Refused
+        // before the close attempt is spent, so the caller can still close once
         // everything is gone.
-        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld())
+        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
+            AnyInputSurfaceHeld())
         {
             return NvencEncoderSessionCloseStatus::Failed;
         }

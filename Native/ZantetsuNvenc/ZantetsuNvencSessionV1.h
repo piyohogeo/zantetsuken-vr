@@ -1,10 +1,10 @@
 // Phase 0.11 native encoder session ABI, version 1.
 //
-// Eight calls: open one retained session, observe that session's encoder
+// Ten calls: open one retained session, observe that session's encoder
 // capabilities once, initialize that encoder once with the fixed request,
-// prepare and release its fixed set of completion events, prepare and release
-// its fixed set of output bitstream buffers, and close that exact session.
-// Neither the event handles nor the buffers ever cross this boundary. What crosses the boundary is
+// prepare and release its fixed sets of NV12 input surfaces, output bitstream
+// buffers, and completion events, and close that exact session. None of the
+// textures, registrations, event handles, or buffers ever cross this boundary. What crosses the boundary is
 // fixed-width and opaque - a status, an opaque owner handle, the observed
 // capability values, and the raw failure values behind a Failed - and never a
 // device pointer, an encoder handle, a function table pointer, a GUID, an
@@ -134,6 +134,17 @@ typedef struct ZantetsuNvencSessionCompletionEventResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionCompletionEventResultV1;
 
+/// What an NV12 input surface preparation or release came to. Creating the
+/// textures is D3D11's work and registering them is the driver's, so both raw
+/// values are here - and only the call that actually failed sets one.
+typedef struct ZantetsuNvencSessionInputSurfaceResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastHResult;
+    int32_t lastNvencStatus;
+} ZantetsuNvencSessionInputSurfaceResultV1;
+
 /// What an output bitstream buffer preparation or release came to. The driver
 /// makes and destroys these, so its status is the only failure value there is.
 typedef struct ZantetsuNvencSessionOutputBufferResultV1
@@ -215,6 +226,34 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize);
+
+// Creates the fixed set of NV12 input surfaces on that exact session's
+// initialized encoder and registers each one, once. All of them are prepared
+// or none are.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when the destination is null, its size is not exactly the struct's, or the
+// owner handle is zero. A preparation that fails reports FAILED with the raw
+// HRESULT or NVENCSTATUS of the call that failed; it unwinds what it took, and
+// the session is closable again unless a step of that unwinding was itself
+// refused. The textures and registrations stay on the native side.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencPrepareSessionInputSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionInputSurfaceResultV1* destination,
+    uint32_t destinationSize);
+
+// Unregisters and releases that whole set, once and in reverse order.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// preparation. The completion events and output buffers are released first: a
+// session that still has either reports FAILED. A refused unregister stops
+// there, keeping what is still held, so the session is not yet closable.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionInputSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionInputSurfaceResultV1* destination,
     uint32_t destinationSize);
 
 // Creates the fixed set of output bitstream buffers on that exact session's

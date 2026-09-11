@@ -134,6 +134,15 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeInputSurfaceResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastHResult;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeOutputBufferResultV1
         {
             internal uint AbiVersion;
@@ -175,6 +184,16 @@ namespace Zantetsu.Observability
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencPrepareSessionInputSurfacesV1(
+            ulong sessionOwner, ref NativeInputSurfaceResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencReleaseSessionInputSurfacesV1(
+            ulong sessionOwner, ref NativeInputSurfaceResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencPrepareSessionOutputBuffersV1(
             ulong sessionOwner, ref NativeOutputBufferResultV1 destination,
             uint destinationSize);
@@ -197,6 +216,9 @@ namespace Zantetsu.Observability
         private bool _outputBuffersPrepareAttempted;
         private bool _outputBuffersReleaseAttempted;
         private bool _outputBuffersPrepared;
+        private bool _inputSurfacesPrepareAttempted;
+        private bool _inputSurfacesReleaseAttempted;
+        private bool _inputSurfacesPrepared;
 
         private NvencNativeEncoderSessionOwner(ulong sessionOwner)
         {
@@ -503,6 +525,101 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Creates this session's fixed set of NV12 input surfaces and
+        /// registers them with the encoder - all of them, or none.
+        /// </summary>
+        /// <remarks>
+        /// The textures and their registrations are the native side's: no
+        /// pointer, handle, slot index, count, or descriptor is exposed here,
+        /// and nothing is converted into or mapped from them yet. One owner
+        /// prepares once, whatever the first attempt concluded, and a failure
+        /// unwinds what it took.
+        /// </remarks>
+        internal void PrepareInputSurfaces()
+        {
+            RequireUsableSession("prepare input surfaces on");
+
+            if (_inputSurfacesPrepareAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surface preparation was already attempted; it is not attempted again.");
+            }
+
+            _inputSurfacesPrepareAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeInputSurfaceResultV1 result = default;
+            int written = ZantetsuNvencPrepareSessionInputSurfacesV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeInputSurfaceResultV1)));
+
+            RequireInputSurfaceResult(written, result, "prepared");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _inputSurfacesPrepared = true;
+        }
+
+        /// <summary>
+        /// Unregisters and releases that whole set.
+        /// </summary>
+        /// <remarks>
+        /// The completion events and the output buffers are released first: a
+        /// session that still has either refuses here, before this release's
+        /// one attempt is spent. Only a complete success clears the set; a
+        /// refused unregister leaves what it stopped at with the session, which
+        /// therefore still cannot be closed, and nothing is retried here.
+        /// </remarks>
+        internal void ReleaseInputSurfaces()
+        {
+            RequireUsableSession("release input surfaces from");
+
+            if (!_inputSurfacesPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session has no prepared input surfaces to release.");
+            }
+
+            // The resources prepared on top of the surfaces go first. Checked
+            // before this release's one attempt is spent.
+            if (_completionEventsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion events are still prepared; they are released before its input surfaces.");
+            }
+
+            if (_outputBuffersPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffers are still prepared; they are released before its input surfaces.");
+            }
+
+            if (_inputSurfacesReleaseAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surface release was already attempted; it is not attempted again.");
+            }
+
+            _inputSurfacesReleaseAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeInputSurfaceResultV1 result = default;
+            int written = ZantetsuNvencReleaseSessionInputSurfacesV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeInputSurfaceResultV1)));
+
+            RequireInputSurfaceResult(written, result, "released");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _inputSurfacesPrepared = false;
+        }
+
+        /// <summary>
         /// Creates this session's fixed set of output bitstream buffers - all
         /// of them, or none.
         /// </summary>
@@ -515,6 +632,14 @@ namespace Zantetsu.Observability
         internal void PrepareOutputBuffers()
         {
             RequireUsableSession("prepare output buffers on");
+
+            // The input surfaces come first. Checked before this
+            // preparation's one attempt is spent.
+            if (!_inputSurfacesPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surfaces are not prepared; they come before its output buffers.");
+            }
 
             if (_outputBuffersPrepareAttempted)
             {
@@ -620,6 +745,12 @@ namespace Zantetsu.Observability
                     "This session's output buffers are still prepared; they are released before the session is closed.");
             }
 
+            if (_inputSurfacesPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surfaces are still prepared; they are released before the session is closed.");
+            }
+
             // One owner, one close attempt - settled before the native side is
             // called, so a destroy it refused is never asked for again.
             if (_closeAttempted)
@@ -690,6 +821,27 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException(
                     "The completion events could not be " + what + " (status "
                     + result.Status + ", win32 error " + result.LastWin32Error
+                    + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+        }
+
+        private static void RequireInputSurfaceResult(
+            int written, NativeInputSurfaceResultV1 result, string what)
+        {
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native input-surface call was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The input surfaces could not be " + what + " (status "
+                    + result.Status + ", HRESULT 0x" + result.LastHResult.ToString("X8")
                     + ", NVENCSTATUS " + result.LastNvencStatus + ").");
             }
         }

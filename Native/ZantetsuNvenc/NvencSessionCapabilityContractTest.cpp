@@ -181,6 +181,23 @@ int main()
         "a second initialization on the same session is refused");
     Check(session.IsOpen(), "the refused second initialization left the session open");
 
+    // Output buffers wait for the input surfaces.
+    Check(
+        !session.TryPrepareOutputBitstreamBuffers(),
+        "output buffers are not prepared before the input surfaces");
+
+    // The fixed set of NV12 input surfaces, owned by the session.
+    Check(
+        session.TryPrepareInputSurfaces(),
+        "the fixed NV12 input surface set prepares and registers");
+    Check(
+        !session.TryPrepareInputSurfaces(),
+        "a second input surface preparation is refused");
+    Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with prepared input surfaces refuses to close");
+    Check(session.IsOpen(), "the refused close left the session open");
+
     // The fixed set of output bitstream buffers, owned by the session.
     Check(
         session.TryPrepareOutputBitstreamBuffers(),
@@ -198,10 +215,13 @@ int main()
         session.TryPrepareCompletionEvents(),
         "the fixed completion event set prepares on the initialized encoder");
 
-    // The events go before the buffers.
+    // The events go before the buffers, and the buffers before the surfaces.
     Check(
         !session.TryReleaseOutputBitstreamBuffers(),
         "the output buffers are not released while completion events are held");
+    Check(
+        !session.TryReleaseInputSurfaces(),
+        "the input surfaces are not released while the other resources are held");
 
     // A prepared set holds the session open, and refusing the close does not
     // spend the close attempt.
@@ -236,6 +256,19 @@ int main()
     Check(
         !session.TryReleaseOutputBitstreamBuffers(),
         "a second output buffer release on the same session is refused");
+
+    Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with prepared input surfaces still refuses to close");
+
+    Check(
+        session.TryReleaseInputSurfaces(),
+        "the input surface set unregisters and releases once the rest is gone");
+
+    // One owner, one release.
+    Check(
+        !session.TryReleaseInputSurfaces(),
+        "a second input surface release on the same session is refused");
 
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,

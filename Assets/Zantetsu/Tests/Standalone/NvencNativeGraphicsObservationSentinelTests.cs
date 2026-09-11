@@ -298,17 +298,18 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
-        /// The initialized session prepares its fixed sets of output bitstream
-        /// buffers and completion events, refuses to close while either is
-        /// prepared, and closes once both are released in order.
+        /// The initialized session prepares its fixed sets of NV12 input
+        /// surfaces, output bitstream buffers, and completion events, refuses
+        /// to close while any of them is prepared, and closes once all three
+        /// are released in the reverse order.
         /// </summary>
         /// <remarks>
-        /// Nothing waits on an event or reads a buffer, and no handle,
-        /// pointer, slot, or count reaches managed code: what is pinned here
-        /// is the order - buffers, then events, then events released, then
-        /// buffers - and that each step happens once. This is not yet a
-        /// prepared Run: the input resources belong to a later unit, and the
-        /// encode sentinel after that is what shows all eight slots in use.
+        /// Nothing is converted, mapped, waited on, or read here, and no
+        /// texture, registration, handle, slot, or count reaches managed code:
+        /// what is pinned is the order - surfaces, buffers, events, then
+        /// events, buffers, surfaces - and that each step happens once. The
+        /// encode sentinel of a later unit is what shows all eight slots
+        /// actually in use.
         /// </remarks>
         [Test]
         public void Player_PreparesAndReleasesItsSlotResources()
@@ -333,15 +334,29 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 owner.InitializeEncoder(profile);
 
-                owner.PrepareOutputBuffers();
+                // The output buffers wait for the input surfaces, and
+                // asking too early costs nothing.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareOutputBuffers());
+
+                owner.PrepareInputSurfaces();
                 Assert.That(owner.IsOpen, Is.True);
 
-                // Prepared buffers hold the session open, and refusing the
+                // Prepared surfaces hold the session open, and refusing the
                 // close leaves it closable later.
                 Assert.Throws<InvalidOperationException>(() => owner.Dispose());
                 Assert.That(owner.IsOpen, Is.True);
 
                 // One session, one preparation.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareInputSurfaces());
+
+                owner.PrepareOutputBuffers();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
                 Assert.Throws<InvalidOperationException>(
                     () => owner.PrepareOutputBuffers());
 
@@ -354,10 +369,13 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.PrepareCompletionEvents());
 
-                // The events go before the buffers, and asking too early
-                // costs nothing: the same owner still releases them after.
+                // The events go before the buffers and the buffers before
+                // the surfaces, and asking too early costs nothing: the same
+                // owner still releases them after.
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseOutputBuffers());
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseInputSurfaces());
                 Assert.That(owner.IsOpen, Is.True);
 
                 owner.ReleaseCompletionEvents();
@@ -366,12 +384,21 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseCompletionEvents());
 
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseInputSurfaces());
+
                 owner.ReleaseOutputBuffers();
                 Assert.That(owner.IsOpen, Is.True);
 
                 // One session, one release.
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseOutputBuffers());
+
+                owner.ReleaseInputSurfaces();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseInputSurfaces());
                 Assert.That(owner.IsOpen, Is.True);
             }
             finally

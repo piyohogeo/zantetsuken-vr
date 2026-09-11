@@ -27,8 +27,8 @@
 //
 // The session exports open one retained encoder session against that same
 // device, observe what that session's encoder supports, initialize that encoder
-// with the fixed request, prepare and release its fixed sets of completion
-// events and output bitstream buffers, and close it. The session owner keeps its own reference, so it is not affected
+// with the fixed request, prepare and release its fixed sets of NV12 input
+// surfaces, output bitstream buffers, and completion events, and close it. The session owner keeps its own reference, so it is not affected
 // by what the graphics lifecycle does next, and only an opaque handle to it
 // crosses the boundary.
 
@@ -421,6 +421,75 @@ ZantetsuNvencReleaseSessionCompletionEventsV1(
         // What the release could not finish is still the session's, so the
         // session is not yet closable.
         destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencPrepareSessionInputSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionInputSurfaceResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionInputSurfaceResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryPrepareInputSurfaces())
+    {
+        // The session is still initialized and open. It is closable unless the
+        // unwinding left a texture or a registration behind, which the raw
+        // HRESULT or NVENCSTATUS reports.
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionInputSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionInputSurfaceResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionInputSurfaceResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryReleaseInputSurfaces())
+    {
+        // What the release could not finish - or the resources that have to go
+        // first - is still the session's, so the session is not yet closable.
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;
