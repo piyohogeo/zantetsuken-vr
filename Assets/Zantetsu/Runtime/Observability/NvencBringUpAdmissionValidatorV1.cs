@@ -14,15 +14,24 @@ namespace Zantetsu.Observability
     /// D3D handle.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The encoder conditions are compared the same way as every other fixed
     /// condition: H.264 encode, its High Profile, and NV12 input must all be
     /// reported as supported, and the observed maximum dimensions must cover
     /// the profile's fixed 1280x720 - an exact fit is admitted, and so is any
     /// larger maximum. Nothing is derived from a maximum beyond that
-    /// comparison: no minimum, alignment, macroblock, or Level is computed, no
-    /// alternative codec or degraded configuration is chosen, and a Supported
-    /// decision is not a promise that an NVENC session will initialize, which
-    /// remains the real session's own answer.
+    /// comparison: no minimum, alignment, macroblock, or Level is computed and
+    /// no alternative codec or degraded configuration is chosen.
+    /// </para>
+    /// <para>
+    /// What is compared here is the whole of the pre-initialization
+    /// capability: the OS, the active adapter's vendor, the current graphics
+    /// API, async encode support, the three encoder facts, and the two
+    /// maximums. A Supported decision is not a promise that an NVENC session
+    /// will initialize, that a completion event will register, or that the
+    /// output can be kept out of video memory - the real session initialization
+    /// answers all three, and this boundary does not stand in for it.
+    /// </para>
     /// </remarks>
     internal static class NvencBringUpAdmissionValidatorV1
     {
@@ -49,11 +58,7 @@ namespace Zantetsu.Observability
             if (!capability.IsWindows10OrNewer) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.IsActiveAdapterNvidia) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.IsCurrentGraphicsApiD3D11) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.ActiveAdapterSupportsWddm) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.ActiveAdapterSupportsAsyncEncode) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.ActiveAdapterSupportsCompletionEvent) return NvencBringUpAdmissionDecision.Unsupported;
-            if (capability.IsActiveAdapterTcc) return NvencBringUpAdmissionDecision.Unsupported;
-            if (!capability.ActiveAdapterCanUseOutputInVidmemZero) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.ActiveAdapterSupportsH264Encode) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.ActiveAdapterSupportsH264HighProfile) return NvencBringUpAdmissionDecision.Unsupported;
             if (!capability.ActiveAdapterSupportsNv12Input) return NvencBringUpAdmissionDecision.Unsupported;

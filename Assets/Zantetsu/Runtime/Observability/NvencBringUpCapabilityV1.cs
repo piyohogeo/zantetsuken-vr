@@ -12,18 +12,34 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The encoder facts are kept as the plain observed values they are: three
-    /// booleans and two maximum dimensions. A false or a zero - or a negative
-    /// maximum - is an initialized snapshot that reports no support, not an
-    /// invalid one, so a probe that found nothing can still be represented
-    /// exactly as it was observed and rejected by the admission boundary rather
-    /// than by a constructor.
+    /// Every member is a fact that can be observed directly before the encoder
+    /// is initialized. The encoder facts are kept as the plain observed values
+    /// they are: three booleans and two maximum dimensions. A false or a zero -
+    /// or a negative maximum - is an initialized snapshot that reports no
+    /// support, not an invalid one, so a probe that found nothing can still be
+    /// represented exactly as it was observed and rejected by the admission
+    /// boundary rather than by a constructor.
+    /// </para>
+    /// <para>
+    /// What deliberately has no member here is anything that cannot be observed
+    /// on its own. The driver model is one: an NVENC session opened on the
+    /// D3D11 device this process is already using, reporting async encode
+    /// support, is the path that has to hold - there is no separate WDDM or TCC
+    /// fact to consult, and no NVML or NVAPI dependency is taken to invent one.
+    /// Completion-event availability is another: whether an event can be
+    /// created and registered is answered by actually doing it during Run
+    /// initialization, not guessed beforehand. Keeping the encoder's output out
+    /// of video memory is a third - that is a value this project requests when
+    /// it initializes the encoder, not a capability to query.
     /// </para>
     /// <para>
     /// No adapter identity, SDK or driver string, codec, profile, or
-    /// input-format GUID list is held, and nothing here proves that an NVENC
-    /// session can actually be created: the real session initialization remains
-    /// the authority on the requested configuration.
+    /// input-format GUID list is held. Every member is a pre-initialization
+    /// observation and nothing more: a snapshot in which all of them are
+    /// supported does not prove that an encoder session initializes, that a
+    /// completion event registers, or that any particular combination of the
+    /// two maximums is accepted. Those answers belong to the real session
+    /// initialization.
     /// </para>
     /// </remarks>
     internal readonly struct NvencBringUpCapabilityV1
@@ -36,15 +52,7 @@ namespace Zantetsu.Observability
 
         internal bool IsCurrentGraphicsApiD3D11 { get; }
 
-        internal bool ActiveAdapterSupportsWddm { get; }
-
         internal bool ActiveAdapterSupportsAsyncEncode { get; }
-
-        internal bool ActiveAdapterSupportsCompletionEvent { get; }
-
-        internal bool IsActiveAdapterTcc { get; }
-
-        internal bool ActiveAdapterCanUseOutputInVidmemZero { get; }
 
         internal bool ActiveAdapterSupportsH264Encode { get; }
 
@@ -70,11 +78,7 @@ namespace Zantetsu.Observability
             bool isWindows10OrNewer,
             bool isActiveAdapterNvidia,
             bool isCurrentGraphicsApiD3D11,
-            bool activeAdapterSupportsWddm,
             bool activeAdapterSupportsAsyncEncode,
-            bool activeAdapterSupportsCompletionEvent,
-            bool isActiveAdapterTcc,
-            bool activeAdapterCanUseOutputInVidmemZero,
             bool activeAdapterSupportsH264Encode,
             bool activeAdapterSupportsH264HighProfile,
             bool activeAdapterSupportsNv12Input,
@@ -84,11 +88,7 @@ namespace Zantetsu.Observability
             IsWindows10OrNewer = isWindows10OrNewer;
             IsActiveAdapterNvidia = isActiveAdapterNvidia;
             IsCurrentGraphicsApiD3D11 = isCurrentGraphicsApiD3D11;
-            ActiveAdapterSupportsWddm = activeAdapterSupportsWddm;
             ActiveAdapterSupportsAsyncEncode = activeAdapterSupportsAsyncEncode;
-            ActiveAdapterSupportsCompletionEvent = activeAdapterSupportsCompletionEvent;
-            IsActiveAdapterTcc = isActiveAdapterTcc;
-            ActiveAdapterCanUseOutputInVidmemZero = activeAdapterCanUseOutputInVidmemZero;
             ActiveAdapterSupportsH264Encode = activeAdapterSupportsH264Encode;
             ActiveAdapterSupportsH264HighProfile = activeAdapterSupportsH264HighProfile;
             ActiveAdapterSupportsNv12Input = activeAdapterSupportsNv12Input;

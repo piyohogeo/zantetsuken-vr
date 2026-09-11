@@ -13,6 +13,14 @@ namespace Zantetsu.Core.Tests
     /// validator. All capability and input snapshots are fakes; no real OS,
     /// GPU, or NVENC is used.
     /// </summary>
+    /// <remarks>
+    /// The capability snapshot is the set of facts observable before the
+    /// encoder is initialized, so a Supported decision here says nothing about
+    /// whether a session initializes, a completion event registers, or the
+    /// requested output-in-video-memory setting is accepted. Nothing in this
+    /// fixture opens a session, registers an event, or touches a native entry
+    /// point.
+    /// </remarks>
     public class NvencBringUpAdmissionContractTests
     {
         private static NvencBringUpProfileV1 MakeProfile(int profileId = 7)
@@ -24,11 +32,7 @@ namespace Zantetsu.Core.Tests
             bool isWindows10OrNewer = true,
             bool isActiveAdapterNvidia = true,
             bool isCurrentGraphicsApiD3D11 = true,
-            bool activeAdapterSupportsWddm = true,
             bool activeAdapterSupportsAsyncEncode = true,
-            bool activeAdapterSupportsCompletionEvent = true,
-            bool isActiveAdapterTcc = false,
-            bool activeAdapterCanUseOutputInVidmemZero = true,
             bool activeAdapterSupportsH264Encode = true,
             bool activeAdapterSupportsH264HighProfile = true,
             bool activeAdapterSupportsNv12Input = true,
@@ -39,11 +43,7 @@ namespace Zantetsu.Core.Tests
                 isWindows10OrNewer,
                 isActiveAdapterNvidia,
                 isCurrentGraphicsApiD3D11,
-                activeAdapterSupportsWddm,
                 activeAdapterSupportsAsyncEncode,
-                activeAdapterSupportsCompletionEvent,
-                isActiveAdapterTcc,
-                activeAdapterCanUseOutputInVidmemZero,
                 activeAdapterSupportsH264Encode,
                 activeAdapterSupportsH264HighProfile,
                 activeAdapterSupportsNv12Input,
@@ -133,11 +133,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(Evaluate(profile, MakeCapability(isWindows10OrNewer: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(isActiveAdapterNvidia: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(isCurrentGraphicsApiD3D11: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsWddm: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsAsyncEncode: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsCompletionEvent: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(isActiveAdapterTcc: true), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
-            Assert.That(Evaluate(profile, MakeCapability(activeAdapterCanUseOutputInVidmemZero: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsH264Encode: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsH264HighProfile: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
             Assert.That(Evaluate(profile, MakeCapability(activeAdapterSupportsNv12Input: false), input), Is.EqualTo(NvencBringUpAdmissionDecision.Unsupported));
@@ -219,6 +215,10 @@ namespace Zantetsu.Core.Tests
                 activeAdapterSupportsNv12Input: false,
                 maximumEncodeWidth: 0,
                 maximumEncodeHeight: -1);
+
+            // Observed as they were reported, and refused by the admission
+            // boundary rather than by the constructor.
+
 
             Assert.That(capability.IsInitialized, Is.True);
             Assert.That(capability.ActiveAdapterSupportsH264Encode, Is.False);

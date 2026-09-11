@@ -15,7 +15,9 @@ namespace Zantetsu.Core.Tests
     /// The probe is a fixture-local recording fake. Nothing here touches a
     /// thread, a task, the filesystem, a Unity static API, or a native entry
     /// point, and the coordinator is never asked to classify anything - the
-    /// admission validator's own fixture owns that.
+    /// admission validator's own fixture owns that. The snapshots carry
+    /// pre-initialization facts only: none of them claims that a session
+    /// initializes or that a completion event registers.
     /// </remarks>
     public class NvencBringUpCapabilityProbeExecutionContractTests
     {
@@ -23,11 +25,7 @@ namespace Zantetsu.Core.Tests
             bool isWindows10OrNewer = true,
             bool isActiveAdapterNvidia = true,
             bool isCurrentGraphicsApiD3D11 = true,
-            bool activeAdapterSupportsWddm = true,
             bool activeAdapterSupportsAsyncEncode = true,
-            bool activeAdapterSupportsCompletionEvent = true,
-            bool isActiveAdapterTcc = false,
-            bool activeAdapterCanUseOutputInVidmemZero = true,
             bool activeAdapterSupportsH264Encode = true,
             bool activeAdapterSupportsH264HighProfile = true,
             bool activeAdapterSupportsNv12Input = true,
@@ -38,11 +36,7 @@ namespace Zantetsu.Core.Tests
                 isWindows10OrNewer,
                 isActiveAdapterNvidia,
                 isCurrentGraphicsApiD3D11,
-                activeAdapterSupportsWddm,
                 activeAdapterSupportsAsyncEncode,
-                activeAdapterSupportsCompletionEvent,
-                isActiveAdapterTcc,
-                activeAdapterCanUseOutputInVidmemZero,
                 activeAdapterSupportsH264Encode,
                 activeAdapterSupportsH264HighProfile,
                 activeAdapterSupportsNv12Input,
@@ -59,15 +53,8 @@ namespace Zantetsu.Core.Tests
                 Is.EqualTo(expected.IsActiveAdapterNvidia));
             Assert.That(observed.IsCurrentGraphicsApiD3D11,
                 Is.EqualTo(expected.IsCurrentGraphicsApiD3D11));
-            Assert.That(observed.ActiveAdapterSupportsWddm,
-                Is.EqualTo(expected.ActiveAdapterSupportsWddm));
             Assert.That(observed.ActiveAdapterSupportsAsyncEncode,
                 Is.EqualTo(expected.ActiveAdapterSupportsAsyncEncode));
-            Assert.That(observed.ActiveAdapterSupportsCompletionEvent,
-                Is.EqualTo(expected.ActiveAdapterSupportsCompletionEvent));
-            Assert.That(observed.IsActiveAdapterTcc, Is.EqualTo(expected.IsActiveAdapterTcc));
-            Assert.That(observed.ActiveAdapterCanUseOutputInVidmemZero,
-                Is.EqualTo(expected.ActiveAdapterCanUseOutputInVidmemZero));
             Assert.That(observed.ActiveAdapterSupportsH264Encode,
                 Is.EqualTo(expected.ActiveAdapterSupportsH264Encode));
             Assert.That(observed.ActiveAdapterSupportsH264HighProfile,
@@ -163,11 +150,7 @@ namespace Zantetsu.Core.Tests
                 isWindows10OrNewer: false,
                 isActiveAdapterNvidia: false,
                 isCurrentGraphicsApiD3D11: false,
-                activeAdapterSupportsWddm: false,
                 activeAdapterSupportsAsyncEncode: false,
-                activeAdapterSupportsCompletionEvent: false,
-                isActiveAdapterTcc: true,
-                activeAdapterCanUseOutputInVidmemZero: false,
                 activeAdapterSupportsH264Encode: false,
                 activeAdapterSupportsH264HighProfile: false,
                 activeAdapterSupportsNv12Input: false,
