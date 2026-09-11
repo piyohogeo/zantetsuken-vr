@@ -10,12 +10,11 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is what makes a retry possible after a partial release. The same
-    /// operation is reused - a partially released lease can only be finished
-    /// through the exact operation it was released by - and the retained
-    /// receipt is the only success latch: no separate flag, retry counter,
-    /// status, attempt result, result wrapper, proof, token, nonce, or
-    /// generation.
+    /// This is what makes a retry possible after a partial release. This
+    /// coordinator retries a partial release only through that same retained
+    /// operation, and the retained receipt is the only success latch: no
+    /// separate flag, retry counter, status, attempt result, result wrapper,
+    /// proof, token, nonce, or generation.
     /// </para>
     /// <para>
     /// The receipt is assigned only after
