@@ -298,16 +298,19 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
-        /// The initialized session registers one completion event, refuses to
-        /// close while it is registered, and closes once it is unregistered.
+        /// The initialized session prepares its fixed set of completion
+        /// events, refuses to close while they are prepared, and closes once
+        /// they are released.
         /// </summary>
         /// <remarks>
-        /// Nothing waits on the event, and its handle never reaches managed
-        /// code: what is pinned here is the ownership order - register,
-        /// unregister, close - and that each step happens once.
+        /// Nothing waits on the events, and no handle, slot, or count reaches
+        /// managed code: what is pinned here is the ownership order - prepare,
+        /// release, close - and that each step happens once. How many events
+        /// the set holds is the profile's fixed encode sample slot count, and
+        /// the later encode sentinel is what shows all of them in use.
         /// </remarks>
         [Test]
-        public void Player_RegistersAndUnregistersOneCompletionEvent()
+        public void Player_PreparesAndReleasesItsCompletionEventSet()
         {
             Assert.That(
                 NvencNativeEncoderSessionOwner.TryOpen(
@@ -329,20 +332,25 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 owner.InitializeEncoder(profile);
 
-                owner.RegisterCompletionEvent();
+                owner.PrepareCompletionEvents();
                 Assert.That(owner.IsOpen, Is.True);
 
-                // The registered event holds the session open, and refusing
-                // the close leaves it closable later.
+                // The prepared set holds the session open, and refusing the
+                // close leaves it closable later.
                 Assert.Throws<InvalidOperationException>(() => owner.Dispose());
                 Assert.That(owner.IsOpen, Is.True);
 
-                owner.UnregisterCompletionEvent();
+                // One session, one preparation.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareCompletionEvents());
                 Assert.That(owner.IsOpen, Is.True);
 
-                // One session, one unregistration.
+                owner.ReleaseCompletionEvents();
+                Assert.That(owner.IsOpen, Is.True);
+
+                // One session, one release.
                 Assert.Throws<InvalidOperationException>(
-                    () => owner.UnregisterCompletionEvent());
+                    () => owner.ReleaseCompletionEvents());
                 Assert.That(owner.IsOpen, Is.True);
             }
             finally

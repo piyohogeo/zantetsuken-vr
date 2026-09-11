@@ -157,12 +157,12 @@ namespace Zantetsu.Observability
             ref NativeInitializeResultV1 destination, uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
-        private static extern int ZantetsuNvencRegisterSessionCompletionEventV1(
+        private static extern int ZantetsuNvencPrepareSessionCompletionEventsV1(
             ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
-        private static extern int ZantetsuNvencUnregisterSessionCompletionEventV1(
+        private static extern int ZantetsuNvencReleaseSessionCompletionEventsV1(
             ulong sessionOwner, ref NativeCompletionEventResultV1 destination,
             uint destinationSize);
 
@@ -173,9 +173,9 @@ namespace Zantetsu.Observability
 
         private ulong _sessionOwner;
         private bool _closeAttempted;
-        private bool _completionEventRegistrationAttempted;
-        private bool _completionEventUnregistrationAttempted;
-        private bool _completionEventRegistered;
+        private bool _completionEventsPrepareAttempted;
+        private bool _completionEventsReleaseAttempted;
+        private bool _completionEventsPrepared;
 
         private NvencNativeEncoderSessionOwner(ulong sessionOwner)
         {
@@ -404,81 +404,81 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Creates and registers this session's one completion event.
+        /// Creates and registers this session's fixed set of completion
+        /// events - all of them, or none.
         /// </summary>
         /// <remarks>
-        /// The event is the native side's: no handle is exposed here, and
-        /// nothing waits on it yet. One owner registers once, whatever the
-        /// first attempt concluded, and a failure leaves the session
-        /// initialized, open, and closable.
+        /// The events are the native side's: no handle, slot state, or count
+        /// is exposed here, and nothing waits on them yet. One owner prepares
+        /// once, whatever the first attempt concluded, and a failure unwinds
+        /// what it took.
         /// </remarks>
-        internal void RegisterCompletionEvent()
+        internal void PrepareCompletionEvents()
         {
-            RequireUsableSession("register a completion event on");
+            RequireUsableSession("prepare completion events on");
 
-            if (_completionEventRegistrationAttempted)
+            if (_completionEventsPrepareAttempted)
             {
                 throw new InvalidOperationException(
-                    "This session's completion-event registration was already attempted; it is not attempted again.");
+                    "This session's completion-event preparation was already attempted; it is not attempted again.");
             }
 
-            _completionEventRegistrationAttempted = true;
+            _completionEventsPrepareAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             NativeCompletionEventResultV1 result = default;
-            int written = ZantetsuNvencRegisterSessionCompletionEventV1(
+            int written = ZantetsuNvencPrepareSessionCompletionEventsV1(
                 _sessionOwner, ref result,
                 (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
 
-            RequireCompletionEventResult(written, result, "registered");
+            RequireCompletionEventResult(written, result, "prepared");
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
 #endif
 
-            _completionEventRegistered = true;
+            _completionEventsPrepared = true;
         }
 
         /// <summary>
-        /// Unregisters that event and closes its handle.
+        /// Unregisters and closes that whole set.
         /// </summary>
         /// <remarks>
-        /// Only a complete success clears the registration: a refused
-        /// unregister or a refused handle close leaves the event with the
-        /// session, which therefore still cannot be closed, and nothing is
-        /// retried here.
+        /// Only a complete success clears it: a refused unregister or handle
+        /// close leaves what it stopped at with the session, which therefore
+        /// still cannot be closed, and nothing is retried here.
         /// </remarks>
-        internal void UnregisterCompletionEvent()
+        internal void ReleaseCompletionEvents()
         {
-            RequireUsableSession("unregister a completion event from");
+            RequireUsableSession("release completion events from");
 
-            if (!_completionEventRegistered)
+            if (!_completionEventsPrepared)
             {
                 throw new InvalidOperationException(
-                    "This session has no registered completion event to unregister.");
+                    "This session has no prepared completion events to release.");
             }
 
-            if (_completionEventUnregistrationAttempted)
+            if (_completionEventsReleaseAttempted)
             {
                 throw new InvalidOperationException(
-                    "This session's completion-event unregistration was already attempted; it is not attempted again.");
+                    "This session's completion-event release was already attempted; it is not attempted again.");
             }
 
-            _completionEventUnregistrationAttempted = true;
+            _completionEventsReleaseAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             NativeCompletionEventResultV1 result = default;
-            int written = ZantetsuNvencUnregisterSessionCompletionEventV1(
+            int written = ZantetsuNvencReleaseSessionCompletionEventsV1(
                 _sessionOwner, ref result,
                 (uint)Marshal.SizeOf(typeof(NativeCompletionEventResultV1)));
 
-            RequireCompletionEventResult(written, result, "unregistered");
+            RequireCompletionEventResult(written, result, "released");
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
 #endif
 
-            _completionEventRegistered = false;
+            _completionEventsPrepared = false;
         }
 
         /// <summary>
@@ -494,13 +494,13 @@ namespace Zantetsu.Observability
                 return;
             }
 
-            // A registered event holds this session open. Refused before the
-            // close attempt is spent, so the caller can still close after
-            // unregistering.
-            if (_completionEventRegistered)
+            // Prepared completion events hold this session open. Refused
+            // before the close attempt is spent, so the caller can still close
+            // after releasing them.
+            if (_completionEventsPrepared)
             {
                 throw new InvalidOperationException(
-                    "This session's completion event is still registered; it is unregistered before the session is closed.");
+                    "This session's completion events are still prepared; they are released before the session is closed.");
             }
 
             // One owner, one close attempt - settled before the native side is
@@ -571,7 +571,7 @@ namespace Zantetsu.Observability
             if (result.Status != StatusOk)
             {
                 throw new InvalidOperationException(
-                    "The completion event could not be " + what + " (status "
+                    "The completion events could not be " + what + " (status "
                     + result.Status + ", win32 error " + result.LastWin32Error
                     + ", NVENCSTATUS " + result.LastNvencStatus + ").");
             }

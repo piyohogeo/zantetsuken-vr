@@ -51,10 +51,15 @@ namespace zantetsu
         Failed,
     };
 
-    /// An owner must not be destroyed while it still holds an encoder or a
-    /// completion-event handle: the event has to be unregistered and closed
-    /// and the session closed successfully first, and an owner whose
-    /// unregister or close was refused stays alive with what it holds.
+    /// The fixed number of completion events a Phase 0.11 session prepares,
+    /// one per encode sample slot. It is a constant of the design: nothing
+    /// here grows, shrinks, or adds one later.
+    constexpr uint32_t kCompletionEventCount = 8;
+
+    /// An owner must not be destroyed while it still holds an encoder or any
+    /// completion-event handle: the events have to be released and the session
+    /// closed successfully first, and an owner whose release or close was
+    /// refused stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -153,21 +158,20 @@ namespace zantetsu
         /// the capability observation.
         bool TryInitializeEncoder(const NvencEncoderInitializationRequest& request);
 
-        /// Creates one completion event and registers it with this session's
-        /// encoder, exactly once per owner. The encoder must already be
-        /// initialized, and the handle becomes this session's as soon as it
-        /// exists. A refused registration closes that handle again and leaves
-        /// the session initialized, open, and closable - unless the OS also
-        /// refuses to close it, in which case the handle stays owned and the
-        /// session stays unclosable. A second call makes no attempt, touching
-        /// neither the OS nor the driver.
-        bool TryRegisterCompletionEvent();
+        /// Creates and registers the fixed set of completion events, exactly
+        /// once per owner. The encoder must already be initialized. Every one
+        /// of the slots must succeed for the set to be prepared; a failure
+        /// part of the way through unwinds what it took in reverse, and a step
+        /// of that unwinding which itself fails leaves that slot and every
+        /// slot still held with this session rather than guessing. A second
+        /// call makes no attempt, touching neither the OS nor the driver.
+        bool TryPrepareCompletionEvents();
 
-        /// Unregisters that exact event and closes its handle, exactly once
-        /// per owner and in that order. A refused unregister or a refused
-        /// close keeps the event: nothing is assumed to have happened, and
-        /// nothing is retried here.
-        bool TryUnregisterCompletionEvent();
+        /// Unregisters and closes the whole set in reverse order, exactly once
+        /// per owner. A refused unregister or close stops the release with
+        /// that slot and the ones before it still held; nothing is assumed to
+        /// have happened, and nothing is retried here.
+        bool TryReleaseCompletionEvents();
 
         bool IsOpen() const { return _encoder != nullptr; }
 
@@ -197,12 +201,25 @@ namespace zantetsu
         // itself against it.
         bool _encoderInitialized = false;
 
-        // The one completion-event handle this session owns, and the two
-        // attempts that may touch it. A held handle means the session is
-        // responsible for it, not that the driver has it registered.
-        HANDLE _completionEvent = nullptr;
-        bool _completionEventRegistrationAttempted = false;
-        bool _completionEventUnregistrationAttempted = false;
+        /// One slot of the fixed set. Holding a handle means the session is
+        /// responsible for it; whether the driver also has it registered is
+        /// the separate fact beside it, so a partial failure is never
+        /// mistaken for either state.
+        struct CompletionEventSlot
+        {
+            HANDLE handle;
+            bool registered;
+        };
+
+        bool TryReleaseCompletionEventSlot(CompletionEventSlot& slot);
+        void RollBackPreparedCompletionEvents(uint32_t count);
+        bool AnyCompletionEventHeld() const;
+
+        // The fixed set this session owns, and the two attempts that may touch
+        // it.
+        CompletionEventSlot _completionEvents[kCompletionEventCount] = {};
+        bool _completionEventsPrepareAttempted = false;
+        bool _completionEventsReleaseAttempted = false;
     };
 }
 

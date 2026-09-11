@@ -2,8 +2,8 @@
 //
 // Six calls: open one retained session, observe that session's encoder
 // capabilities once, initialize that encoder once with the fixed request,
-// register and unregister one completion event on it, and close that exact
-// session. The event handle itself never crosses this boundary. What crosses the boundary is
+// prepare and release its fixed set of completion events, and close that exact
+// session. The event handles themselves never cross this boundary. What crosses the boundary is
 // fixed-width and opaque - a status, an opaque owner handle, the observed
 // capability values, and the raw failure values behind a Failed - and never a
 // device pointer, an encoder handle, a function table pointer, a GUID, an
@@ -123,7 +123,7 @@ typedef struct ZantetsuNvencSessionInitializeResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionInitializeResultV1;
 
-/// What a completion-event registration or unregistration came to.
+/// What a completion-event preparation or release came to.
 typedef struct ZantetsuNvencSessionCompletionEventResultV1
 {
     uint32_t abiVersion;
@@ -180,27 +180,28 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencInitializeSessionEnc
     ZantetsuNvencSessionInitializeResultV1* destination,
     uint32_t destinationSize);
 
-// Creates one completion event and registers it with that exact session's
-// initialized encoder, once.
+// Creates and registers the fixed set of completion events on that exact
+// session's initialized encoder, once. All of them are prepared or none are.
 //
 // Returns 1 when the result was written, 0 - leaving the destination untouched
 // - when the destination is null, its size is not exactly the struct's, or the
-// owner handle is zero. A registration that fails reports FAILED with its raw
-// Win32 error or NVENCSTATUS and leaves the session initialized, open, and
-// closable. The event handle stays on the native side.
+// owner handle is zero. A preparation that fails reports FAILED with its raw
+// Win32 error or NVENCSTATUS; it unwinds what it took, and the session is
+// closable again unless a step of that unwinding was itself refused. The event
+// handles stay on the native side.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
-ZantetsuNvencRegisterSessionCompletionEventV1(
+ZantetsuNvencPrepareSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize);
 
-// Unregisters that event and closes its handle, once and in that order.
+// Unregisters and closes that whole set, once and in reverse order.
 //
 // Returns 1 when the result was written, 0 under the same conditions as the
-// registration. A refused unregister or a refused close reports FAILED and
-// keeps the event, so the session is not yet closable.
+// preparation. A refused unregister or close reports FAILED and stops there,
+// keeping what is still held, so the session is not yet closable.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
-ZantetsuNvencUnregisterSessionCompletionEventV1(
+ZantetsuNvencReleaseSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize);

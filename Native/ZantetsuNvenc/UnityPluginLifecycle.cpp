@@ -27,8 +27,8 @@
 //
 // The session exports open one retained encoder session against that same
 // device, observe what that session's encoder supports, initialize that encoder
-// with the fixed request, register and unregister its one completion event, and
-// close it. The session owner keeps its own reference, so it is not affected
+// with the fixed request, prepare and release its fixed set of completion
+// events, and close it. The session owner keeps its own reference, so it is not affected
 // by what the graphics lifecycle does next, and only an opaque handle to it
 // crosses the boundary.
 
@@ -362,7 +362,7 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL ZantetsuNvencInitializeSessionEnc
 }
 
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
-ZantetsuNvencRegisterSessionCompletionEventV1(
+ZantetsuNvencPrepareSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize)
@@ -381,11 +381,11 @@ ZantetsuNvencRegisterSessionCompletionEventV1(
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
 
-    if (!session->TryRegisterCompletionEvent())
+    if (!session->TryPrepareCompletionEvents())
     {
-        // The session is still initialized and open. It is closable unless the
-        // failure left a handle it could not close, which the raw Win32 error
-        // reports.
+        // The session is still initialized and open. It is closable unless
+        // the unwinding left a handle or a registration behind, which the raw
+        // Win32 error or NVENCSTATUS reports.
         destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
@@ -397,7 +397,7 @@ ZantetsuNvencRegisterSessionCompletionEventV1(
 }
 
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
-ZantetsuNvencUnregisterSessionCompletionEventV1(
+ZantetsuNvencReleaseSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
     uint32_t destinationSize)
@@ -416,10 +416,10 @@ ZantetsuNvencUnregisterSessionCompletionEventV1(
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
 
-    if (!session->TryUnregisterCompletionEvent())
+    if (!session->TryReleaseCompletionEvents())
     {
-        // The handle is still the session's, so the session is not yet
-        // closable.
+        // What the release could not finish is still the session's, so the
+        // session is not yet closable.
         destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->lastNvencStatus = static_cast<int32_t>(session->LastNvencStatus());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;

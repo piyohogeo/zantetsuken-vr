@@ -181,35 +181,35 @@ int main()
         "a second initialization on the same session is refused");
     Check(session.IsOpen(), "the refused second initialization left the session open");
 
-    // One completion event, owned by the session.
+    // The fixed set of completion events, owned by the session.
     Check(
-        session.TryRegisterCompletionEvent(),
-        "a completion event registers on the initialized encoder");
+        session.TryPrepareCompletionEvents(),
+        "the fixed completion event set prepares on the initialized encoder");
 
-    // A registered event holds the session open, and refusing the close does
-    // not spend the close attempt.
+    // A prepared set holds the session open, and refusing the close does not
+    // spend the close attempt.
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
-        "a session with a registered event refuses to close");
+        "a session with prepared completion events refuses to close");
     Check(session.IsOpen(), "the refused close left the session open");
 
-    // One owner, one registration.
+    // One owner, one preparation.
     Check(
-        !session.TryRegisterCompletionEvent(),
-        "a second registration on the same session is refused");
+        !session.TryPrepareCompletionEvents(),
+        "a second preparation on the same session is refused");
 
     Check(
-        session.TryUnregisterCompletionEvent(),
-        "the completion event unregisters and its handle closes");
+        session.TryReleaseCompletionEvents(),
+        "the completion event set unregisters and closes");
 
-    // One owner, one unregistration.
+    // One owner, one release.
     Check(
-        !session.TryUnregisterCompletionEvent(),
-        "a second unregistration on the same session is refused");
+        !session.TryReleaseCompletionEvents(),
+        "a second release on the same session is refused");
 
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the session closes once its event is gone");
+        "the session closes once its completion events are gone");
     Check(!session.IsOpen(), "the closed session holds no encoder");
 
     binding.Clear();
