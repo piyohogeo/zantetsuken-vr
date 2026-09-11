@@ -23,7 +23,11 @@ namespace Zantetsu.Observability
     /// second one or re-implements the factory's Running admission.
     /// </para>
     /// <para>
-    /// Every entry is main-thread and non-waiting.
+    /// Every entry is main-thread. <see cref="TryOpen"/> performs the lock
+    /// acquisition and the initialization recovery inspection synchronously,
+    /// as the entry coordinator always has, and no claim is made here about
+    /// how long a filesystem or OS call takes; what it does not wait for is
+    /// the publication recovery worker it started.
     /// <see cref="TryOpen"/> returns false on ordinary lock contention without
     /// composing anything. A session-ready or collision outcome is handed back
     /// exactly as the entry produced it - the same outcome and the same
@@ -40,8 +44,11 @@ namespace Zantetsu.Observability
     /// most once, and only after the worker has physically stopped with one;
     /// it then disposes that worker and frees the slot. A worker parked for a
     /// release retry is left parked - nothing here turns it into a success or a
-    /// failure - and this unit adds no retry policy, no deadline, no automatic
-    /// re-entry, and no forced unlock. A faulted worker therefore keeps its
+    /// failure - and only an explicit
+    /// <see cref="TryRequestRecoveryReleaseRetry"/> resumes it, forwarded to
+    /// the worker that decides whether the request is admissible at all. This
+    /// unit adds no retry policy, no attempt counter, no deadline, no
+    /// automatic re-entry, and no forced unlock. A faulted worker therefore keeps its
     /// slot, its worker instance, and whatever lock its lease still holds:
     /// neither a released lock nor a terminal result is inferred from a fault.
     /// </para>
@@ -184,6 +191,19 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Forwards one explicit release-retry request to the active recovery
+        /// worker. The worker is the only authority on whether the request is
+        /// admissible - it alone checks the parked state and the lease's
+        /// partial release, and it alone performs the state transition - so
+        /// nothing is latched, counted, or deadlined here.
+        /// </summary>
+        internal bool TryRequestRecoveryReleaseRetry()
+        {
+            NvencRunPublicationRecoveryWorkerService worker = _worker;
+            return worker != null && worker.TryRequestReleaseRetry();
+        }
+
+        /// <summary>
         /// Collects the active recovery's terminal result at most once, and
         /// only once that worker has physically stopped with one. On success
         /// the worker is disposed and the slot is freed, so the next Run may be
@@ -220,9 +240,15 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Composes one worker for that exact outcome and lease and starts it
-        /// once. Until the start returns, ownership of the lease has not
-        /// reached the worker, so a failure releases it here.
+        /// once.
         /// </summary>
+        /// <remarks>
+        /// A <c>Start</c> that throws leaves that worker instance unstarted by
+        /// the worker's own contract, and only in that case - as in a refused
+        /// composition - does this owner clean up the unstarted worker and the
+        /// lease. Once <c>Start</c> returns normally, every later release of
+        /// that lease is the recovery graph's.
+        /// </remarks>
         private void StartRecovery(
             CaptureRunInitializationOpenOutcome entryOutcome,
             CaptureRunInitializationSessionOwnershipLease entryLease)
@@ -241,8 +267,8 @@ namespace Zantetsu.Observability
                         "The recovery worker factory returned no worker.");
                 }
 
-                // The slot is taken before the start, so a start that throws
-                // can never be followed by a second attempt on this Run.
+                // The slot is taken before the start, so this Run is never
+                // offered a second worker while this one exists.
                 _worker = worker;
                 _recoveryOpenOutcome = entryOutcome;
                 _recoveryOwnershipLease = entryLease;

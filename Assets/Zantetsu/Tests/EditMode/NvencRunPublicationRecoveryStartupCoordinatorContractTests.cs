@@ -462,6 +462,166 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Opener.CallCount, Is.EqualTo(0));
         }
 
+        // ---- The one explicit release-retry control ----
+
+        [Test]
+        public void RequestReleaseRetry_WithoutAnActiveRecovery_IsRefused()
+        {
+            Harness h = MakeHarness(RunShape.Fresh);
+
+            // Before any Run.
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+
+            Assert.That(
+                h.Coordinator.TryOpen(
+                    h.Layout,
+                    MaximumRootEntryCount,
+                    out CaptureRunInitializationOpenOutcome outcome,
+                    out CaptureRunInitializationSessionOwnershipLease ownershipLease),
+                Is.True);
+            Own(ownershipLease);
+
+            // A session-ready Run started no worker, so there is nothing to
+            // resume and nothing is touched by asking.
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+            Assert.That(h.Coordinator.HasActiveRecovery, Is.False);
+            Assert.That(outcome.Status,
+                Is.EqualTo(CaptureRunInitializationOpenStatus.SessionReady));
+            Assert.That(ownershipLease.IsCreated, Is.True);
+            Assert.That(h.FirstHandle.DisposeCount, Is.EqualTo(0));
+            Assert.That(h.SecondHandle.DisposeCount, Is.EqualTo(0));
+            h.AssertRecoveryNeverComposed();
+        }
+
+        [Test]
+        public void RequestReleaseRetry_WhileRunningOrAfterCompletion_IsRefused()
+        {
+            Harness h = MakeHarness(RunShape.PublicationRecovery, PlanOpen.Blocked);
+
+            try
+            {
+                Assert.That(
+                    h.Coordinator.TryOpen(
+                        h.Layout,
+                        MaximumRootEntryCount,
+                        out CaptureRunInitializationOpenOutcome outcome,
+                        out CaptureRunInitializationSessionOwnershipLease ownershipLease),
+                    Is.True);
+
+                Assert.That(outcome, Is.Not.Null);
+                Assert.That(ownershipLease, Is.Null);
+
+                // Running: the worker is inside the inspection.
+                WaitUntilOpenerEntered(h.Opener);
+                Assert.That(h.Coordinator.RecoveryWorkerState,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Running));
+
+                int opens = h.Opener.CallCount;
+                Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+                Assert.That(h.Coordinator.RecoveryWorkerState,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Running));
+                Assert.That(h.Opener.CallCount, Is.EqualTo(opens));
+                Assert.That(h.FirstHandle.DisposeCount, Is.EqualTo(0));
+
+                // Completed, before the terminal is collected.
+                h.Opener.Gate.Set();
+                WaitUntilState(
+                    h.Coordinator, NvencRunPublicationRecoveryWorkerState.Completed);
+
+                opens = h.Opener.CallCount;
+                Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+                Assert.That(h.Coordinator.RecoveryWorkerState,
+                    Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Completed));
+                Assert.That(h.Opener.CallCount, Is.EqualTo(opens));
+                Assert.That(h.Inspector.InspectCount, Is.EqualTo(1));
+
+                // The completed terminal is still there to collect.
+                Assert.That(
+                    h.Coordinator.TryCollectRecoveryTerminal(
+                        out NvencRunPublicationRecoveryTerminalResult terminal),
+                    Is.True);
+                Assert.That(terminal.IsValid, Is.True);
+            }
+            finally
+            {
+                h.FinishBlockedRecovery();
+            }
+        }
+
+        /// <summary>
+        /// A partially released lease parks the worker, and the one explicit
+        /// request resumes that exact worker's retained release stage - once.
+        /// </summary>
+        [Test]
+        public void RequestReleaseRetry_WhenParked_ResumesTheRetainedReleaseExactlyOnce()
+        {
+            Harness h = MakeHarness(RunShape.PublicationRecovery);
+            h.Backend.FailFirstReleaseOfTheSecondLock = true;
+
+            Assert.That(
+                h.Coordinator.TryOpen(
+                    h.Layout,
+                    MaximumRootEntryCount,
+                    out CaptureRunInitializationOpenOutcome outcome,
+                    out CaptureRunInitializationSessionOwnershipLease ownershipLease),
+                Is.True);
+
+            Assert.That(ownershipLease, Is.Null);
+            CaptureRunInitializationSessionOwnershipLease recoveryLease =
+                h.Coordinator.ActiveRecoveryOwnershipLease;
+            Assert.That(recoveryLease, Is.Not.Null);
+            Own(recoveryLease);
+
+            WaitUntilState(
+                h.Coordinator,
+                NvencRunPublicationRecoveryWorkerState.AwaitingReleaseRetry);
+
+            // The park is a partial release, not a finished one.
+            Assert.That(recoveryLease.IsCreated, Is.False);
+            Assert.That(recoveryLease.CanRelease, Is.True);
+            Assert.That(recoveryLease.IsReleaseComplete, Is.False);
+            Assert.That(h.Coordinator.TryGetRecoveryFailure(out Exception parked), Is.True);
+            Assert.That(parked, Is.Not.Null);
+            Assert.That(
+                h.Coordinator.TryCollectRecoveryTerminal(
+                    out NvencRunPublicationRecoveryTerminalResult pending),
+                Is.False);
+            Assert.That(pending.IsValid, Is.False);
+
+            int inspections = h.Inspector.InspectCount;
+            int opens = h.Opener.CallCount;
+
+            // One request is accepted; an immediate second finds the state
+            // already moved on.
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.True);
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+
+            // The same worker resumes its retained release branch: the
+            // terminal arrives with nothing re-inspected and nothing cleaned
+            // up again.
+            NvencRunPublicationRecoveryTerminalResult terminal =
+                CollectTerminal(h.Coordinator);
+
+            Assert.That(terminal.IsValid, Is.True);
+            Assert.That(terminal.IsStopped, Is.True);
+            Assert.That(ReferenceEquals(terminal.OpenOutcome, outcome), Is.True);
+            Assert.That(ReferenceEquals(terminal.OwnershipLease, recoveryLease), Is.True);
+            Assert.That(h.Inspector.InspectCount, Is.EqualTo(inspections));
+            Assert.That(h.Opener.CallCount, Is.EqualTo(opens));
+            h.AssertFileSystemsNeverEntered();
+
+            // The retry finished the release: the handle that failed was
+            // released on its second attempt, and the one that had already
+            // succeeded was not touched again.
+            Assert.That(recoveryLease.IsReleaseComplete, Is.True);
+            Assert.That(h.SecondHandle.DisposeCount, Is.EqualTo(2));
+            Assert.That(h.FirstHandle.DisposeCount, Is.EqualTo(1));
+
+            // The slot is free, so the request is refused again.
+            Assert.That(h.Coordinator.HasActiveRecovery, Is.False);
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+        }
+
         // ---- A fault is not a success ----
 
         [Test]
@@ -515,6 +675,16 @@ namespace Zantetsu.Core.Tests
                     out CaptureRunInitializationOpenOutcome second,
                     out CaptureRunInitializationSessionOwnershipLease secondLease));
             Assert.That(h.Inspector.InspectCount, Is.EqualTo(1));
+
+            // A faulted recovery is not resumable through the retry request
+            // either, and asking changes nothing.
+            int opens = h.Opener.CallCount;
+            Assert.That(h.Coordinator.TryRequestRecoveryReleaseRetry(), Is.False);
+            Assert.That(h.Coordinator.RecoveryWorkerState,
+                Is.EqualTo(NvencRunPublicationRecoveryWorkerState.Faulted));
+            Assert.That(h.Opener.CallCount, Is.EqualTo(opens));
+            Assert.That(h.FirstHandle.DisposeCount, Is.EqualTo(0));
+            Assert.That(h.SecondHandle.DisposeCount, Is.EqualTo(0));
         }
 
         // ---- Fixture helpers ----
@@ -756,6 +926,15 @@ namespace Zantetsu.Core.Tests
             internal void AssertRecoveryNeverComposed()
             {
                 Assert.That(Opener.CallCount, Is.EqualTo(0));
+                AssertFileSystemsNeverEntered();
+            }
+
+            /// <summary>
+            /// Neither filesystem surface was touched: a stopped recovery
+            /// commits nothing and cleans up nothing.
+            /// </summary>
+            internal void AssertFileSystemsNeverEntered()
+            {
                 Assert.That(CommitFileSystem.CallCount, Is.EqualTo(0));
                 Assert.That(CleanupFileSystem.CallCount, Is.EqualTo(0));
             }
@@ -804,6 +983,13 @@ namespace Zantetsu.Core.Tests
 
             internal Func<string, bool> OnAcquire { get; set; }
 
+            /// <summary>
+            /// Arms a one-time release failure on the second lock's handle -
+            /// the one a lease releases first - so exactly one of the two
+            /// releases fails and the lease ends up partially released.
+            /// </summary>
+            internal bool FailFirstReleaseOfTheSecondLock { get; set; }
+
             internal List<FakeLockHandle> CreatedHandles { get; } =
                 new List<FakeLockHandle>();
 
@@ -820,6 +1006,11 @@ namespace Zantetsu.Core.Tests
                 }
 
                 FakeLockHandle created = new FakeLockHandle(absoluteLockPath, _disposeLog);
+                if (FailFirstReleaseOfTheSecondLock && CreatedHandles.Count == 1)
+                {
+                    created.FailFirstRelease();
+                }
+
                 CreatedHandles.Add(created);
                 handle = created;
                 return true;
@@ -830,6 +1021,7 @@ namespace Zantetsu.Core.Tests
         {
             private readonly List<string> _disposeLog;
             private int _disposeCount;
+            private int _throwOnce;
 
             internal FakeLockHandle(string lockPath, List<string> disposeLog)
             {
@@ -843,12 +1035,27 @@ namespace Zantetsu.Core.Tests
 
             internal int DisposeCount => Volatile.Read(ref _disposeCount);
 
+            /// <summary>
+            /// Fails the first release attempt only, so the lease ends up
+            /// partially released and the worker parks.
+            /// </summary>
+            internal void FailFirstRelease()
+            {
+                Volatile.Write(ref _throwOnce, 1);
+            }
+
             public void Dispose()
             {
                 Interlocked.Increment(ref _disposeCount);
                 lock (_disposeLog)
                 {
                     _disposeLog.Add(LockPath);
+                }
+
+                if (Interlocked.Exchange(ref _throwOnce, 0) == 1)
+                {
+                    throw new IOException(
+                        "Fake lock handle release failure: " + LockPath + ".");
                 }
             }
         }
