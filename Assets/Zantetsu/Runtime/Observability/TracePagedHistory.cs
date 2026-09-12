@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
+using Zantetsu.Trace;
 
 namespace Zantetsu.Observability
 {
@@ -18,21 +19,42 @@ namespace Zantetsu.Observability
     /// shrunk, added to, or moved while the Run is going.
     /// </para>
     /// <para>
-    /// What is held is only the pages, one committed byte count per page, and
-    /// one committed record count for the history - no page objects, no index,
-    /// no page state, no reference count, lease, generation, or live snapshot.
+    /// Records are put in one after another through <see cref="Receive"/>,
+    /// each framed with its length and kind, and a record is never split
+    /// across pages: one that will not fit what is left of a page starts the
+    /// next page instead, leaving the tail of the old one unused and
+    /// uncommitted. A record that will not fit and has no page left to go to
+    /// is dropped without waiting, and the counts and the position in the
+    /// current page are left exactly as they were - so a shorter record after
+    /// it can still be taken.
+    /// </para>
+    /// <para>
+    /// Only one thread may put records in, one at a time; that is the caller's
+    /// to keep, and nothing here checks it, locks, or waits. A record becomes
+    /// visible by being counted: the page's committed byte count is written
+    /// after the record is in the page, and the history's record count after
+    /// that, both as ordinary stores. Reading those counts while records are
+    /// still going in is not something this type supports - reading is for
+    /// after the writing has stopped.
+    /// </para>
+    /// <para>
+    /// What is held is only the pages, one committed byte count per page, one
+    /// committed record count and one drop count for the history - no page
+    /// objects, no index, no page state, no reference count, lease,
+    /// generation, or live snapshot.
     /// The producer lanes are not this type's and are not released with it;
     /// stopping whatever writes to or reads from the history is not its job
     /// either. <see cref="Dispose"/> gives the region back once, and a second
     /// call does nothing.
     /// </para>
     /// <para>
-    /// Nothing is written into a page here. The pointer into a page is not
-    /// handed out, and neither is any array behind it: what a writer needs
-    /// comes later.
+    /// The page region sits behind the counts in the same block, and neither a
+    /// pointer into it nor any array behind it is handed out: what is in the
+    /// pages is read back through a view built after the writing has stopped,
+    /// which is not part of this type.
     /// </para>
     /// </remarks>
-    internal sealed unsafe class TracePagedHistory : IDisposable
+    internal sealed unsafe class TracePagedHistory : ITraceRecordDestination, IDisposable
     {
         /// <summary>
         /// The block in front of the per-page counts, holding the history's own
@@ -43,13 +65,24 @@ namespace Zantetsu.Observability
 
         private const int CommittedRecordCountOffset = 0;
 
+        private const int DropCountOffset = CommittedRecordCountOffset + sizeof(long);
+
         private readonly int _pageSize;
         private readonly int _pageCount;
+        private readonly int _maxPayloadLength;
         private readonly long _blockBytes;
 
         private byte* _block;
         private long* _committedRecordCount;
+        private long* _dropCount;
         private long* _committedByteCounts;
+        private byte* _pages;
+
+        /// <summary>
+        /// The page records are going into. Only the one writer touches it,
+        /// and it only ever moves forward.
+        /// </summary>
+        private int _currentPage;
 
         /// <summary>
         /// Takes the pages and the counts the profile describes, in one piece.
@@ -63,6 +96,7 @@ namespace Zantetsu.Observability
 
             _pageSize = profile.HistoryPageSize;
             _pageCount = profile.HistoryPageCount;
+            _maxPayloadLength = profile.MaxPayloadLength;
             _blockBytes = profile.HistoryStorageBytes;
 
             _block = (byte*)UnsafeUtility.Malloc(_blockBytes, MetadataBlockBytes, Allocator.Persistent);
@@ -75,7 +109,9 @@ namespace Zantetsu.Observability
             // Every count starts at nothing, and so does every page.
             UnsafeUtility.MemClear(_block, _blockBytes);
             _committedRecordCount = (long*)(_block + CommittedRecordCountOffset);
+            _dropCount = (long*)(_block + DropCountOffset);
             _committedByteCounts = (long*)(_block + MetadataBlockBytes);
+            _pages = _block + MetadataBlockBytes + PageCountBytesFor(_pageCount);
         }
 
         /// <summary>
@@ -123,6 +159,19 @@ namespace Zantetsu.Observability
             }
         }
 
+        /// <summary>
+        /// Records the history had no room left for. Saturating, never
+        /// wrapping, and not broken down by page, event, or reason.
+        /// </summary>
+        internal long DropCount
+        {
+            get
+            {
+                RequireLive();
+                return Interlocked.Read(ref *_dropCount);
+            }
+        }
+
         /// <summary>How much of one page has been committed.</summary>
         internal long CommittedByteCountOf(int page)
         {
@@ -134,6 +183,94 @@ namespace Zantetsu.Observability
             }
 
             return Interlocked.Read(ref _committedByteCounts[page]);
+        }
+
+        /// <summary>
+        /// Puts one record into the history: its length, its kind, and then
+        /// its payload, all in one piece inside a single page.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// For the one writer, on its own thread, one record at a time. A
+        /// record that will not fit what is left of the current page goes at
+        /// the start of the next one; a record with no page left to go to is
+        /// dropped, counted once, and changes nothing else.
+        /// </para>
+        /// <para>
+        /// An empty payload is a record like any other. A negative length, a
+        /// length longer than the Run allows, or no payload where there should
+        /// be one is a mistake in the calling code, not a full history: it is
+        /// refused before anything is written and is not counted as a drop.
+        /// </para>
+        /// </remarks>
+        public void Receive(TraceEventType recordKind, byte* payload, int payloadLength)
+        {
+            RequireLive();
+
+            if (payloadLength < 0 || payloadLength > _maxPayloadLength)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(payloadLength),
+                    payloadLength,
+                    "A record must be between zero bytes and the longest the Run allows.");
+            }
+
+            if (payloadLength > 0 && payload == null)
+            {
+                throw new ArgumentNullException(nameof(payload));
+            }
+
+            int recordLength = TraceRecordHeader.RecordKindSize + payloadLength;
+            int framedLength = TraceRecordHeader.LengthFieldSize + recordLength;
+
+            long offset = _committedByteCounts[_currentPage];
+            if (offset + framedLength > _pageSize)
+            {
+                if (_currentPage + 1 >= _pageCount)
+                {
+                    // Nowhere left to put it. The page keeps the room it still
+                    // has, so a shorter record after this one can still go in.
+                    CountDrop();
+                    return;
+                }
+
+                // The tail of this page stays as it is - unused, and not
+                // counted as committed.
+                _currentPage++;
+                offset = _committedByteCounts[_currentPage];
+            }
+
+            byte* cursor = _pages + ((long)_currentPage * _pageSize) + offset;
+            *(TraceRecordHeader*)cursor = new TraceRecordHeader
+            {
+                RecordLength = recordLength,
+                RecordKind = recordKind,
+            };
+
+            if (payloadLength > 0)
+            {
+                UnsafeUtility.MemCpy(cursor + TraceRecordHeader.Bytes, payload, payloadLength);
+            }
+
+            // The record is in the page before either count says so: the
+            // page's bytes first, then the history's records.
+            _committedByteCounts[_currentPage] = offset + framedLength;
+            *_committedRecordCount = *_committedRecordCount + 1L;
+        }
+
+        /// <summary>
+        /// Adds one to the drop count, stopping at the largest value rather
+        /// than turning over.
+        /// </summary>
+        private void CountDrop()
+        {
+            long current = *_dropCount;
+            if (current == long.MaxValue)
+            {
+                return;
+            }
+
+            *_dropCount = current + 1L;
         }
 
         /// <summary>
@@ -151,7 +288,9 @@ namespace Zantetsu.Observability
             UnsafeUtility.Free(_block, Allocator.Persistent);
             _block = null;
             _committedRecordCount = null;
+            _dropCount = null;
             _committedByteCounts = null;
+            _pages = null;
         }
 
         private void RequireLive()
