@@ -445,6 +445,12 @@ namespace zantetsu
             volatile LONG state;
             HRESULT lastHResult;
             DWORD lastWin32Error;
+
+            /// Whether this slot's fence event is already registered for the
+            /// generation it currently holds. One registration per command, so
+            /// a repeated collection does not stack another, and neither the
+            /// registration nor a signal it produced carries into the next.
+            bool fenceEventRegistered;
         };
 
         /// Gives one slot's handles and fence back, in the reverse of the order

@@ -1125,6 +1125,7 @@ namespace zantetsu
             _conversionSlots[i].lastGeneration = 0;
             _conversionSlots[i].lastHResult = S_OK;
             _conversionSlots[i].lastWin32Error = 0;
+            _conversionSlots[i].fenceEventRegistered = false;
             _conversionSlots[i].state =
                 static_cast<LONG>(ConversionCommandState::Idle);
         }
@@ -1233,6 +1234,7 @@ namespace zantetsu
         slot.lastGeneration = generation;
         slot.lastHResult = S_OK;
         slot.lastWin32Error = 0;
+        slot.fenceEventRegistered = false;
         slot.eventData.session = this;
         slot.eventData.syncSlotIndex = syncSlotIndex;
         slot.eventData.sourceSlotIndex = sourceSlotIndex;
@@ -1292,11 +1294,9 @@ namespace zantetsu
         if (context == nullptr || _context4 == nullptr)
         {
             // Nothing was drawn and nothing will signal, so the waiter is told
-            // on the callback's own edge instead.
+            // on the callback's own edge instead. Everything this callback has
+            // to say is written before the state that says it is finished.
             slot.lastHResult = E_FAIL;
-            ::InterlockedExchange(
-                &slot.state,
-                static_cast<LONG>(ConversionCommandState::AwaitingCollection));
 
             if (!::SetEvent(slot.callbackEvent))
             {
@@ -1305,6 +1305,9 @@ namespace zantetsu
                 slot.lastWin32Error = ::GetLastError();
             }
 
+            ::InterlockedExchange(
+                &slot.state,
+                static_cast<LONG>(ConversionCommandState::AwaitingCollection));
             return;
         }
 
@@ -1452,20 +1455,21 @@ namespace zantetsu
         if (savedDepthStencilState != nullptr) { savedDepthStencilState->Release(); }
 
         // A failure is recorded for the waiter, never thrown and never
-        // retried here. The order matters: what happened is published first,
-        // then the state, and only then is the waiter woken - so a worker that
-        // wakes sees both, and cannot return the slot to idle while this
-        // callback is still writing to it.
+        // retried here. The order matters: everything this callback has to say
+        // is written, the waiter is woken, and the state that says the command
+        // is collectable is published last - so a worker that sees that state
+        // sees a callback with nothing left to write, and one woken by the
+        // event that finds the state not yet published simply comes back.
         slot.lastHResult = signalHr;
-
-        ::InterlockedExchange(
-            &slot.state,
-            static_cast<LONG>(ConversionCommandState::AwaitingCollection));
 
         if (!::SetEvent(slot.callbackEvent))
         {
             slot.lastWin32Error = ::GetLastError();
         }
+
+        ::InterlockedExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::AwaitingCollection));
     }
 
     namespace
@@ -1560,6 +1564,17 @@ namespace zantetsu
 
                 return false;
             }
+
+            // Woken, but the callback has not published yet: this command is
+            // left for the next collection rather than spun on here.
+            const LONG published = ::InterlockedCompareExchange(
+                &slot.state,
+                static_cast<LONG>(ConversionCommandState::AwaitingCollection),
+                static_cast<LONG>(ConversionCommandState::AwaitingCollection));
+            if (published != static_cast<LONG>(ConversionCommandState::AwaitingCollection))
+            {
+                return false;
+            }
         }
 
         // What the callback recorded, whether or not the GPU was ever asked to
@@ -1579,16 +1594,24 @@ namespace zantetsu
 
         if (slot.fence->GetCompletedValue() < generation)
         {
-            const HRESULT hr =
-                slot.fence->SetEventOnCompletion(generation, slot.completionEvent);
-            if (FAILED(hr))
+            // Registered once for this command. A second collection after a
+            // timeout waits on the registration the first one made rather than
+            // stacking another.
+            if (!slot.fenceEventRegistered)
             {
-                if (callbackHResult != nullptr)
+                const HRESULT hr =
+                    slot.fence->SetEventOnCompletion(generation, slot.completionEvent);
+                if (FAILED(hr))
                 {
-                    *callbackHResult = hr;
+                    if (callbackHResult != nullptr)
+                    {
+                        *callbackHResult = hr;
+                    }
+
+                    return false;
                 }
 
-                return false;
+                slot.fenceEventRegistered = true;
             }
 
             const ULONGLONG now = ::GetTickCount64();
@@ -1622,10 +1645,28 @@ namespace zantetsu
             return false;
         }
 
-        // The published completion is consumed here, before the slot is idle
-        // again: the next command on this slot must set it anew. A reset the OS
+        // Both completions are consumed here, before the slot is idle again:
+        // the next command on this slot must produce its own. A reset the OS
         // refuses leaves the slot outstanding rather than idle with an event
         // that would complete the next command for nothing.
+        //
+        // The fence event goes first, with the registration that named it, and
+        // the callback event after, because the callback event is what a
+        // collector waits on to decide there is anything to do at all.
+        if (!::ResetEvent(slot.completionEvent))
+        {
+            const DWORD error = ::GetLastError();
+            _lastWin32Error = error;
+            if (win32Error != nullptr)
+            {
+                *win32Error = error;
+            }
+
+            return false;
+        }
+
+        slot.fenceEventRegistered = false;
+
         if (!::ResetEvent(slot.callbackEvent))
         {
             const DWORD error = ::GetLastError();

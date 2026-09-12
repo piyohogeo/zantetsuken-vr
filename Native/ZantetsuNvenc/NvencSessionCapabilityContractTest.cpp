@@ -433,6 +433,8 @@ int main()
         Check(allIssued, "every slot takes a command before any is collected");
 
         bool everyImpatientAttemptRecovers = true;
+        bool everyNextGenerationWaits = true;
+        bool everyTimeoutIsSilent = true;
         bool anyImpatientAttemptTimedOut = false;
         for (uint32_t i = 0; i < zantetsu::kConversionCommandSlotCount; ++i)
         {
@@ -440,27 +442,65 @@ int main()
             // GPU alone - and with no patience at all it may run out of time.
             const bool impatient = session.TryCollectConversionCommand(
                 i, 30, 0, &callbackHResult, &collectWin32Error);
-            if (impatient)
+            if (!impatient)
             {
-                continue;
+                anyImpatientAttemptTimedOut = true;
+
+                // A wait that only ran out of time says nothing about the
+                // thread's last error.
+                if (collectWin32Error != 0)
+                {
+                    everyTimeoutIsSilent = false;
+                    break;
+                }
+
+                // The published completion was not consumed, so the very same
+                // generation is still collectable.
+                if (!session.TryCollectConversionCommand(
+                        i, 30, 5000, &callbackHResult, &collectWin32Error))
+                {
+                    everyImpatientAttemptRecovers = false;
+                    break;
+                }
             }
 
-            anyImpatientAttemptTimedOut = true;
+        }
 
-            // A wait that only ran out of time says nothing about the thread's
-            // last error.
-            if (collectWin32Error != 0)
+        // The generation after each one starts from nothing: neither the fence
+        // event that command was waited on nor the completion its callback
+        // published may carry over, so a collection before the next callback
+        // has run must simply run out of time.
+        for (uint32_t i = 0;
+            i < zantetsu::kConversionCommandSlotCount && everyNextGenerationWaits;
+            ++i)
+        {
+            void* nextData = nullptr;
+            if (!session.TryArmConversionCommand(i, i, i, 31, &nextData) ||
+                nextData == nullptr)
             {
-                everyImpatientAttemptRecovers = false;
+                everyNextGenerationWaits = false;
                 break;
             }
 
-            // The published completion was not consumed, so the very same
-            // generation is still collectable.
-            if (!session.TryCollectConversionCommand(
-                    i, 30, 5000, &callbackHResult, &collectWin32Error))
+            if (session.TryCollectConversionCommand(
+                    i, 31, 50, &callbackHResult, &collectWin32Error))
             {
-                everyImpatientAttemptRecovers = false;
+                everyNextGenerationWaits = false;
+                break;
+            }
+
+            if (collectWin32Error != 0)
+            {
+                everyTimeoutIsSilent = false;
+                break;
+            }
+
+            zantetsu::RunConversionCommandFromEventData(nextData);
+
+            if (!session.TryCollectConversionCommand(
+                    i, 31, 5000, &callbackHResult, &collectWin32Error))
+            {
+                everyNextGenerationWaits = false;
                 break;
             }
         }
@@ -468,34 +508,15 @@ int main()
         Check(
             everyImpatientAttemptRecovers,
             "an impatient collection that times out leaves the same generation collectable");
+        Check(
+            everyNextGenerationWaits,
+            "no leftover fence or callback completion carries into the next generation");
+        Check(
+            everyTimeoutIsSilent,
+            "a collection that only ran out of time reports no Win32 error");
         std::printf(
             "  observed: an impatient collection timed out on the GPU: %s\n",
             anyImpatientAttemptTimedOut ? "yes" : "no");
-    }
-
-    // ---- a collected completion does not complete the next command ----
-    {
-        void* eventData = nullptr;
-        Check(
-            session.TryArmConversionCommand(3, 3, 3, 31, &eventData) &&
-                eventData != nullptr,
-            "a slot whose previous command was collected arms again");
-
-        // Its callback has not run, so nothing has published anything for this
-        // generation: the previous command's completion must not stand in.
-        Check(
-            !session.TryCollectConversionCommand(
-                3, 31, 50, &callbackHResult, &collectWin32Error),
-            "a stale callback completion does not complete the next generation");
-        Check(
-            collectWin32Error == 0,
-            "a collection that only ran out of time reports no Win32 error");
-
-        zantetsu::RunConversionCommandFromEventData(eventData);
-        Check(
-            session.TryCollectConversionCommand(
-                3, 31, 5000, &callbackHResult, &collectWin32Error),
-            "the command completes once its callback has actually run");
     }
 
     // ---- what an arming refuses, before it changes anything ----
@@ -514,7 +535,7 @@ int main()
                 0, 0, zantetsu::kEncodeSampleSlotCount, 100, &eventData),
             "an encode sample slot index out of range is refused");
         Check(
-            !session.TryArmConversionCommand(0, 0, 0, 30, &eventData),
+            !session.TryArmConversionCommand(0, 0, 0, 31, &eventData),
             "a generation that is not newer than the slot's last is refused");
     }
 

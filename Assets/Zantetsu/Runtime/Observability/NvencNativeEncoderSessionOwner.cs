@@ -952,16 +952,36 @@ namespace Zantetsu.Observability
             _conversionCommandsPrepareAttempted = true;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            NativeConversionResultV1 result = default;
-            int written = ZantetsuNvencPrepareSessionConversionCommandsV1(
-                _sessionOwner, ref result,
-                (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+            // Made before the native side is asked for anything, and owned from
+            // the moment it exists: a buffer that could not be made stops the
+            // preparation while there is still nothing native to release.
+            CommandBuffer commands = new CommandBuffer();
+            _conversionCommands = commands;
 
-            RequireConversionResult(written, result, "prepared");
+            try
+            {
+                NativeConversionResultV1 result = default;
+                int written = ZantetsuNvencPrepareSessionConversionCommandsV1(
+                    _sessionOwner, ref result,
+                    (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
 
-            // Made once the native side is ready, so a refused preparation
-            // leaves nothing behind.
-            _conversionCommands = new CommandBuffer();
+                RequireConversionResult(written, result, "prepared");
+            }
+            catch (Exception)
+            {
+                // Giving the buffer back must not replace the failure that
+                // brought us here.
+                _conversionCommands = null;
+                try
+                {
+                    commands.Dispose();
+                }
+                catch (Exception)
+                {
+                }
+
+                throw;
+            }
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
