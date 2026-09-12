@@ -493,17 +493,15 @@ Assert-UnityLogClean $logPath
 
 # The point of this runner is that the player really is built at the fixed
 # path, so a missing one is an infrastructure failure even if the tests passed:
-# it would mean the run went somewhere else. Existence alone would also be
-# satisfied by an executable left over from an earlier run, so it has to have
-# been written by this one.
+# it would mean the run went somewhere else.
 if (-not (Test-Path -LiteralPath $player.Executable -PathType Leaf)) {
     Fail-Infrastructure "The test player was not found at the fixed path: $($player.Executable)"
 }
 
 # Existence alone would also be satisfied by an executable left over from an
-# earlier run, so this run's own log has to name the fixed path as the place it
-# built to. The executable's timestamp cannot carry this: an unchanged project
-# produces an up-to-date player that Unity does not rewrite.
+# earlier run, so this run's log must identify the fixed executable as its
+# selected locationPathName; the executable may be reused without being
+# rewritten. That is also why a timestamp cannot carry this check.
 $locationLines = @(Select-String -Path $logPath -Pattern '^\s*locationPathName\s*=\s*(.+?)\s*$' |
     ForEach-Object { $_.Matches[0].Groups[1].Value })
 if ($locationLines.Count -eq 0) {
