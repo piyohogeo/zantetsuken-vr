@@ -250,9 +250,12 @@ namespace Zantetsu.Core.Tests
                     method.Name == "TryBeginAdmission" || method.Name == "EndAdmission" ||
                     method.Name == "TryBeginResourceResolution" || method.Name == "EndResourceResolution" ||
                     method.Name == "TryBeginSubmitStep" || method.Name == "EndSubmitStep" ||
-                    method.Name == "TryBeginSettlement" || method.Name == "EndSettlement",
+                    method.Name == "TryBeginSettlement" || method.Name == "EndSettlement" ||
+                    method.Name == "BindResourceResolutionReleaseNotification" ||
+                    method.Name == "UnbindResourceResolutionReleaseNotification" ||
+                    method.Name == "ReleaseSharedGate",
                     Is.True,
-                    type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, submit-step, or settlement method.");
+                    type.Name + "." + method.Name + " must be a transition, admission, resource-resolution, submit-step, or settlement method, or the gate-release wake.");
             }
         }
 
@@ -458,13 +461,28 @@ namespace Zantetsu.Core.Tests
             Type type = typeof(NvencCaptureProcessState);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(fields.Length, Is.EqualTo(3));
+            Assert.That(fields.Length, Is.EqualTo(4));
 
-            Type[] expected = { typeof(int), typeof(object) };
+            Type[] expected =
+            {
+                typeof(int), typeof(object), typeof(NvencOrderedOutputWorkerService)
+            };
+
+            int waiters = 0;
             foreach (FieldInfo field in fields)
             {
-                Assert.That(expected, Does.Contain(field.FieldType), field.Name + " must be an int or object.");
+                Assert.That(
+                    expected, Does.Contain(field.FieldType),
+                    field.Name + " must be an int, an object, or the one Output Worker woken on gate release.");
+
+                if (field.FieldType == typeof(NvencOrderedOutputWorkerService))
+                {
+                    waiters++;
+                }
             }
+
+            // One bound worker, never a list or a registry of them.
+            Assert.That(waiters, Is.EqualTo(1));
         }
 
         [Test]

@@ -32,11 +32,20 @@ namespace Zantetsu.Observability
     /// transitions are idempotent and exception-safe, and this type is not an
     /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject. The
     /// Composition Root, not this type, creates exactly one instance per
-    /// process; no singleton or static Current is forced here.
+    /// process; no singleton or static Current is forced here. One Output
+    /// Worker may be bound to be woken whenever the shared gate is released,
+    /// because a collector that could not take it keeps its record and parks
+    /// with nothing else able to ask it to try again; the wake is a coalescing
+    /// hint and this type still owns no worker, queue, or record.
     /// </remarks>
     internal sealed class NvencCaptureProcessState
     {
         private int _state = (int)NvencCaptureProcessStatus.Running;
+
+        // The one Output Worker woken when this shared gate is released. An
+        // Output Worker that failed to take the gate holds its record and
+        // parks, and nothing else would ever ask it to try again.
+        private volatile NvencOrderedOutputWorkerService _gateReleaseWaiter;
 
         // Monotonic Run Abandoned flag, recorded only inside the shared gate.
         private int _runAbandoned;
@@ -86,7 +95,7 @@ namespace Zantetsu.Observability
 
             if (Volatile.Read(ref _state) != (int)NvencCaptureProcessStatus.Running)
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
                 return false;
             }
 
@@ -99,7 +108,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void EndAdmission()
         {
-            Monitor.Exit(_admissionGate);
+            ReleaseSharedGate();
         }
 
         /// <summary>
@@ -126,7 +135,7 @@ namespace Zantetsu.Observability
 
             if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
                 return false;
             }
 
@@ -139,7 +148,114 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void EndResourceResolution()
         {
+            ReleaseSharedGate();
+        }
+
+        /// <summary>
+        /// Binds the one Output Worker woken whenever this shared gate is
+        /// released. Exactly once, at composition.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A collector that has already taken a record from the queue can be
+        /// stopped by nothing more than this gate being momentarily held by
+        /// someone else: it keeps the record and parks, and no enqueue, drain,
+        /// or completion is coming to wake it. The gate's own release is the
+        /// only event that can say "try again", which is why the binding lives
+        /// here rather than at either worker.
+        /// </para>
+        /// <para>
+        /// It is closed to one worker: there is no list, no registry, and no
+        /// way to re-point it. Without a binding this type behaves exactly as
+        /// before and wakes nobody.
+        /// </para>
+        /// </remarks>
+        internal void BindResourceResolutionReleaseNotification(
+            NvencOrderedOutputWorkerService outputWorker)
+        {
+            if (outputWorker == null)
+            {
+                throw new ArgumentNullException(nameof(outputWorker));
+            }
+
+            if (_gateReleaseWaiter != null)
+            {
+                throw new InvalidOperationException(
+                    "This process state already wakes an Output Worker when the shared gate is released; the binding is made once.");
+            }
+
+            _gateReleaseWaiter = outputWorker;
+        }
+
+        /// <summary>
+        /// Releases the binding, and only once the exact bound Output Worker
+        /// has physically stopped.
+        /// </summary>
+        /// <remarks>
+        /// Unbinding a worker that is still running would drop the one wake a
+        /// record it is holding still needs, so a running worker is refused
+        /// here rather than trusted to the caller's ordering. A foreign worker
+        /// is refused too.
+        /// </remarks>
+        internal void UnbindResourceResolutionReleaseNotification(
+            NvencOrderedOutputWorkerService outputWorker)
+        {
+            if (outputWorker == null)
+            {
+                throw new ArgumentNullException(nameof(outputWorker));
+            }
+
+            if (!ReferenceEquals(_gateReleaseWaiter, outputWorker))
+            {
+                throw new InvalidOperationException(
+                    "Only the Output Worker this process state is bound to can release the binding.");
+            }
+
+            if (!outputWorker.IsStopped)
+            {
+                throw new InvalidOperationException(
+                    "The binding is released only after the Output Worker has physically stopped; releasing it earlier would drop the wake a held record still needs.");
+            }
+
+            _gateReleaseWaiter = null;
+        }
+
+        /// <summary>
+        /// Releases the one shared gate and then tells the bound Output Worker
+        /// that it is free.
+        /// </summary>
+        /// <remarks>
+        /// The hint is the same coalescing state-change hint the workers
+        /// already use: it carries no count, acknowledgement, or reason, and
+        /// many releases may collapse into one wake. It is delivered after the
+        /// monitor is released and never before, so a worker it wakes can
+        /// actually take the gate. A worker caught between its failed
+        /// acquisition and its park loses nothing either: it resets its signal
+        /// and re-checks for progress before waiting, and by then the gate is
+        /// free.
+        /// </remarks>
+        private void ReleaseSharedGate()
+        {
             Monitor.Exit(_admissionGate);
+
+            NvencOrderedOutputWorkerService waiter = _gateReleaseWaiter;
+            if (waiter == null)
+            {
+                return;
+            }
+
+            try
+            {
+                waiter.Notify();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Reachable only for a worker disposed between the read above
+                // and this call, which has physically stopped and has nothing
+                // left to wake. This release runs inside callers' finally
+                // blocks, so the hint is dropped rather than replacing the
+                // failure those callers are already reporting.
+            }
         }
 
         /// <summary>
@@ -165,7 +281,7 @@ namespace Zantetsu.Observability
 
             if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
                 return false;
             }
 
@@ -178,7 +294,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void EndSubmitStep()
         {
-            Monitor.Exit(_admissionGate);
+            ReleaseSharedGate();
         }
 
         /// <summary>
@@ -197,7 +313,7 @@ namespace Zantetsu.Observability
 
             if (Volatile.Read(ref _state) == (int)NvencCaptureProcessStatus.PoisonedUntilProcessRestart)
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
                 return false;
             }
 
@@ -210,7 +326,7 @@ namespace Zantetsu.Observability
         /// </summary>
         internal void EndSettlement()
         {
-            Monitor.Exit(_admissionGate);
+            ReleaseSharedGate();
         }
 
         internal bool TryBeginDrain()
@@ -225,7 +341,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
             }
         }
 
@@ -257,7 +373,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
             }
         }
 
@@ -321,7 +437,7 @@ namespace Zantetsu.Observability
             }
             finally
             {
-                Monitor.Exit(_admissionGate);
+                ReleaseSharedGate();
             }
         }
     }
