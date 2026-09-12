@@ -229,11 +229,17 @@ namespace Zantetsu.Observability
 
             try
             {
-                // Re-check the process state and the record/evidence correlation
-                // inside the gate; poison serializes on the same gate.
+                // Only the source and pending sync lease belong to this
+                // handoff. Output collection may already have returned or
+                // re-rented the Work/Sample slots and downstream credits;
+                // their current state cannot invalidate completed source reads.
+                // Poison, exact sync generation, surface ownership and the
+                // immutable completion evidence still serialize on this gate.
                 if (_processState.IsPoisoned ||
-                    !handoff.Record.IsValidFor(
-                        _backendOwner, _workSlots, _sampleSlots, _syncSlots, _submitToOutputCredits, _frameCompletionCredits) ||
+                    !_syncSlots.IsPendingRelease(handoff.Record.SyncSlot) ||
+                    handoff.Record.Surface == null ||
+                    !handoff.Record.Surface.IsOwnedBy(_backendOwner, handoff.Record.WorkToken) ||
+                    !handoff.Evidence.IsValid ||
                     !handoff.Evidence.Matches(_completionSource, handoff.Record))
                 {
                     return false;

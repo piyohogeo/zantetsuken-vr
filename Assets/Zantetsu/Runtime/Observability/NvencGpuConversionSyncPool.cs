@@ -235,6 +235,16 @@ namespace Zantetsu.Observability
             return true;
         }
 
+        /// <summary>
+        /// True only for this pool's exact active generation that was marked
+        /// pending release. Callers serialize this observation and release on
+        /// the resource-resolution gate; observing it transfers no ownership.
+        /// </summary>
+        internal bool IsPendingRelease(in NvencGpuConversionSyncLease lease)
+        {
+            return IsActive(lease) && _pending[lease.SlotIndex];
+        }
+
         internal bool IsActive(in NvencGpuConversionSyncLease lease)
         {
             if (!lease.IsValid || lease.OwnerToken != _ownerToken)

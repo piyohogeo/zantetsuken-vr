@@ -73,6 +73,156 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void Apply_AfterDownstreamResourcesAreReturnedAndRerented_ReleasesOnlyOriginalSourceAndSync()
+        {
+            using (Harness h = Harness.Create(2))
+            {
+                NvencSubmissionRecord first = h.CreateRecord(7);
+                h.Source.MarkCompleted(first.WorkToken);
+                Assert.That(h.Coordinator.TryReleaseSourceResources(first), Is.True);
+
+                // Deterministically model Output and Frame Completion outrunning
+                // the Main Thread's pending source-release handoff.
+                Assert.That(h.SamplePool.TryReturn(first.SampleSlot), Is.True);
+                Assert.That(h.SubmitToOutputCreditPool.TryReturn(first.SubmitToOutputCredit), Is.True);
+                Assert.That(h.WorkPool.TryReturn(first.WorkSlot), Is.True);
+                Assert.That(h.FrameCompletionCreditPool.TryReturn(first.FrameCompletionCredit), Is.True);
+                NvencSubmissionRecord next = h.CreateRecord(8);
+                Assert.That(next.WorkSlot.SlotIndex, Is.EqualTo(first.WorkSlot.SlotIndex));
+                Assert.That(next.SampleSlot.SlotIndex, Is.EqualTo(first.SampleSlot.SlotIndex));
+                Assert.That(next.SubmitToOutputCredit.SlotIndex, Is.EqualTo(first.SubmitToOutputCredit.SlotIndex));
+                Assert.That(next.FrameCompletionCredit.SlotIndex, Is.EqualTo(first.FrameCompletionCredit.SlotIndex));
+                Assert.That(next.WorkSlot.Generation, Is.EqualTo(first.WorkSlot.Generation + 1));
+                Assert.That(next.SampleSlot.Generation, Is.EqualTo(first.SampleSlot.Generation + 1));
+                Assert.That(next.SubmitToOutputCredit.Generation, Is.EqualTo(first.SubmitToOutputCredit.Generation + 1));
+                Assert.That(next.FrameCompletionCredit.Generation, Is.EqualTo(first.FrameCompletionCredit.Generation + 1));
+
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(first.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.IsActive(first.SyncSlot), Is.False);
+                Assert.That(h.SyncPool.OccupiedCount, Is.EqualTo(1));
+                Assert.That(h.Boundary.HasPending, Is.False);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(next.IsValidFor(h.Owner, h.WorkPool, h.SamplePool,
+                    h.SyncPool, h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool), Is.True);
+                Assert.That(h.State.IsPoisoned, Is.False);
+            }
+        }
+
+        [Test]
+        public void Apply_BeforeSyncWasMarkedPending_DoesNotReleaseSurface()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                Assert.That(h.Boundary.TryEnqueue(new NvencSourceSurfaceReleaseHandoff(
+                    record, NvencSourceReadCompletedEvidence.Create(h.Source, record))), Is.True);
+
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsOwnedBy(h.Owner, record.WorkToken), Is.True);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.True);
+                Assert.That(h.SyncPool.IsPendingRelease(record.SyncSlot), Is.False);
+                Assert.That(h.Boundary.HasPending, Is.True);
+            }
+        }
+
+        [Test]
+        public void Apply_WithStaleSync_DoesNotReleaseSurfaceOrNewPendingGeneration()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
+                Assert.That(h.SyncPool.TryReturnPendingRelease(record.SyncSlot), Is.True);
+                Assert.That(h.SyncPool.TryRent(out NvencGpuConversionSyncLease next), Is.True);
+                Assert.That(next.SlotIndex, Is.EqualTo(record.SyncSlot.SlotIndex));
+                Assert.That(next.Generation, Is.EqualTo(record.SyncSlot.Generation + 1));
+                Assert.That(h.SyncPool.TryMarkPendingRelease(next), Is.True);
+
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsOwnedBy(h.Owner, record.WorkToken), Is.True);
+                Assert.That(h.SyncPool.IsPendingRelease(next), Is.True);
+                Assert.That(h.Boundary.HasPending, Is.True);
+                Assert.That(h.SyncPool.TryReturnPendingRelease(next), Is.True);
+            }
+        }
+
+        [Test]
+        public void Apply_WithForeignPendingSync_DoesNotReleaseEitherPoolOrSurface()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                NvencGpuConversionSyncPool foreignPool = new NvencGpuConversionSyncPool(h.State);
+                Assert.That(foreignPool.TryRent(out NvencGpuConversionSyncLease foreign), Is.True);
+                Assert.That(foreignPool.TryMarkPendingRelease(foreign), Is.True);
+                Assert.That(h.SyncPool.TryMarkPendingRelease(record.SyncSlot), Is.True);
+                Assert.That(foreign.SlotIndex, Is.EqualTo(record.SyncSlot.SlotIndex));
+                Assert.That(foreign.Generation, Is.EqualTo(record.SyncSlot.Generation));
+                NvencSubmissionRecord foreignRecord = NvencSubmissionRecord.Create(
+                    h.Owner, record.WorkToken, record.WorkSlot, record.SampleSlot, foreign,
+                    record.SubmitToOutputCredit, record.FrameCompletionCredit, record.Surface,
+                    h.WorkPool, h.SamplePool, foreignPool,
+                    h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool);
+                Assert.That(h.Boundary.TryEnqueue(new NvencSourceSurfaceReleaseHandoff(
+                    foreignRecord, NvencSourceReadCompletedEvidence.Create(h.Source, foreignRecord))), Is.True);
+
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsOwnedBy(h.Owner, record.WorkToken), Is.True);
+                Assert.That(h.SyncPool.IsPendingRelease(record.SyncSlot), Is.True);
+                Assert.That(foreignPool.IsPendingRelease(foreign), Is.True);
+                Assert.That(h.Boundary.HasPending, Is.True);
+                h.SyncPool.RevertPendingRelease(record.SyncSlot);
+                Assert.That(foreignPool.TryReturnPendingRelease(foreign), Is.True);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Apply_WithUncorrelatedEvidence_RetainsPendingSource(bool foreignSource)
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                Assert.That(h.SyncPool.TryMarkPendingRelease(record.SyncSlot), Is.True);
+                NvencSourceReadCompletedEvidence evidence = foreignSource
+                    ? NvencSourceReadCompletedEvidence.Create(new FakeSourceReadCompletedSource(), record)
+                    : default;
+                Assert.That(h.Boundary.TryEnqueue(new NvencSourceSurfaceReleaseHandoff(record, evidence)), Is.True);
+
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsOwnedBy(h.Owner, record.WorkToken), Is.True);
+                Assert.That(h.SyncPool.IsPendingRelease(record.SyncSlot), Is.True);
+                Assert.That(h.Boundary.HasPending, Is.True);
+                h.SyncPool.RevertPendingRelease(record.SyncSlot);
+            }
+        }
+
+        [Test]
+        public void Apply_WithForeignBackendOwner_RetainsOriginalHandoff()
+        {
+            using (Harness h = Harness.Create(1))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(7);
+                h.Source.MarkCompleted(record.WorkToken);
+                Assert.That(h.Coordinator.TryReleaseSourceResources(record), Is.True);
+                NvencSourceResourceReleaseCoordinator foreign = new NvencSourceResourceReleaseCoordinator(
+                    h.State, h.WorkPool, h.SamplePool, h.SyncPool,
+                    h.SubmitToOutputCreditPool, h.FrameCompletionCreditPool,
+                    h.Source, h.Boundary, Guid.NewGuid());
+
+                Assert.That(foreign.TryApplyPendingRelease(), Is.False);
+                Assert.That(record.Surface.IsOwnedBy(h.Owner, record.WorkToken), Is.True);
+                Assert.That(h.SyncPool.IsPendingRelease(record.SyncSlot), Is.True);
+                Assert.That(h.Boundary.HasPending, Is.True);
+                Assert.That(h.Coordinator.TryApplyPendingRelease(), Is.True);
+                Assert.That(record.Surface.IsCreated, Is.False);
+                Assert.That(h.SyncPool.IsActive(record.SyncSlot), Is.False);
+            }
+        }
+
+        [Test]
         public void Release_DoesNotAffectOtherSevenWorks()
         {
             using (Harness h = Harness.Create(8))
