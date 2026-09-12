@@ -30,6 +30,41 @@ regression candidate until the cause is established. Move an entry to "Active
 flakes" only once its reproduction conditions or a test-side race are
 confirmed, or to "Resolved" once it is fixed.
 
+## Retired
+
+Entries here are tests that no longer exist. Nothing below is permission to
+re-run anything, and nothing below records a proven product defect.
+
+### Standalone: `Player_RunsAndCollectsItsConversionCommands`
+
+The conversion-command sentinel failed 3 times across 142 recorded Standalone
+runs with `generation 4 must complete` - a conversion completion that had not
+arrived inside the test's single 5 s wait. At least 2 of those failures
+(`20260912-110903-7c5e2c`, `20260912-122422-6a7834`) predate the decoder unit
+that ended in 54ceb49, so the failure was not introduced by it.
+
+Its shape was the reason it could stop a whole Standalone run: the 5 s wait was
+performed on a thread of the test's own, and the coroutine then waited for that
+thread with no deadline of its own, so a wait that did not return left the
+Player with nothing to end it.
+
+It was retired rather than given a longer timeout, because the same
+observations are now made by the production-path nine-frame sentinel and by the
+native contract test, on the real pipeline rather than on direct native calls:
+the eight fixed sync slots all run real callbacks inside one Run before
+anything is collected, the ninth frame reuses a returned slot under a later
+generation, the native contract reuses one slot sixteen times distinguished
+only by generation and covers the uncollected-release, generation-mismatch and
+collect-once refusals, and the decode of that Run's chunk shows nine distinct
+frames in the order they were accepted. The one observation that lived only
+here - that Unity still draws after the render callbacks - moved into the
+nine-frame sentinel, where it runs once after every conversion has completed
+and before teardown.
+
+Nothing here says a product defect was proven, and nothing here was resolved by
+re-running: the failure was real, it was observed again during the decoder
+unit's verification, and the test that produced it is gone.
+
 ## Resolved
 
 ### Submit worker: settle observed before the output queue was filled

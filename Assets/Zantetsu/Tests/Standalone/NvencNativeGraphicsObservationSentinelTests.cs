@@ -541,146 +541,6 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
-        /// The Player issues real conversion render events: every sync slot
-        /// runs, one slot is reused sixteen times, two commands with different
-        /// source and sample slots ride the same frame, a worker collects each
-        /// completion off the render thread, and Unity keeps rendering
-        /// afterwards.
-        /// </summary>
-        /// <remarks>
-        /// Nothing is mapped, encoded, or read back here: what is pinned is
-        /// that the callback really runs through Unity's render thread, that a
-        /// completion is distinguished by its generation rather than by time,
-        /// that two commands in one frame do not overwrite each other's event
-        /// data, and that the session refuses to give up its resources while a
-        /// command is uncollected.
-        /// </remarks>
-        [UnityTest]
-        public IEnumerator Player_RunsAndCollectsItsConversionCommands()
-        {
-            Assert.That(
-                NvencNativeEncoderSessionOwner.TryOpen(
-                    out NvencNativeEncoderSessionOwner owner),
-                Is.True,
-                "this Player's device must be able to open an encoder session.");
-
-            CaptureFrameProfile captureProfile = new CaptureFrameProfile(
-                7,
-                45.0,
-                CaptureSource.UnityRenderTexture,
-                CaptureEye.Left,
-                new CaptureImageRect(
-                    0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
-                0,
-                CapturePixelFormat.Rgba32);
-
-            CaptureFrameRenderTargetPool pool = new CaptureFrameRenderTargetPool(
-                NvencNativeEncoderSessionOwner.SourceSurfaceCount, captureProfile);
-
-            bool prepared = false;
-
-            try
-            {
-                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
-                new NvencBringUpCapabilityProbeExecutionCoordinator(
-                    new NvencBringUpCapabilityProbe(owner)).Execute();
-                owner.InitializeEncoder(profile);
-
-                IntPtr[] sources =
-                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
-                pool.CopyNativeTexturePointers(sources);
-                owner.BindSourceSurfaces(sources);
-                owner.PrepareInputSurfaces();
-                owner.PrepareConversionCommands();
-                prepared = true;
-
-                // Every sync slot runs one command, each against its own
-                // source and its own encode sample slot.
-                for (int slot = 0;
-                    slot < NvencNativeEncoderSessionOwner.ConversionCommandSlotCount;
-                    slot++)
-                {
-                    Assert.That(owner.TryIssueConversionCommand(slot, slot, slot, 1), Is.True);
-                }
-
-                // A command that has been issued but not collected holds the
-                // session's resources, and refusing that costs nothing.
-                Assert.Throws<InvalidOperationException>(
-                    () => owner.ReleaseConversionCommands());
-                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
-                Assert.That(owner.IsOpen, Is.True);
-
-                for (int slot = 0;
-                    slot < NvencNativeEncoderSessionOwner.ConversionCommandSlotCount;
-                    slot++)
-                {
-                    yield return CollectOnWorker(owner, slot, 1, result =>
-                        Assert.That(
-                            result, Is.True,
-                            "sync slot " + slot + " must complete its first command."));
-                }
-
-                // One slot, sixteen reuses. Only the generation tells them
-                // apart, and an older one is never accepted as this one.
-                for (ulong generation = 2; generation <= 17; generation++)
-                {
-                    ulong current = generation;
-
-                    // A generation this slot does not hold is a caller asking
-                    // about work that is not there - never "not yet".
-                    Assert.Throws<InvalidOperationException>(
-                        () => owner.TryCollectConversionCommand(0, current, 0),
-                        "a generation that has not been issued is not a pending completion.");
-
-                    Assert.That(owner.TryIssueConversionCommand(0, 0, 0, current), Is.True);
-
-                    Assert.Throws<InvalidOperationException>(
-                        () => owner.TryCollectConversionCommand(0, current - 1, 0),
-                        "an older generation is not satisfied by a newer signal.");
-
-                    yield return CollectOnWorker(owner, 0, current, result =>
-                        Assert.That(
-                            result, Is.True,
-                            "generation " + current + " must complete."));
-
-                    Assert.Throws<InvalidOperationException>(
-                        () => owner.TryCollectConversionCommand(0, current, 0),
-                        "a completion is collected once.");
-                }
-
-                // Two commands in one frame, on different sync slots, with
-                // different sources and different sample slots: each carries
-                // its own event data, so neither overwrites the other.
-                Assert.That(owner.TryIssueConversionCommand(2, 3, 5, 100), Is.True);
-                Assert.That(owner.TryIssueConversionCommand(6, 1, 7, 200), Is.True);
-
-                yield return CollectOnWorker(owner, 2, 100, result =>
-                    Assert.That(result, Is.True, "the first same-frame command completes."));
-                yield return CollectOnWorker(owner, 6, 200, result =>
-                    Assert.That(result, Is.True, "the second same-frame command completes."));
-
-                // Unity still renders after the callbacks handed the pipeline
-                // back.
-                yield return null;
-                AssertUnityStillRenders();
-            }
-            finally
-            {
-                if (prepared)
-                {
-                    owner.ReleaseConversionCommands();
-                    owner.ReleaseInputSurfaces();
-                    owner.ReleaseSourceSurfaces();
-                }
-
-                owner.Dispose();
-                pool.Dispose();
-            }
-
-            Assert.That(owner.IsOpen, Is.False);
-        }
-
-        /// <summary>
         /// The production completion source, against the real session and the
         /// real render callback: it says no before the conversion is issued,
         /// converges to yes after it, and the evidence it hands back binds
@@ -1345,6 +1205,15 @@ namespace Zantetsu.Observability.StandaloneTests
                         yield return null;
                     }
 
+                    // Every conversion of this Run has completed and the
+                    // session is still open, so this is where the render
+                    // callbacks' effect on Unity's own drawing shows: it draws
+                    // one known colour through Unity's pipeline and reads it
+                    // back, once, before any teardown begins. Inherited from
+                    // the retired conversion-command sentinel, which was the
+                    // only place that checked it.
+                    AssertUnityStillRenders();
+
                     yield return run.Terminate(
                         Total,
                         value =>
@@ -1974,33 +1843,6 @@ namespace Zantetsu.Observability.StandaloneTests
                 stalled, Is.False,
                 "one frame did not get through both workers: " + stalledAt);
             Assert.That(owner.IsOpen, Is.False);
-        }
-
-        /// <summary>
-        /// Collects one completion on a worker thread - never the main thread -
-        /// and reports what it got once that thread has finished.
-        /// </summary>
-        private static IEnumerator CollectOnWorker(
-            NvencNativeEncoderSessionOwner owner,
-            int syncSlotIndex,
-            ulong generation,
-            Action<bool> check)
-        {
-            bool collected = false;
-            Thread worker = new Thread(() =>
-            {
-                collected = owner.TryCollectConversionCommand(
-                    syncSlotIndex, generation, 5000);
-            });
-
-            worker.Start();
-            while (worker.IsAlive)
-            {
-                yield return null;
-            }
-
-            worker.Join();
-            check(collected);
         }
 
         /// <summary>
