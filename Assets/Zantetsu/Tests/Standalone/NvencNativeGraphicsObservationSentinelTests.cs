@@ -2149,7 +2149,8 @@ namespace Zantetsu.Observability.StandaloneTests
             internal Guid BackendOwner;
 
             internal SentinelChunkWriter Writer;
-            internal SentinelOutputWorkerTeardown Teardown;
+            internal NvencNativeOutputWorkerTeardown Teardown;
+            internal NvencMainThreadResourceTeardown MainThreadTeardown;
             internal SentinelEncodePictureSubmitter Submitter;
             internal SentinelOutputBitstreamSource OutputSource;
 
@@ -2195,7 +2196,6 @@ namespace Zantetsu.Observability.StandaloneTests
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 BackendOwner = Guid.NewGuid();
                 Writer = new SentinelChunkWriter();
-                Teardown = new SentinelOutputWorkerTeardown();
 
                 Assert.That(
                     NvencNativeEncoderSessionOwner.TryOpen(out Owner), Is.True,
@@ -2227,6 +2227,10 @@ namespace Zantetsu.Observability.StandaloneTests
                 Owner.PrepareConversionCommands();
                 Owner.PrepareOutputBuffers();
                 Owner.PrepareCompletionEvents();
+
+                // The real teardown of this session's native resource
+                // groups, which the Output Worker runs on its own thread.
+                Teardown = new NvencNativeOutputWorkerTeardown(Owner);
 
                 ReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
                     ProcessState, WorkSlots, SampleSlots, SyncSlots,
@@ -2288,6 +2292,11 @@ namespace Zantetsu.Observability.StandaloneTests
                 // 6. Only now may the Submit Worker run.
                 SubmitWorker.Start();
                 // ---- end of the composition ----
+
+                // The real teardown of what Unity owns, which the Main
+                // Thread runs after both workers have physically stopped.
+                MainThreadTeardown = new NvencMainThreadResourceTeardown(
+                    Context, Owner, Pool);
 
                 Admission = new NvencSubmissionAdmissionCoordinator(
                     ProcessState, WorkSlots, SampleSlots, SyncSlots, SubmitCredits,
@@ -2408,11 +2417,6 @@ namespace Zantetsu.Observability.StandaloneTests
                     yield break;
                 }
 
-                Assert.That(Teardown.CallCount, Is.EqualTo(1));
-                Assert.That(
-                    Teardown.ExecutingThreadName,
-                    Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
-
                 bool stopped = false;
                 yield return AdvanceUntil(
                     () => SubmitWorker.IsStopped && OutputWorker.IsStopped, null,
@@ -2434,29 +2438,41 @@ namespace Zantetsu.Observability.StandaloneTests
             /// </summary>
             internal void ReleaseAfterProvenStop()
             {
+                // The Output Worker already released the native groups and
+                // closed the session inside its own teardown; this side only
+                // runs once that is done and both threads are gone.
+                Assert.That(OutputWorker.TeardownCompleted, Is.True);
                 Assert.That(SubmitWorker.IsStopped, Is.True);
                 Assert.That(OutputWorker.IsStopped, Is.True);
                 Assert.That(SyncSlots.OccupiedCount, Is.Zero);
                 Assert.That(SampleSlots.OccupiedCount, Is.Zero);
                 Assert.That(WorkSlots.OccupiedCount, Is.Zero);
+                Assert.That(
+                    Owner.IsOpen, Is.False,
+                    "the Output Worker teardown must already have closed the session");
 
                 // Physically stopped, so no held record is waiting on the gate
                 // wake any more and the binding can go. It is never released
                 // before the stop, and never on the poison path.
                 ProcessState.UnbindResourceResolutionReleaseNotification(OutputWorker);
 
-                Owner.ReleaseCompletionEvents();
-                Owner.ReleaseOutputBuffers();
-                Owner.ReleaseConversionCommands();
-                Owner.ReleaseInputSurfaces();
-                Owner.ReleaseSourceSurfaces();
-
-                // Only a stopped worker is disposed, and the session closes
-                // last.
+                // Only a stopped worker is disposed.
                 SubmitWorker.Dispose();
                 OutputWorker.Dispose();
-                Owner.Dispose();
-                Pool.Dispose();
+
+                // What Unity owns goes last, on this thread, through the
+                // production boundary - and its receipt is only issued for
+                // this exact Run.
+                NvencMainThreadTextureTeardownReceipt receipt = MainThreadTeardown.TearDown();
+                Assert.That(receipt, Is.Not.Null);
+                Assert.That(receipt.IsIssuedFor(MainThreadTeardown, Context), Is.True);
+
+                // A session that really closed cannot be used again, and a
+                // pool that really went cannot lend another surface.
+                Assert.Throws<InvalidOperationException>(() => Owner.PrepareCompletionEvents());
+                Assert.That(
+                    () => Pool.TryRent(out CaptureFrameRenderTargetLease _), Throws.Exception,
+                    "a disposed source pool cannot lend another surface");
             }
 
             /// <summary>

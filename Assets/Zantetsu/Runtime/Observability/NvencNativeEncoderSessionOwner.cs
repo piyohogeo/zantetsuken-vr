@@ -1683,6 +1683,27 @@ namespace Zantetsu.Observability
         /// </summary>
         public void Dispose()
         {
+            // The two halves, in the only order they can happen in: a caller
+            // that simply disposes this owner still closes the native session
+            // and then releases what Unity owns.
+            CloseNativeSession();
+            DisposeManagedConversionResources();
+        }
+
+        /// <summary>
+        /// Closes the native encoder session and nothing else. Safe to call
+        /// from the thread that owns the native teardown, because it touches
+        /// no Unity-managed object.
+        /// </summary>
+        /// <remarks>
+        /// The prepared-resource refusals happen before the one close attempt
+        /// is spent, so a caller that still holds a resource group can release
+        /// it and close afterwards. The Unity-managed conversion
+        /// <c>CommandBuffer</c> deliberately survives this call: destroying it
+        /// is the Main Thread's, and only after this close has succeeded.
+        /// </remarks>
+        internal void CloseNativeSession()
+        {
             if (_sessionOwner == 0)
             {
                 return;
@@ -1757,10 +1778,28 @@ namespace Zantetsu.Observability
 #endif
 
             _sessionOwner = 0;
+        }
 
-            // The session really is closed, and no command can be outstanding:
-            // the buffer that issued them goes with it, exactly once. A close
-            // that was refused throws above and keeps it.
+        /// <summary>
+        /// Destroys the Unity-managed conversion <c>CommandBuffer</c> this
+        /// owner holds, exactly once, on the Main Thread and only once the
+        /// native session is closed.
+        /// </summary>
+        /// <remarks>
+        /// The buffer is what issued the render events, so it can only go
+        /// after the session that answered them: while the session is open a
+        /// command could still be armed. A close that was refused therefore
+        /// keeps the buffer, and this entry refuses too. Calling it with
+        /// nothing left to destroy does nothing.
+        /// </remarks>
+        internal void DisposeManagedConversionResources()
+        {
+            if (_sessionOwner != 0)
+            {
+                throw new InvalidOperationException(
+                    "This session is still open; its native session is closed before the conversion command buffer is destroyed.");
+            }
+
             if (_conversionCommands != null)
             {
                 _conversionCommands.Dispose();

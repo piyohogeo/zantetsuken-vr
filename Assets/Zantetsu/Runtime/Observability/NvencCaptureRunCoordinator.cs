@@ -41,7 +41,7 @@ namespace Zantetsu.Observability
     internal sealed class NvencCaptureRunCoordinator
     {
         /// <summary>
-        /// Private-gated proof that the Main Thread NV12 Texture teardown
+        /// Private-gated proof that the Main Thread resource teardown
         /// completed normally. The type is visible to the Backend Join for
         /// exact-type checking, but it can only be minted by the Run
         /// Coordinator — at its normal return from
@@ -562,14 +562,17 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Normal Main Thread NV12 Texture teardown completion: true only
+        /// Normal Main Thread resource teardown completion: true only
         /// after <see cref="TryCompleteMainThreadTextureTeardown"/> has
         /// verified the exact receipt and published the completion.
         /// </summary>
         internal bool MainThreadTextureTeardownCompleted => _mainThreadTextureTeardownCompleted;
 
         /// <summary>
-        /// Non-waiting, exactly-once Main Thread NV12 Texture teardown. It is
+        /// Non-waiting, exactly-once Main Thread resource teardown - the
+        /// conversion <c>CommandBuffer</c> and the source RGBA texture pool
+        /// Unity owns, never the native resources the Output Worker released.
+        /// It is
         /// admitted only while the process is Draining (not Poisoned), the
         /// terminal outcome is collected, the Output Worker teardown request
         /// is accepted, the exact Submit Worker reports
@@ -672,7 +675,7 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Non-waiting, idempotent Backend Join entry. It is admitted only
-        /// after the Main Thread NV12 Texture teardown completed, and then
+        /// after the Main Thread resource teardown completed, and then
         /// passes the minted private-gated Backend Join proof to the exact
         /// Backend Join boundary; on its success the join is latched. A
         /// not-ready condition or a gate contention returns false with no side

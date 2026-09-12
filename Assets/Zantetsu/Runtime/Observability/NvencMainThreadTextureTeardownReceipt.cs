@@ -3,10 +3,11 @@ using System;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Immutable success receipt of one Main Thread NV12 Texture teardown
-    /// call. It holds only the exact teardown implementation that issued it
-    /// and the exact Run chunk context it is bound to; no token, nonce,
-    /// generation, Texture array, Texture reference, or Lease is retained or
+    /// Immutable success receipt of one Main Thread teardown call - the
+    /// conversion <c>CommandBuffer</c> and the source RGBA texture pool that
+    /// Unity owns. It holds only the exact teardown implementation that issued
+    /// it and the exact Run chunk context it is bound to; no token, nonce,
+    /// generation, texture array, texture reference, or Lease is retained or
     /// exposed.
     /// </summary>
     /// <remarks>
