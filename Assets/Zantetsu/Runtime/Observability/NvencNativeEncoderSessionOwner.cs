@@ -328,6 +328,12 @@ namespace Zantetsu.Observability
         // asked for once and kept here. Neither it nor an event data pointer
         // is ever handed to a caller.
         private IntPtr _conversionEventCallback;
+
+        // The one command buffer every conversion is issued through, made when
+        // the commands are prepared and cleared around each issue. A buffer per
+        // issue would put a managed and a native allocation on the path every
+        // frame takes.
+        private CommandBuffer _conversionCommands;
         // How many issued conversions have not been collected yet. Kept here
         // so a release is refused before its one attempt is spent, the way
         // every other ordering refusal is.
@@ -952,6 +958,10 @@ namespace Zantetsu.Observability
                 (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
 
             RequireConversionResult(written, result, "prepared");
+
+            // Made once the native side is ready, so a refused preparation
+            // leaves nothing behind.
+            _conversionCommands = new CommandBuffer();
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");
@@ -1050,7 +1060,7 @@ namespace Zantetsu.Observability
         {
             RequireUsableSession("issue a conversion command on");
 
-            if (!_conversionCommandsPrepared)
+            if (!_conversionCommandsPrepared || _conversionCommands == null)
             {
                 throw new InvalidOperationException(
                     "This session's conversion commands are not prepared; there is nothing to issue.");
@@ -1135,19 +1145,16 @@ namespace Zantetsu.Observability
 
             try
             {
-                CommandBuffer commands = new CommandBuffer();
-                try
-                {
-                    commands.IssuePluginEventAndData(
-                        _conversionEventCallback,
-                        0,
-                        new IntPtr((long)armed.EventData));
-                    Graphics.ExecuteCommandBuffer(commands);
-                }
-                finally
-                {
-                    commands.Dispose();
-                }
+                // The same buffer every time: cleared, filled with this one
+                // event, executed, and cleared again so it holds nothing
+                // between issues.
+                _conversionCommands.Clear();
+                _conversionCommands.IssuePluginEventAndData(
+                    _conversionEventCallback,
+                    0,
+                    new IntPtr((long)armed.EventData));
+                Graphics.ExecuteCommandBuffer(_conversionCommands);
+                _conversionCommands.Clear();
             }
             catch (Exception)
             {
@@ -1423,6 +1430,15 @@ namespace Zantetsu.Observability
 #endif
 
             _sessionOwner = 0;
+
+            // The session really is closed, and no command can be outstanding:
+            // the buffer that issued them goes with it, exactly once. A close
+            // that was refused throws above and keeps it.
+            if (_conversionCommands != null)
+            {
+                _conversionCommands.Dispose();
+                _conversionCommands = null;
+            }
         }
 
         private void RequireUsableSession(string what)

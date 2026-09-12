@@ -429,6 +429,12 @@ namespace zantetsu
         /// event says the GPU finished the work; the callback event says the
         /// callback finished publishing what it did, which is the only way a
         /// callback that never reached its Signal can be reported at all.
+        ///
+        /// The callback event is manual-reset and is reset only when the
+        /// command is finally collected, so a collection that gets past the
+        /// callback and then times out waiting for the GPU can be repeated: the
+        /// second attempt finds the result already published and waits only for
+        /// the fence.
         struct ConversionCommandSlot
         {
             ID3D11Fence* fence;
@@ -438,6 +444,7 @@ namespace zantetsu
             ConversionCommandEventDataV1 eventData;
             volatile LONG state;
             HRESULT lastHResult;
+            DWORD lastWin32Error;
         };
 
         /// Gives one slot's handles and fence back, in the reverse of the order

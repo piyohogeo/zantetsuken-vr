@@ -410,6 +410,94 @@ int main()
         Check(staleRefused, "an older generation is refused rather than completed");
     }
 
+    // ---- a collection that gets past the callback and then times out on
+    //      the GPU can be repeated for the same generation ----
+    {
+        // Every slot is loaded first, so the last one's fence has the most
+        // chance of still being outstanding when it is collected with no
+        // patience at all.
+        bool allIssued = true;
+        for (uint32_t i = 0; i < zantetsu::kConversionCommandSlotCount; ++i)
+        {
+            void* eventData = nullptr;
+            if (!session.TryArmConversionCommand(i, i, i, 30, &eventData) ||
+                eventData == nullptr)
+            {
+                allIssued = false;
+                break;
+            }
+
+            zantetsu::RunConversionCommandFromEventData(eventData);
+        }
+
+        Check(allIssued, "every slot takes a command before any is collected");
+
+        bool everyImpatientAttemptRecovers = true;
+        bool anyImpatientAttemptTimedOut = false;
+        for (uint32_t i = 0; i < zantetsu::kConversionCommandSlotCount; ++i)
+        {
+            // The callback has already published, so this one waits for the
+            // GPU alone - and with no patience at all it may run out of time.
+            const bool impatient = session.TryCollectConversionCommand(
+                i, 30, 0, &callbackHResult, &collectWin32Error);
+            if (impatient)
+            {
+                continue;
+            }
+
+            anyImpatientAttemptTimedOut = true;
+
+            // A wait that only ran out of time says nothing about the thread's
+            // last error.
+            if (collectWin32Error != 0)
+            {
+                everyImpatientAttemptRecovers = false;
+                break;
+            }
+
+            // The published completion was not consumed, so the very same
+            // generation is still collectable.
+            if (!session.TryCollectConversionCommand(
+                    i, 30, 5000, &callbackHResult, &collectWin32Error))
+            {
+                everyImpatientAttemptRecovers = false;
+                break;
+            }
+        }
+
+        Check(
+            everyImpatientAttemptRecovers,
+            "an impatient collection that times out leaves the same generation collectable");
+        std::printf(
+            "  observed: an impatient collection timed out on the GPU: %s\n",
+            anyImpatientAttemptTimedOut ? "yes" : "no");
+    }
+
+    // ---- a collected completion does not complete the next command ----
+    {
+        void* eventData = nullptr;
+        Check(
+            session.TryArmConversionCommand(3, 3, 3, 31, &eventData) &&
+                eventData != nullptr,
+            "a slot whose previous command was collected arms again");
+
+        // Its callback has not run, so nothing has published anything for this
+        // generation: the previous command's completion must not stand in.
+        Check(
+            !session.TryCollectConversionCommand(
+                3, 31, 50, &callbackHResult, &collectWin32Error),
+            "a stale callback completion does not complete the next generation");
+        Check(
+            collectWin32Error == 0,
+            "a collection that only ran out of time reports no Win32 error");
+
+        zantetsu::RunConversionCommandFromEventData(eventData);
+        Check(
+            session.TryCollectConversionCommand(
+                3, 31, 5000, &callbackHResult, &collectWin32Error),
+            "the command completes once its callback has actually run");
+    }
+
     // ---- what an arming refuses, before it changes anything ----
     {
         void* eventData = nullptr;
@@ -426,7 +514,7 @@ int main()
                 0, 0, zantetsu::kEncodeSampleSlotCount, 100, &eventData),
             "an encode sample slot index out of range is refused");
         Check(
-            !session.TryArmConversionCommand(0, 0, 0, 18, &eventData),
+            !session.TryArmConversionCommand(0, 0, 0, 30, &eventData),
             "a generation that is not newer than the slot's last is refused");
     }
 

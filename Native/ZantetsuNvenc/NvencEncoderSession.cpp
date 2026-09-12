@@ -1106,8 +1106,10 @@ namespace zantetsu
             _conversionSlots[i].completionEvent = completionEvent;
 
             // The other half of the completion: the callback says on this one
-            // that it has finished and published what it did.
-            HANDLE callbackEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            // that it has finished and published what it did. Manual-reset, so
+            // the fact stays true until the command is collected - a
+            // collection that then times out on the GPU can be repeated.
+            HANDLE callbackEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
             if (callbackEvent == nullptr)
             {
                 _lastWin32Error = ::GetLastError();
@@ -1122,6 +1124,7 @@ namespace zantetsu
             _conversionSlots[i].callbackEvent = callbackEvent;
             _conversionSlots[i].lastGeneration = 0;
             _conversionSlots[i].lastHResult = S_OK;
+            _conversionSlots[i].lastWin32Error = 0;
             _conversionSlots[i].state =
                 static_cast<LONG>(ConversionCommandState::Idle);
         }
@@ -1229,6 +1232,7 @@ namespace zantetsu
 
         slot.lastGeneration = generation;
         slot.lastHResult = S_OK;
+        slot.lastWin32Error = 0;
         slot.eventData.session = this;
         slot.eventData.syncSlotIndex = syncSlotIndex;
         slot.eventData.sourceSlotIndex = sourceSlotIndex;
@@ -1293,7 +1297,14 @@ namespace zantetsu
             ::InterlockedExchange(
                 &slot.state,
                 static_cast<LONG>(ConversionCommandState::AwaitingCollection));
-            ::SetEvent(slot.callbackEvent);
+
+            if (!::SetEvent(slot.callbackEvent))
+            {
+                // Nobody will be woken, so what the OS said is the only thing
+                // a waiter will ever have to go on.
+                slot.lastWin32Error = ::GetLastError();
+            }
+
             return;
         }
 
@@ -1451,7 +1462,28 @@ namespace zantetsu
             &slot.state,
             static_cast<LONG>(ConversionCommandState::AwaitingCollection));
 
-        ::SetEvent(slot.callbackEvent);
+        if (!::SetEvent(slot.callbackEvent))
+        {
+            slot.lastWin32Error = ::GetLastError();
+        }
+    }
+
+    namespace
+    {
+        /// What a wait that did not succeed should report. A timeout leaves the
+        /// thread's last error undefined, so it is never read there; what is
+        /// reported instead is whatever the callback itself recorded, which is
+        /// zero unless it failed to wake anyone. Only a failed wait has a
+        /// meaningful last error.
+        DWORD DescribeWaitFailure(DWORD waitResult, DWORD recordedError)
+        {
+            if (waitResult == WAIT_FAILED)
+            {
+                return ::GetLastError();
+            }
+
+            return recordedError;
+        }
     }
 
     bool NvencEncoderSession::TryCollectConversionCommand(
@@ -1506,19 +1538,28 @@ namespace zantetsu
             ::GetTickCount64() + static_cast<ULONGLONG>(timeoutMilliseconds);
 
         // The callback first: it is what publishes the result, and it is the
-        // only edge a callback that never reached its Signal arrives on.
-        const DWORD callbackWait =
-            ::WaitForSingleObject(slot.callbackEvent, timeoutMilliseconds);
-        if (callbackWait != WAIT_OBJECT_0)
+        // only edge a callback that never reached its Signal arrives on. A
+        // command that has already published one is not waited for again, so a
+        // second collection after a fence timeout goes straight on.
+        if (state != static_cast<LONG>(ConversionCommandState::AwaitingCollection))
         {
-            const DWORD error = ::GetLastError();
-            _lastWin32Error = error;
-            if (win32Error != nullptr)
+            const DWORD callbackWait =
+                ::WaitForSingleObject(slot.callbackEvent, timeoutMilliseconds);
+            if (callbackWait != WAIT_OBJECT_0)
             {
-                *win32Error = error;
-            }
+                const DWORD error = DescribeWaitFailure(callbackWait, slot.lastWin32Error);
+                if (error != 0)
+                {
+                    _lastWin32Error = error;
+                }
 
-            return false;
+                if (win32Error != nullptr)
+                {
+                    *win32Error = error;
+                }
+
+                return false;
+            }
         }
 
         // What the callback recorded, whether or not the GPU was ever asked to
@@ -1559,19 +1600,41 @@ namespace zantetsu
                 ::WaitForSingleObject(slot.completionEvent, remaining);
             if (fenceWait != WAIT_OBJECT_0)
             {
-                const DWORD error = ::GetLastError();
-                _lastWin32Error = error;
+                const DWORD error = DescribeWaitFailure(fenceWait, slot.lastWin32Error);
+                if (error != 0)
+                {
+                    _lastWin32Error = error;
+                }
+
                 if (win32Error != nullptr)
                 {
                     *win32Error = error;
                 }
 
+                // The callback's result stays published and the slot stays
+                // outstanding, so the same generation can be collected again.
                 return false;
             }
         }
 
         if (slot.fence->GetCompletedValue() < generation)
         {
+            return false;
+        }
+
+        // The published completion is consumed here, before the slot is idle
+        // again: the next command on this slot must set it anew. A reset the OS
+        // refuses leaves the slot outstanding rather than idle with an event
+        // that would complete the next command for nothing.
+        if (!::ResetEvent(slot.callbackEvent))
+        {
+            const DWORD error = ::GetLastError();
+            _lastWin32Error = error;
+            if (win32Error != nullptr)
+            {
+                *win32Error = error;
+            }
+
             return false;
         }
 
