@@ -67,6 +67,8 @@ param(
 
     [string]$PlayerDirectory,
 
+    [string]$FfmpegPath,
+
     [int]$TimeoutSeconds = 1800
 )
 
@@ -74,6 +76,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 $TestAssemblyName = 'Zantetsu.Observability.StandaloneTests'
+
+# The one environment variable this run hands the decoder over in. It is set on
+# this process just before the editor is launched, so only the editor and the
+# player it starts inherit it, and the previous value is put back afterwards.
+$FfmpegEnvironmentVariable = 'ZANTETSU_FFMPEG'
+
 
 # ---------------------------------------------------------------------------
 # Infrastructure failure helper (always exits with code 2)
@@ -430,6 +438,72 @@ if (-not (Test-Path -LiteralPath $outDir -PathType Container)) {
 $resultXml = Join-Path $outDir 'StandaloneResults.xml'
 $logPath = Join-Path $outDir 'StandaloneTests.log'
 
+# ---------------------------------------------------------------------------
+# Decoder resolution. The sentinel decodes its own confirmed chunk with an
+# ffmpeg this script locates and checks; nothing is downloaded, installed,
+# copied into the repository, or written to a machine-wide setting, and no
+# particular build or version is required.
+# ---------------------------------------------------------------------------
+function Resolve-Ffmpeg {
+    param([string]$Requested, [string]$RepositoryRoot)
+
+    $candidate = $Requested
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        $found = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -eq $found) {
+            Fail-Infrastructure 'ffmpeg.exe was not found; pass -FfmpegPath explicitly.'
+        }
+        $candidate = $found.Source
+    }
+
+    try {
+        $candidate = [System.IO.Path]::GetFullPath($candidate)
+    } catch {
+        Fail-Infrastructure "The decoder path could not be resolved: $candidate"
+    }
+
+    if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+        Fail-Infrastructure "The decoder path must be absolute: $candidate"
+    }
+
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        Fail-Infrastructure "The decoder path is not an existing file: $candidate"
+    }
+
+    $item = Get-Item -LiteralPath $candidate
+    if ($item.Attributes -band [System.IO.FileAttributes]::Directory) {
+        Fail-Infrastructure "The decoder path is not a regular file: $candidate"
+    }
+
+    if ([System.IO.Path]::GetExtension($candidate).ToLowerInvariant() -ne '.exe') {
+        Fail-Infrastructure "The decoder must be an .exe: $candidate"
+    }
+
+    # A decoder inside the repository would mean a binary was committed or
+    # dropped there; refuse it rather than run it.
+    $rootWithSeparator = $RepositoryRoot.TrimEnd('\') + '\'
+    if ($candidate.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail-Infrastructure "The decoder must not live inside the repository: $candidate"
+    }
+
+    return $candidate
+}
+
+$ffmpegExecutable = Resolve-Ffmpeg $FfmpegPath $repoRoot
+
+# The first line only, for the record. A failure to report it is not a reason
+# to refuse the run, and no version is required of it.
+$ffmpegVersionLine = '(not reported)'
+try {
+    $versionOutput = & $ffmpegExecutable '-hide_banner' '-version' 2>&1 | Select-Object -First 1
+    if ($null -ne $versionOutput) {
+        $ffmpegVersionLine = $versionOutput.ToString().Trim()
+    }
+} catch {
+    $ffmpegVersionLine = '(could not be read)'
+}
+
 $startTime = Get-Date
 
 # Path arguments are explicitly quoted so paths containing spaces are passed
@@ -437,13 +511,27 @@ $startTime = Get-Date
 $unityArguments = '-batchmode -projectPath "{0}" -runTests -testPlatform StandaloneWindows64 -buildPlayerPath "{1}" -assemblyNames {2} -testResults "{3}" -logFile "{4}"' -f `
     $repoRoot, $player.Directory, $TestAssemblyName, $resultXml, $logPath
 
+# Set on this process only, so the editor and the player it starts inherit it
+# and nothing outside this run is changed. The previous value - including its
+# absence - is restored as soon as the editor has been launched.
+$previousFfmpegValue = [System.Environment]::GetEnvironmentVariable($FfmpegEnvironmentVariable)
+$hadPreviousFfmpegValue = $null -ne $previousFfmpegValue
+
 $unityProc = $null
 try {
+    [System.Environment]::SetEnvironmentVariable($FfmpegEnvironmentVariable, $ffmpegExecutable)
+
     # Hidden: this is a batch-mode run, and nothing here needs a window. A
     # firewall prompt is the operating system's own dialog and still appears.
     $unityProc = Start-Process -FilePath $UnityEditorPath -ArgumentList $unityArguments -WindowStyle Hidden -PassThru -ErrorAction Stop
 } catch {
     Fail-Infrastructure "Failed to start Unity: $($_.Exception.Message)"
+} finally {
+    if ($hadPreviousFfmpegValue) {
+        [System.Environment]::SetEnvironmentVariable($FfmpegEnvironmentVariable, $previousFfmpegValue)
+    } else {
+        [System.Environment]::SetEnvironmentVariable($FfmpegEnvironmentVariable, $null)
+    }
 }
 if ($null -eq $unityProc) {
     Fail-Infrastructure 'Failed to launch Unity (no process handle was returned).'
@@ -541,6 +629,8 @@ Write-Host ('  Unity exit    : {0}' -f $unityExitCode)
 Write-Host ('  Elapsed       : {0:N1} s' -f $elapsedSeconds)
 Write-Host ('  Results XML   : {0}' -f $resultXml)
 Write-Host ('  Log           : {0}' -f $logPath)
+Write-Host ('  Decoder       : {0}' -f $ffmpegExecutable)
+Write-Host ('  Decoder build : {0}' -f $ffmpegVersionLine)
 Write-Host ('  total/passed/failed/skipped/inconclusive : {0}/{1}/{2}/{3}/{4}' -f $summary.total, $summary.passed, $summary.failed, $summary.skipped, $summary.inconclusive)
 
 if ($allPassed) {

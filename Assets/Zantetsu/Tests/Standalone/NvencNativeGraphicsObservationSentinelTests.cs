@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Process = System.Diagnostics.Process;
+using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 using Stopwatch = System.Diagnostics.Stopwatch;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -37,6 +39,19 @@ namespace Zantetsu.Observability.StandaloneTests
         private const int SentinelIterations = 32;
 
         private const long SentinelTestRunId = 1;
+
+        /// <summary>
+        /// The one environment variable the fixed-path runner hands the
+        /// decoder over in. The path itself is the runner's to resolve and
+        /// check; this fixture only uses what it was given.
+        /// </summary>
+        private const string DecoderPathVariable = "ZANTETSU_FFMPEG";
+
+        /// <summary>
+        /// Wall-clock budget for the one decode this sentinel runs, after the
+        /// Run is over and nothing of the capture path is still alive.
+        /// </summary>
+        private const int DecodeTimeoutMs = 60000;
 
         private const string SentinelRunInitId = "0123456789abcdef0123456789abcdef";
 
@@ -1118,6 +1133,12 @@ namespace Zantetsu.Observability.StandaloneTests
                     Assert.That(
                         run.Pool.TryRent(out CaptureFrameRenderTargetLease rented), Is.True,
                         "the fixed source pool must supply one surface per frame");
+
+                    // Each frame gets its own grey, far enough apart that
+                    // compression cannot reorder them, registered from this
+                    // thread before the surface becomes the backend's.
+                    ClearSourceToGrey(run.Pool, rented, GreyForFrame(i + 1));
+
                     surfaces[i] = new CaptureSurfaceLease(run.Pool, rented);
                     run.Track(surfaces[i]);
 
@@ -1172,6 +1193,11 @@ namespace Zantetsu.Observability.StandaloneTests
                     }
                     else
                     {
+                        // The reused surface still carries the grey of the
+                        // frame that gave it back, so it is repainted for this
+                        // one after the return and the re-rent.
+                        ClearSourceToGrey(run.Pool, reused, GreyForFrame(Total));
+
                         surfaces[Filled] = new CaptureSurfaceLease(run.Pool, reused);
                         run.Track(surfaces[Filled]);
                     }
@@ -1414,6 +1440,12 @@ namespace Zantetsu.Observability.StandaloneTests
                         prefix[2] == 0x01 || (prefix[2] == 0x00 && prefix[3] == 0x01),
                         Is.True,
                         "the chunk must start with an Annex-B start code");
+
+                    // The chunk is confirmed and nothing of the capture
+                    // path is alive any more: the encoder session is closed,
+                    // both workers stopped, both teardowns done and this Run's
+                    // lock released. Only now is it handed to a decoder.
+                    DecodeAndCheckFrameOrder(run, confirmedChunk, Total);
 
                     run.DeleteTemporaryBase();
                     teardownDone = true;
@@ -2111,6 +2143,192 @@ namespace Zantetsu.Observability.StandaloneTests
         /// Requests poison/wakeup after failure without replacing the original
         /// exception. Never used to release an owned resource.
         /// </summary>
+        /// <summary>
+        /// The grey one frame is painted with. Monotonic in the frame id and
+        /// far enough apart that an encoder cannot swap two of them, which is
+        /// all this is for: it is not a colour, range, or orientation claim.
+        /// </summary>
+        private static float GreyForFrame(int captureFrameId)
+        {
+            return 0.08f + (0.09f * (captureFrameId - 1));
+        }
+
+        /// <summary>
+        /// Registers a clear of the whole source surface from the Main Thread,
+        /// before the surface is handed to the backend. No shader, no
+        /// Texture2D, no CPU upload, and nothing here waits for the GPU.
+        /// </summary>
+        private static void ClearSourceToGrey(
+            CaptureFrameRenderTargetPool pool, in CaptureFrameRenderTargetLease lease, float grey)
+        {
+            RenderTexture target = pool.GetRenderTexture(lease);
+
+            // A command buffer rather than RenderTexture.active, so no global
+            // render state is borrowed and none has to be put back.
+            using (CommandBuffer commands = new CommandBuffer { name = "ZantetsuSentinelSourceClear" })
+            {
+                commands.SetRenderTarget(target);
+                commands.ClearRenderTarget(false, true, new Color(grey, grey, grey, 1f));
+                Graphics.ExecuteCommandBuffer(commands);
+            }
+        }
+
+        /// <summary>
+        /// Decodes the confirmed chunk once with the decoder the runner
+        /// resolved, and checks that it holds exactly the frames that went in,
+        /// in the order they went in.
+        /// </summary>
+        /// <remarks>
+        /// The greys are read back from a small region in the middle of each
+        /// frame, seeking to it rather than reading the frame, so nothing here
+        /// holds a decoded frame - let alone all of them. What is asserted is
+        /// the count and the order, never an exact value, a tolerance, a
+        /// colour space, or an orientation.
+        /// </remarks>
+        private static void DecodeAndCheckFrameOrder(
+            SentinelRun run, string chunkPath, int expectedFrames)
+        {
+            string decoder = Environment.GetEnvironmentVariable(DecoderPathVariable);
+            Assert.That(
+                string.IsNullOrEmpty(decoder), Is.False,
+                "the runner must hand this Player a decoder path in " + DecoderPathVariable);
+
+            string rawPath = Path.Combine(run.TemporaryBase, "decoded.rgb24");
+
+            ProcessStartInfo start = new ProcessStartInfo(decoder)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            // Quoted one argument at a time, so a path with spaces stays one
+            // argument and nothing is handed to a shell to re-parse.
+            // -vsync 0 because a raw H.264 stream carries no timestamps: without
+            // it the output is made constant-rate and a frame is duplicated, so
+            // the decode would no longer be the frames that went in, in that
+            // order. It is a decode condition, not a fallback.
+            start.Arguments = string.Join(
+                " ",
+                "-nostdin",
+                "-v", "error",
+                "-vsync", "0",
+                "-f", "h264",
+                "-i", Quote(chunkPath),
+                "-map", "0:v:0",
+                "-pix_fmt", "rgb24",
+                "-f", "rawvideo",
+                Quote(rawPath));
+
+            string standardError;
+            using (Process decode = new Process { StartInfo = start })
+            {
+                System.Text.StringBuilder errorText = new System.Text.StringBuilder();
+                System.Text.StringBuilder outputText = new System.Text.StringBuilder();
+                decode.OutputDataReceived += (sender, args) => outputText.Append(args.Data);
+                decode.ErrorDataReceived += (sender, args) => errorText.Append(args.Data);
+
+                Assert.That(decode.Start(), Is.True, "the decoder did not start");
+
+                // Both pipes are drained while it runs, so neither can fill
+                // and stall the decoder.
+                decode.BeginOutputReadLine();
+                decode.BeginErrorReadLine();
+
+                if (!decode.WaitForExit(DecodeTimeoutMs))
+                {
+                    // Only this instance, and only after it is confirmed gone.
+                    QuietStep(() => decode.Kill());
+                    decode.WaitForExit(DecodeTimeoutMs);
+                    Assert.Fail(
+                        "the decoder did not finish within " + DecodeTimeoutMs + " ms");
+                }
+
+                standardError = errorText.ToString();
+                Assert.That(
+                    decode.ExitCode, Is.EqualTo(0),
+                    "the decoder refused the chunk: " + standardError);
+            }
+
+            // Exactly the frames that went in, and no partial tail.
+            long frameBytes =
+                (long)NvencBringUpProfileV1.Width * NvencBringUpProfileV1.Height * 3L;
+            long expectedLength = frameBytes * expectedFrames;
+
+            using (FileStream raw = new FileStream(
+                rawPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Assert.That(
+                    raw.Length, Is.EqualTo(expectedLength),
+                    "the decode must hold exactly " + expectedFrames + " whole frames");
+
+                // A small region in the middle of each frame is enough to tell
+                // the greys apart.
+                const int RegionSide = 16;
+                int firstColumn = (NvencBringUpProfileV1.Width - RegionSide) / 2;
+                int firstRow = (NvencBringUpProfileV1.Height - RegionSide) / 2;
+                byte[] row = new byte[RegionSide * 3];
+                double[] averages = new double[expectedFrames];
+
+                for (int frame = 0; frame < expectedFrames; frame++)
+                {
+                    double total = 0.0;
+                    for (int offsetRow = 0; offsetRow < RegionSide; offsetRow++)
+                    {
+                        long position = (frameBytes * frame)
+                            + (((long)(firstRow + offsetRow) * NvencBringUpProfileV1.Width)
+                                + firstColumn) * 3L;
+                        raw.Position = position;
+
+                        int read = 0;
+                        while (read < row.Length)
+                        {
+                            int got = raw.Read(row, read, row.Length - read);
+                            if (got <= 0)
+                            {
+                                break;
+                            }
+
+                            read += got;
+                        }
+
+                        Assert.That(read, Is.EqualTo(row.Length));
+
+                        for (int i = 0; i < row.Length; i++)
+                        {
+                            total += row[i];
+                        }
+                    }
+
+                    averages[frame] = total / row.Length / RegionSide;
+                }
+
+                // In the order they were given, and far enough apart that
+                // compression cannot have reordered them.
+                for (int frame = 1; frame < expectedFrames; frame++)
+                {
+                    Assert.That(
+                        averages[frame], Is.GreaterThan(averages[frame - 1]),
+                        "decoded frame " + (frame + 1) + " must be brighter than frame " + frame
+                        + " (" + string.Join(", ", Array.ConvertAll(averages, a => a.ToString("F1")))
+                        + ")");
+                }
+
+                Assert.That(
+                    averages[expectedFrames - 1] - averages[0], Is.GreaterThan(20.0),
+                    "the greys must stay far enough apart to be an ordering at all");
+            }
+
+            SentinelMarker(
+                "decoded " + expectedFrames + " frames in order with " + decoder);
+        }
+
+        private static string Quote(string path)
+        {
+            return "\"" + path + "\"";
+        }
+
         /// <summary>
         /// The same hash the descriptor carries, computed over what is
         /// actually on disk. Streamed, so the chunk is never materialized as
