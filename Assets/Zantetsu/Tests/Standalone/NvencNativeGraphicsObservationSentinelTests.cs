@@ -1136,7 +1136,7 @@ namespace Zantetsu.Observability.StandaloneTests
                 // completion. Nothing is collected, so the capacity stays full.
                 bool filled = false;
                 yield return AdvanceUntil(
-                    () => run.Writer.AppendCount == Filled &&
+                    () => run.ChunkWriter.AppendCount == Filled &&
                         run.OutputQueue.Count == 0 &&
                         !run.OutputProcessor.HasPendingWork,
                     run.AdvanceMainThread,
@@ -1196,7 +1196,7 @@ namespace Zantetsu.Observability.StandaloneTests
                     Assert.That(run.WorkSlots.OccupiedCount, Is.EqualTo(Filled));
                     Assert.That(run.SyncSlots.OccupiedCount, Is.EqualTo(0));
                     Assert.That(run.ProcessState.IsPoisoned, Is.False);
-                    Assert.That(run.Writer.AppendCount, Is.EqualTo(Filled));
+                    Assert.That(run.ChunkWriter.AppendCount, Is.EqualTo(Filled));
 
                     // Collect exactly one, which returns exactly one Work Slot
                     // and one Frame Completion credit.
@@ -1265,22 +1265,19 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 if (!stalled)
                 {
-                    // Nine access units, every one of them plausible, and one
-                    // chunk that was never split or finalized per frame.
-                    Assert.That(run.Writer.AppendCount, Is.EqualTo(Total));
-                    Assert.That(run.Writer.ShortestValidLength, Is.GreaterThanOrEqualTo(1));
+                    // Nine access units appended into one open chunk, and
+                    // nothing finalized per frame: the chunk is still the
+                    // Run's to add to until the Run itself ends.
+                    Assert.That(run.ChunkWriter.AppendCount, Is.EqualTo((long)Total));
                     Assert.That(
-                        run.Writer.LongestValidLength,
-                        Is.LessThanOrEqualTo((int)NvencBringUpProfileV1.MaxAccessUnitByteLength));
-                    Assert.That(
-                        run.Writer.EveryAppendStartedWithAnnexB, Is.True,
-                        "every access unit must start with Annex-B");
-                    Assert.That(run.Writer.FinalizeCount, Is.EqualTo(0));
+                        run.ChunkWriter.State, Is.EqualTo(NvencRunChunkWriterState.Open),
+                        "a frame must never finalize the Run's chunk");
+                    Assert.That(run.ChunkWriter.AccumulatedByteLength, Is.GreaterThan(0L));
 
                     // Both workers did their own half on their own threads.
-                    Assert.That(
-                        run.Writer.AppendThreadName,
-                        Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+                    // The appends are the Output Worker's by construction -
+                    // this thread never drives either processor - and the copy
+                    // that produced their bytes is recorded here.
                     Assert.That(
                         run.OutputSource.ExecutingThreadName,
                         Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
@@ -1333,8 +1330,15 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 if (!stalled)
                 {
-                    // One finalization for the whole Run, not one per frame.
-                    Assert.That(run.Writer.FinalizeCount, Is.EqualTo(1));
+                    // One finalization for the whole Run, not one per frame,
+                    // and a result that re-verifies its own correlation.
+                    Assert.That(
+                        run.ChunkWriter.State, Is.EqualTo(NvencRunChunkWriterState.Finalized));
+                    Assert.That(run.FinalizationResult, Is.Not.Null);
+                    Assert.That(run.FinalizationResult.IsValid, Is.True);
+                    Assert.That(run.FinalizationResult.AppendedCount, Is.EqualTo((long)Total));
+                    Assert.That(run.FinalizationResult.LastFrameId, Is.EqualTo((long)Total));
+                    Assert.That(run.FinalizationResult.ByteLength, Is.GreaterThan(0L));
 
                     for (int i = 0; i < Total; i++)
                     {
@@ -1343,6 +1347,75 @@ namespace Zantetsu.Observability.StandaloneTests
                     }
 
                     run.ReleaseAfterProvenStop();
+
+                    // Only now: the Run is over, both workers stopped, both
+                    // teardowns done, and the chunk's handles and this Run's
+                    // lock released. The path comes from the descriptor, never
+                    // from a file name copied into this test.
+                    CaptureArtifactDescriptor descriptor = run.FinalizationResult.Descriptor;
+                    Assert.That(descriptor.IsValid, Is.True);
+
+                    string confirmedChunk = Path.Combine(
+                        run.Layout.StagingRunRoot,
+                        descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+                    Assert.That(
+                        File.Exists(confirmedChunk), Is.True,
+                        "the descriptor's staging path must name a confirmed chunk");
+
+                    // Its own directory holds that one file and nothing else,
+                    // so no pending entry was left behind.
+                    string[] chunkEntries =
+                        Directory.GetFileSystemEntries(Path.GetDirectoryName(confirmedChunk));
+                    Assert.That(chunkEntries.Length, Is.EqualTo(1));
+                    Assert.That(
+                        Path.GetFullPath(chunkEntries[0]),
+                        Is.EqualTo(Path.GetFullPath(confirmedChunk)));
+
+                    // Read once, streamed: the length, the first four
+                    // bytes and the hash, without ever holding the chunk.
+                    long fileLength;
+                    string fileHash;
+                    byte[] prefix = new byte[4];
+                    using (FileStream chunkStream = new FileStream(
+                        confirmedChunk, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        fileLength = chunkStream.Length;
+
+                        int read = 0;
+                        while (read < prefix.Length)
+                        {
+                            int got = chunkStream.Read(prefix, read, prefix.Length - read);
+                            if (got <= 0)
+                            {
+                                break;
+                            }
+
+                            read += got;
+                        }
+
+                        Assert.That(read, Is.EqualTo(prefix.Length));
+
+                        chunkStream.Position = 0;
+                        fileHash = Sha256Hex(chunkStream);
+                    }
+
+                    Assert.That(
+                        fileLength, Is.EqualTo(descriptor.ByteLength),
+                        "the file on disk must be exactly as long as the descriptor says");
+                    Assert.That(
+                        fileHash, Is.EqualTo(descriptor.ContentHash),
+                        "the file on disk must hash to the descriptor's content hash");
+
+                    // Annex-B at the start, and nothing parsed beyond that.
+                    Assert.That(prefix[0], Is.EqualTo((byte)0x00));
+                    Assert.That(prefix[1], Is.EqualTo((byte)0x00));
+                    Assert.That(
+                        prefix[2] == 0x01 || (prefix[2] == 0x00 && prefix[3] == 0x01),
+                        Is.True,
+                        "the chunk must start with an Annex-B start code");
+
+                    run.DeleteTemporaryBase();
                     teardownDone = true;
                     SentinelMarker("nine-frame teardown complete");
                 }
@@ -2038,6 +2111,27 @@ namespace Zantetsu.Observability.StandaloneTests
         /// Requests poison/wakeup after failure without replacing the original
         /// exception. Never used to release an owned resource.
         /// </summary>
+        /// <summary>
+        /// The same hash the descriptor carries, computed over what is
+        /// actually on disk. Streamed, so the chunk is never materialized as
+        /// one array however long it is.
+        /// </summary>
+        private static string Sha256Hex(Stream content)
+        {
+            using (System.Security.Cryptography.SHA256 sha =
+                System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(content);
+                System.Text.StringBuilder text = new System.Text.StringBuilder(hash.Length * 2);
+                foreach (byte value in hash)
+                {
+                    text.Append(value.ToString("x2"));
+                }
+
+                return text.ToString();
+            }
+        }
+
         private static void QuietStep(Action step)
         {
             try
@@ -2148,7 +2242,12 @@ namespace Zantetsu.Observability.StandaloneTests
             internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue;
             internal Guid BackendOwner;
 
-            internal SentinelChunkWriter Writer;
+            internal string TemporaryBase;
+            internal CaptureRunRootLayout Layout;
+            internal CaptureRunInitializationSessionIssue Issue;
+            internal NvencRunChunkFileSession FileSession;
+            internal NvencRunChunkWriter ChunkWriter;
+            internal NvencChunkFinalizationResult FinalizationResult;
             internal NvencNativeOutputWorkerTeardown Teardown;
             internal NvencMainThreadResourceTeardown MainThreadTeardown;
             internal SentinelEncodePictureSubmitter Submitter;
@@ -2195,7 +2294,6 @@ namespace Zantetsu.Observability.StandaloneTests
                 SubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
                 OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
                 BackendOwner = Guid.NewGuid();
-                Writer = new SentinelChunkWriter();
 
                 Assert.That(
                     NvencNativeEncoderSessionOwner.TryOpen(out Owner), Is.True,
@@ -2238,16 +2336,46 @@ namespace Zantetsu.Observability.StandaloneTests
                     new NvencNativeSourceReadCompletedSource(Owner),
                     new NvencSourceSurfaceReturnBoundary(), BackendOwner);
 
+                // A real Run, initialized by the production boundaries. This
+                // fixture creates only what a trusted base root already is:
+                // the base itself and the one relative parent a Run sits
+                // under. The Run roots, the markers, the lock, the chunks
+                // directory and the chunk file are all made by the product.
+                TemporaryBase = Path.Combine(
+                    Path.GetTempPath(), "zantetsu-tierb-" + Guid.NewGuid().ToString("N"));
+                Layout = new CaptureRunRootLayout(
+                    Path.Combine(TemporaryBase, "staging"),
+                    Path.Combine(TemporaryBase, "final"),
+                    SentinelTestRunId);
+                Directory.CreateDirectory(Path.GetDirectoryName(Layout.StagingRunRoot));
+                Directory.CreateDirectory(Path.GetDirectoryName(Layout.FinalRunRoot));
+
+                Assert.That(
+                    new CaptureRunInitializationBootstrapCoordinator(
+                        new CaptureRunLockAcquisitionCoordinator(CaptureRunLockOsBackend.Create()),
+                        new CryptographicCaptureRunInitializationIdSource(),
+                        new CaptureRunInitializationExecutionCoordinator(
+                            CaptureRunRootOsProvisioner.Create(),
+                            CaptureRunMarkerOsAtomicWriter.Create()))
+                    .TryInitialize(Layout, out Issue),
+                    Is.True,
+                    "the production Run initialization must succeed on the temporary base");
+
+                // One writer instance is both the appender and the finalizer,
+                // over the one file session this Run's chunk lives in.
+                FileSession = NvencRunChunkFileSession.Create(Issue);
+                ChunkWriter = new NvencRunChunkWriter(FileSession);
+
                 // One buffer, one sink, one collector, one completion
                 // boundary: the Output Processor and the Run chunk context
                 // must be talking about the same ones.
                 NvencOwnedAccessUnitBuffer accessUnitBuffer =
                     new NvencOwnedAccessUnitBuffer(ProcessState);
                 NvencRunChunkSink sink =
-                    new NvencRunChunkSink(ProcessState, accessUnitBuffer, Writer);
+                    new NvencRunChunkSink(ProcessState, accessUnitBuffer, ChunkWriter);
                 Context = new NvencRunChunkContext(
-                    MakeRunIssue(), sink,
-                    new NvencRunChunkFinalizationCoordinator(Writer), "chunk/0");
+                    Issue, sink,
+                    new NvencRunChunkFinalizationCoordinator(ChunkWriter), "chunk/0");
                 OutputSource = new SentinelOutputBitstreamSource(Owner);
                 NvencSubmittedOutputCollector collector = new NvencSubmittedOutputCollector(
                     ProcessState, WorkSlots, SampleSlots, SubmitCredits, CompletionCredits,
@@ -2340,7 +2468,9 @@ namespace Zantetsu.Observability.StandaloneTests
                     " sync=" + SyncSlots.OccupiedCount +
                     " submitCredits=" + SubmitCredits.OccupiedCount +
                     " completionCredits=" + CompletionCredits.OccupiedCount +
-                    " appends=" + Writer.AppendCount +
+                    " appends=" + (ChunkWriter == null ? -1L : ChunkWriter.AppendCount) +
+                    " writerState=" + (ChunkWriter == null ? "none" : ChunkWriter.State.ToString()) +
+                    " runRoot=" + (Layout == null ? "none" : Layout.StagingRunRoot) +
                     " poisoned=" + ProcessState.IsPoisoned +
                     " submitFatal=" + (submitFailure == null ? "none" : submitFailure.GetType().Name) +
                     " outputFatal=" + (outputFailure == null ? "none" : outputFailure.GetType().Name);
@@ -2397,6 +2527,7 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 Assert.That(outcome.IsFinalized, Is.True);
                 Assert.That(outcome.Result, Is.Not.Null);
+                FinalizationResult = outcome.Result;
 
                 bool teardownRequested = false;
                 yield return AdvanceUntil(
@@ -2473,6 +2604,25 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.That(
                     () => Pool.TryRent(out CaptureFrameRenderTargetLease _), Throws.Exception,
                     "a disposed source pool cannot lend another surface");
+
+                // The chunk's file handles go before the ownership lease that
+                // holds this Run's OS lock, so the lock is never released
+                // while the Run still has a file open under it.
+                FileSession.Dispose();
+                Issue.OwnershipLease.Dispose();
+                Assert.That(Issue.OwnershipLease.IsReleaseComplete, Is.True);
+            }
+
+            /// <summary>
+            /// Removes this Run's temporary tree, and only on the path that
+            /// has proved every handle and the lock were released: an unknown
+            /// state keeps the tree for whoever looks afterwards.
+            /// </summary>
+            internal void DeleteTemporaryBase()
+            {
+                Assert.That(Issue.OwnershipLease.IsReleaseComplete, Is.True);
+                Directory.Delete(TemporaryBase, true);
+                Assert.That(Directory.Exists(TemporaryBase), Is.False);
             }
 
             /// <summary>
@@ -2493,9 +2643,15 @@ namespace Zantetsu.Observability.StandaloneTests
                 QuietStep(() => ProcessState?.TryPoison());
                 QuietStep(() => SubmitWorker?.Notify());
                 QuietStep(() => OutputWorker?.Notify());
+
+                // Nothing on disk is guessed at either: a Run whose workers,
+                // native calls or file handles are in an unknown state keeps
+                // its lock, its handles and its temporary tree, and the path
+                // is written down for whoever looks afterwards.
                 SentinelMarker(
                     "RETAINED owner graph; external process termination required; " +
-                    (stalledAt ?? DescribeState("no stage recorded")));
+                    (stalledAt ?? DescribeState("no stage recorded")) +
+                    " retainedPath=" + (TemporaryBase ?? "none"));
             }
         }
 
