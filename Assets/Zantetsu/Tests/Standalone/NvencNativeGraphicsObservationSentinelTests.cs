@@ -298,18 +298,23 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
-        /// The initialized session prepares its fixed sets of NV12 input
-        /// surfaces, output bitstream buffers, and completion events, refuses
-        /// to close while any of them is prepared, and closes once all three
-        /// are released in the reverse order.
+        /// The initialized session binds the production pool's eight capture
+        /// render targets as its sources, prepares its fixed sets of NV12
+        /// input surfaces, output bitstream buffers, and completion events,
+        /// refuses to close while any of them is held, and closes once all of
+        /// them are released in the reverse order.
         /// </summary>
         /// <remarks>
-        /// Nothing is converted, mapped, waited on, or read here, and no
-        /// texture, registration, handle, slot, or count reaches managed code:
-        /// what is pinned is the order - surfaces, buffers, events, then
-        /// events, buffers, surfaces - and that each step happens once. The
-        /// encode sentinel of a later unit is what shows all eight slots
-        /// actually in use.
+        /// The sources are the real render targets a Run would capture into,
+        /// created by the production pool and still owned by it: what crosses
+        /// the boundary is the eight native pointers, read once on the main
+        /// thread, and nothing comes back. Nothing is drawn, converted,
+        /// mapped, waited on, or read here, and no texture, view, registration,
+        /// handle, slot, or count reaches managed code: what is pinned is the
+        /// order - sources, surfaces, buffers, events, then events, buffers,
+        /// surfaces, sources - and that each step happens once. The encode
+        /// sentinel of a later unit is what shows all eight slots actually in
+        /// use.
         /// </remarks>
         [Test]
         public void Player_PreparesAndReleasesItsSlotResources()
@@ -319,6 +324,21 @@ namespace Zantetsu.Observability.StandaloneTests
                     out NvencNativeEncoderSessionOwner owner),
                 Is.True,
                 "this Player's device must be able to open an encoder session.");
+
+            // The production pool, with the Run's own fixed capacity and
+            // profile. It keeps owning its render targets throughout.
+            CaptureFrameProfile captureProfile = new CaptureFrameProfile(
+                7,
+                45.0,
+                CaptureSource.UnityRenderTexture,
+                CaptureEye.Left,
+                new CaptureImageRect(
+                    0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
+                0,
+                CapturePixelFormat.Rgba32);
+
+            CaptureFrameRenderTargetPool pool = new CaptureFrameRenderTargetPool(
+                NvencNativeEncoderSessionOwner.SourceSurfaceCount, captureProfile);
 
             try
             {
@@ -333,6 +353,31 @@ namespace Zantetsu.Observability.StandaloneTests
                     Is.EqualTo(NvencBringUpAdmissionDecision.Supported));
 
                 owner.InitializeEncoder(profile);
+
+                // The input surfaces wait for the sources, and asking too
+                // early costs nothing.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareInputSurfaces());
+
+                // The eight pointers, read once from the pool that owns the
+                // textures. Nothing is rented to read them.
+                IntPtr[] sources =
+                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
+                pool.CopyNativeTexturePointers(sources);
+                foreach (IntPtr source in sources)
+                {
+                    Assert.That(source, Is.Not.EqualTo(IntPtr.Zero));
+                }
+
+                owner.BindSourceSurfaces(sources);
+                Assert.That(owner.IsOpen, Is.True);
+
+                // Bound sources hold the session open, and one owner binds
+                // once.
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.BindSourceSurfaces(sources));
 
                 // The output buffers wait for the input surfaces, and
                 // asking too early costs nothing.
@@ -376,6 +421,8 @@ namespace Zantetsu.Observability.StandaloneTests
                     () => owner.ReleaseOutputBuffers());
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseInputSurfaces());
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseSourceSurfaces());
                 Assert.That(owner.IsOpen, Is.True);
 
                 owner.ReleaseCompletionEvents();
@@ -394,16 +441,34 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseOutputBuffers());
 
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseSourceSurfaces());
+
                 owner.ReleaseInputSurfaces();
                 Assert.That(owner.IsOpen, Is.True);
 
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseInputSurfaces());
+
+                // Bound sources alone still hold the session open, and
+                // refusing that close spends nothing.
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                owner.ReleaseSourceSurfaces();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseSourceSurfaces());
                 Assert.That(owner.IsOpen, Is.True);
             }
             finally
             {
                 owner.Dispose();
+
+                // The pool owned its render targets the whole way through and
+                // disposes them itself.
+                pool.Dispose();
             }
 
             Assert.That(owner.IsOpen, Is.False);

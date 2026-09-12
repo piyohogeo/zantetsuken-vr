@@ -134,6 +134,35 @@ typedef struct ZantetsuNvencSessionCompletionEventResultV1
     int32_t lastNvencStatus;
 } ZantetsuNvencSessionCompletionEventResultV1;
 
+/// How many source RGBA surfaces one session binds. Fixed, and separate from
+/// the encode sample slots: the two sets are bound to each other only while a
+/// frame is in flight, which is not this ABI's business.
+#define ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT 8
+
+/// The fixed set of source surfaces, handed over in one request.
+///
+/// Each entry is an ID3D11Texture2D* the caller already owns, passed as an
+/// integer so no COM type crosses the boundary. The caller keeps its own
+/// ownership; the session takes its own reference to each one. Nothing is
+/// returned about them.
+typedef struct ZantetsuNvencSessionSourceSurfaceRequestV1
+{
+    uint32_t abiVersion;
+    uint32_t surfaceCount;
+    uint64_t surfaces[ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT];
+} ZantetsuNvencSessionSourceSurfaceRequestV1;
+
+/// What a source surface binding or release came to. Everything here is D3D11's
+/// work - a descriptor that is not the fixed RGBA8 source, a texture from
+/// another device, or a view the device refused - so an HRESULT is the only raw
+/// value there is, and only a call that actually failed sets it.
+typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastHResult;
+} ZantetsuNvencSessionSourceSurfaceResultV1;
+
 /// What an NV12 input surface preparation or release came to. Creating the
 /// textures is D3D11's work and registering them is the driver's, so both raw
 /// values are here - and only the call that actually failed sets one.
@@ -226,6 +255,39 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionCompletionEventsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionCompletionEventResultV1* destination,
+    uint32_t destinationSize);
+
+// Binds the fixed set of source RGBA surfaces to that exact session, once, and
+// creates the shader resource view each one is read through. All of them are
+// bound or none are.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when either pointer is null, either size is not exactly its struct's, the
+// owner handle is zero, the request's ABI version is not this one, its surface
+// count is not the fixed one, or any surface is null. A binding that fails
+// reports FAILED with the raw HRESULT of the D3D11 call that failed, or zero
+// when a descriptor simply was not the accepted one; it releases what it took,
+// in reverse. The encoder must already be initialized, and nothing else may be
+// prepared yet.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencBindSessionSourceSurfacesV1(
+    uint64_t sessionOwner,
+    const ZantetsuNvencSessionSourceSurfaceRequestV1* request,
+    uint32_t requestSize,
+    ZantetsuNvencSessionSourceSurfaceResultV1* destination,
+    uint32_t destinationSize);
+
+// Releases that whole set - each view, then each reference - once and in
+// reverse order.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// binding. The NV12 input surfaces, output buffers, and completion events are
+// released first: a session that still has any of them reports FAILED without
+// spending the release.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionSourceSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionSourceSurfaceResultV1* destination,
     uint32_t destinationSize);
 
 // Creates the fixed set of NV12 input surfaces on that exact session's

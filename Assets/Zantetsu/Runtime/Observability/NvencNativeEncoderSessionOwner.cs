@@ -36,6 +36,13 @@ namespace Zantetsu.Observability
         /// <summary>The session ABI version this build speaks.</summary>
         internal const uint AbiVersion = 1;
 
+        /// <summary>
+        /// How many source surfaces one session binds. Fixed, and its own
+        /// count: a source surface and an encode sample slot are two different
+        /// sets.
+        /// </summary>
+        internal const int SourceSurfaceCount = 8;
+
         private const uint StatusOk = 1;
         private const uint StatusUnsupported = 2;
         private const uint StatusFailed = 3;
@@ -134,6 +141,24 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeSourceSurfaceRequestV1
+        {
+            internal uint AbiVersion;
+            internal uint SurfaceCount;
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = SourceSurfaceCount)]
+            internal ulong[] Surfaces;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeSourceSurfaceResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastHResult;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeInputSurfaceResultV1
         {
             internal uint AbiVersion;
@@ -184,6 +209,17 @@ namespace Zantetsu.Observability
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencBindSessionSourceSurfacesV1(
+            ulong sessionOwner, ref NativeSourceSurfaceRequestV1 request,
+            uint requestSize, ref NativeSourceSurfaceResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencReleaseSessionSourceSurfacesV1(
+            ulong sessionOwner, ref NativeSourceSurfaceResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencPrepareSessionInputSurfacesV1(
             ulong sessionOwner, ref NativeInputSurfaceResultV1 destination,
             uint destinationSize);
@@ -216,6 +252,9 @@ namespace Zantetsu.Observability
         private bool _outputBuffersPrepareAttempted;
         private bool _outputBuffersReleaseAttempted;
         private bool _outputBuffersPrepared;
+        private bool _sourceSurfacesBindAttempted;
+        private bool _sourceSurfacesReleaseAttempted;
+        private bool _sourceSurfacesBound;
         private bool _inputSurfacesPrepareAttempted;
         private bool _inputSurfacesReleaseAttempted;
         private bool _inputSurfacesPrepared;
@@ -525,6 +564,150 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Binds this session's fixed set of source RGBA surfaces - all of
+        /// them, or none.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The pointers name textures the caller keeps owning; this owner
+        /// neither holds nor disposes them, and neither does the pool they
+        /// came from. What the native side takes is its own reference and the
+        /// view it will read through, and none of that comes back: no pointer,
+        /// view, descriptor, slot, or count is returned.
+        /// </para>
+        /// <para>
+        /// A null set, a set that is not the fixed size, or a null pointer in
+        /// it is refused here, before the one binding attempt is spent. One
+        /// owner binds once, whatever the first attempt concluded.
+        /// </para>
+        /// </remarks>
+        internal void BindSourceSurfaces(IntPtr[] sourceTextures)
+        {
+            RequireUsableSession("bind source surfaces to");
+
+            if (sourceTextures == null)
+            {
+                throw new ArgumentNullException(nameof(sourceTextures));
+            }
+
+            if (sourceTextures.Length != SourceSurfaceCount)
+            {
+                throw new ArgumentException(
+                    "The source surface set must be exactly " + SourceSurfaceCount
+                    + " textures.", nameof(sourceTextures));
+            }
+
+            for (int i = 0; i < sourceTextures.Length; i++)
+            {
+                if (sourceTextures[i] == IntPtr.Zero)
+                {
+                    throw new ArgumentException(
+                        "The source surface set contains a null texture.",
+                        nameof(sourceTextures));
+                }
+            }
+
+            if (_sourceSurfacesBindAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's source surface binding was already attempted; it is not attempted again.");
+            }
+
+            _sourceSurfacesBindAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeSourceSurfaceRequestV1 request = new NativeSourceSurfaceRequestV1
+            {
+                AbiVersion = AbiVersion,
+                SurfaceCount = (uint)SourceSurfaceCount,
+                Surfaces = new ulong[SourceSurfaceCount],
+            };
+
+            for (int i = 0; i < sourceTextures.Length; i++)
+            {
+                request.Surfaces[i] = (ulong)sourceTextures[i].ToInt64();
+            }
+
+            NativeSourceSurfaceResultV1 result = default;
+            int written = ZantetsuNvencBindSessionSourceSurfacesV1(
+                _sessionOwner, ref request,
+                (uint)Marshal.SizeOf(typeof(NativeSourceSurfaceRequestV1)),
+                ref result,
+                (uint)Marshal.SizeOf(typeof(NativeSourceSurfaceResultV1)));
+
+            RequireSourceSurfaceResult(written, result, "bound");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _sourceSurfacesBound = true;
+        }
+
+        /// <summary>
+        /// Releases that whole set - each view, then each reference.
+        /// </summary>
+        /// <remarks>
+        /// Everything prepared on top of the sources is released first: a
+        /// session that still has its NV12 input surfaces, output buffers, or
+        /// completion events refuses here, before this release's one attempt is
+        /// spent. The textures themselves are untouched; only what the native
+        /// side took is given back.
+        /// </remarks>
+        internal void ReleaseSourceSurfaces()
+        {
+            RequireUsableSession("release source surfaces from");
+
+            if (!_sourceSurfacesBound)
+            {
+                throw new InvalidOperationException(
+                    "This session has no bound source surfaces to release.");
+            }
+
+            // The resources prepared on top of the sources go first. Checked
+            // before this release's one attempt is spent.
+            if (_completionEventsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion events are still prepared; they are released before its source surfaces.");
+            }
+
+            if (_outputBuffersPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffers are still prepared; they are released before its source surfaces.");
+            }
+
+            if (_inputSurfacesPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surfaces are still prepared; they are released before its source surfaces.");
+            }
+
+            if (_sourceSurfacesReleaseAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's source surface release was already attempted; it is not attempted again.");
+            }
+
+            _sourceSurfacesReleaseAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeSourceSurfaceResultV1 result = default;
+            int written = ZantetsuNvencReleaseSessionSourceSurfacesV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeSourceSurfaceResultV1)));
+
+            RequireSourceSurfaceResult(written, result, "released");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _sourceSurfacesBound = false;
+        }
+
+        /// <summary>
         /// Creates this session's fixed set of NV12 input surfaces and
         /// registers them with the encoder - all of them, or none.
         /// </summary>
@@ -538,6 +721,14 @@ namespace Zantetsu.Observability
         internal void PrepareInputSurfaces()
         {
             RequireUsableSession("prepare input surfaces on");
+
+            // The source surfaces come first. Checked before this
+            // preparation's one attempt is spent.
+            if (!_sourceSurfacesBound)
+            {
+                throw new InvalidOperationException(
+                    "This session's source surfaces are not bound; they come before its input surfaces.");
+            }
 
             if (_inputSurfacesPrepareAttempted)
             {
@@ -751,6 +942,12 @@ namespace Zantetsu.Observability
                     "This session's input surfaces are still prepared; they are released before the session is closed.");
             }
 
+            if (_sourceSurfacesBound)
+            {
+                throw new InvalidOperationException(
+                    "This session's source surfaces are still bound; they are released before the session is closed.");
+            }
+
             // One owner, one close attempt - settled before the native side is
             // called, so a destroy it refused is never asked for again.
             if (_closeAttempted)
@@ -822,6 +1019,27 @@ namespace Zantetsu.Observability
                     "The completion events could not be " + what + " (status "
                     + result.Status + ", win32 error " + result.LastWin32Error
                     + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+        }
+
+        private static void RequireSourceSurfaceResult(
+            int written, NativeSourceSurfaceResultV1 result, string what)
+        {
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native source-surface call was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The source surfaces could not be " + what + " (status "
+                    + result.Status + ", HRESULT 0x"
+                    + result.LastHResult.ToString("X8") + ").");
             }
         }
 

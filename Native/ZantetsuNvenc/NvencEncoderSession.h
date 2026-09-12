@@ -59,16 +59,23 @@ namespace zantetsu
     /// constant of the design: nothing here grows, shrinks, or adds one later.
     constexpr uint32_t kEncodeSampleSlotCount = 8;
 
-    /// The one encoded size, which is also the one input surface size: this
-    /// bring-up neither scales nor crops.
+    /// The fixed number of source RGBA surfaces a Phase 0.11 session binds.
+    /// It is deliberately its own count and its own set: a source surface and
+    /// an encode sample slot are bound to each other only while a frame is in
+    /// flight, so they are never the same array.
+    constexpr uint32_t kSourceSurfaceSlotCount = 8;
+
+    /// The one encoded size, which is also the one input surface size and the
+    /// one accepted source size: this bring-up neither scales nor crops.
     constexpr uint32_t kInputSurfaceWidth = 1280;
     constexpr uint32_t kInputSurfaceHeight = 720;
 
     /// An owner must not be destroyed while it still holds an encoder, a
     /// completion-event handle, an output bitstream buffer, an input surface,
-    /// or a conversion shader: everything has to be released and the session
-    /// closed successfully first, and an owner whose release or close was
-    /// refused stays alive with what it holds.
+    /// a conversion shader, or a source surface binding: everything has to be
+    /// released and the session closed successfully first, and an owner whose
+    /// release or close was refused stays alive with what it holds.
+
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -182,6 +189,31 @@ namespace zantetsu
         /// have happened, and nothing is retried here.
         bool TryReleaseCompletionEvents();
 
+        /// Binds the fixed set of source RGBA surfaces, exactly once per
+        /// owner, taking this session's own reference to each texture and
+        /// creating the shader resource view it will be read through. The
+        /// encoder must already be initialized and nothing else may be
+        /// prepared yet.
+        ///
+        /// Each texture is accepted only as the fixed source it has to be: the
+        /// exact device this session is open on, and a descriptor that is
+        /// typeless RGBA8 at the fixed size with one mip, one slice, no
+        /// multisampling, and a shader resource binding. The sRGB view this
+        /// creates is what gives that storage its colour interpretation. Nothing is converted, copied, recreated, or retried,
+        /// and no other format is accepted in its place. All of them must
+        /// succeed; a failure releases what it took, in reverse.
+        ///
+        /// The pointers are the caller's textures, passed as raw addresses;
+        /// this session neither destroys them nor hands any of them back.
+        bool TryBindSourceSurfaces(void* const* textures, uint32_t count);
+
+        /// Releases the whole set in reverse order - each view, then each
+        /// texture reference - exactly once per owner. Everything prepared on
+        /// top of the sources goes first: a session that still holds an input
+        /// surface, an output buffer, or a completion event refuses before
+        /// this release's one attempt is spent.
+        bool TryReleaseSourceSurfaces();
+
         /// Creates the fixed conversion pipeline and the fixed set of NV12
         /// input surfaces, exactly once per owner: the three shader objects
         /// first, in pipeline order, then one registered surface per slot. The
@@ -282,6 +314,26 @@ namespace zantetsu
         void RollBackPreparedOutputBitstreamBuffers(uint32_t count);
         bool AnyOutputBitstreamBufferHeld() const;
 
+        /// One source surface, as far as it exists: the texture reference
+        /// this session took and the view the conversion reads it through.
+        /// Both are facts of their own, so a half-bound surface is never
+        /// mistaken for a finished or an empty one. Neither is exposed.
+        struct SourceSurfaceSlot
+        {
+            ID3D11Texture2D* texture;
+            ID3D11ShaderResourceView* shaderResourceView;
+        };
+
+        /// Whether this texture is the fixed source this session accepts: the
+        /// exact device, and the exact descriptor. Nothing is inferred from a
+        /// Unity-side name, and no other format is tried.
+        bool IsAcceptedSourceTexture(ID3D11Texture2D* texture) const;
+
+        void ReleaseSourceSurfaceSlot(SourceSurfaceSlot& slot);
+        void RollBackBoundSourceSurfaces(uint32_t count);
+        bool AnySourceSurfaceHeld() const;
+        bool AreSourceSurfacesFullyBound() const;
+
         bool TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot);
         void RollBackPreparedInputSurfaces(uint32_t count);
 
@@ -316,6 +368,12 @@ namespace zantetsu
         ID3D11VertexShader* _conversionVertexShader = nullptr;
         ID3D11PixelShader* _conversionLumaPixelShader = nullptr;
         ID3D11PixelShader* _conversionChromaPixelShader = nullptr;
+
+        // The fixed set of source surfaces this session binds, kept apart
+        // from the encode sample slots.
+        SourceSurfaceSlot _sourceSlots[kSourceSurfaceSlotCount] = {};
+        bool _sourceSurfacesBindAttempted = false;
+        bool _sourceSurfacesReleaseAttempted = false;
 
         // The fixed set of slots this session owns, and the attempts that may
         // touch each kind of resource in them.

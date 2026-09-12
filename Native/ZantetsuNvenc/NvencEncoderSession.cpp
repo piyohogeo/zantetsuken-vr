@@ -57,13 +57,15 @@ namespace zantetsu
     {
         // Destroying an owner that still holds an encoder, a completion-event
         // handle or registration, an output bitstream buffer, an input
-        // surface, or a conversion shader is a contract violation, not a state
+        // surface, a conversion shader, or a source surface binding is a
+        // contract violation, not a state
         // this handles: the caller releases and closes first, and an owner
         // whose release or close was refused is kept. Nothing is unregistered,
         // closed, released, or destroyed implicitly here.
         assert(!AnyCompletionEventHeld());
         assert(!AnyOutputBitstreamBufferHeld());
         assert(!AnyInputSurfaceHeld());
+        assert(!AnySourceSurfaceHeld());
         assert(_encoder == nullptr);
 
         ReleaseDeviceAndDriver();
@@ -626,6 +628,221 @@ namespace zantetsu
         }
     }
 
+    /// Whether this is the one source texture shape this session accepts. The
+    /// descriptor was established by reading a real Player's render texture,
+    /// not by mapping a Unity format name onto a DXGI one, and nothing else is
+    /// accepted in its place: there is no compatibility table and no fallback.
+    bool NvencEncoderSession::IsAcceptedSourceTexture(ID3D11Texture2D* texture) const
+    {
+        // The exact device this session is open on. A texture from another
+        // device is not this session's to read, whatever it looks like.
+        ID3D11Device* owningDevice = nullptr;
+        texture->GetDevice(&owningDevice);
+        if (owningDevice == nullptr)
+        {
+            return false;
+        }
+
+        const bool sameDevice = owningDevice == _device;
+        owningDevice->Release();
+
+        if (!sameDevice)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC desc = {};
+        texture->GetDesc(&desc);
+
+        // RGBA8 at the one size, with nothing the fixed conversion cannot
+        // read: one mip, one slice, no multisampling, and readable as a shader
+        // resource. The storage format is typeless - that is what a Player's
+        // capture render target really reports - so it carries no colour
+        // interpretation of its own, and the sRGB view created below is what
+        // makes the read decode.
+        return desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS &&
+            desc.Width == kInputSurfaceWidth &&
+            desc.Height == kInputSurfaceHeight &&
+            desc.MipLevels == 1 &&
+            desc.ArraySize == 1 &&
+            desc.SampleDesc.Count == 1 &&
+            desc.SampleDesc.Quality == 0 &&
+            (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) != 0;
+    }
+
+    /// Gives one source surface back in the reverse of the order it was taken:
+    /// the view, then the reference. A COM release cannot be refused, so this
+    /// reports nothing.
+    void NvencEncoderSession::ReleaseSourceSurfaceSlot(SourceSurfaceSlot& slot)
+    {
+        if (slot.shaderResourceView != nullptr)
+        {
+            ID3D11ShaderResourceView* view = slot.shaderResourceView;
+            slot.shaderResourceView = nullptr;
+            view->Release();
+        }
+
+        if (slot.texture != nullptr)
+        {
+            ID3D11Texture2D* texture = slot.texture;
+            slot.texture = nullptr;
+
+            // Only this session's own reference. The texture itself stays the
+            // caller's, and is neither destroyed nor handed back.
+            texture->Release();
+        }
+    }
+
+    /// Unwinds the surfaces this binding took, in reverse. Nothing here can be
+    /// refused, so unlike the registered NV12 surfaces it always completes.
+    void NvencEncoderSession::RollBackBoundSourceSurfaces(uint32_t count)
+    {
+        for (uint32_t i = count; i > 0; --i)
+        {
+            ReleaseSourceSurfaceSlot(_sourceSlots[i - 1]);
+        }
+    }
+
+    bool NvencEncoderSession::AnySourceSurfaceHeld() const
+    {
+        for (uint32_t i = 0; i < kSourceSurfaceSlotCount; ++i)
+        {
+            if (_sourceSlots[i].texture != nullptr ||
+                _sourceSlots[i].shaderResourceView != nullptr)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool NvencEncoderSession::AreSourceSurfacesFullyBound() const
+    {
+        for (uint32_t i = 0; i < kSourceSurfaceSlotCount; ++i)
+        {
+            if (_sourceSlots[i].texture == nullptr ||
+                _sourceSlots[i].shaderResourceView == nullptr)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::TryBindSourceSurfaces(
+        void* const* textures, uint32_t count)
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        if (textures == nullptr || count != kSourceSurfaceSlotCount)
+        {
+            return false;
+        }
+
+        // The sources are the first thing bound after the encoder exists:
+        // nothing may be prepared on top of them yet, and nothing may be held.
+        if (!_encoderInitialized ||
+            AnySourceSurfaceHeld() ||
+            AnyInputSurfaceHeld() ||
+            AnyOutputBitstreamBufferHeld() ||
+            AnyCompletionEventHeld())
+        {
+            return false;
+        }
+
+        // One owner, one binding - settled before D3D11 is touched.
+        if (_sourceSurfacesBindAttempted)
+        {
+            return false;
+        }
+
+        _sourceSurfacesBindAttempted = true;
+
+        for (uint32_t i = 0; i < kSourceSurfaceSlotCount; ++i)
+        {
+            ID3D11Texture2D* texture = static_cast<ID3D11Texture2D*>(textures[i]);
+            if (texture == nullptr)
+            {
+                RollBackBoundSourceSurfaces(i);
+                return false;
+            }
+
+            // A descriptor that is not the accepted one is not a D3D11
+            // failure, so no HRESULT is invented for it.
+            if (!IsAcceptedSourceTexture(texture))
+            {
+                RollBackBoundSourceSurfaces(i);
+                return false;
+            }
+
+            // This session's own reference, taken before anything is made from
+            // it and owned from that moment.
+            texture->AddRef();
+            _sourceSlots[i].texture = texture;
+
+            // The explicit typed view the shader reads through. Its sRGB
+            // format is what decodes to linear on read; nothing beyond the
+            // format, the dimension, and the one mip is set.
+            D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+            viewDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            viewDesc.Texture2D.MostDetailedMip = 0;
+            viewDesc.Texture2D.MipLevels = 1;
+
+            ID3D11ShaderResourceView* view = nullptr;
+            const HRESULT hr =
+                _device->CreateShaderResourceView(texture, &viewDesc, &view);
+            if (FAILED(hr) || view == nullptr)
+            {
+                _lastHResult = hr;
+                RollBackBoundSourceSurfaces(i + 1);
+                return false;
+            }
+
+            _sourceSlots[i].shaderResourceView = view;
+        }
+
+        return AreSourceSurfacesFullyBound();
+    }
+
+    bool NvencEncoderSession::TryReleaseSourceSurfaces()
+    {
+        if (_encoder == nullptr || _closeAttempted)
+        {
+            return false;
+        }
+
+        if (!AnySourceSurfaceHeld())
+        {
+            return false;
+        }
+
+        // Everything prepared on top of the sources goes first. Checked before
+        // this release's one attempt is spent, so the caller can still release
+        // them once the rest is gone.
+        if (AnyInputSurfaceHeld() ||
+            AnyOutputBitstreamBufferHeld() ||
+            AnyCompletionEventHeld())
+        {
+            return false;
+        }
+
+        if (_sourceSurfacesReleaseAttempted)
+        {
+            return false;
+        }
+
+        _sourceSurfacesReleaseAttempted = true;
+
+        RollBackBoundSourceSurfaces(kSourceSurfaceSlotCount);
+        return true;
+    }
+
     bool NvencEncoderSession::AnyInputSurfaceSlotResourceHeld() const
     {
         for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
@@ -841,6 +1058,14 @@ namespace zantetsu
             AnyCompletionEventHeld() ||
             AnyOutputBitstreamBufferHeld() ||
             AnyInputSurfaceHeld())
+        {
+            return false;
+        }
+
+        // The sources the conversion will read come first. Checked before this
+        // preparation's one attempt is spent, so the caller can still prepare
+        // once they are bound.
+        if (!AreSourceSurfacesFullyBound())
         {
             return false;
         }
@@ -1226,13 +1451,13 @@ namespace zantetsu
     {
         // An encoder is not destroyed while this session still holds any
         // completion-event handle or registration, output bitstream buffer,
-        // input surface, or conversion shader - prepared, half-prepared, or
-        // half-released. A session left holding only shaders is holding
+        // input surface, conversion shader, or source surface binding -
+        // prepared, half-prepared, or half-released. A session left holding only shaders is holding
         // something, and is refused here as well. Refused before the close
         // attempt is spent, so the caller can still close once everything is
         // gone.
         if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
-            AnyInputSurfaceHeld())
+            AnyInputSurfaceHeld() || AnySourceSurfaceHeld())
         {
             return NvencEncoderSessionCloseStatus::Failed;
         }

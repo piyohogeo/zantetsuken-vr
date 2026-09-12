@@ -431,6 +431,94 @@ ZantetsuNvencReleaseSessionCompletionEventsV1(
 }
 
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencBindSessionSourceSurfacesV1(
+    uint64_t sessionOwner,
+    const ZantetsuNvencSessionSourceSurfaceRequestV1* request,
+    uint32_t requestSize,
+    ZantetsuNvencSessionSourceSurfaceResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionSourceSurfaceResultV1) ||
+        request == nullptr ||
+        requestSize != sizeof(ZantetsuNvencSessionSourceSurfaceRequestV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    // A request this build does not speak, or one that is not the fixed set,
+    // is refused before the session is touched.
+    if (request->abiVersion != ZANTETSU_NVENC_SESSION_V1_VERSION ||
+        request->surfaceCount != ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT)
+    {
+        return 0;
+    }
+
+    void* textures[ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT] = {};
+    for (uint32_t i = 0; i < ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT; ++i)
+    {
+        if (request->surfaces[i] == 0)
+        {
+            return 0;
+        }
+
+        textures[i] = reinterpret_cast<void*>(
+            static_cast<uintptr_t>(request->surfaces[i]));
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryBindSourceSurfaces(
+            textures, ZANTETSU_NVENC_SESSION_V1_SOURCE_SURFACE_COUNT))
+    {
+        // The session is still initialized and open, and the binding released
+        // what it took. A descriptor this session does not accept leaves the
+        // HRESULT at zero, because no D3D11 call failed.
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionSourceSurfacesV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionSourceSurfaceResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionSourceSurfaceResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryReleaseSourceSurfaces())
+    {
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencPrepareSessionInputSurfacesV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionInputSurfaceResultV1* destination,

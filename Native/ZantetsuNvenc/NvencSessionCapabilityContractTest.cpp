@@ -67,6 +67,40 @@ namespace
 
         return device;
     }
+
+    /// The source texture a Player's capture render target really is, as read
+    /// from one with GetDesc: typeless RGBA8, 1280x720, one mip, one slice, no
+    /// multisampling, bound as both a render target and a shader resource. The
+    /// storage carries no colour interpretation; the session's sRGB view is
+    /// what supplies it.
+    ID3D11Texture2D* CreateSourceTexture(ID3D11Device* device)
+    {
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = 1280;
+        desc.Height = 720;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = 0;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = 0;
+
+        ID3D11Texture2D* texture = nullptr;
+        const HRESULT hr = device->CreateTexture2D(&desc, nullptr, &texture);
+        if (FAILED(hr) || texture == nullptr)
+        {
+            std::printf(
+                "FAILED: could not create a source texture (hr 0x%08lX)\n",
+                static_cast<unsigned long>(hr));
+            ++g_failures;
+            return nullptr;
+        }
+
+        return texture;
+    }
 }
 
 int main()
@@ -181,10 +215,60 @@ int main()
         "a second initialization on the same session is refused");
     Check(session.IsOpen(), "the refused second initialization left the session open");
 
+    // The NV12 input surfaces wait for the sources, and asking too early
+    // must not spend the one preparation attempt.
+    Check(
+        !session.TryPrepareInputSurfaces(),
+        "the NV12 input surfaces are not prepared before the sources are bound");
+
     // Output buffers wait for the input surfaces.
     Check(
         !session.TryPrepareOutputBitstreamBuffers(),
         "output buffers are not prepared before the input surfaces");
+
+    // The fixed set of source RGBA surfaces, created here the way a Player's
+    // capture render targets are and owned by this test.
+    ID3D11Texture2D* sourceTextures[zantetsu::kSourceSurfaceSlotCount] = {};
+    void* sourcePointers[zantetsu::kSourceSurfaceSlotCount] = {};
+    bool sourcesCreated = true;
+    for (uint32_t i = 0; i < zantetsu::kSourceSurfaceSlotCount; ++i)
+    {
+        sourceTextures[i] = CreateSourceTexture(device);
+        if (sourceTextures[i] == nullptr)
+        {
+            sourcesCreated = false;
+            break;
+        }
+
+        sourcePointers[i] = sourceTextures[i];
+    }
+
+    if (!sourcesCreated)
+    {
+        for (uint32_t i = zantetsu::kSourceSurfaceSlotCount; i > 0; --i)
+        {
+            if (sourceTextures[i - 1] != nullptr)
+            {
+                sourceTextures[i - 1]->Release();
+            }
+        }
+
+        binding.Clear();
+        return 1;
+    }
+
+    Check(
+        session.TryBindSourceSurfaces(
+            sourcePointers, zantetsu::kSourceSurfaceSlotCount),
+        "the fixed set of source RGBA surfaces binds: a reference and a view each");
+    Check(
+        !session.TryBindSourceSurfaces(
+            sourcePointers, zantetsu::kSourceSurfaceSlotCount),
+        "a second source surface binding is refused");
+    Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with bound source surfaces refuses to close");
+    Check(session.IsOpen(), "the refused close left the session open");
 
     // The fixed conversion pipeline and the fixed set of NV12 input surfaces,
     // owned by the session. Success here is the whole set: three shader
@@ -264,6 +348,10 @@ int main()
         "a session with a prepared pipeline and input surfaces still refuses to close");
 
     Check(
+        !session.TryReleaseSourceSurfaces(),
+        "the source surfaces are not released while the input surfaces are held");
+
+    Check(
         session.TryReleaseInputSurfaces(),
         "the input surface set and then the three shaders release once the rest is gone");
 
@@ -273,9 +361,28 @@ int main()
         "a second input surface release on the same session is refused");
 
     Check(
+        session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+        "a session with only its source surfaces left still refuses to close");
+
+    // The refusal above spent nothing, so the release still works.
+    Check(
+        session.TryReleaseSourceSurfaces(),
+        "the source surface set releases its views and references once the rest is gone");
+    Check(
+        !session.TryReleaseSourceSurfaces(),
+        "a second source surface release on the same session is refused");
+
+    Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the session closes once its slot resources and pipeline are gone");
+        "the session closes once its slot resources, pipeline, and sources are gone");
     Check(!session.IsOpen(), "the closed session holds no encoder");
+
+    // The test's own references, given back in the reverse of the order they
+    // were taken. The session released its own with the binding.
+    for (uint32_t i = zantetsu::kSourceSurfaceSlotCount; i > 0; --i)
+    {
+        sourceTextures[i - 1]->Release();
+    }
 
     binding.Clear();
 

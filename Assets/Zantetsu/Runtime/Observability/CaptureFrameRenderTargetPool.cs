@@ -200,6 +200,75 @@ namespace Zantetsu.Observability
             _generations[slot]++;
         }
 
+        /// <summary>
+        /// Copies this pool's native texture pointers, one per slot, into
+        /// <paramref name="destination"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// For the Run initialization that binds these render targets to the
+        /// native capture session, and for nothing else: the pointers are read
+        /// from the textures on the main thread, once, and are not stored,
+        /// cached, wrapped, or counted here. The pool keeps owning its
+        /// textures, and a pointer read here is only valid while it does.
+        /// </para>
+        /// <para>
+        /// The pool must be created, the destination must be exactly its
+        /// capacity, and nothing may be rented: reading the set while a slot is
+        /// out on lease would describe a pool that is already in use. No lease
+        /// is taken or returned to check that, so no generation moves. If any
+        /// slot cannot supply a pointer, nothing is written and the call
+        /// throws, so a partial set cannot be handed on.
+        /// </para>
+        /// </remarks>
+        internal void CopyNativeTexturePointers(IntPtr[] destination)
+        {
+            ThrowIfDisposed();
+
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            if (destination.Length != _capacity)
+            {
+                throw new ArgumentException(
+                    "The destination must be exactly the pool's capacity.",
+                    nameof(destination));
+            }
+
+            if (_rentedCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Cannot read the native texture pointers while render targets are rented.");
+            }
+
+            IntPtr[] pointers = new IntPtr[_capacity];
+            for (int i = 0; i < _capacity; i++)
+            {
+                RenderTexture rt = _textures[i];
+                if (rt == null || !rt.IsCreated())
+                {
+                    throw new InvalidOperationException("The render texture is not created.");
+                }
+
+                IntPtr pointer = rt.GetNativeTexturePtr();
+                if (pointer == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException(
+                        "The render texture has no native texture pointer.");
+                }
+
+                pointers[i] = pointer;
+            }
+
+            // Written only once every slot supplied one.
+            for (int i = 0; i < _capacity; i++)
+            {
+                destination[i] = pointers[i];
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed)
