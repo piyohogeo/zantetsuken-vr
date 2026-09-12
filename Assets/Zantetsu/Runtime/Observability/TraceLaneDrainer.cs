@@ -56,17 +56,12 @@ namespace Zantetsu.Observability
         private readonly TraceLaneSet _lanes;
 
         private int _nextOrdinal;
+        private bool _sealed;
 
         internal TraceLaneDrainer(TraceLaneSet lanes)
         {
             _lanes = lanes ?? throw new ArgumentNullException(nameof(lanes));
         }
-
-        /// <summary>
-        /// The lane the next drain will look at first: the one after the lane
-        /// the last drain took a record from.
-        /// </summary>
-        internal int NextOrdinal => _nextOrdinal;
 
         /// <summary>
         /// Hands over up to the profile's ordinary drain limit of records and
@@ -78,6 +73,8 @@ namespace Zantetsu.Observability
             {
                 throw new ArgumentNullException(nameof(destination));
             }
+
+            RequireNotSealed();
 
             int laneCount = _lanes.LaneCount;
             if (laneCount == 0)
@@ -121,5 +118,113 @@ namespace Zantetsu.Observability
 
             return drained;
         }
+
+        /// <summary>
+        /// Takes everything the lanes still hold, adds up what they had to
+        /// drop, and seals the drainer.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is for after the producers have stopped - every job finished,
+        /// every worker stopped, every writer done with. That is the caller's
+        /// to know: nothing here proves it again, and nothing here can stop a
+        /// producer or take a writer away. A writer used after that point is
+        /// undefined behaviour, as it already was.
+        /// </para>
+        /// <para>
+        /// The ordinary drain is what does the work, run until it comes back
+        /// empty, so the order records come out in and the lane the round
+        /// resumes at are exactly what they were - there is no second drain
+        /// algorithm here and no sequence across lanes. Only once every record
+        /// has been handed over and every lane's drop count added up is the
+        /// drainer sealed; after that, draining again - ordinary or final - is
+        /// a mistake in the calling code rather than something to recover
+        /// from.
+        /// </para>
+        /// <para>
+        /// A destination that throws stops all of this where it stands: that
+        /// record stays in its lane, nothing is sealed, and the failure is
+        /// passed on as it is. Nothing is rolled back, retried, or collected
+        /// up. The lane set is not released here and does not change hands.
+        /// </para>
+        /// </remarks>
+        internal TraceFinalDrainResult DrainToEndAndSeal(ITraceRecordDestination destination)
+        {
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            RequireNotSealed();
+
+            long records = 0L;
+            int drained;
+            do
+            {
+                drained = Drain(destination);
+                records = SaturatingAdd(records, drained);
+            }
+            while (drained > 0);
+
+            long drops = 0L;
+            int laneCount = _lanes.LaneCount;
+            for (int ordinal = 0; ordinal < laneCount; ordinal++)
+            {
+                drops = SaturatingAdd(drops, _lanes.DropCountOf(ordinal));
+            }
+
+            _sealed = true;
+            return new TraceFinalDrainResult(records, drops);
+        }
+
+        /// <summary>
+        /// Adds two counts and stops at the largest value rather than turning
+        /// over. Neither a record count nor a drop count is ever negative.
+        /// </summary>
+        private static long SaturatingAdd(long total, long addition)
+        {
+            if (addition <= 0L)
+            {
+                return total;
+            }
+
+            return addition >= long.MaxValue - total ? long.MaxValue : total + addition;
+        }
+
+        private void RequireNotSealed()
+        {
+            if (_sealed)
+            {
+                throw new InvalidOperationException(
+                    "This trace lane drainer has been sealed and takes no more records.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// What one final drain came to: how many records were handed over, and
+    /// how many the lanes had to drop over the whole Run.
+    /// </summary>
+    /// <remarks>
+    /// Both counts stop at their largest value rather than turning over. There
+    /// is nothing else in here - no issuer, generation, time, proof, or
+    /// receipt to check it against, and no reason a record was dropped.
+    /// </remarks>
+    internal readonly struct TraceFinalDrainResult
+    {
+        private readonly long _recordCount;
+        private readonly long _dropCount;
+
+        internal TraceFinalDrainResult(long recordCount, long dropCount)
+        {
+            _recordCount = recordCount;
+            _dropCount = dropCount;
+        }
+
+        /// <summary>Records the final drain handed to the destination.</summary>
+        internal long RecordCount => _recordCount;
+
+        /// <summary>Records the lanes could not take, added up.</summary>
+        internal long DropCount => _dropCount;
     }
 }
