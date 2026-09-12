@@ -38,12 +38,14 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Everything is checked here, before a single byte is allocated: there is
-    /// at least one lane, every capacity is positive, every payload ring is
-    /// big enough for the longest record the Run allows, and the ordinary
-    /// drain limit is positive. The total the lanes will take is added up in
-    /// checked arithmetic from the same calculation the lane itself allocates
-    /// by, so the figure validated here is the figure taken later.
+    /// Everything is checked here, and every setting and the total are
+    /// checked before a single byte of a lane's unmanaged storage is taken:
+    /// there is at least one lane, every capacity is positive, every payload
+    /// ring is big enough for the longest record the Run allows, and the
+    /// ordinary drain limit is positive. The total the lanes will take is
+    /// added up in checked arithmetic from the same calculation the lane
+    /// itself allocates by, so the figure validated here is the figure taken
+    /// later.
     /// </para>
     /// <para>
     /// The lane array is copied, so a caller that keeps and edits its own
@@ -65,7 +67,10 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// Validates the whole configuration and fixes it. A profile that
-        /// cannot be built describes nothing and allocates nothing.
+        /// cannot be built describes nothing and leaves no lane storage
+        /// taken; the temporary managed array holding the defensive snapshot
+        /// may already have been made, because the settings are copied before
+        /// they are read.
         /// </summary>
         internal TraceLaneSetProfile(
             int maxPayloadLength,
@@ -97,7 +102,9 @@ namespace Zantetsu.Observability
             }
 
             // Copied first, so nothing below can be read from an array the
-            // caller is free to change afterwards.
+            // caller is free to change afterwards. This managed array is made
+            // even for a profile that turns out to be invalid; what the checks
+            // below come before is any unmanaged storage a lane would hold.
             TraceLaneSettings[] copy = new TraceLaneSettings[lanes.Length];
             Array.Copy(lanes, copy, lanes.Length);
 
