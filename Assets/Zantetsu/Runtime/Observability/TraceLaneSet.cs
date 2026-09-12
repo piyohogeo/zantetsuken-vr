@@ -122,6 +122,15 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// What one lane could not take. It is that lane's own count and
+        /// nothing sums it up here.
+        /// </summary>
+        internal long DropCountOf(int ordinal)
+        {
+            return Lane(ordinal).DropCount;
+        }
+
+        /// <summary>
         /// Releases the record <see cref="TryPeek"/> returned for one lane.
         /// </summary>
         internal void Consume(int ordinal, in TraceLaneIndexEntry entry)
