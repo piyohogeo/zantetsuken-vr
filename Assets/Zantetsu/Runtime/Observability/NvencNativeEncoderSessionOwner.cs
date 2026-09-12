@@ -72,10 +72,11 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// A submit or an output collection reports this for the one
-        /// controllable outcome that is not a completion: nothing changed hands
-        /// and nothing is in an unknown state.
+        /// controllable outcome that is not a completion: a map that took
+        /// nothing, or a bitstream with nothing usable in it that was still
+        /// unlocked and unmapped. Either way nothing is in an unknown state.
         /// </summary>
-        private const uint StatusNotSubmitted = 5;
+        private const uint StatusRejected = 5;
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
         private const string NativeLibraryName = "ZantetsuNvenc";
@@ -1026,7 +1027,7 @@ namespace Zantetsu.Observability
                     System.Threading.Interlocked.Increment(ref _encodeSamplesInFlight);
                     return true;
 
-                case StatusNotSubmitted:
+                case StatusRejected:
                     return false;
 
                 case StatusFailed:
@@ -1061,7 +1062,10 @@ namespace Zantetsu.Observability
         /// <para>
         /// The array is passed straight to the native copy and is neither
         /// stored nor published here, and no pointer, handle, or slot state
-        /// comes back.
+        /// comes back. Only a true result reports a valid length: the copy
+        /// happens before the unlock and the unmap, so a failure afterwards can
+        /// leave bytes in the array that are not an access unit and must not be
+        /// treated as one.
         /// </para>
         /// </remarks>
         internal bool TryCopyCompletedOutput(
@@ -1127,7 +1131,7 @@ namespace Zantetsu.Observability
                     System.Threading.Interlocked.Decrement(ref _encodeSamplesInFlight);
                     return true;
 
-                case StatusNotSubmitted:
+                case StatusRejected:
                     // Nothing usable came back, but the lock and the map did,
                     // so the frame is no longer the driver's either.
                     System.Threading.Interlocked.Decrement(ref _encodeSamplesInFlight);

@@ -1793,6 +1793,14 @@ namespace zantetsu
             return NvencEncodeSubmitStatus::Failed;
         }
 
+        // The generation is spent here, before the driver is touched: one
+        // attempt per sample generation, whatever that attempt comes to. A map
+        // the driver refuses does not hand this generation back.
+        slot.lastSampleGeneration = generation;
+
+        // This generation has had no output collected yet.
+        slot.outputCollectionAttempted = false;
+
         NV_ENC_MAP_INPUT_RESOURCE mapResource = {};
         mapResource.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
         mapResource.registeredResource = slot.registeredInputResource;
@@ -1827,7 +1835,6 @@ namespace zantetsu
         // Owned from the moment it exists: this session must unmap it.
         slot.mappedInputResource = mapResource.mappedResource;
         slot.mappedBufferFormat = mapResource.mappedBufferFmt;
-        slot.lastSampleGeneration = generation;
 
         // The fixed picture. The encoder makes no picture type decision for
         // this profile, so the type, the display order, and the reference flag
@@ -1925,6 +1932,18 @@ namespace zantetsu
         {
             return NvencOutputCollectStatus::Failed;
         }
+
+        // One collection per submitted picture, spent before the event is
+        // waited on. A collection that failed after consuming the completion
+        // event is never repeated: a second attempt would wait forever on an
+        // event nothing will signal again, so it touches neither the OS nor the
+        // driver.
+        if (slot.outputCollectionAttempted)
+        {
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        slot.outputCollectionAttempted = true;
 
         // The encoder signals this event when the picture is done. Waiting is
         // the whole point of this call, which is why only the output worker

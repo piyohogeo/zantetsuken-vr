@@ -41,9 +41,11 @@ extern "C" {
 // A submit or an output collection reports this for the one controllable
 // outcome that is not a completion: a map the driver refused without taking
 // anything, or a bitstream with nothing usable to copy that was nevertheless
-// unlocked and unmapped safely. The caller can report an ordinary failure and
-// carry on; nothing is in an unknown state.
-#define ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED 5u
+// unlocked and unmapped safely. Both are rejections rather than failures - the
+// caller can report an ordinary failure and carry on, because nothing is in an
+// unknown state - and a collected picture really was submitted, so this is not
+// about submission.
+#define ZANTETSU_NVENC_SESSION_V1_STATUS_REJECTED 5u
 
 typedef struct ZantetsuNvencSessionOpenResultV1
 {
@@ -182,8 +184,8 @@ typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
 
 /// What one attempt to submit a picture came to.
 ///
-/// OK means the encoder accepted it. NOT_SUBMITTED is the narrow controllable
-/// case - the map was refused and gave nothing back, so nothing changed hands.
+/// OK means the encoder accepted it. REJECTED is the narrow controllable case -
+/// the map was refused and gave nothing back, so nothing changed hands.
 /// FAILED means what this process owns is no longer known, and nothing was
 /// unmapped on a guess. The driver's own status is the only raw value.
 typedef struct ZantetsuNvencSessionSubmitResultV1
@@ -196,9 +198,9 @@ typedef struct ZantetsuNvencSessionSubmitResultV1
 /// What one attempt to collect a submitted picture's bitstream came to.
 ///
 /// OK means the access unit was copied and both the lock and the map were given
-/// back; the length is then 1..destinationCapacity. NOT_SUBMITTED is used here
-/// for the controllable rejection - nothing usable to copy, with the lock and
-/// the map given back safely, so the slot is usable again. FAILED means the
+/// back; the length is then 1..destinationCapacity. REJECTED means there was
+/// nothing usable to copy, with the lock and the map given back safely, so the
+/// slot is usable again. FAILED means the
 /// wait, the lock, the unlock, or the unmap did not resolve. No pointer and no
 /// slot state is reported: only the length and the raw values.
 typedef struct ZantetsuNvencSessionOutputResultV1
@@ -414,8 +416,8 @@ ZantetsuNvencReleaseSessionInputSurfacesV1(
 // owner handle is zero. Only the slot and a positive generation are named; no
 // token, frame id, pointer, or handle crosses this call, and every per-picture
 // value is fixed by the profile. A refused map that gave nothing back reports
-// NOT_SUBMITTED; anything that leaves ownership unknown reports FAILED and
-// unmaps nothing on a guess.
+// REJECTED; anything that leaves ownership unknown reports FAILED and unmaps
+// nothing on a guess.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencSubmitSessionEncodePictureV1(
     uint64_t sessionOwner,

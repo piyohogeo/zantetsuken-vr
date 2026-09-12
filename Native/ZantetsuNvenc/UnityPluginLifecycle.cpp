@@ -633,7 +633,7 @@ ZantetsuNvencSubmitSessionEncodePictureV1(
 
     if (status == zantetsu::NvencEncodeSubmitStatus::NotSubmitted)
     {
-        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED;
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_REJECTED;
         return 1;
     }
 
@@ -688,7 +688,7 @@ ZantetsuNvencCopySessionCompletedOutputV1(
 
     if (status == zantetsu::NvencOutputCollectStatus::Rejected)
     {
-        result->status = ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED;
+        result->status = ZANTETSU_NVENC_SESSION_V1_STATUS_REJECTED;
         return 1;
     }
 

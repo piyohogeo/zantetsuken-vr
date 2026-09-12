@@ -414,8 +414,10 @@ namespace zantetsu
         /// thread, or the thread that submits. There is no timeout of its own,
         /// no polling, no flush, and no end of stream.
         ///
-        /// The destination is the caller's and is written at most once, in
-        /// full, and only when everything that follows it also succeeds.
+        /// Only Copied reports a valid length. The copy happens before the
+        /// unlock and the unmap, so a later failure can leave bytes in the
+        /// caller's storage; they are not valid data and nothing may treat
+        /// them as an access unit.
         NvencOutputCollectStatus TryCopyCompletedOutput(
             uint32_t sampleSlotIndex,
             uint64_t generation,
@@ -504,6 +506,13 @@ namespace zantetsu
             uint64_t lastSampleGeneration;
             bool submitted;
             bool bitstreamLocked;
+
+            /// Whether this slot's current sample generation has already had
+            /// its output collected once. A collection that failed part of the
+            /// way through is not repeated: the second attempt touches neither
+            /// the OS nor the driver, so a completion event that the first one
+            /// already consumed can never be waited on again.
+            bool outputCollectionAttempted;
         };
 
         /// Whether every slot holds its completion event, registered, and its
