@@ -141,10 +141,11 @@ typedef struct ZantetsuNvencSessionCompletionEventResultV1
 
 /// The fixed set of source surfaces, handed over in one request.
 ///
-/// Each entry is an ID3D11Texture2D* the caller already owns, passed as an
-/// integer so no COM type crosses the boundary. The caller keeps its own
-/// ownership; the session takes its own reference to each one. Nothing is
-/// returned about them.
+/// Each entry is an ID3D11Resource* the caller already owns - what the graphics
+/// contract promises for a native texture pointer - passed as an integer so no
+/// COM type crosses the boundary. The session asks that resource for the 2D
+/// interface it needs and keeps the reference that query returns; the caller's
+/// own ownership is untouched. Nothing is returned about them.
 typedef struct ZantetsuNvencSessionSourceSurfaceRequestV1
 {
     uint32_t abiVersion;
@@ -153,9 +154,11 @@ typedef struct ZantetsuNvencSessionSourceSurfaceRequestV1
 } ZantetsuNvencSessionSourceSurfaceRequestV1;
 
 /// What a source surface binding or release came to. Everything here is D3D11's
-/// work - a descriptor that is not the fixed RGBA8 source, a texture from
-/// another device, or a view the device refused - so an HRESULT is the only raw
-/// value there is, and only a call that actually failed sets it.
+/// work - a resource that is not a 2D texture, a descriptor that is not the
+/// fixed RGBA8 source, a texture from another device, or a view the device
+/// refused - so an HRESULT is the only raw value there is, and only a call that
+/// actually failed sets it. A descriptor this session does not accept fails no
+/// call, and leaves the HRESULT at zero.
 typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
 {
     uint32_t abiVersion;
@@ -265,9 +268,9 @@ ZantetsuNvencReleaseSessionCompletionEventsV1(
 // - when either pointer is null, either size is not exactly its struct's, the
 // owner handle is zero, the request's ABI version is not this one, its surface
 // count is not the fixed one, or any surface is null. A binding that fails
-// reports FAILED with the raw HRESULT of the D3D11 call that failed, or zero
-// when a descriptor simply was not the accepted one; it releases what it took,
-// in reverse. The encoder must already be initialized, and nothing else may be
+// reports FAILED with the raw HRESULT of the D3D11 call that failed - the
+// interface query or the view - or zero when a descriptor simply was not the
+// accepted one; it releases what it took, in reverse. The encoder must already be initialized, and nothing else may be
 // prepared yet.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencBindSessionSourceSurfacesV1(

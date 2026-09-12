@@ -765,25 +765,39 @@ namespace zantetsu
 
         for (uint32_t i = 0; i < kSourceSurfaceSlotCount; ++i)
         {
-            ID3D11Texture2D* texture = static_cast<ID3D11Texture2D*>(textures[i]);
-            if (texture == nullptr)
+            // What the caller hands over is a resource, which is all the
+            // graphics contract promises. The 2D interface is asked for
+            // through the resource itself rather than assumed from the
+            // address, and the reference that query returns is this session's
+            // own - owned from the moment it exists, so nothing is AddRef'd a
+            // second time.
+            ID3D11Resource* resource = static_cast<ID3D11Resource*>(textures[i]);
+            if (resource == nullptr)
             {
                 RollBackBoundSourceSurfaces(i);
                 return false;
             }
+
+            ID3D11Texture2D* texture = nullptr;
+            const HRESULT queryHr = resource->QueryInterface(
+                __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
+            if (FAILED(queryHr) || texture == nullptr)
+            {
+                _lastHResult = queryHr;
+                RollBackBoundSourceSurfaces(i);
+                return false;
+            }
+
+            _sourceSlots[i].texture = texture;
 
             // A descriptor that is not the accepted one is not a D3D11
-            // failure, so no HRESULT is invented for it.
+            // failure, so no HRESULT is invented for it. Everything from here
+            // on asks the 2D interface, never the address that came in.
             if (!IsAcceptedSourceTexture(texture))
             {
-                RollBackBoundSourceSurfaces(i);
+                RollBackBoundSourceSurfaces(i + 1);
                 return false;
             }
-
-            // This session's own reference, taken before anything is made from
-            // it and owned from that moment.
-            texture->AddRef();
-            _sourceSlots[i].texture = texture;
 
             // The explicit typed view the shader reads through. Its sRGB
             // format is what decodes to linear on read; nothing beyond the

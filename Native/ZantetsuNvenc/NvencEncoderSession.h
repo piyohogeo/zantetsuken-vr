@@ -203,8 +203,10 @@ namespace zantetsu
         /// and no other format is accepted in its place. All of them must
         /// succeed; a failure releases what it took, in reverse.
         ///
-        /// The pointers are the caller's textures, passed as raw addresses;
-        /// this session neither destroys them nor hands any of them back.
+        /// The pointers are the caller's resources, passed as raw addresses:
+        /// each is asked for its 2D interface rather than assumed to be one,
+        /// and the reference that query returns is what this session holds. It
+        /// destroys none of them and hands none of them back.
         bool TryBindSourceSurfaces(void* const* textures, uint32_t count);
 
         /// Releases the whole set in reverse order - each view, then each
@@ -314,8 +316,9 @@ namespace zantetsu
         void RollBackPreparedOutputBitstreamBuffers(uint32_t count);
         bool AnyOutputBitstreamBufferHeld() const;
 
-        /// One source surface, as far as it exists: the texture reference
-        /// this session took and the view the conversion reads it through.
+        /// One source surface, as far as it exists: the 2D interface
+        /// reference this session got from the caller's resource and the view
+        /// the conversion reads it through.
         /// Both are facts of their own, so a half-bound surface is never
         /// mistaken for a finished or an empty one. Neither is exposed.
         struct SourceSurfaceSlot

@@ -569,11 +569,11 @@ namespace Zantetsu.Observability
         /// </summary>
         /// <remarks>
         /// <para>
-        /// The pointers name textures the caller keeps owning; this owner
-        /// neither holds nor disposes them, and neither does the pool they
-        /// came from. What the native side takes is its own reference and the
-        /// view it will read through, and none of that comes back: no pointer,
-        /// view, descriptor, slot, or count is returned.
+        /// The pointers name textures the pool owns and goes on owning. This
+        /// owner neither holds nor disposes them; the native session takes
+        /// only its own COM reference to each, plus the view it will read
+        /// through, and none of that comes back: no pointer, view, descriptor,
+        /// slot, or count is returned.
         /// </para>
         /// <para>
         /// A null set, a set that is not the fixed size, or a null pointer in

@@ -240,7 +240,9 @@ int main()
             break;
         }
 
-        sourcePointers[i] = sourceTextures[i];
+        // Handed over as the resource the graphics contract promises, not as
+        // the 2D interface: the session asks for that itself.
+        sourcePointers[i] = static_cast<ID3D11Resource*>(sourceTextures[i]);
     }
 
     if (!sourcesCreated)
