@@ -60,8 +60,28 @@ interleaving.
 Fixed in 7f26217, which changed the four sites that read `OutputQueue.Count`
 straight after a settle wait to a bounded convergence on that count.
 
-A failure of this assertion is now a regression to investigate, never something
-to pass by re-running.
+The same mis-judgement was still present on the other side of the fixture. In
+the full suite run `20260912-132411-fb2e27`,
+`NvencOrderedSubmitWorkerServiceContractTests.Drain_BeginDrainIdempotent` failed
+at `Assert.That(h.Worker.DrainCompleted, Is.True)` (`Expected: True But was:
+False`) immediately after a settle wait. That is the identical mechanism: a
+settle is a wake hint, not evidence that the drain has completed, and the
+positive reads of `DrainCompleted` had not been converted. This is not an active
+flake and not a product defect - `DrainCompleted` itself is correct, and the
+fixture was asking the wrong question.
+
+`Drain_SettleObservedAfterBeginDrain_IsNotEvidenceOfCompletedDrain` demonstrates
+it deterministically with the same two ordinary Settled observers: the worker is
+held at the start of a raise, the drain is requested inside that window, the
+raise is then allowed to publish its settle, and the drain is shown to be
+incomplete at exactly that point. Every positive drain confirmation in that
+fixture now goes through `WaitForDrainCompleted`, which re-checks the flag
+against one deadline and uses the settle only as a wake hint, exactly as
+`WaitForOutputQueueCount` does. The evidence for this fix is that deterministic
+test and the replaced confirmations, not a successful re-run.
+
+A failure of either assertion is now a regression to investigate, never
+something to pass by re-running.
 
 ### Output worker: settle observed before terminal result became collectable
 

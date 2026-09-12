@@ -435,8 +435,7 @@ namespace Zantetsu.Core.Tests
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitSettled(h.SettledEvent, "worker did not stop after an empty drain");
-                Assert.That(h.Worker.DrainCompleted, Is.True);
+                WaitForDrainCompleted(h, "worker did not complete an empty drain");
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(0));
             }
         }
@@ -458,8 +457,7 @@ namespace Zantetsu.Core.Tests
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitSettled(h.SettledEvent, "worker did not stop after draining pending records");
-                Assert.That(h.Worker.DrainCompleted, Is.True);
+                WaitForDrainCompleted(h, "worker did not complete the drain of pending records");
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(3));
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(3));
 
@@ -502,8 +500,7 @@ namespace Zantetsu.Core.Tests
                 h.SettledEvent.Reset();
                 h.Worker.Notify();
 
-                WaitSettled(h.SettledEvent, "worker did not stop after drain + evidence");
-                Assert.That(h.Worker.DrainCompleted, Is.True);
+                WaitForDrainCompleted(h, "worker did not complete the drain once the evidence arrived");
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
             }
         }
@@ -525,8 +522,7 @@ namespace Zantetsu.Core.Tests
                 h.SettledEvent.Reset();
                 Assert.That(h.Worker.BeginDrain(), Is.True);
 
-                WaitSettled(h.SettledEvent, "worker did not stop");
-                Assert.That(h.Worker.DrainCompleted, Is.True);
+                WaitForDrainCompleted(h, "worker did not complete the drain");
 
                 // Worker stop does not drain the Submit-to-Output Queue.
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(2));
@@ -573,8 +569,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(h.Worker.BeginDrain(), Is.True);
                 Assert.That(h.Worker.BeginDrain(), Is.True); // idempotent
 
-                WaitSettled(h.SettledEvent, "worker did not stop");
-                Assert.That(h.Worker.DrainCompleted, Is.True);
+                WaitForDrainCompleted(h, "worker did not complete the drain");
                 Assert.That(h.Submitter.SubmitCount, Is.EqualTo(1));
                 Assert.That(h.OutputQueue.Count, Is.EqualTo(1));
             }
@@ -895,6 +890,156 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(h.OutputQueue.Count, Is.EqualTo(expected), message);
+        }
+
+        /// <summary>
+        /// A settle observed after a drain request is not evidence that the
+        /// drain has completed: the raise that carried it may have been in
+        /// flight before the request, and the worker may still be inside it.
+        /// </summary>
+        /// <remarks>
+        /// The same two ordinary observers as the output-queue case, and no
+        /// product change: the worker is held at the start of a raise, the drain
+        /// is requested inside that window, the raise is then allowed to publish
+        /// its settle, and the drain is shown to be incomplete at exactly that
+        /// point. Released, it converges - which is what
+        /// <c>WaitForDrainCompleted</c> confirms.
+        /// </remarks>
+        [Test]
+        public void Drain_SettleObservedAfterBeginDrain_IsNotEvidenceOfCompletedDrain()
+        {
+            // The events outlive the Harness: the worker parks inside an
+            // observer, so they are released only after it has stopped.
+            using (ManualResetEventSlim insideRaise = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim proceed = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim observedSettle = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim releaseWorker = new ManualResetEventSlim(false))
+            using (ManualResetEventSlim confirmationStarted = new ManualResetEventSlim(false))
+            using (Harness h = Harness.Create(1))
+            {
+                Action enterRaise = () =>
+                {
+                    insideRaise.Set();
+                    proceed.Wait(WatchdogTimeoutMs);
+                };
+                Action publishSettle = () =>
+                {
+                    observedSettle.Set();
+                    releaseWorker.Wait(WatchdogTimeoutMs);
+                };
+
+                h.Worker.Settled += enterRaise;
+                h.Worker.Settled += publishSettle;
+                try
+                {
+                    h.Worker.Start();
+                    Assert.That(insideRaise.Wait(WatchdogTimeoutMs), Is.True,
+                        "worker did not reach its settle raise");
+
+                    // The drain is requested while that raise is in flight, so
+                    // the raise carries no information about it.
+                    Assert.That(observedSettle.IsSet, Is.False);
+                    Assert.That(h.State.TryBeginDrain(), Is.True);
+                    Assert.That(h.Worker.BeginDrain(), Is.True);
+
+                    // Let the in-flight raise finish: the settle is now observed
+                    // strictly after the drain request.
+                    proceed.Set();
+                    Assert.That(observedSettle.Wait(WatchdogTimeoutMs), Is.True,
+                        "the in-flight settle was not observed");
+
+                    // Treating that settle as evidence of a completed drain is
+                    // wrong, and this holds deterministically because the worker
+                    // is still held inside the raise: the fixture's own settle
+                    // signal is set, and the drain is not complete.
+                    Assert.That(h.SettledEvent.IsSet, Is.True);
+                    Assert.That(h.Worker.DrainCompleted, Is.False);
+                    Assert.That(h.Worker.IsStopped, Is.False);
+
+                    // The worker is released only once the confirmation below
+                    // has begun, so that confirmation starts from exactly the
+                    // state above: a settle already signalled and a drain that
+                    // has not completed. A confirmation that took the settle
+                    // for the condition would answer from there; one that
+                    // re-checks the condition converges instead.
+                    Thread releaser = new Thread(() =>
+                    {
+                        confirmationStarted.Wait(WatchdogTimeoutMs);
+                        releaseWorker.Set();
+                    });
+
+                    releaser.Start();
+                    try
+                    {
+                        confirmationStarted.Set();
+                        WaitForDrainCompleted(h, "worker did not complete the drain");
+                    }
+                    finally
+                    {
+                        releaser.Join(WatchdogTimeoutMs);
+                    }
+                }
+                finally
+                {
+                    proceed.Set();
+                    releaseWorker.Set();
+                    h.Worker.Settled -= enterRaise;
+                    h.Worker.Settled -= publishSettle;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Confirms the real condition - the worker having completed its drain -
+        /// inside a bounded watchdog.
+        /// </summary>
+        /// <remarks>
+        /// The worker's Settled event is a best-effort park notification, so a
+        /// settle observed after a drain request may be a raise that was already
+        /// in flight and carries no information about it. This helper therefore
+        /// never treats a settle as the condition: it checks the flag first,
+        /// then resets and notifies and re-checks against a single monotonic
+        /// deadline that is never re-granted, and only uses the settle as a wake
+        /// hint between attempts. It re-issues no drain request, no enqueue, and
+        /// no other state change - the only things repeated are the flag check
+        /// and the notification that asks the worker to re-evaluate.
+        /// </remarks>
+        private static void WaitForDrainCompleted(Harness h, string message)
+        {
+            if (h.Worker.DrainCompleted)
+            {
+                Assert.That(h.Worker.DrainCompleted, Is.True, message);
+                return;
+            }
+
+            Stopwatch watch = Stopwatch.StartNew();
+            while (true)
+            {
+                h.SettledEvent.Reset();
+                h.Worker.Notify();
+
+                if (h.Worker.DrainCompleted)
+                {
+                    break;
+                }
+
+                long remaining = WatchdogTimeoutMs - watch.ElapsedMilliseconds;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                // The wake hint's own result is deliberately ignored: only the
+                // re-check below decides.
+                h.SettledEvent.Wait((int)remaining);
+
+                if (h.Worker.DrainCompleted || watch.ElapsedMilliseconds >= WatchdogTimeoutMs)
+                {
+                    break;
+                }
+            }
+
+            Assert.That(h.Worker.DrainCompleted, Is.True, message);
         }
 
         private static void WaitSettled(ManualResetEventSlim settled, string message)
