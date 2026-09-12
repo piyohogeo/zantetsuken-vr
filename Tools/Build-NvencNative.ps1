@@ -17,12 +17,17 @@
     in the build directory: nothing is copied into this repository or into a
     Unity project.
 
-    The SDK and the Unity installation are external prerequisites and are never
-    redistributed by this repository. The SDK root, the Unity root, and the
-    build directory are required arguments: this script downloads nothing,
-    searches for no SDK or Unity installation, reads no Unity Hub setting or
-    environment variable, guesses no default path, and refuses a build
-    directory inside the repository.
+    The fixed RGBA to NV12 shaders are compiled at build time by the fxc.exe
+    named with -Fxc, into byte code headers under the build directory. Nothing
+    is compiled at run time and no d3dcompiler dependency is added.
+
+    The SDK, the Unity installation, and the Windows SDK that provides fxc.exe
+    are external prerequisites and are never redistributed by this repository.
+    The SDK root, the Unity root, the build directory, and the shader compiler
+    are required arguments: this script downloads nothing, searches for no SDK,
+    Unity installation, or shader compiler, reads no Unity Hub setting,
+    registry key, or environment variable, guesses no default path, and refuses
+    a build directory inside the repository.
 
     CMake comes from PATH unless -CMake names another one. Targeting a Visual
     Studio generator with -A x64 needs a CMake that knows the installed Visual
@@ -45,6 +50,13 @@ param(
 
     [Parameter(Mandatory = $true)]
     [string]$BuildDirectory,
+
+    # Full path to the fxc.exe of your own Windows SDK, which compiles the
+    # fixed RGBA to NV12 shaders at build time. Required: no shader compiler is
+    # searched for on PATH, read from the registry, or guessed, and none is
+    # used at run time.
+    [Parameter(Mandatory = $true)]
+    [string]$Fxc,
 
     [string]$CMake = 'cmake',
 
@@ -133,6 +145,25 @@ if ($buildCompare -eq $repoFull -or
     Fail "BuildDirectory '$buildFull' is inside the repository '$repoFull'. Build output and the CMake cache must stay outside it."
 }
 
+# --- 5. The shader compiler, named and never searched for ---
+#
+# Checked here, before the build directory is created, so a missing or wrong
+# path costs nothing on disk.
+
+if ([string]::IsNullOrWhiteSpace($Fxc)) {
+    Fail 'Fxc must not be empty.'
+}
+
+if (-not (Test-Path -LiteralPath $Fxc -PathType Leaf)) {
+    Fail "The shader compiler '$Fxc' does not exist. Pass the full path to the fxc.exe of your own Windows SDK; this repository ships no shader compiler and searches for none."
+}
+
+$fxcFull = (Resolve-Path -LiteralPath $Fxc).Path
+
+if ([System.IO.Path]::GetExtension($fxcFull).ToLowerInvariant() -ne '.exe') {
+    Fail "The shader compiler '$fxcFull' is not an .exe. Pass the full path to fxc.exe."
+}
+
 $cmakeCommand = Get-Command $CMake -ErrorAction SilentlyContinue
 if (-not $cmakeCommand) {
     Fail "cmake was not found: '$CMake' is neither on PATH nor an existing executable."
@@ -148,21 +179,23 @@ Write-Host "  SDK header      : $sdkHeader"
 Write-Host "  Unity PluginAPI : $unityPluginApi"
 Write-Host "  Build directory : $buildFull"
 Write-Host ("  CMake           : " + $cmakeCommand.Source)
+Write-Host "  fxc             : $fxcFull"
 
-# --- 5. Configure: x64, Release ---
+# --- 6. Configure: x64, Release ---
 
 # The Visual Studio generator is multi-config, so Release is chosen by the
 # build step below rather than at configure time.
 & $cmakeCommand.Source -S $nativeProject -B $buildFull -A x64 `
     "-DZANTETSU_NVENC_SDK_ROOT=$sdkRootFull" `
-    "-DZANTETSU_UNITY_EDITOR_ROOT=$unityRootFull"
+    "-DZANTETSU_UNITY_EDITOR_ROOT=$unityRootFull" `
+    "-DZANTETSU_FXC=$fxcFull"
 
 if ($LASTEXITCODE -ne 0) {
     [Console]::Error.WriteLine('ERROR: CMake configure failed.')
     exit $LASTEXITCODE
 }
 
-# --- 6. Build every target ---
+# --- 7. Build every target ---
 
 & $cmakeCommand.Source --build $buildFull --config Release --target ZantetsuNvencSdkVersionContract
 
@@ -186,7 +219,7 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# --- 7. Run the native contract test ---
+# --- 8. Run the native contract test ---
 
 $contractTest = Join-Path $buildFull 'Release\ZantetsuNvencD3D11DeviceBindingContractTest.exe'
 if (-not (Test-Path -LiteralPath $contractTest -PathType Leaf)) {
@@ -217,7 +250,7 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# --- 8. Run the driver API contract test, only when asked ---
+# --- 9. Run the driver API contract test, only when asked ---
 
 if ($RunDriverApiContractTest) {
     $driverApiTest = Join-Path $buildFull 'Release\ZantetsuNvencDriverApiContractTest.exe'

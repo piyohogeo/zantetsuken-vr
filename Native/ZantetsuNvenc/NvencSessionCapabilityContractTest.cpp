@@ -186,16 +186,18 @@ int main()
         !session.TryPrepareOutputBitstreamBuffers(),
         "output buffers are not prepared before the input surfaces");
 
-    // The fixed set of NV12 input surfaces, owned by the session.
+    // The fixed conversion pipeline and the fixed set of NV12 input surfaces,
+    // owned by the session. Success here is the whole set: three shader
+    // objects, and every slot's texture, plane views, and registration.
     Check(
         session.TryPrepareInputSurfaces(),
-        "the fixed NV12 input surface set prepares: textures, both plane views, and registrations");
+        "the fixed pipeline and NV12 input surface set prepare: three shaders, then textures, both plane views, and registrations");
     Check(
         !session.TryPrepareInputSurfaces(),
         "a second input surface preparation is refused");
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
-        "a session with prepared input surfaces refuses to close");
+        "a session with a prepared pipeline and input surfaces refuses to close");
     Check(session.IsOpen(), "the refused close left the session open");
 
     // The fixed set of output bitstream buffers, owned by the session.
@@ -259,11 +261,11 @@ int main()
 
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
-        "a session with prepared input surfaces still refuses to close");
+        "a session with a prepared pipeline and input surfaces still refuses to close");
 
     Check(
         session.TryReleaseInputSurfaces(),
-        "the input surface set unregisters and releases once the rest is gone");
+        "the input surface set and then the three shaders release once the rest is gone");
 
     // One owner, one release.
     Check(
@@ -272,7 +274,7 @@ int main()
 
     Check(
         session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Closed,
-        "the session closes once its slot resources are gone");
+        "the session closes once its slot resources and pipeline are gone");
     Check(!session.IsOpen(), "the closed session holds no encoder");
 
     binding.Clear();

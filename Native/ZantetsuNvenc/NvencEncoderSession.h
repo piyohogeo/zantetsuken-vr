@@ -10,8 +10,11 @@
 // stays open until it is closed explicitly, so the units that come after can
 // query and initialize this very encoder.
 //
-// Nothing here queries a capability, initializes an encoder, or creates an
-// event, texture, or buffer.
+// Beyond the session itself, this owner holds what one Phase 0.11 Run needs
+// and nothing more: the fixed conversion shaders and, per slot, the NV12 input
+// surface with its plane views and registration, the output bitstream buffer,
+// and the completion event. Nothing here binds state, issues GPU work, or
+// encodes.
 
 #ifndef ZANTETSU_NVENC_ENCODER_SESSION_H
 #define ZANTETSU_NVENC_ENCODER_SESSION_H
@@ -62,10 +65,10 @@ namespace zantetsu
     constexpr uint32_t kInputSurfaceHeight = 720;
 
     /// An owner must not be destroyed while it still holds an encoder, a
-    /// completion-event handle, an output bitstream buffer, or an input
-    /// surface: everything has to be released and the session closed
-    /// successfully first, and an owner whose release or close was refused
-    /// stays alive with what it holds.
+    /// completion-event handle, an output bitstream buffer, an input surface,
+    /// or a conversion shader: everything has to be released and the session
+    /// closed successfully first, and an owner whose release or close was
+    /// refused stays alive with what it holds.
     /// What the encoder session reports about itself, as observed. Every value
     /// comes from the session that is currently open on the current device;
     /// that a session opened at all is not taken as a substitute for any of
@@ -179,19 +182,26 @@ namespace zantetsu
         /// have happened, and nothing is retried here.
         bool TryReleaseCompletionEvents();
 
-        /// Creates the fixed set of NV12 input surfaces, one per slot and
-        /// exactly once per owner, and registers each with the encoder. The
+        /// Creates the fixed conversion pipeline and the fixed set of NV12
+        /// input surfaces, exactly once per owner: the three shader objects
+        /// first, in pipeline order, then one registered surface per slot. The
         /// encoder must already be initialized and no other slot resource may
-        /// be prepared yet. All of the slots must succeed; a failure part of
-        /// the way through unwinds what it took in reverse, and a step of that
+        /// be prepared yet. All of it must succeed; a failure part of the way
+        /// through unwinds what it took in reverse, and a step of that
         /// unwinding which itself fails leaves that slot and every slot still
-        /// held with this session.
+        /// held with this session - and then the shaders too, since they are
+        /// not taken out from under surfaces that are still registered.
+        ///
+        /// Nothing is bound, drawn, or issued here: these are objects the
+        /// session owns, not a pipeline that has run.
         bool TryPrepareInputSurfaces();
 
         /// Unregisters and releases the whole set in reverse order, exactly
-        /// once per owner. The completion events and output buffers go first:
-        /// a session that still has either refuses. A refused unregister stops
-        /// the release with that slot and the ones before it still held.
+        /// once per owner: every slot first, then the chroma, luma, and vertex
+        /// shaders. The completion events and output buffers go before all of
+        /// it: a session that still has either refuses. A refused unregister
+        /// stops the release with that slot and the ones before it still held,
+        /// and leaves the shaders alone.
         bool TryReleaseInputSurfaces();
 
         /// Creates the fixed set of output bitstream buffers, one per slot and
@@ -252,9 +262,7 @@ namespace zantetsu
         /// the driver must be told to forget - so a half-prepared slot is never
         /// mistaken for a finished or an empty one.
         ///
-        /// This is not a finished slot - the input resource belongs to a later
-        /// unit - and none of it is exposed: there is no getter and no slot in
-        /// the ABI.
+        /// None of it is exposed: there is no getter and no slot in the ABI.
         struct EncodeSampleSlot
         {
             HANDLE completionEvent;
@@ -276,11 +284,38 @@ namespace zantetsu
 
         bool TryReleaseInputSurfaceSlot(EncodeSampleSlot& slot);
         void RollBackPreparedInputSurfaces(uint32_t count);
+
+        /// Whether any slot still holds a texture, a plane view, or a
+        /// registration. The shaders are deliberately not part of this: the
+        /// rollback asks it to decide whether the shaders may follow.
+        bool AnyInputSurfaceSlotResourceHeld() const;
+
+        /// Whether anything of the input side is still held - any slot
+        /// resource or any of the three shaders. A session holding only
+        /// shaders is still holding something and is not closable.
         bool AnyInputSurfaceHeld() const;
 
         /// Whether every slot holds its texture, both plane views, and its
-        /// registration. Anything less is not a prepared input set.
+        /// registration, and all three conversion shaders exist. Anything less
+        /// is not a prepared input set.
         bool AreInputSurfacesFullyPrepared() const;
+
+        /// Creates the three conversion shader objects in pipeline order,
+        /// taking ownership of each the moment it exists. A failure keeps the
+        /// real HRESULT and releases what it already made, in reverse.
+        bool TryCreateConversionShaders();
+
+        /// Releases the three in the reverse of the order they were created.
+        /// A COM release cannot be refused, so this reports nothing.
+        void ReleaseConversionShaders();
+
+        // The fixed conversion pipeline this session owns: one fullscreen
+        // triangle vertex shader and the two plane pixel shaders, held
+        // directly. There is no shader owner, registry, version table, or
+        // cache - these three are all there is, and none of them is exposed.
+        ID3D11VertexShader* _conversionVertexShader = nullptr;
+        ID3D11PixelShader* _conversionLumaPixelShader = nullptr;
+        ID3D11PixelShader* _conversionChromaPixelShader = nullptr;
 
         // The fixed set of slots this session owns, and the attempts that may
         // touch each kind of resource in them.

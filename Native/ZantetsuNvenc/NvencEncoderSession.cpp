@@ -3,6 +3,13 @@
 #include <cassert>
 #include <new>
 
+// The fixed conversion shaders, compiled by this build and embedded as byte
+// code. There is no run-time compile and no d3dcompiler dependency: these
+// headers are generated into the build directory before this file is compiled.
+#include "NvencRgbaToNv12V1_ChromaPs.h"
+#include "NvencRgbaToNv12V1_LumaPs.h"
+#include "NvencRgbaToNv12V1_Vs.h"
+
 namespace zantetsu
 {
     namespace
@@ -49,11 +56,11 @@ namespace zantetsu
     NvencEncoderSession::~NvencEncoderSession()
     {
         // Destroying an owner that still holds an encoder, a completion-event
-        // handle or registration, an output bitstream buffer, or an input
-        // surface is a contract violation, not a state this handles: the caller
-        // releases and closes first, and an owner whose release or close was
-        // refused is kept. Nothing is unregistered, closed, released, or
-        // destroyed implicitly here.
+        // handle or registration, an output bitstream buffer, an input
+        // surface, or a conversion shader is a contract violation, not a state
+        // this handles: the caller releases and closes first, and an owner
+        // whose release or close was refused is kept. Nothing is unregistered,
+        // closed, released, or destroyed implicitly here.
         assert(!AnyCompletionEventHeld());
         assert(!AnyOutputBitstreamBufferHeld());
         assert(!AnyInputSurfaceHeld());
@@ -619,7 +626,7 @@ namespace zantetsu
         }
     }
 
-    bool NvencEncoderSession::AnyInputSurfaceHeld() const
+    bool NvencEncoderSession::AnyInputSurfaceSlotResourceHeld() const
     {
         for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
         {
@@ -636,8 +643,23 @@ namespace zantetsu
         return false;
     }
 
+    bool NvencEncoderSession::AnyInputSurfaceHeld() const
+    {
+        return AnyInputSurfaceSlotResourceHeld() ||
+            _conversionVertexShader != nullptr ||
+            _conversionLumaPixelShader != nullptr ||
+            _conversionChromaPixelShader != nullptr;
+    }
+
     bool NvencEncoderSession::AreInputSurfacesFullyPrepared() const
     {
+        if (_conversionVertexShader == nullptr ||
+            _conversionLumaPixelShader == nullptr ||
+            _conversionChromaPixelShader == nullptr)
+        {
+            return false;
+        }
+
         for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
         {
             const EncodeSampleSlot& slot = _slots[i];
@@ -651,6 +673,85 @@ namespace zantetsu
         }
 
         return true;
+    }
+
+    /// Creates the three shader objects from the byte code this build compiled,
+    /// in the order the pipeline uses them. Each is owned from the moment it
+    /// exists; a refused creation keeps the real HRESULT and gives back what it
+    /// already took, in reverse.
+    bool NvencEncoderSession::TryCreateConversionShaders()
+    {
+        ID3D11VertexShader* vertexShader = nullptr;
+        const HRESULT vertexHr = _device->CreateVertexShader(
+            kZantetsuNvencRgbaToNv12VertexShaderV1,
+            sizeof(kZantetsuNvencRgbaToNv12VertexShaderV1),
+            nullptr,
+            &vertexShader);
+        if (FAILED(vertexHr) || vertexShader == nullptr)
+        {
+            _lastHResult = vertexHr;
+            return false;
+        }
+
+        _conversionVertexShader = vertexShader;
+
+        ID3D11PixelShader* lumaShader = nullptr;
+        const HRESULT lumaHr = _device->CreatePixelShader(
+            kZantetsuNvencRgbaToNv12LumaPixelShaderV1,
+            sizeof(kZantetsuNvencRgbaToNv12LumaPixelShaderV1),
+            nullptr,
+            &lumaShader);
+        if (FAILED(lumaHr) || lumaShader == nullptr)
+        {
+            _lastHResult = lumaHr;
+            ReleaseConversionShaders();
+            return false;
+        }
+
+        _conversionLumaPixelShader = lumaShader;
+
+        ID3D11PixelShader* chromaShader = nullptr;
+        const HRESULT chromaHr = _device->CreatePixelShader(
+            kZantetsuNvencRgbaToNv12ChromaPixelShaderV1,
+            sizeof(kZantetsuNvencRgbaToNv12ChromaPixelShaderV1),
+            nullptr,
+            &chromaShader);
+        if (FAILED(chromaHr) || chromaShader == nullptr)
+        {
+            _lastHResult = chromaHr;
+            ReleaseConversionShaders();
+            return false;
+        }
+
+        _conversionChromaPixelShader = chromaShader;
+        return true;
+    }
+
+    /// Gives the three back in the reverse of the order they were taken. Each
+    /// reference is cleared before it is released, and a COM release reports
+    /// nothing worth checking.
+    void NvencEncoderSession::ReleaseConversionShaders()
+    {
+        if (_conversionChromaPixelShader != nullptr)
+        {
+            ID3D11PixelShader* shader = _conversionChromaPixelShader;
+            _conversionChromaPixelShader = nullptr;
+            shader->Release();
+        }
+
+        if (_conversionLumaPixelShader != nullptr)
+        {
+            ID3D11PixelShader* shader = _conversionLumaPixelShader;
+            _conversionLumaPixelShader = nullptr;
+            shader->Release();
+        }
+
+        if (_conversionVertexShader != nullptr)
+        {
+            ID3D11VertexShader* shader = _conversionVertexShader;
+            _conversionVertexShader = nullptr;
+            shader->Release();
+        }
     }
 
     /// Unregisters one slot's input surface if the driver has it, then releases
@@ -704,9 +805,12 @@ namespace zantetsu
         return true;
     }
 
-    /// Unwinds the surfaces this preparation took, in reverse. An unregister
-    /// that is itself refused stops the unwinding: that slot and the ones
-    /// before it stay held rather than being released on an assumption.
+    /// Unwinds what this preparation took, in reverse: the slots first, then
+    /// the conversion shaders. An unregister that is itself refused stops the
+    /// unwinding - that slot and the ones before it stay held rather than
+    /// being released on an assumption, and the shaders stay with them, since
+    /// a surface the driver still has registered is not left without the
+    /// pipeline that was prepared alongside it.
     void NvencEncoderSession::RollBackPreparedInputSurfaces(uint32_t count)
     {
         for (uint32_t i = count; i > 0; --i)
@@ -715,6 +819,11 @@ namespace zantetsu
             {
                 return;
             }
+        }
+
+        if (!AnyInputSurfaceSlotResourceHeld())
+        {
+            ReleaseConversionShaders();
         }
     }
 
@@ -751,6 +860,14 @@ namespace zantetsu
         // a registered resource is never left with no way to take it back.
         if (api.nvEncRegisterResource == nullptr ||
             api.nvEncUnregisterResource == nullptr)
+        {
+            return false;
+        }
+
+        // The conversion pipeline comes before the surfaces it will write to.
+        // Creating a shader object touches no surface and issues no GPU work,
+        // so a refusal here leaves nothing else to give back.
+        if (!TryCreateConversionShaders())
         {
             return false;
         }
@@ -879,11 +996,14 @@ namespace zantetsu
             if (!TryReleaseInputSurfaceSlot(_slots[i - 1]))
             {
                 // Stopped here: this slot and everything before it stay with
-                // the session.
+                // the session, and so does the conversion pipeline.
                 return false;
             }
         }
 
+        // Every slot is gone, so the pipeline that was prepared before them
+        // goes now, in the reverse of the order it was created.
+        ReleaseConversionShaders();
         return true;
     }
 
@@ -1105,10 +1225,12 @@ namespace zantetsu
     NvencEncoderSessionCloseStatus NvencEncoderSession::Close()
     {
         // An encoder is not destroyed while this session still holds any
-        // completion-event handle or registration, output bitstream buffer, or
-        // input surface - prepared, half-prepared, or half-released. Refused
-        // before the close attempt is spent, so the caller can still close once
-        // everything is gone.
+        // completion-event handle or registration, output bitstream buffer,
+        // input surface, or conversion shader - prepared, half-prepared, or
+        // half-released. A session left holding only shaders is holding
+        // something, and is refused here as well. Refused before the close
+        // attempt is spent, so the caller can still close once everything is
+        // gone.
         if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
             AnyInputSurfaceHeld())
         {

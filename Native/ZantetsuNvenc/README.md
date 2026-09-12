@@ -18,7 +18,7 @@ an NVENC library.
 
 ## Prerequisites
 
-Both are external and are obtained by you:
+All of these are external and are obtained by you:
 
 * **NVIDIA Video Codec SDK 13.0** — obtain it from NVIDIA's official
   distribution and agree to the license that applies to it. This repository
@@ -26,27 +26,36 @@ Both are external and are obtained by you:
 * **Unity 6000.3.22f1** — its `Editor/Data/PluginAPI` headers are used under the
   license Unity ships with them. This repository redistributes none of them
   either.
+* **A Windows SDK** — its `fxc.exe` compiles the fixed RGBA to NV12 shaders at
+  build time. This repository redistributes no shader compiler and no compiled
+  shader byte code.
 
 At run time, `nvEncodeAPI64.dll` is provided by the NVIDIA driver installed on
 the machine. It is never bundled with, copied by, or produced from this build.
 
 ## Build
 
-Pass your own SDK root, your own Unity installation root, and a build directory
-outside this repository:
+Pass your own SDK root, your own Unity installation root, a build directory
+outside this repository, and your own shader compiler:
 
 ```powershell
 .\Tools\Build-NvencNative.ps1 `
   -SdkRoot '<path to your extracted Video Codec SDK 13.0>' `
   -UnityEditorRoot '<path to your Unity 6000.3.22f1 installation>' `
-  -BuildDirectory '<path to a build directory outside this repository>'
+  -BuildDirectory '<path to a build directory outside this repository>' `
+  -Fxc '<path to fxc.exe>'
 ```
 
 The SDK root is the directory that contains `Interface\nvEncodeAPI.h`; the Unity
-root is the one that contains `Editor\Data\PluginAPI`. All three arguments are
-required: nothing is downloaded, searched for, read from Unity Hub or an
+root is the one that contains `Editor\Data\PluginAPI`; `-Fxc` is the full path
+to the `fxc.exe` of your own Windows SDK. All four arguments are required:
+nothing is downloaded, searched for, read from Unity Hub, the registry, or an
 environment variable, or guessed, and no build directory is created inside the
 repository.
+
+The shader byte code headers are generated into that build directory. They, the
+compiler intermediates, and the compiler itself stay outside this repository and
+are never committed.
 
 The built DLL stays in that build directory. It is not placed in a Unity
 project, and no managed API calls into it yet.

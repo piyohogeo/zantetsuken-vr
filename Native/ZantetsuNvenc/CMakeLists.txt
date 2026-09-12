@@ -58,6 +58,23 @@ foreach(header IN ITEMS
     endif()
 endforeach()
 
+set(ZANTETSU_FXC "" CACHE FILEPATH
+    "Full path to the Windows SDK fxc.exe that compiles the fixed RGBA to NV12 shaders")
+
+if(ZANTETSU_FXC STREQUAL "")
+    message(FATAL_ERROR
+        "ZANTETSU_FXC is required. Pass the full path to the fxc.exe of your own "
+        "Windows SDK installation, for example -DZANTETSU_FXC=<path to fxc.exe>. "
+        "No shader compiler is searched for, read from the registry, guessed, or "
+        "shipped by this repository, and none is used at run time.")
+endif()
+
+if(IS_DIRECTORY "${ZANTETSU_FXC}" OR NOT EXISTS "${ZANTETSU_FXC}")
+    message(FATAL_ERROR
+        "ZANTETSU_FXC does not name an existing file: '${ZANTETSU_FXC}'. It must "
+        "be the full path to an fxc.exe.")
+endif()
+
 project(ZantetsuNvenc CXX)
 
 if(NOT WIN32)
@@ -76,6 +93,57 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR
         "This target builds for x64 only. Configure with -A x64.")
 endif()
+
+# The fixed RGBA to NV12 shaders, compiled once at build time into three byte
+# code headers. There is exactly one custom command for the three of them and
+# one target that owns it, so every consumer depends on the same rule rather
+# than defining its own copy of it. Nothing here is compiled at run time: the
+# DLL never links or loads d3dcompiler.
+#
+# The headers and every intermediate go to the build directory, which is
+# outside the repository; no byte code, .cso, or compiler binary is ever
+# written into the source tree or committed.
+set(ZANTETSU_SHADER_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/NvencRgbaToNv12V1.hlsl")
+set(ZANTETSU_SHADER_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+set(ZANTETSU_SHADER_VS_HEADER "${ZANTETSU_SHADER_HEADER_DIR}/NvencRgbaToNv12V1_Vs.h")
+set(ZANTETSU_SHADER_LUMA_HEADER "${ZANTETSU_SHADER_HEADER_DIR}/NvencRgbaToNv12V1_LumaPs.h")
+set(ZANTETSU_SHADER_CHROMA_HEADER "${ZANTETSU_SHADER_HEADER_DIR}/NvencRgbaToNv12V1_ChromaPs.h")
+
+# Common to all three: the entry point is named explicitly, optimisation is on,
+# every warning is an error, and debug and reflection data are stripped rather
+# than carried into the build output.
+add_custom_command(
+    OUTPUT
+        "${ZANTETSU_SHADER_VS_HEADER}"
+        "${ZANTETSU_SHADER_LUMA_HEADER}"
+        "${ZANTETSU_SHADER_CHROMA_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZANTETSU_SHADER_HEADER_DIR}"
+    COMMAND "${ZANTETSU_FXC}" /nologo /T vs_5_0 /E FullscreenTriangleVs
+            /O3 /WX /Qstrip_debug /Qstrip_reflect
+            /Vn kZantetsuNvencRgbaToNv12VertexShaderV1
+            /Fh "${ZANTETSU_SHADER_VS_HEADER}" "${ZANTETSU_SHADER_SOURCE}"
+    COMMAND "${ZANTETSU_FXC}" /nologo /T ps_5_0 /E LumaPs
+            /O3 /WX /Qstrip_debug /Qstrip_reflect
+            /Vn kZantetsuNvencRgbaToNv12LumaPixelShaderV1
+            /Fh "${ZANTETSU_SHADER_LUMA_HEADER}" "${ZANTETSU_SHADER_SOURCE}"
+    COMMAND "${ZANTETSU_FXC}" /nologo /T ps_5_0 /E ChromaPs
+            /O3 /WX /Qstrip_debug /Qstrip_reflect
+            /Vn kZantetsuNvencRgbaToNv12ChromaPixelShaderV1
+            /Fh "${ZANTETSU_SHADER_CHROMA_HEADER}" "${ZANTETSU_SHADER_SOURCE}"
+    DEPENDS "${ZANTETSU_SHADER_SOURCE}"
+    COMMENT "Compiling the fixed RGBA to NV12 shaders with fxc"
+    VERBATIM)
+
+# The .hlsl is deliberately not listed as a source of this target: a Visual
+# Studio generator would then add it as an FXCompile item and compile it a
+# second time with its own defaults, looking for a "main" entry point that does
+# not exist here. The three explicit invocations above are the only ones.
+add_custom_target(ZantetsuNvencShaderHeaders
+    DEPENDS
+        "${ZANTETSU_SHADER_VS_HEADER}"
+        "${ZANTETSU_SHADER_LUMA_HEADER}"
+        "${ZANTETSU_SHADER_CHROMA_HEADER}")
 
 # One object library: the version contract, compiled and nothing else.
 add_library(ZantetsuNvencSdkVersionContract OBJECT
@@ -123,7 +191,11 @@ target_compile_options(ZantetsuNvenc PRIVATE /utf-8)
 target_include_directories(ZantetsuNvenc
     PRIVATE
         "${ZANTETSU_UNITY_PLUGIN_API_DIR}"
-        "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
+        "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}"
+        "${ZANTETSU_SHADER_HEADER_DIR}")
+
+# The byte code headers exist before this target starts compiling.
+add_dependencies(ZantetsuNvenc ZantetsuNvencShaderHeaders)
 
 target_link_libraries(ZantetsuNvenc PRIVATE d3d11)
 
@@ -182,6 +254,11 @@ target_compile_definitions(ZantetsuNvencSessionCapabilityContractTest
 target_compile_options(ZantetsuNvencSessionCapabilityContractTest PRIVATE /utf-8)
 
 target_include_directories(ZantetsuNvencSessionCapabilityContractTest
-    PRIVATE "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}")
+    PRIVATE
+        "${ZANTETSU_NVENC_SDK_INTERFACE_DIR}"
+        "${ZANTETSU_SHADER_HEADER_DIR}")
+
+# The same rule, depended on rather than duplicated.
+add_dependencies(ZantetsuNvencSessionCapabilityContractTest ZantetsuNvencShaderHeaders)
 
 target_link_libraries(ZantetsuNvencSessionCapabilityContractTest PRIVATE d3d11)
