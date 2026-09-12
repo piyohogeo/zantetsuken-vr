@@ -817,6 +817,191 @@ namespace Zantetsu.Observability.StandaloneTests
         }
 
         /// <summary>
+        /// One whole frame through the production adapters on the real device:
+        /// the conversion completes, the picture is submitted, its completion
+        /// is awaited, and the access unit is copied out - leaving the slot
+        /// usable and the session closable.
+        /// </summary>
+        /// <remarks>
+        /// The bytes are only checked for what this unit can honestly claim: a
+        /// length inside the fixed storage and an Annex-B start code. No
+        /// parsing, no NAL classification, no colour, no decoder comparison,
+        /// and one frame rather than a qualification run.
+        /// </remarks>
+        [UnityTest]
+        public IEnumerator Player_EncodesAndCollectsOneFrameThroughTheProductionAdapters()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            CaptureFrameProfile captureProfile = new CaptureFrameProfile(
+                7,
+                45.0,
+                CaptureSource.UnityRenderTexture,
+                CaptureEye.Left,
+                new CaptureImageRect(
+                    0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
+                0,
+                CapturePixelFormat.Rgba32);
+
+            CaptureFrameRenderTargetPool pool = new CaptureFrameRenderTargetPool(
+                NvencNativeEncoderSessionOwner.SourceSurfaceCount, captureProfile);
+
+            NvencCaptureProcessState processState = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workSlots = new NvencCaptureWorkSlotPool(processState);
+            NvencEncodeSampleSlotPool sampleSlots = new NvencEncodeSampleSlotPool(processState);
+            NvencGpuConversionSyncPool syncSlots = new NvencGpuConversionSyncPool(processState);
+            NvencSubmitToOutputCreditPool submitCredits =
+                new NvencSubmitToOutputCreditPool(processState);
+            NvencFrameCompletionCreditPool completionCredits =
+                new NvencFrameCompletionCreditPool(processState);
+            Guid backendOwner = Guid.NewGuid();
+
+            bool prepared = false;
+            CaptureSurfaceLease builtSurface = null;
+            CaptureFrameWorkToken builtToken = default;
+
+            try
+            {
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+                new NvencBringUpCapabilityProbeExecutionCoordinator(
+                    new NvencBringUpCapabilityProbe(owner)).Execute();
+                owner.InitializeEncoder(profile);
+
+                IntPtr[] sources =
+                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
+                pool.CopyNativeTexturePointers(sources);
+                owner.BindSourceSurfaces(sources);
+                owner.PrepareInputSurfaces();
+                owner.PrepareConversionCommands();
+                owner.PrepareOutputBuffers();
+                owner.PrepareCompletionEvents();
+                prepared = true;
+
+                Assert.That(workSlots.TryRent(out NvencCaptureWorkSlotLease work), Is.True);
+                Assert.That(
+                    sampleSlots.TryRent(out NvencEncodeSampleSlotLease sample), Is.True);
+                Assert.That(syncSlots.TryRent(out NvencGpuConversionSyncLease sync), Is.True);
+                Assert.That(
+                    submitCredits.TryRent(out NvencSubmitToOutputCreditLease submitCredit),
+                    Is.True);
+                Assert.That(
+                    completionCredits.TryRent(
+                        out NvencFrameCompletionCreditLease completionCredit),
+                    Is.True);
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease rented), Is.True);
+
+                CaptureFrameWorkToken workToken = new CaptureFrameWorkToken(
+                    backendOwner, work.SlotIndex, work.Generation, 1, 1);
+                CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, rented);
+                surface.TransferToBackend(backendOwner, workToken);
+                builtSurface = surface;
+                builtToken = workToken;
+
+                // The picture is only meaningful once its conversion has
+                // actually written the surface.
+                owner.IssueConversionCommand(
+                    sync.SlotIndex, 0, sample.SlotIndex, (ulong)sync.Generation);
+
+                NvencNativeSourceReadCompletedSource completionSource =
+                    new NvencNativeSourceReadCompletedSource(owner);
+
+                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                    backendOwner, workToken, work, sample, sync, submitCredit,
+                    completionCredit, surface, workSlots, sampleSlots, syncSlots,
+                    submitCredits, completionCredits);
+
+                bool converted = false;
+                for (int attempt = 0; attempt < 600 && !converted; attempt++)
+                {
+                    converted = completionSource.TryGetEvidence(
+                        record, out NvencSourceReadCompletedEvidence _);
+                    if (!converted)
+                    {
+                        yield return null;
+                    }
+                }
+
+                Assert.That(
+                    converted, Is.True, "the conversion must complete before encoding.");
+
+                // The production adapters, from here on.
+                NvencNativeEncodePictureSubmitter submitter =
+                    new NvencNativeEncodePictureSubmitter(owner);
+                NvencNativeOutputBitstreamSource outputSource =
+                    new NvencNativeOutputBitstreamSource(owner);
+
+                NvencEncodePictureSubmitOperation operation =
+                    NvencEncodePictureSubmitOperation.Create(record, workSlots, sampleSlots);
+
+                Assert.That(
+                    submitter.TrySubmit(operation), Is.True,
+                    "the converted surface must map and submit one picture.");
+
+                // The driver has the frame: nothing it was built on may go yet.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseCompletionEvents());
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                byte[] accessUnit =
+                    new byte[(int)NvencBringUpProfileV1.MaxAccessUnitByteLength];
+
+                Assert.That(
+                    outputSource.TryCopyCompletedOutput(
+                        workToken, sample, accessUnit, accessUnit.Length,
+                        out int validLength),
+                    Is.True,
+                    "the submitted picture's access unit must copy out.");
+
+                Assert.That(validLength, Is.GreaterThanOrEqualTo(1));
+                Assert.That(
+                    validLength,
+                    Is.LessThanOrEqualTo((int)NvencBringUpProfileV1.MaxAccessUnitByteLength));
+
+                // Annex-B and nothing more.
+                Assert.That(validLength, Is.GreaterThanOrEqualTo(4));
+                Assert.That(accessUnit[0], Is.EqualTo((byte)0x00));
+                Assert.That(accessUnit[1], Is.EqualTo((byte)0x00));
+                bool startCode = accessUnit[2] == 0x01 ||
+                    (accessUnit[2] == 0x00 && accessUnit[3] == 0x01);
+                Assert.That(startCode, Is.True, "the access unit must start with Annex-B.");
+            }
+            finally
+            {
+                if (prepared)
+                {
+                    owner.ReleaseCompletionEvents();
+                    owner.ReleaseOutputBuffers();
+                    owner.ReleaseConversionCommands();
+                    owner.ReleaseInputSurfaces();
+                    owner.ReleaseSourceSurfaces();
+                }
+
+                owner.Dispose();
+
+                if (builtSurface != null && builtSurface.IsCreated)
+                {
+                    if (builtSurface.IsBackendOwned)
+                    {
+                        builtSurface.ReleaseFromBackend(backendOwner, builtToken);
+                    }
+                    else
+                    {
+                        builtSurface.Dispose();
+                    }
+                }
+
+                pool.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
+        /// <summary>
         /// Collects one completion on a worker thread - never the main thread -
         /// and reports what it got once that thread has finished.
         /// </summary>

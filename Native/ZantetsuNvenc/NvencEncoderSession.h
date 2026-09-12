@@ -91,6 +91,36 @@ namespace zantetsu
         Failed,
     };
 
+    /// What one attempt to submit a picture came to.
+    ///
+    /// NotSubmitted is the narrow, controllable case: the map was refused and
+    /// gave back no handle, so nothing changed hands and the caller can report
+    /// an ordinary submit failure. Everything else is Failed - a device that is
+    /// gone, a map that failed while leaving a handle, an encode whose
+    /// acceptance cannot be established - because what this process owns is
+    /// then unknown, and nothing is unmapped on a guess.
+    enum class NvencEncodeSubmitStatus
+    {
+        Submitted,
+        NotSubmitted,
+        Failed,
+    };
+
+    /// What one attempt to collect a submitted picture's bitstream came to.
+    ///
+    /// Rejected is the controllable case: there was nothing usable to copy - no
+    /// pointer, no length, or more bytes than the caller can hold - and the
+    /// lock and the map were both given back safely, so the slot is usable
+    /// again. Failed means the wait, the lock, the unlock, or the unmap did not
+    /// resolve, so the slot stays exactly as it is and nothing is retried or
+    /// released on a guess.
+    enum class NvencOutputCollectStatus
+    {
+        Copied,
+        Rejected,
+        Failed,
+    };
+
     /// The fixed number of GPU conversion command slots. A conversion binds
     /// one source surface to one encode sample slot for one frame, so it is
     /// its own set again: a command slot is not a source and not a sample.
@@ -361,6 +391,40 @@ namespace zantetsu
         /// callback for the same command draws nothing.
         void RunConversionCommand(ConversionCommandEventDataV1& data);
 
+        /// Maps one slot's registered input and submits exactly one picture
+        /// for it, once per sample generation.
+        ///
+        /// Only the slot and the generation are named: no work token, frame
+        /// id, pointer, or handle crosses this call. Everything the picture
+        /// needs is the slot's own - its registered input, its output bitstream
+        /// buffer, its completion event - and every per-picture value is fixed
+        /// by this profile, which encodes each frame as an IDR with no picture
+        /// type decision by the encoder.
+        ///
+        /// Nothing is retried and nothing falls back. A driver that refuses
+        /// this fixed combination stops the frame.
+        NvencEncodeSubmitStatus TrySubmitEncodePicture(
+            uint32_t sampleSlotIndex, uint64_t generation, NVENCSTATUS* lastStatus);
+
+        /// Waits for one submitted picture, copies its access unit into the
+        /// caller's storage, and gives the lock and the map back.
+        ///
+        /// This blocks on the slot's completion event, so it belongs to the
+        /// output worker and to nothing else: never the main thread, the render
+        /// thread, or the thread that submits. There is no timeout of its own,
+        /// no polling, no flush, and no end of stream.
+        ///
+        /// The destination is the caller's and is written at most once, in
+        /// full, and only when everything that follows it also succeeds.
+        NvencOutputCollectStatus TryCopyCompletedOutput(
+            uint32_t sampleSlotIndex,
+            uint64_t generation,
+            uint8_t* destination,
+            uint32_t destinationCapacity,
+            uint32_t* validLength,
+            NVENCSTATUS* lastStatus,
+            DWORD* win32Error);
+
         /// Creates the fixed set of output bitstream buffers, one per slot and
         /// exactly once per owner. The encoder must already be initialized and
         /// the input surfaces already prepared. All of the slots must succeed;
@@ -429,7 +493,29 @@ namespace zantetsu
             ID3D11RenderTargetView* inputLumaRenderTargetView;
             ID3D11RenderTargetView* inputChromaRenderTargetView;
             NV_ENC_REGISTERED_PTR registeredInputResource;
+
+            /// What one frame in flight adds: the mapped input the driver gave
+            /// back, the sample generation that mapping belongs to, and the two
+            /// facts that say how far that frame has got. A mapped handle means
+            /// this session must unmap it; a locked bitstream means it must
+            /// unlock it.
+            NV_ENC_INPUT_PTR mappedInputResource;
+            NV_ENC_BUFFER_FORMAT mappedBufferFormat;
+            uint64_t lastSampleGeneration;
+            bool submitted;
+            bool bitstreamLocked;
         };
+
+        /// Whether every slot holds its completion event, registered, and its
+        /// output bitstream buffer. Anything less is not a prepared set.
+        bool AreCompletionEventsPrepared() const;
+        bool AreOutputBitstreamBuffersPrepared() const;
+
+        /// Whether any slot still has a frame in flight - an input the driver
+        /// has mapped, a picture it has accepted, or a bitstream this session
+        /// has locked. Nothing that a frame was built on is torn down while one
+        /// of these is true.
+        bool AnyEncodeSampleInFlight() const;
 
         bool TryReleaseCompletionEventSlot(EncodeSampleSlot& slot);
         void RollBackPreparedCompletionEvents(uint32_t count);

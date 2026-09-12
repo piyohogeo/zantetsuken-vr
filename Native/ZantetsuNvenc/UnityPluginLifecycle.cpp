@@ -599,6 +599,104 @@ static void UNITY_INTERFACE_API ZantetsuNvencConversionEvent(int eventId, void* 
 }
 
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencSubmitSessionEncodePictureV1(
+    uint64_t sessionOwner,
+    uint32_t sampleSlotIndex,
+    uint64_t generation,
+    ZantetsuNvencSessionSubmitResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionSubmitResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    NVENCSTATUS lastStatus = NV_ENC_SUCCESS;
+    const zantetsu::NvencEncodeSubmitStatus status =
+        session->TrySubmitEncodePicture(sampleSlotIndex, generation, &lastStatus);
+
+    destination->lastNvencStatus = static_cast<int32_t>(lastStatus);
+
+    if (status == zantetsu::NvencEncodeSubmitStatus::Submitted)
+    {
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+        return 1;
+    }
+
+    if (status == zantetsu::NvencEncodeSubmitStatus::NotSubmitted)
+    {
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCopySessionCompletedOutputV1(
+    uint64_t sessionOwner,
+    uint32_t sampleSlotIndex,
+    uint64_t generation,
+    uint8_t* destination,
+    uint32_t destinationCapacity,
+    ZantetsuNvencSessionOutputResultV1* result,
+    uint32_t resultSize)
+{
+    if (result == nullptr ||
+        resultSize != sizeof(ZantetsuNvencSessionOutputResultV1) ||
+        sessionOwner == 0 ||
+        destination == nullptr ||
+        destinationCapacity == 0)
+    {
+        return 0;
+    }
+
+    result->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    result->validLength = 0;
+    result->lastWin32Error = 0;
+    result->lastNvencStatus = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    uint32_t validLength = 0;
+    NVENCSTATUS lastStatus = NV_ENC_SUCCESS;
+    DWORD win32Error = 0;
+    const zantetsu::NvencOutputCollectStatus status =
+        session->TryCopyCompletedOutput(
+            sampleSlotIndex, generation, destination, destinationCapacity,
+            &validLength, &lastStatus, &win32Error);
+
+    result->lastNvencStatus = static_cast<int32_t>(lastStatus);
+    result->lastWin32Error = static_cast<uint32_t>(win32Error);
+
+    if (status == zantetsu::NvencOutputCollectStatus::Copied)
+    {
+        result->validLength = validLength;
+        result->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+        return 1;
+    }
+
+    if (status == zantetsu::NvencOutputCollectStatus::Rejected)
+    {
+        result->status = ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED;
+        return 1;
+    }
+
+    result->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencPrepareSessionConversionCommandsV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionConversionResultV1* destination,

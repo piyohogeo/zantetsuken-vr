@@ -38,6 +38,13 @@ extern "C" {
 // that simply has not happened.
 #define ZANTETSU_NVENC_SESSION_V1_STATUS_PENDING 4u
 
+// A submit or an output collection reports this for the one controllable
+// outcome that is not a completion: a map the driver refused without taking
+// anything, or a bitstream with nothing usable to copy that was nevertheless
+// unlocked and unmapped safely. The caller can report an ordinary failure and
+// carry on; nothing is in an unknown state.
+#define ZANTETSU_NVENC_SESSION_V1_STATUS_NOT_SUBMITTED 5u
+
 typedef struct ZantetsuNvencSessionOpenResultV1
 {
     uint32_t abiVersion;
@@ -172,6 +179,36 @@ typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
     uint32_t status;
     int32_t lastHResult;
 } ZantetsuNvencSessionSourceSurfaceResultV1;
+
+/// What one attempt to submit a picture came to.
+///
+/// OK means the encoder accepted it. NOT_SUBMITTED is the narrow controllable
+/// case - the map was refused and gave nothing back, so nothing changed hands.
+/// FAILED means what this process owns is no longer known, and nothing was
+/// unmapped on a guess. The driver's own status is the only raw value.
+typedef struct ZantetsuNvencSessionSubmitResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastNvencStatus;
+} ZantetsuNvencSessionSubmitResultV1;
+
+/// What one attempt to collect a submitted picture's bitstream came to.
+///
+/// OK means the access unit was copied and both the lock and the map were given
+/// back; the length is then 1..destinationCapacity. NOT_SUBMITTED is used here
+/// for the controllable rejection - nothing usable to copy, with the lock and
+/// the map given back safely, so the slot is usable again. FAILED means the
+/// wait, the lock, the unlock, or the unmap did not resolve. No pointer and no
+/// slot state is reported: only the length and the raw values.
+typedef struct ZantetsuNvencSessionOutputResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    uint32_t validLength;
+    uint32_t lastWin32Error;
+    int32_t lastNvencStatus;
+} ZantetsuNvencSessionOutputResultV1;
 
 /// How many GPU conversion command slots one session prepares. Fixed, and its
 /// own count again: a command binds a source to a sample slot for one frame.
@@ -368,6 +405,42 @@ ZantetsuNvencReleaseSessionInputSurfacesV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionInputSurfaceResultV1* destination,
     uint32_t destinationSize);
+
+// Maps one sample slot's registered input and submits exactly one picture for
+// it, once per sample generation.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when the destination is null, its size is not exactly the struct's, or the
+// owner handle is zero. Only the slot and a positive generation are named; no
+// token, frame id, pointer, or handle crosses this call, and every per-picture
+// value is fixed by the profile. A refused map that gave nothing back reports
+// NOT_SUBMITTED; anything that leaves ownership unknown reports FAILED and
+// unmaps nothing on a guess.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencSubmitSessionEncodePictureV1(
+    uint64_t sessionOwner,
+    uint32_t sampleSlotIndex,
+    uint64_t generation,
+    ZantetsuNvencSessionSubmitResultV1* destination,
+    uint32_t destinationSize);
+
+// Waits for that picture, copies its access unit into the caller's storage, and
+// gives the lock and the map back.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// submit, or when the storage is null or its capacity is zero. This blocks on
+// the slot's completion event: it is the output worker's call and no other
+// thread's. The storage is written at most once and only when everything after
+// it also succeeded.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCopySessionCompletedOutputV1(
+    uint64_t sessionOwner,
+    uint32_t sampleSlotIndex,
+    uint64_t generation,
+    uint8_t* destination,
+    uint32_t destinationCapacity,
+    ZantetsuNvencSessionOutputResultV1* result,
+    uint32_t resultSize);
 
 // Creates the fixed set of GPU conversion command slots on that exact session,
 // once: the device and context interfaces the signalling needs, then a fence

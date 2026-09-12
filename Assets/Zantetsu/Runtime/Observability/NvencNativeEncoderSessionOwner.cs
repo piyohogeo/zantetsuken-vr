@@ -70,6 +70,13 @@ namespace Zantetsu.Observability
         /// </summary>
         private const uint StatusPending = 4;
 
+        /// <summary>
+        /// A submit or an output collection reports this for the one
+        /// controllable outcome that is not a completion: nothing changed hands
+        /// and nothing is in an unknown state.
+        /// </summary>
+        private const uint StatusNotSubmitted = 5;
+
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
         private const string NativeLibraryName = "ZantetsuNvenc";
 
@@ -191,6 +198,24 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeSubmitResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeOutputResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal uint ValidLength;
+            internal uint LastWin32Error;
+            internal int LastNvencStatus;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeConversionResultV1
         {
             internal uint AbiVersion;
@@ -282,6 +307,17 @@ namespace Zantetsu.Observability
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencSubmitSessionEncodePictureV1(
+            ulong sessionOwner, uint sampleSlotIndex, ulong generation,
+            ref NativeSubmitResultV1 destination, uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencCopySessionCompletedOutputV1(
+            ulong sessionOwner, uint sampleSlotIndex, ulong generation,
+            [In, Out] byte[] destination, uint destinationCapacity,
+            ref NativeOutputResultV1 result, uint resultSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencPrepareSessionConversionCommandsV1(
             ulong sessionOwner, ref NativeConversionResultV1 destination,
             uint destinationSize);
@@ -345,6 +381,11 @@ namespace Zantetsu.Observability
         // so a release is refused before its one attempt is spent, the way
         // every other ordering refusal is.
         private int _conversionCommandsInFlight;
+
+        // How many submitted pictures the driver still has. Kept here so a
+        // teardown is refused before its one attempt is spent, the way every
+        // other ordering refusal is.
+        private int _encodeSamplesInFlight;
         private bool _conversionCommandsPrepareAttempted;
         private bool _conversionCommandsReleaseAttempted;
         private bool _conversionCommandsPrepared;
@@ -639,6 +680,8 @@ namespace Zantetsu.Observability
                     "This session has no prepared completion events to release.");
             }
 
+            RequireNoEncodeSampleInFlight("its completion events are released");
+
             if (_completionEventsReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -789,6 +832,8 @@ namespace Zantetsu.Observability
                     "This session's input surfaces are still prepared; they are released before its source surfaces.");
             }
 
+            RequireNoEncodeSampleInFlight("its source surfaces are released");
+
             if (_sourceSurfacesReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -898,6 +943,8 @@ namespace Zantetsu.Observability
                     "This session's conversion commands are still prepared; they are released before its input surfaces.");
             }
 
+            RequireNoEncodeSampleInFlight("its input surfaces are released");
+
             if (_inputSurfacesReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -919,6 +966,188 @@ namespace Zantetsu.Observability
 #endif
 
             _inputSurfacesPrepared = false;
+        }
+
+        /// <summary>
+        /// Maps one encode sample slot's input and submits exactly one picture
+        /// for it. True means the encoder accepted it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Only the slot and a positive generation are named: no work token,
+        /// frame id, pointer, or handle crosses this call, and every
+        /// per-picture value is the profile's. False is the narrow controllable
+        /// failure - the map was refused and took nothing, so nothing changed
+        /// hands. Everything else throws, because what this process owns is
+        /// then unknown and nothing may be unmapped on a guess.
+        /// </para>
+        /// <para>
+        /// Nothing is retried, nothing falls back, and no completion is waited
+        /// for here.
+        /// </para>
+        /// </remarks>
+        internal bool TrySubmitEncodePicture(int sampleSlotIndex, ulong generation)
+        {
+            RequireUsableSession("submit an encode picture on");
+
+            if (sampleSlotIndex < 0 || sampleSlotIndex >= EncodeSampleSlotCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(sampleSlotIndex), sampleSlotIndex,
+                    "The encode sample slot index is outside the fixed set.");
+            }
+
+            if (generation == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(generation), generation,
+                    "A sample generation is greater than zero.");
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeSubmitResultV1 result = default;
+            int written = ZantetsuNvencSubmitSessionEncodePictureV1(
+                _sessionOwner, (uint)sampleSlotIndex, generation, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeSubmitResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native encode picture submit was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            switch (result.Status)
+            {
+                case StatusOk:
+                    // The driver has this frame until its output is collected.
+                    System.Threading.Interlocked.Increment(ref _encodeSamplesInFlight);
+                    return true;
+
+                case StatusNotSubmitted:
+                    return false;
+
+                case StatusFailed:
+                    throw new InvalidOperationException(
+                        "The encode picture could not be submitted safely (NVENCSTATUS "
+                        + result.LastNvencStatus + ").");
+
+                default:
+                    throw new InvalidOperationException(
+                        "The native encode picture submit returned an undefined status: "
+                        + result.Status + ".");
+            }
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+        }
+
+        /// <summary>
+        /// Waits for one submitted picture, copies its access unit into
+        /// <paramref name="destination"/>, and gives the lock and the map back.
+        /// True means the bytes are there and the slot is usable again.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This blocks on the picture's completion event, so it belongs to the
+        /// output worker alone - never the main, render, or submitting thread.
+        /// False is the controllable rejection: there was nothing usable to
+        /// copy, but the lock and the map were both given back, so the slot is
+        /// usable again. Everything else throws.
+        /// </para>
+        /// <para>
+        /// The array is passed straight to the native copy and is neither
+        /// stored nor published here, and no pointer, handle, or slot state
+        /// comes back.
+        /// </para>
+        /// </remarks>
+        internal bool TryCopyCompletedOutput(
+            int sampleSlotIndex,
+            ulong generation,
+            byte[] destination,
+            int destinationCapacity,
+            out int validLength)
+        {
+            validLength = 0;
+
+            RequireUsableSession("copy completed output from");
+
+            if (sampleSlotIndex < 0 || sampleSlotIndex >= EncodeSampleSlotCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(sampleSlotIndex), sampleSlotIndex,
+                    "The encode sample slot index is outside the fixed set.");
+            }
+
+            if (destination == null)
+            {
+                throw new ArgumentNullException(nameof(destination));
+            }
+
+            if (destinationCapacity <= 0 || destinationCapacity > destination.Length)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(destinationCapacity), destinationCapacity,
+                    "The capacity must be inside the destination.");
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeOutputResultV1 result = default;
+            int written = ZantetsuNvencCopySessionCompletedOutputV1(
+                _sessionOwner, (uint)sampleSlotIndex, generation, destination,
+                (uint)destinationCapacity, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeOutputResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native output collection was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            switch (result.Status)
+            {
+                case StatusOk:
+                    if (result.ValidLength == 0 ||
+                        result.ValidLength > (uint)destinationCapacity)
+                    {
+                        throw new InvalidOperationException(
+                            "The native output collection reported a length outside the storage: "
+                            + result.ValidLength + ".");
+                    }
+
+                    validLength = (int)result.ValidLength;
+
+                    // Collected: the driver has given this frame back.
+                    System.Threading.Interlocked.Decrement(ref _encodeSamplesInFlight);
+                    return true;
+
+                case StatusNotSubmitted:
+                    // Nothing usable came back, but the lock and the map did,
+                    // so the frame is no longer the driver's either.
+                    System.Threading.Interlocked.Decrement(ref _encodeSamplesInFlight);
+                    return false;
+
+                case StatusFailed:
+                    throw new InvalidOperationException(
+                        "The completed output could not be collected safely (NVENCSTATUS "
+                        + result.LastNvencStatus + ", win32 error "
+                        + result.LastWin32Error + ").");
+
+                default:
+                    throw new InvalidOperationException(
+                        "The native output collection returned an undefined status: "
+                        + result.Status + ".");
+            }
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
         }
 
         /// <summary>
@@ -1039,6 +1268,8 @@ namespace Zantetsu.Observability
                     + inFlight
                     + " uncollected conversion command(s); they are collected before the set is released.");
             }
+
+            RequireNoEncodeSampleInFlight("its conversion commands are released");
 
             if (_conversionCommandsReleaseAttempted)
             {
@@ -1388,6 +1619,8 @@ namespace Zantetsu.Observability
                     "This session's completion events are still prepared; they are released before its output buffers.");
             }
 
+            RequireNoEncodeSampleInFlight("its output buffers are released");
+
             if (_outputBuffersReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -1457,6 +1690,8 @@ namespace Zantetsu.Observability
                     "This session's source surfaces are still bound; they are released before the session is closed.");
             }
 
+            RequireNoEncodeSampleInFlight("the session is closed");
+
             // One owner, one close attempt - settled before the native side is
             // called, so a destroy it refused is never asked for again.
             if (_closeAttempted)
@@ -1499,6 +1734,23 @@ namespace Zantetsu.Observability
             {
                 _conversionCommands.Dispose();
                 _conversionCommands = null;
+            }
+        }
+
+        /// <summary>
+        /// Refuses while the driver still has a submitted picture. Called
+        /// before any teardown spends its one attempt, so the caller can still
+        /// tear down once every frame has been collected.
+        /// </summary>
+        private void RequireNoEncodeSampleInFlight(string what)
+        {
+            int inFlight = System.Threading.Volatile.Read(ref _encodeSamplesInFlight);
+            if (inFlight != 0)
+            {
+                throw new InvalidOperationException(
+                    "This session still has " + inFlight
+                    + " submitted picture(s) the encoder has not given back; they are collected before "
+                    + what + ".");
             }
         }
 

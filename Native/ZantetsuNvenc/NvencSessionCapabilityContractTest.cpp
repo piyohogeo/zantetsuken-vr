@@ -17,14 +17,44 @@
 // returns non-zero.
 
 #include <cstdio>
+#include <new>
 
 #include <d3d11.h>
 
 #include "D3D11DeviceBinding.h"
 #include "NvencEncoderSession.h"
 
+namespace zantetsu
+{
+    /// The test's own scratch storage. Production never allocates for an
+    /// access unit here; this is the caller-provided destination the copy
+    /// writes into.
+    template <typename T>
+    class ScopedArray
+    {
+    public:
+        explicit ScopedArray(uint32_t count)
+            : _values(count == 0 ? nullptr : new (std::nothrow) T[count]())
+        {
+        }
+
+        ~ScopedArray() { delete[] _values; }
+
+        ScopedArray(const ScopedArray&) = delete;
+        ScopedArray& operator=(const ScopedArray&) = delete;
+
+        T* Get() const { return _values; }
+
+    private:
+        T* _values;
+    };
+}
+
 namespace
 {
+    /// The fixed access unit storage this profile uses.
+    constexpr uint32_t kAccessUnitCapacity = 16u * 1024u * 1024u;
+
     int g_failures = 0;
 
     void Check(bool condition, const char* what)
@@ -655,6 +685,104 @@ int main()
         "the fixed completion event set prepares on the initialized encoder");
 
     // The events go before the buffers, and the buffers before the surfaces.
+    // ---- one whole frame: convert, map, submit, wait, lock, copy, unlock,
+    //      unmap ----
+    {
+        const uint32_t frameSlot = 0;
+
+        // The picture is only meaningful once its conversion has actually
+        // written the surface, so that comes first and is collected.
+        void* conversionData = nullptr;
+        Check(
+            session.TryArmConversionCommand(
+                frameSlot, frameSlot, frameSlot, 60, &conversionData) &&
+                conversionData != nullptr,
+            "the frame's conversion arms");
+        zantetsu::RunConversionCommandFromEventData(conversionData);
+        Check(
+            session.TryCollectConversionCommand(
+                frameSlot, 60, 5000, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Completed,
+            "the frame's conversion completes before anything is encoded");
+
+        NVENCSTATUS submitStatus = NV_ENC_SUCCESS;
+        Check(
+            session.TrySubmitEncodePicture(frameSlot, 1, &submitStatus) ==
+                zantetsu::NvencEncodeSubmitStatus::Submitted,
+            "the converted surface maps and one picture submits");
+        if (submitStatus != NV_ENC_SUCCESS)
+        {
+            std::printf(
+                "  observed: submit reported NVENCSTATUS %d\n",
+                static_cast<int>(submitStatus));
+        }
+
+        // One picture per sample generation, and only ever forward.
+        NVENCSTATUS secondStatus = NV_ENC_SUCCESS;
+        Check(
+            session.TrySubmitEncodePicture(frameSlot, 1, &secondStatus) !=
+                zantetsu::NvencEncodeSubmitStatus::Submitted,
+            "the same sample generation does not submit twice");
+
+        // Nothing the frame is built on may be taken away while the driver
+        // still has it.
+        Check(
+            !session.TryReleaseCompletionEvents(),
+            "the completion events are not released while a picture is in flight");
+        Check(
+            session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
+            "a session with a picture in flight refuses to close");
+
+        zantetsu::ScopedArray<uint8_t> accessUnit(kAccessUnitCapacity);
+        Check(accessUnit.Get() != nullptr, "the test's access unit storage exists");
+
+        uint32_t validLength = 0;
+        NVENCSTATUS outputStatus = NV_ENC_SUCCESS;
+        DWORD outputWin32Error = 0;
+        const zantetsu::NvencOutputCollectStatus collected =
+            session.TryCopyCompletedOutput(
+                frameSlot, 1, accessUnit.Get(), kAccessUnitCapacity,
+                &validLength, &outputStatus, &outputWin32Error);
+
+        Check(
+            collected == zantetsu::NvencOutputCollectStatus::Copied,
+            "the completion event is awaited and the access unit copies out");
+        if (collected != zantetsu::NvencOutputCollectStatus::Copied)
+        {
+            std::printf(
+                "  observed: output reported NVENCSTATUS %d, win32 error %lu\n",
+                static_cast<int>(outputStatus),
+                static_cast<unsigned long>(outputWin32Error));
+        }
+
+        Check(
+            validLength >= 1 && validLength <= kAccessUnitCapacity,
+            "the copied access unit has a length inside the storage");
+
+        // Annex-B and nothing more: no parser, no NAL classification.
+        const bool startCode = validLength >= 4 &&
+            accessUnit.Get()[0] == 0x00 && accessUnit.Get()[1] == 0x00 &&
+            (accessUnit.Get()[2] == 0x01 ||
+                (accessUnit.Get()[2] == 0x00 && accessUnit.Get()[3] == 0x01));
+        Check(startCode, "the copied access unit begins with an Annex-B start code");
+        std::printf("  observed: access unit of %u bytes\n", validLength);
+
+        // Collected: the slot is usable again with a newer generation.
+        NVENCSTATUS reuseStatus = NV_ENC_SUCCESS;
+        Check(
+            session.TrySubmitEncodePicture(frameSlot, 2, &reuseStatus) ==
+                zantetsu::NvencEncodeSubmitStatus::Submitted,
+            "the same slot takes another picture under a newer generation");
+
+        uint32_t reuseLength = 0;
+        Check(
+            session.TryCopyCompletedOutput(
+                frameSlot, 2, accessUnit.Get(), kAccessUnitCapacity,
+                &reuseLength, &outputStatus, &outputWin32Error) ==
+                zantetsu::NvencOutputCollectStatus::Copied,
+            "the reused slot's picture collects as well");
+    }
+
     Check(
         !session.TryReleaseOutputBitstreamBuffers(),
         "the output buffers are not released while completion events are held");

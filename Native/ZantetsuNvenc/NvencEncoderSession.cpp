@@ -62,6 +62,7 @@ namespace zantetsu
         // this handles: the caller releases and closes first, and an owner
         // whose release or close was refused is kept. Nothing is unregistered,
         // closed, released, or destroyed implicitly here.
+        assert(!AnyEncodeSampleInFlight());
         assert(!AnyCompletionEventHeld());
         assert(!AnyOutputBitstreamBufferHeld());
         assert(!AnyInputSurfaceHeld());
@@ -1153,6 +1154,11 @@ namespace zantetsu
             return false;
         }
 
+        if (AnyEncodeSampleInFlight())
+        {
+            return false;
+        }
+
         if (AnyConversionCommandBusy())
         {
             return false;
@@ -1693,6 +1699,340 @@ namespace zantetsu
         return NvencConversionCollectStatus::Completed;
     }
 
+    bool NvencEncoderSession::AreCompletionEventsPrepared() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].completionEvent == nullptr ||
+                !_slots[i].completionEventRegistered)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::AreOutputBitstreamBuffersPrepared() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].outputBitstreamBuffer == nullptr)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::AnyEncodeSampleInFlight() const
+    {
+        for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
+        {
+            if (_slots[i].mappedInputResource != nullptr ||
+                _slots[i].submitted ||
+                _slots[i].bitstreamLocked)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    NvencEncodeSubmitStatus NvencEncoderSession::TrySubmitEncodePicture(
+        uint32_t sampleSlotIndex, uint64_t generation, NVENCSTATUS* lastStatus)
+    {
+        if (lastStatus != nullptr)
+        {
+            *lastStatus = NV_ENC_SUCCESS;
+        }
+
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr ||
+            !_encoderInitialized)
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        if (sampleSlotIndex >= kEncodeSampleSlotCount || generation == 0)
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        // Everything a picture is built from has to be completely there.
+        if (!AreInputSurfacesFullyPrepared() ||
+            !AreOutputBitstreamBuffersPrepared() ||
+            !AreCompletionEventsPrepared())
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        EncodeSampleSlot& slot = _slots[sampleSlotIndex];
+
+        // One frame at a time in a slot, and only ever forward.
+        if (slot.mappedInputResource != nullptr || slot.submitted ||
+            slot.bitstreamLocked)
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        if (generation <= slot.lastSampleGeneration)
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+
+        // The way back is confirmed before anything is mapped, so a mapped
+        // input is never left with no way to unmap it.
+        if (api.nvEncMapInputResource == nullptr ||
+            api.nvEncUnmapInputResource == nullptr ||
+            api.nvEncEncodePicture == nullptr)
+        {
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        NV_ENC_MAP_INPUT_RESOURCE mapResource = {};
+        mapResource.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
+        mapResource.registeredResource = slot.registeredInputResource;
+
+        const NVENCSTATUS mapStatus = api.nvEncMapInputResource(_encoder, &mapResource);
+        if (mapStatus != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = mapStatus;
+            if (lastStatus != nullptr)
+            {
+                *lastStatus = mapStatus;
+            }
+
+            // A refused map that gave nothing back changed no ownership, so the
+            // caller can report an ordinary submit failure. A refused map that
+            // left a handle, or a device that is gone, did not.
+            if (mapResource.mappedResource != nullptr ||
+                mapStatus == NV_ENC_ERR_DEVICE_NOT_EXIST)
+            {
+                return NvencEncodeSubmitStatus::Failed;
+            }
+
+            return NvencEncodeSubmitStatus::NotSubmitted;
+        }
+
+        if (mapResource.mappedResource == nullptr)
+        {
+            // Success without a handle is not something to reason about.
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        // Owned from the moment it exists: this session must unmap it.
+        slot.mappedInputResource = mapResource.mappedResource;
+        slot.mappedBufferFormat = mapResource.mappedBufferFmt;
+        slot.lastSampleGeneration = generation;
+
+        // The fixed picture. The encoder makes no picture type decision for
+        // this profile, so the type, the display order, and the reference flag
+        // are stated here - this is where the project's "every frame is an IDR"
+        // becomes an explicit IDR picture rather than a force flag, which is
+        // for the picture-type-decision path. The sequence and picture
+        // parameter sets come from the initialization's repeat setting; nothing
+        // is asked for per picture.
+        NV_ENC_PIC_PARAMS picture = {};
+        picture.version = NV_ENC_PIC_PARAMS_VER;
+        picture.inputWidth = kInputSurfaceWidth;
+        picture.inputHeight = kInputSurfaceHeight;
+        picture.inputPitch = 0;
+        picture.inputBuffer = slot.mappedInputResource;
+        picture.bufferFmt = slot.mappedBufferFormat;
+        picture.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+        picture.pictureType = NV_ENC_PIC_TYPE_IDR;
+        picture.outputBitstream = slot.outputBitstreamBuffer;
+        picture.completionEvent = slot.completionEvent;
+        picture.inputTimeStamp = 0;
+        picture.inputDuration = 0;
+        picture.encodePicFlags = 0;
+        picture.codecPicParams.h264PicParams.displayPOCSyntax = 0;
+        picture.codecPicParams.h264PicParams.refPicFlag = 1;
+
+        const NVENCSTATUS encodeStatus = api.nvEncEncodePicture(_encoder, &picture);
+        if (encodeStatus != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = encodeStatus;
+            if (lastStatus != nullptr)
+            {
+                *lastStatus = encodeStatus;
+            }
+
+            // The input is mapped and whether the encoder took it cannot be
+            // established, so it stays mapped and this session keeps it. That
+            // includes needing more input: this profile has no delay to drain,
+            // so it is not an ordinary "not submitted" either.
+            return NvencEncodeSubmitStatus::Failed;
+        }
+
+        slot.submitted = true;
+        return NvencEncodeSubmitStatus::Submitted;
+    }
+
+    NvencOutputCollectStatus NvencEncoderSession::TryCopyCompletedOutput(
+        uint32_t sampleSlotIndex,
+        uint64_t generation,
+        uint8_t* destination,
+        uint32_t destinationCapacity,
+        uint32_t* validLength,
+        NVENCSTATUS* lastStatus,
+        DWORD* win32Error)
+    {
+        if (validLength != nullptr)
+        {
+            *validLength = 0;
+        }
+
+        if (lastStatus != nullptr)
+        {
+            *lastStatus = NV_ENC_SUCCESS;
+        }
+
+        if (win32Error != nullptr)
+        {
+            *win32Error = 0;
+        }
+
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        if (sampleSlotIndex >= kEncodeSampleSlotCount || destination == nullptr ||
+            destinationCapacity == 0)
+        {
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        EncodeSampleSlot& slot = _slots[sampleSlotIndex];
+
+        // Exactly the submitted picture this caller names, and no other.
+        if (!slot.submitted || slot.bitstreamLocked ||
+            slot.mappedInputResource == nullptr ||
+            slot.lastSampleGeneration != generation)
+        {
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        const NV_ENCODE_API_FUNCTION_LIST& api = *_functionList;
+        if (api.nvEncLockBitstream == nullptr ||
+            api.nvEncUnlockBitstream == nullptr ||
+            api.nvEncUnmapInputResource == nullptr)
+        {
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        // The encoder signals this event when the picture is done. Waiting is
+        // the whole point of this call, which is why only the output worker
+        // makes it.
+        const DWORD waited = ::WaitForSingleObject(slot.completionEvent, INFINITE);
+        if (waited != WAIT_OBJECT_0)
+        {
+            if (waited == WAIT_FAILED)
+            {
+                const DWORD error = ::GetLastError();
+                _lastWin32Error = error;
+                if (win32Error != nullptr)
+                {
+                    *win32Error = error;
+                }
+            }
+
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        NV_ENC_LOCK_BITSTREAM lockBitstream = {};
+        lockBitstream.version = NV_ENC_LOCK_BITSTREAM_VER;
+        lockBitstream.outputBitstream = slot.outputBitstreamBuffer;
+        lockBitstream.doNotWait = 0;
+
+        const NVENCSTATUS lockStatus = api.nvEncLockBitstream(_encoder, &lockBitstream);
+        if (lockStatus != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = lockStatus;
+            if (lastStatus != nullptr)
+            {
+                *lastStatus = lockStatus;
+            }
+
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        // Held from the moment the driver gave it, so the unlock below is owed
+        // whatever happens to the bytes.
+        slot.bitstreamLocked = true;
+
+        const uint8_t* bitstream =
+            static_cast<const uint8_t*>(lockBitstream.bitstreamBufferPtr);
+        const uint32_t length = lockBitstream.bitstreamSizeInBytes;
+
+        // Whether there is anything usable to copy is decided before the copy,
+        // and does not change what is owed.
+        const bool usable =
+            bitstream != nullptr && length >= 1 && length <= destinationCapacity;
+
+        if (usable)
+        {
+            for (uint32_t i = 0; i < length; ++i)
+            {
+                destination[i] = bitstream[i];
+            }
+        }
+
+        const NVENCSTATUS unlockStatus =
+            api.nvEncUnlockBitstream(_encoder, slot.outputBitstreamBuffer);
+        if (unlockStatus != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = unlockStatus;
+            if (lastStatus != nullptr)
+            {
+                *lastStatus = unlockStatus;
+            }
+
+            // Still locked, still mapped, still submitted: this slot is not
+            // usable again and nothing is guessed about it.
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        slot.bitstreamLocked = false;
+
+        const NVENCSTATUS unmapStatus =
+            api.nvEncUnmapInputResource(_encoder, slot.mappedInputResource);
+        if (unmapStatus != NV_ENC_SUCCESS)
+        {
+            _lastNvencStatus = unmapStatus;
+            if (lastStatus != nullptr)
+            {
+                *lastStatus = unmapStatus;
+            }
+
+            // The lock is back but the map is not, so the slot stays held.
+            return NvencOutputCollectStatus::Failed;
+        }
+
+        slot.mappedInputResource = nullptr;
+        slot.mappedBufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED;
+        slot.submitted = false;
+
+        if (!usable)
+        {
+            // Everything was given back safely; there was simply nothing to
+            // hand on. The slot is usable again.
+            return NvencOutputCollectStatus::Rejected;
+        }
+
+        if (validLength != nullptr)
+        {
+            *validLength = length;
+        }
+
+        return NvencOutputCollectStatus::Copied;
+    }
+
     bool NvencEncoderSession::AnyInputSurfaceSlotResourceHeld() const
     {
         for (uint32_t i = 0; i < kEncodeSampleSlotCount; ++i)
@@ -2052,9 +2392,10 @@ namespace zantetsu
 
         // The completion events, the output buffers, and the conversion
         // commands go first: an input surface is not taken out from under
-        // resources that were prepared on top of it.
+        // resources that were prepared on top of it. Nor is one taken out from
+        // under a frame the driver still has.
         if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
-            AnyConversionCommandHeld())
+            AnyConversionCommandHeld() || AnyEncodeSampleInFlight())
         {
             return false;
         }
@@ -2166,8 +2507,9 @@ namespace zantetsu
         }
 
         // The completion events go first: a slot's event is not left
-        // registered against an encoder whose output buffers are already gone.
-        if (AnyCompletionEventHeld())
+        // registered against an encoder whose output buffers are already gone,
+        // and neither is a frame the driver will still write into one.
+        if (AnyCompletionEventHeld() || AnyEncodeSampleInFlight())
         {
             return false;
         }
@@ -2284,6 +2626,14 @@ namespace zantetsu
             return false;
         }
 
+        // A frame the driver still has - a mapped input, an accepted picture,
+        // a locked bitstream - is not torn down from underneath. Checked
+        // before this release's one attempt is spent.
+        if (AnyEncodeSampleInFlight())
+        {
+            return false;
+        }
+
         // One owner, one release - settled before the driver is touched.
         if (_completionEventsReleaseAttempted)
         {
@@ -2317,7 +2667,8 @@ namespace zantetsu
         // gone.
         if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
             AnyConversionCommandHeld() || AnyConversionCommandBusy() ||
-            AnyInputSurfaceHeld() || AnySourceSurfaceHeld())
+            AnyInputSurfaceHeld() || AnySourceSurfaceHeld() ||
+            AnyEncodeSampleInFlight())
         {
             return NvencEncoderSessionCloseStatus::Failed;
         }
