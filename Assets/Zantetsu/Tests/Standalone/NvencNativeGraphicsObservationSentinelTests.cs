@@ -591,26 +591,25 @@ namespace Zantetsu.Observability.StandaloneTests
                 {
                     ulong current = generation;
 
-                    Assert.That(
-                        owner.TryCollectConversionCommand(0, current, 0),
-                        Is.False,
-                        "a generation that has not been issued must not complete.");
+                    // A generation this slot does not hold is a caller asking
+                    // about work that is not there - never "not yet".
+                    Assert.Throws<InvalidOperationException>(
+                        () => owner.TryCollectConversionCommand(0, current, 0),
+                        "a generation that has not been issued is not a pending completion.");
 
                     owner.IssueConversionCommand(0, 0, 0, current);
 
-                    Assert.That(
-                        owner.TryCollectConversionCommand(0, current - 1, 0),
-                        Is.False,
-                        "an older generation must not be satisfied by a newer signal.");
+                    Assert.Throws<InvalidOperationException>(
+                        () => owner.TryCollectConversionCommand(0, current - 1, 0),
+                        "an older generation is not satisfied by a newer signal.");
 
                     yield return CollectOnWorker(owner, 0, current, result =>
                         Assert.That(
                             result, Is.True,
                             "generation " + current + " must complete."));
 
-                    Assert.That(
-                        owner.TryCollectConversionCommand(0, current, 0),
-                        Is.False,
+                    Assert.Throws<InvalidOperationException>(
+                        () => owner.TryCollectConversionCommand(0, current, 0),
                         "a completion is collected once.");
                 }
 
@@ -640,6 +639,177 @@ namespace Zantetsu.Observability.StandaloneTests
                 }
 
                 owner.Dispose();
+                pool.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
+        /// <summary>
+        /// The production completion source, against the real session and the
+        /// real render callback: it says no before the conversion is issued,
+        /// converges to yes after it, and the evidence it hands back binds
+        /// exactly that source, work, sync lease, and surface.
+        /// </summary>
+        /// <remarks>
+        /// One logical submission is built here - not eight, and not the submit
+        /// or output pipeline around it - because what is being checked is the
+        /// boundary between one sync lease and one native conversion.
+        /// </remarks>
+        [UnityTest]
+        public IEnumerator Player_ProductionCompletionSourceReportsTheRealConversion()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            CaptureFrameProfile captureProfile = new CaptureFrameProfile(
+                7,
+                45.0,
+                CaptureSource.UnityRenderTexture,
+                CaptureEye.Left,
+                new CaptureImageRect(
+                    0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
+                0,
+                CapturePixelFormat.Rgba32);
+
+            CaptureFrameRenderTargetPool pool = new CaptureFrameRenderTargetPool(
+                NvencNativeEncoderSessionOwner.SourceSurfaceCount, captureProfile);
+
+            NvencCaptureProcessState processState = new NvencCaptureProcessState();
+            NvencCaptureWorkSlotPool workSlots = new NvencCaptureWorkSlotPool(processState);
+            NvencEncodeSampleSlotPool sampleSlots = new NvencEncodeSampleSlotPool(processState);
+            NvencGpuConversionSyncPool syncSlots = new NvencGpuConversionSyncPool(processState);
+            NvencSubmitToOutputCreditPool submitCredits =
+                new NvencSubmitToOutputCreditPool(processState);
+            NvencFrameCompletionCreditPool completionCredits =
+                new NvencFrameCompletionCreditPool(processState);
+            Guid backendOwner = Guid.NewGuid();
+
+            bool prepared = false;
+            CaptureSurfaceLease builtSurface = null;
+            CaptureFrameWorkToken builtToken = default;
+
+            try
+            {
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+                new NvencBringUpCapabilityProbeExecutionCoordinator(
+                    new NvencBringUpCapabilityProbe(owner)).Execute();
+                owner.InitializeEncoder(profile);
+
+                IntPtr[] sources =
+                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
+                pool.CopyNativeTexturePointers(sources);
+                owner.BindSourceSurfaces(sources);
+                owner.PrepareInputSurfaces();
+                owner.PrepareConversionCommands();
+                prepared = true;
+
+                // One logical submission, from the real pools.
+                Assert.That(workSlots.TryRent(out NvencCaptureWorkSlotLease work), Is.True);
+                Assert.That(sampleSlots.TryRent(out NvencEncodeSampleSlotLease sample), Is.True);
+                Assert.That(syncSlots.TryRent(out NvencGpuConversionSyncLease sync), Is.True);
+                Assert.That(
+                    submitCredits.TryRent(out NvencSubmitToOutputCreditLease submitCredit),
+                    Is.True);
+                Assert.That(
+                    completionCredits.TryRent(
+                        out NvencFrameCompletionCreditLease completionCredit),
+                    Is.True);
+                Assert.That(pool.TryRent(out CaptureFrameRenderTargetLease rented), Is.True);
+
+                // The lease's generation is the positive, forward-only number
+                // the conversion is armed with; nothing translates it.
+                Assert.That(sync.Generation, Is.GreaterThan(0L));
+
+                CaptureFrameWorkToken workToken = new CaptureFrameWorkToken(
+                    backendOwner, work.SlotIndex, work.Generation, 1, 1);
+                CaptureSurfaceLease surface = new CaptureSurfaceLease(pool, rented);
+                surface.TransferToBackend(backendOwner, workToken);
+                builtSurface = surface;
+                builtToken = workToken;
+
+                NvencSubmissionRecord record = NvencSubmissionRecord.Create(
+                    backendOwner, workToken, work, sample, sync, submitCredit,
+                    completionCredit, surface, workSlots, sampleSlots, syncSlots,
+                    submitCredits, completionCredits);
+
+                NvencNativeSourceReadCompletedSource completionSource =
+                    new NvencNativeSourceReadCompletedSource(owner);
+
+                // No conversion has been armed for this lease, so asking about
+                // it is a caller asking about work that is not there. That is a
+                // broken contract, not a completion still to come - answering
+                // "not yet" would have a caller wait for something that is never
+                // coming.
+                Assert.Throws<InvalidOperationException>(
+                    () => completionSource.TryGetEvidence(
+                        record, out NvencSourceReadCompletedEvidence _),
+                    "a record whose conversion was never issued is not pending.");
+
+                owner.IssueConversionCommand(
+                    sync.SlotIndex, 0, sample.SlotIndex, (ulong)sync.Generation);
+
+                // It converges, within a bounded number of frames rather than a
+                // blocking wait. Every attempt that is not the completion is a
+                // plain false with default evidence.
+                NvencSourceReadCompletedEvidence evidence = default;
+                bool completed = false;
+                for (int attempt = 0; attempt < 600 && !completed; attempt++)
+                {
+                    completed = completionSource.TryGetEvidence(record, out evidence);
+                    if (!completed)
+                    {
+                        Assert.That(evidence.IsValid, Is.False);
+                        yield return null;
+                    }
+                }
+
+                Assert.That(
+                    completed, Is.True,
+                    "the issued conversion must complete within the watchdog.");
+
+                Assert.That(evidence.IsValid, Is.True);
+                Assert.That(evidence.Matches(completionSource, record), Is.True);
+                Assert.That(evidence.Source, Is.SameAs(completionSource));
+                Assert.That(evidence.Surface, Is.SameAs(surface));
+                Assert.That(evidence.WorkToken.IdenticalTo(workToken), Is.True);
+                Assert.That(evidence.SyncSlot.SlotIndex, Is.EqualTo(sync.SlotIndex));
+                Assert.That(evidence.SyncSlot.Generation, Is.EqualTo(sync.Generation));
+
+                // The completion belongs to that one command: asking again is
+                // not a second proof, it is a broken contract.
+                Assert.Throws<InvalidOperationException>(
+                    () => completionSource.TryGetEvidence(
+                        record, out NvencSourceReadCompletedEvidence _));
+            }
+            finally
+            {
+                if (prepared)
+                {
+                    owner.ReleaseConversionCommands();
+                    owner.ReleaseInputSurfaces();
+                    owner.ReleaseSourceSurfaces();
+                }
+
+                owner.Dispose();
+
+                // The one surface this test rented goes back before the pool it
+                // came from is disposed.
+                if (builtSurface != null && builtSurface.IsCreated)
+                {
+                    if (builtSurface.IsBackendOwned)
+                    {
+                        builtSurface.ReleaseFromBackend(backendOwner, builtToken);
+                    }
+                    else
+                    {
+                        builtSurface.Dispose();
+                    }
+                }
+
                 pool.Dispose();
             }
 

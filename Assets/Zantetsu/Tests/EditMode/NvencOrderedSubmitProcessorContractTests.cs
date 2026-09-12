@@ -18,6 +18,39 @@ namespace Zantetsu.Core.Tests
     {
         private const int WatchdogTimeoutMs = 5000;
 
+        /// <summary>
+        /// A completion authority that raises leaves this process unable to say
+        /// what it still owns, so the processor poisons, keeps everything, and
+        /// lets the very same exception out.
+        /// </summary>
+        [Test]
+        public void Process_SourceCompletionThrows_PoisonsAndRethrowsSameException()
+        {
+            using (Harness h = Harness.Create(2))
+            {
+                NvencSubmissionRecord record = h.CreateRecord(1);
+                h.Enqueue(record);
+
+                InvalidOperationException raised =
+                    new InvalidOperationException("the conversion could not be completed");
+                h.Source.Throw(raised);
+
+                InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(
+                    () => h.Processor.TryProcessNext());
+
+                // The same exception object, not a translation of it.
+                Assert.That(thrown, Is.SameAs(raised));
+
+                Assert.That(h.State.IsPoisoned, Is.True);
+                Assert.That(h.Submitter.SubmitCount, Is.EqualTo(0));
+                Assert.That(
+                    h.OutputQueue.TryDequeue(out NvencSubmitToOutputRecord _), Is.False);
+
+                // The current is still held: nothing was released or handed on.
+                Assert.That(h.Processor.HasCurrentWork, Is.True);
+            }
+        }
+
         [Test]
         public void Process_FifoOrder_IsPreserved()
         {
@@ -490,6 +523,7 @@ namespace Zantetsu.Core.Tests
         private sealed class FakeSourceReadCompletedSource : INvencSourceReadCompletedSource
         {
             private readonly List<CaptureFrameWorkToken> _completed = new List<CaptureFrameWorkToken>();
+            private Exception _exception;
 
             internal int ObserveCount { get; private set; }
 
@@ -498,10 +532,24 @@ namespace Zantetsu.Core.Tests
                 _completed.Add(token);
             }
 
+            /// <summary>
+            /// Makes the authority raise, the way the production source does
+            /// when the native side cannot establish a safe completion.
+            /// </summary>
+            internal void Throw(Exception exception)
+            {
+                _exception = exception;
+            }
+
             public bool TryGetEvidence(
                 in NvencSubmissionRecord record, out NvencSourceReadCompletedEvidence evidence)
             {
                 ObserveCount++;
+                if (_exception != null)
+                {
+                    throw _exception;
+                }
+
                 foreach (CaptureFrameWorkToken token in _completed)
                 {
                     if (token.IdenticalTo(record.WorkToken))

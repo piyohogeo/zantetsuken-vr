@@ -777,9 +777,19 @@ ZantetsuNvencCollectSessionConversionCommandV1(
     // not whatever the session last failed at.
     HRESULT callbackHResult = S_OK;
     DWORD win32Error = 0;
-    if (!session->TryCollectConversionCommand(
+    const zantetsu::NvencConversionCollectStatus status =
+        session->TryCollectConversionCommand(
             syncSlotIndex, generation, timeoutMilliseconds,
-            &callbackHResult, &win32Error))
+            &callbackHResult, &win32Error);
+
+    if (status == zantetsu::NvencConversionCollectStatus::Pending)
+    {
+        // Nothing happened and nothing is claimed about why.
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_PENDING;
+        return 1;
+    }
+
+    if (status != zantetsu::NvencConversionCollectStatus::Completed)
     {
         destination->lastHResult = static_cast<int32_t>(callbackHResult);
         destination->lastWin32Error = static_cast<uint32_t>(win32Error);

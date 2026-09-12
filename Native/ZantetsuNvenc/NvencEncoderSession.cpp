@@ -1490,7 +1490,7 @@ namespace zantetsu
         }
     }
 
-    bool NvencEncoderSession::TryCollectConversionCommand(
+    NvencConversionCollectStatus NvencEncoderSession::TryCollectConversionCommand(
         uint32_t syncSlotIndex,
         uint64_t generation,
         uint32_t timeoutMilliseconds,
@@ -1509,22 +1509,23 @@ namespace zantetsu
 
         if (syncSlotIndex >= kConversionCommandSlotCount)
         {
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         ConversionCommandSlot& slot = _conversionSlots[syncSlotIndex];
         if (slot.fence == nullptr || slot.completionEvent == nullptr ||
             slot.callbackEvent == nullptr)
         {
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         // Exactly one outstanding command is collectable: this slot's current
-        // generation. An older one, or a slot with nothing outstanding, is
-        // refused rather than waited on.
+        // generation. An older one, or a slot with nothing outstanding, is a
+        // caller asking about work that is not there - a broken contract, not a
+        // completion still to come.
         if (slot.lastGeneration != generation)
         {
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         const LONG state = ::InterlockedCompareExchange(
@@ -1533,7 +1534,7 @@ namespace zantetsu
             static_cast<LONG>(ConversionCommandState::Idle));
         if (state == static_cast<LONG>(ConversionCommandState::Idle))
         {
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         // One deadline for the whole collection, so waiting for the callback
@@ -1562,7 +1563,11 @@ namespace zantetsu
                     *win32Error = error;
                 }
 
-                return false;
+                // A wait that ran out of time is the command still to come; a
+                // wait that failed is not.
+                return callbackWait == WAIT_TIMEOUT
+                    ? NvencConversionCollectStatus::Pending
+                    : NvencConversionCollectStatus::Failed;
             }
 
             // Woken, but the callback has not published yet: this command is
@@ -1573,7 +1578,7 @@ namespace zantetsu
                 static_cast<LONG>(ConversionCommandState::AwaitingCollection));
             if (published != static_cast<LONG>(ConversionCommandState::AwaitingCollection))
             {
-                return false;
+                return NvencConversionCollectStatus::Pending;
             }
         }
 
@@ -1588,8 +1593,9 @@ namespace zantetsu
         if (FAILED(callbackResult))
         {
             // Nothing signalled, so there is no fence to wait on. The command
-            // stays outstanding rather than being returned to idle.
-            return false;
+            // stays outstanding rather than being returned to idle, and what
+            // went wrong is not something waiting longer will fix.
+            return NvencConversionCollectStatus::Failed;
         }
 
         if (slot.fence->GetCompletedValue() < generation)
@@ -1608,7 +1614,7 @@ namespace zantetsu
                         *callbackHResult = hr;
                     }
 
-                    return false;
+                    return NvencConversionCollectStatus::Failed;
                 }
 
                 slot.fenceEventRegistered = true;
@@ -1636,13 +1642,16 @@ namespace zantetsu
 
                 // The callback's result stays published and the slot stays
                 // outstanding, so the same generation can be collected again.
-                return false;
+                return fenceWait == WAIT_TIMEOUT
+                    ? NvencConversionCollectStatus::Pending
+                    : NvencConversionCollectStatus::Failed;
             }
         }
 
         if (slot.fence->GetCompletedValue() < generation)
         {
-            return false;
+            // Woken without the value having been reached: still to come.
+            return NvencConversionCollectStatus::Pending;
         }
 
         // Both completions are consumed here, before the slot is idle again:
@@ -1662,7 +1671,7 @@ namespace zantetsu
                 *win32Error = error;
             }
 
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         slot.fenceEventRegistered = false;
@@ -1676,12 +1685,12 @@ namespace zantetsu
                 *win32Error = error;
             }
 
-            return false;
+            return NvencConversionCollectStatus::Failed;
         }
 
         ::InterlockedExchange(
             &slot.state, static_cast<LONG>(ConversionCommandState::Idle));
-        return true;
+        return NvencConversionCollectStatus::Completed;
     }
 
     bool NvencEncoderSession::AnyInputSurfaceSlotResourceHeld() const

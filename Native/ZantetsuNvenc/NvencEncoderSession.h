@@ -65,6 +65,27 @@ namespace zantetsu
     /// flight, so they are never the same array.
     constexpr uint32_t kSourceSurfaceSlotCount = 8;
 
+    /// What one attempt to collect a conversion came to.
+    ///
+    /// Pending is the ordinary "not yet": the callback has not published, or
+    /// the GPU has not reached this command's generation within the time the
+    /// caller allowed. Nothing about the command changes, and nothing is
+    /// invented to describe it - no HRESULT, no Win32 error.
+    ///
+    /// Failed is everything that means a safe completion could not be
+    /// established: what the callback recorded, a refused registration, a wait
+    /// that failed, a refused reset. It also covers a caller asking about a
+    /// command that is not there - an index out of range, a generation that is
+    /// not this slot's, a slot with nothing outstanding - because that is a
+    /// broken calling contract or an inconsistency, not a completion that has
+    /// yet to happen.
+    enum class NvencConversionCollectStatus
+    {
+        Completed,
+        Pending,
+        Failed,
+    };
+
     /// The fixed number of GPU conversion command slots. A conversion binds
     /// one source surface to one encode sample slot for one frame, so it is
     /// its own set again: a command slot is not a source and not a sample.
@@ -315,8 +336,13 @@ namespace zantetsu
         ///
         /// The callback's own HRESULT and the last Win32 error are written out
         /// for the caller; an older generation, a slot that has nothing
-        /// outstanding, and a second collection are all refused.
-        bool TryCollectConversionCommand(
+        /// outstanding, and a second collection are all refused as failures
+        /// rather than reported as something still to come.
+        ///
+        /// Only Completed returns the slot to idle. Pending leaves the slot,
+        /// both events, the fence registration, and the generation exactly as
+        /// they were.
+        NvencConversionCollectStatus TryCollectConversionCommand(
             uint32_t syncSlotIndex,
             uint64_t generation,
             uint32_t timeoutMilliseconds,

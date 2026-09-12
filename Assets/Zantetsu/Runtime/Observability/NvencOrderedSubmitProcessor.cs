@@ -193,7 +193,25 @@ namespace Zantetsu.Observability
             {
                 // 5. Request the evidenced source release handoff. On false the
                 // current is held and later records are never overtaken.
-                if (!_releaseCoordinator.TryReleaseSourceResources(_current))
+                //
+                // A throw is not a submit failure that can be reported: the
+                // completion authority could not say whether the source is
+                // still being read, so what this process owns is no longer
+                // known. Poison first, fabricate no output record, call no
+                // submitter, keep the current and everything it holds, and let
+                // the very same exception out.
+                bool released;
+                try
+                {
+                    released = _releaseCoordinator.TryReleaseSourceResources(_current);
+                }
+                catch (Exception)
+                {
+                    _processState.TryPoison();
+                    throw;
+                }
+
+                if (!released)
                 {
                     return false;
                 }

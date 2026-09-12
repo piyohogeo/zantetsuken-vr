@@ -63,6 +63,12 @@ namespace Zantetsu.Observability
         private const uint StatusUnsupported = 2;
         private const uint StatusFailed = 3;
 
+        /// <summary>
+        /// A conversion collection, and only that, reports this: the command
+        /// has not completed yet and nothing about it changed.
+        /// </summary>
+        private const uint StatusPending = 4;
+
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
         private const string NativeLibraryName = "ZantetsuNvenc";
 
@@ -1215,27 +1221,44 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Waits for exactly one issued conversion to complete and returns its
-        /// slot to use. Returns false when it did not complete in time or the
-        /// callback recorded a failure.
+        /// Asks once whether exactly one issued conversion has completed, and
+        /// returns its slot to use when it has. True means completed; false
+        /// means not yet.
         /// </summary>
         /// <remarks>
-        /// For a worker thread: it touches the command's fence and its event
-        /// and nothing else - no Unity API, no graphics context, no drawing.
-        /// An older generation, a slot with nothing outstanding, and a second
-        /// collection are all refused by the native side.
+        /// <para>
+        /// For a worker thread: it touches the command's two events and its
+        /// fence and nothing else - no Unity API, no graphics context, no
+        /// drawing. One call asks the native side exactly once.
+        /// </para>
+        /// <para>
+        /// False is only ever "not yet": the callback has not published, or the
+        /// GPU has not reached this command in the time allowed. Nothing
+        /// changed, and nothing is claimed about why. Everything else - a
+        /// callback that failed, a refused wait or reset, a generation or slot
+        /// that is not outstanding, a broken ABI - throws, because a caller
+        /// that cannot tell those apart from "not yet" would wait for a
+        /// completion that is never coming.
+        /// </para>
+        /// <para>
+        /// No timeout, handle, HRESULT, or native result type crosses this
+        /// boundary.
+        /// </para>
         /// </remarks>
         internal bool TryCollectConversionCommand(
             int syncSlotIndex, ulong generation, uint timeoutMilliseconds)
         {
             if (_sessionOwner == 0 || _closeAttempted)
             {
-                return false;
+                throw new InvalidOperationException(
+                    "This encoder session is not usable; there is no conversion to collect.");
             }
 
             if (syncSlotIndex < 0 || syncSlotIndex >= ConversionCommandSlotCount)
             {
-                return false;
+                throw new ArgumentOutOfRangeException(
+                    nameof(syncSlotIndex), syncSlotIndex,
+                    "The sync slot index is outside the fixed set.");
             }
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
@@ -1253,16 +1276,31 @@ namespace Zantetsu.Observability
 
             RequireAbiVersion(result.AbiVersion);
 
-            if (result.Status != StatusOk)
+            switch (result.Status)
             {
-                return false;
-            }
+                case StatusOk:
+                    // Collected: this one is no longer the render thread's.
+                    System.Threading.Interlocked.Decrement(
+                        ref _conversionCommandsInFlight);
+                    return true;
 
-            // Collected: this one is no longer the render thread's.
-            System.Threading.Interlocked.Decrement(ref _conversionCommandsInFlight);
-            return true;
+                case StatusPending:
+                    return false;
+
+                case StatusFailed:
+                    throw new InvalidOperationException(
+                        "The conversion command could not be completed (HRESULT 0x"
+                        + result.LastHResult.ToString("X8") + ", win32 error "
+                        + result.LastWin32Error + ").");
+
+                default:
+                    throw new InvalidOperationException(
+                        "The native conversion collection returned an undefined status: "
+                        + result.Status + ".");
+            }
 #else
-            return false;
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
 #endif
         }
 

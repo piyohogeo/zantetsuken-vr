@@ -331,7 +331,9 @@ int main()
             // draw nothing.
             zantetsu::RunConversionCommandFromEventData(eventData);
 
-            if (!session.TryCollectConversionCommand(i, 1, 5000, &callbackHResult, &collectWin32Error))
+            if (zantetsu::NvencConversionCollectStatus::Completed !=
+                session.TryCollectConversionCommand(
+                    i, 1, 5000, &callbackHResult, &collectWin32Error))
             {
                 allCollected = false;
                 break;
@@ -384,7 +386,9 @@ int main()
             // The generation before this one belongs to a command that is
             // already collected: waiting on it must be refused, not satisfied
             // by an older signal.
-            if (session.TryCollectConversionCommand(0, generation - 1, 0, &callbackHResult, &collectWin32Error))
+            if (zantetsu::NvencConversionCollectStatus::Completed ==
+                session.TryCollectConversionCommand(
+                    0, generation - 1, 0, &callbackHResult, &collectWin32Error))
             {
                 staleRefused = false;
                 break;
@@ -392,14 +396,18 @@ int main()
 
             zantetsu::RunConversionCommandFromEventData(eventData);
 
-            if (!session.TryCollectConversionCommand(0, generation, 5000, &callbackHResult, &collectWin32Error))
+            if (zantetsu::NvencConversionCollectStatus::Completed !=
+                session.TryCollectConversionCommand(
+                    0, generation, 5000, &callbackHResult, &collectWin32Error))
             {
                 reuseHeld = false;
                 break;
             }
 
             // Collected once, and only once.
-            if (session.TryCollectConversionCommand(0, generation, 0, &callbackHResult, &collectWin32Error))
+            if (zantetsu::NvencConversionCollectStatus::Completed ==
+                session.TryCollectConversionCommand(
+                    0, generation, 0, &callbackHResult, &collectWin32Error))
             {
                 reuseHeld = false;
                 break;
@@ -440,7 +448,7 @@ int main()
         {
             // The callback has already published, so this one waits for the
             // GPU alone - and with no patience at all it may run out of time.
-            const bool impatient = session.TryCollectConversionCommand(
+            const bool impatient = zantetsu::NvencConversionCollectStatus::Completed == session.TryCollectConversionCommand(
                 i, 30, 0, &callbackHResult, &collectWin32Error);
             if (!impatient)
             {
@@ -456,7 +464,7 @@ int main()
 
                 // The published completion was not consumed, so the very same
                 // generation is still collectable.
-                if (!session.TryCollectConversionCommand(
+                if (zantetsu::NvencConversionCollectStatus::Completed != session.TryCollectConversionCommand(
                         i, 30, 5000, &callbackHResult, &collectWin32Error))
                 {
                     everyImpatientAttemptRecovers = false;
@@ -482,7 +490,7 @@ int main()
                 break;
             }
 
-            if (session.TryCollectConversionCommand(
+            if (zantetsu::NvencConversionCollectStatus::Completed == session.TryCollectConversionCommand(
                     i, 31, 50, &callbackHResult, &collectWin32Error))
             {
                 everyNextGenerationWaits = false;
@@ -497,7 +505,7 @@ int main()
 
             zantetsu::RunConversionCommandFromEventData(nextData);
 
-            if (!session.TryCollectConversionCommand(
+            if (zantetsu::NvencConversionCollectStatus::Completed != session.TryCollectConversionCommand(
                     i, 31, 5000, &callbackHResult, &collectWin32Error))
             {
                 everyNextGenerationWaits = false;
@@ -517,6 +525,54 @@ int main()
         std::printf(
             "  observed: an impatient collection timed out on the GPU: %s\n",
             anyImpatientAttemptTimedOut ? "yes" : "no");
+    }
+
+    // ---- what a collection is told apart from ----
+    {
+        void* eventData = nullptr;
+        Check(
+            session.TryArmConversionCommand(5, 5, 5, 40, &eventData) &&
+                eventData != nullptr,
+            "a slot arms for the three-way collection check");
+
+        // Armed, but its callback has not run: not yet, and nothing about the
+        // command changed.
+        Check(
+            session.TryCollectConversionCommand(
+                5, 40, 0, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Pending,
+            "a command whose callback has not run is pending");
+        Check(
+            callbackHResult == S_OK && collectWin32Error == 0,
+            "a pending collection invents no HRESULT and no Win32 error");
+
+        zantetsu::RunConversionCommandFromEventData(eventData);
+
+        // The same generation, given time, completes.
+        Check(
+            session.TryCollectConversionCommand(
+                5, 40, 5000, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Completed,
+            "the same generation completes once its callback has run and the GPU caught up");
+
+        // Asking again, or about a generation this slot does not hold, is a
+        // caller asking about work that is not there - never "not yet".
+        Check(
+            session.TryCollectConversionCommand(
+                5, 40, 0, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Failed,
+            "collecting a completed command a second time fails rather than pends");
+        Check(
+            session.TryCollectConversionCommand(
+                5, 39, 0, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Failed,
+            "collecting a generation this slot does not hold fails rather than pends");
+        Check(
+            session.TryCollectConversionCommand(
+                zantetsu::kConversionCommandSlotCount, 40, 0,
+                &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Failed,
+            "collecting a slot index out of range fails rather than pends");
     }
 
     // ---- what an arming refuses, before it changes anything ----
@@ -576,7 +632,9 @@ int main()
             session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
             "a session with an uncollected command refuses to close");
         Check(
-            session.TryCollectConversionCommand(1, 101, 5000, &callbackHResult, &collectWin32Error),
+            session.TryCollectConversionCommand(
+                1, 101, 5000, &callbackHResult, &collectWin32Error) ==
+                zantetsu::NvencConversionCollectStatus::Completed,
             "the started command completes and collects");
     }
 

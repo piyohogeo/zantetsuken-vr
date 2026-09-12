@@ -31,6 +31,11 @@ extern "C" {
 #define ZANTETSU_NVENC_SESSION_V1_STATUS_UNSUPPORTED 2u
 #define ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED 3u
 
+// Only a conversion collection reports this: the command has not completed yet
+// and nothing about it changed. It is not a failure and carries no raw value -
+// nothing is invented to describe something that simply has not happened.
+#define ZANTETSU_NVENC_SESSION_V1_STATUS_PENDING 4u
+
 typedef struct ZantetsuNvencSessionOpenResultV1
 {
     uint32_t abiVersion;
@@ -431,9 +436,16 @@ ZantetsuNvencCancelSessionConversionCommandV1(
 // The callback's completion is waited for first, because that is what publishes
 // the result and the only edge a callback that never signalled arrives on; the
 // fence is waited for after it, and only when the callback succeeded. Both
-// share one deadline. An older generation, a slot with nothing outstanding, a
-// second collection, a timeout, and a callback that recorded a failure are all
-// reported as FAILED, with that callback's own HRESULT.
+// share one deadline.
+//
+// A completion reports OK and is the only outcome that returns the slot to use.
+// A command that has not published, or a fence that has not reached it in the
+// time allowed, reports PENDING and leaves the slot, both events, the fence
+// registration, and the generation untouched. Everything else reports FAILED
+// with that callback's own HRESULT or the raw Win32 error: what the callback
+// recorded, a refused registration, a failed wait, a refused reset - and a
+// caller asking about a command that is not there, which is a broken contract
+// rather than something still to come.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencCollectSessionConversionCommandV1(
     uint64_t sessionOwner,
