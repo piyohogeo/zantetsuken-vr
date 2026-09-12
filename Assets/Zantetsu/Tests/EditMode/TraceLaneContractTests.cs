@@ -37,7 +37,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void EnabledRecords_AreReadBackInOrder_WithTheirKindAndPayload()
         {
-            using (TraceLane lane = new TraceLane(64, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(64, 64, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -55,7 +55,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void AnEmptyPayload_IsARecordLikeAnyOther()
         {
-            using (TraceLane lane = new TraceLane(16, 2, TwoEvents))
+            using (TraceLane lane = new TraceLane(16, 16, 2, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -72,7 +72,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TheCallersBytes_AreCopiedBeforeTryWriteReturns()
         {
-            using (TraceLane lane = new TraceLane(64, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(64, 64, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -101,7 +101,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ADisabledEvent_IsNotWrittenAndIsNotADrop()
         {
-            using (TraceLane lane = new TraceLane(64, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(64, 64, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -127,7 +127,7 @@ namespace Zantetsu.Core.Tests
         public void WhenTheIndexIsFull_TheRecordIsRefusedAndCounted()
         {
             // Two index slots, payload room to spare: the index runs out first.
-            using (TraceLane lane = new TraceLane(64, 2, TwoEvents))
+            using (TraceLane lane = new TraceLane(64, 64, 2, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -146,7 +146,7 @@ namespace Zantetsu.Core.Tests
         public void WhenThePayloadIsFull_TheRecordIsRefusedAndCounted()
         {
             // Index room to spare, eight payload bytes: the payload runs out.
-            using (TraceLane lane = new TraceLane(8, 8, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 8, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -163,7 +163,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void APayloadLongerThanTheRing_IsRefusedAndCounted()
         {
-            using (TraceLane lane = new TraceLane(8, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
                 Assert.That(writer.MaxPayloadLength, Is.EqualTo(8));
@@ -181,9 +181,50 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void APayloadLongerThanTheLanesLongestRecord_IsRefusedThoughTheRingHasRoom()
+        {
+            // Sixteen bytes of ring, but no single record longer than four.
+            // The ring's size says how many records fit, not how long one may
+            // be, so a five-byte record is refused with twelve bytes free.
+            using (TraceLane lane = new TraceLane(16, 4, 4, TwoEvents))
+            {
+                TraceLaneWriter writer = lane.CreateWriter();
+
+                Assert.That(lane.MaxPayloadLength, Is.EqualTo(4));
+                Assert.That(lane.PayloadCapacity, Is.EqualTo(16));
+                Assert.That(writer.MaxPayloadLength, Is.EqualTo(4));
+
+                Assert.That(Write(writer, KindA, 1, 2, 3, 4), Is.True);
+                Assert.That(lane.DropCount, Is.EqualTo(0L));
+
+                Assert.That(Write(writer, KindB, 5, 6, 7, 8, 9), Is.False);
+                Assert.That(lane.DropCount, Is.EqualTo(1L));
+
+                // The record already in the lane is untouched, and so are the
+                // cursors: the next record still begins where the first one
+                // ended rather than after a record that was never written.
+                Assert.That(lane.TryPeek(out TraceLaneIndexEntry entry, out byte* payload), Is.True);
+                Assert.That(entry.RecordKind, Is.EqualTo(KindA));
+                Assert.That(entry.PayloadStart, Is.EqualTo(0L));
+                AssertBytes(payload, new byte[] { 1, 2, 3, 4 });
+                lane.Consume(entry);
+
+                Assert.That(Write(writer, KindB, 10, 11, 12, 13), Is.True);
+                Assert.That(lane.TryPeek(out TraceLaneIndexEntry next, out byte* nextPayload), Is.True);
+                Assert.That(
+                    next.PayloadStart, Is.EqualTo(4L),
+                    "the refused record must not have moved the write position");
+                AssertBytes(nextPayload, new byte[] { 10, 11, 12, 13 });
+                lane.Consume(next);
+
+                Assert.That(lane.DropCount, Is.EqualTo(1L));
+            }
+        }
+
+        [Test]
         public void ARefusalLeavesTheRecordsAlreadyInTheLaneReadable()
         {
-            using (TraceLane lane = new TraceLane(8, 2, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 2, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -203,7 +244,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TheDropCountSaturatesRatherThanWrapping()
         {
-            using (TraceLane lane = new TraceLane(8, 1, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 1, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -230,7 +271,7 @@ namespace Zantetsu.Core.Tests
             // Eight payload bytes. Five, consumed, then four: the four cannot
             // fit in the three that are left before the end, so the tail is
             // spent as padding and the record starts at the beginning.
-            using (TraceLane lane = new TraceLane(8, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -263,7 +304,7 @@ namespace Zantetsu.Core.Tests
             // it needs the two bytes of tail as padding as well, six in all.
             // Counting only the four would let it start at the beginning of
             // the ring and overwrite the record still waiting there.
-            using (TraceLane lane = new TraceLane(8, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -293,7 +334,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ConsumingARecord_GivesItsRoomBackToTheProducer()
         {
-            using (TraceLane lane = new TraceLane(8, 2, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 2, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -318,7 +359,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void APeekedPayload_IsNotOverwrittenUntilItIsConsumed()
         {
-            using (TraceLane lane = new TraceLane(8, 4, TwoEvents))
+            using (TraceLane lane = new TraceLane(8, 8, 4, TwoEvents))
             {
                 TraceLaneWriter writer = lane.CreateWriter();
 
@@ -350,7 +391,7 @@ namespace Zantetsu.Core.Tests
             // that has to hold when an assertion below fails as well, not only
             // when the test passes. So the lane is released by hand, after the
             // producer is told to stop and is seen to have stopped.
-            TraceLane lane = new TraceLane(256, 16, TwoEvents);
+            TraceLane lane = new TraceLane(256, 256, 16, TwoEvents);
             TraceLaneWriter writer = lane.CreateWriter();
             int written = 0;
             long refused = 0;
@@ -465,14 +506,17 @@ namespace Zantetsu.Core.Tests
                 BurstCompiler.IsEnabled, Is.True,
                 "Burst compilation is off, so this test would prove nothing");
 
-            using (TraceLane lane = new TraceLane(512, Records, TwoEvents))
-            using (NativeArray<int> accepted = new NativeArray<int>(1, Allocator.TempJob))
+            // One index slot more than the job fills, so the oversize
+            // record below can only be refused for its length.
+            using (TraceLane lane = new TraceLane(512, 4, Records + 1, TwoEvents))
+            using (NativeArray<int> results = new NativeArray<int>(2, Allocator.TempJob))
             {
                 TraceLaneWriteJob job = new TraceLaneWriteJob
                 {
                     Writer = lane.CreateWriter(),
                     Records = Records,
-                    Accepted = accepted,
+                    OversizeLength = 5,
+                    Results = results,
                 };
 
                 // Compiled synchronously, so this really runs through Burst
@@ -480,8 +524,14 @@ namespace Zantetsu.Core.Tests
                 job.Schedule().Complete();
 
                 Assert.That(
-                    accepted[0], Is.EqualTo(Records),
+                    job.Writer.MaxPayloadLength, Is.EqualTo(4),
+                    "the writer should carry the lane's own record limit, not its ring size");
+                Assert.That(
+                    results[ResultAccepted], Is.EqualTo(Records),
                     "every record the job offered should have been taken");
+                Assert.That(
+                    results[ResultOversizeRefused], Is.EqualTo(1),
+                    "a record longer than the limit must be refused inside Burst too");
 
                 for (int record = 0; record < Records; record++)
                 {
@@ -493,9 +543,14 @@ namespace Zantetsu.Core.Tests
                     lane.Consume(entry);
                 }
 
-                Assert.That(lane.DropCount, Is.EqualTo(0L));
+                Assert.That(
+                    lane.DropCount, Is.EqualTo(1L),
+                    "only the oversize record should have been counted as a drop");
             }
         }
+
+        private const int ResultAccepted = 0;
+        private const int ResultOversizeRefused = 1;
 
         /// <summary>
         /// Writes into the lane from inside Burst-compiled code, through the
@@ -506,11 +561,12 @@ namespace Zantetsu.Core.Tests
         {
             public TraceLaneWriter Writer;
             public int Records;
-            public NativeArray<int> Accepted;
+            public int OversizeLength;
+            public NativeArray<int> Results;
 
             public void Execute()
             {
-                byte* payload = stackalloc byte[4];
+                byte* payload = stackalloc byte[16];
                 int accepted = 0;
 
                 for (int record = 0; record < Records; record++)
@@ -531,7 +587,18 @@ namespace Zantetsu.Core.Tests
                     }
                 }
 
-                Accepted[0] = accepted;
+                // The same limit applies here as anywhere else: a record
+                // longer than the lane's longest is refused, even though the
+                // ring has room for it many times over.
+                for (int i = 0; i < OversizeLength; i++)
+                {
+                    payload[i] = (byte)i;
+                }
+
+                int oversizeRefused = Writer.TryWrite(KindA, payload, OversizeLength) ? 0 : 1;
+
+                Results[ResultAccepted] = accepted;
+                Results[ResultOversizeRefused] = oversizeRefused;
             }
         }
 
@@ -542,7 +609,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TheLaneHoldsItsRegionUntilItIsDisposed()
         {
-            TraceLane lane = new TraceLane(64, 4, TwoEvents);
+            TraceLane lane = new TraceLane(64, 64, 4, TwoEvents);
             try
             {
                 Assert.That(lane.AllocatedBytes, Is.GreaterThan(0L));
@@ -568,9 +635,15 @@ namespace Zantetsu.Core.Tests
         public void ALaneRefusesCapacitiesItCannotHold()
         {
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => new TraceLane(0, 4, TwoEvents));
+                () => new TraceLane(0, 1, 4, TwoEvents));
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => new TraceLane(64, 0, TwoEvents));
+                () => new TraceLane(64, 64, 0, TwoEvents));
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => new TraceLane(64, 0, 4, TwoEvents));
+
+            // A record limit the ring could never hold.
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => new TraceLane(64, 65, 4, TwoEvents));
         }
 
         // -------------------------------------------------------------------

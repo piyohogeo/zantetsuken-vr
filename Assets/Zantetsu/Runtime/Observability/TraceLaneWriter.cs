@@ -49,6 +49,7 @@ namespace Zantetsu.Observability
         [NativeDisableUnsafePtrRestriction]
         private readonly long* _cursors;
         private readonly int _payloadCapacity;
+        private readonly int _maxPayloadLength;
         private readonly int _indexCapacity;
         private readonly TraceLaneEventMask _enabled;
 
@@ -57,6 +58,7 @@ namespace Zantetsu.Observability
             TraceLaneIndexEntry* index,
             long* cursors,
             int payloadCapacity,
+            int maxPayloadLength,
             int indexCapacity,
             TraceLaneEventMask enabled)
         {
@@ -64,12 +66,17 @@ namespace Zantetsu.Observability
             _index = index;
             _cursors = cursors;
             _payloadCapacity = payloadCapacity;
+            _maxPayloadLength = maxPayloadLength;
             _indexCapacity = indexCapacity;
             _enabled = enabled;
         }
 
-        /// <summary>The longest payload one record of this lane can carry.</summary>
-        internal int MaxPayloadLength => _payloadCapacity;
+        /// <summary>
+        /// The longest payload one record of this lane can carry. It is a
+        /// limit of its own, not the size of the ring: a bigger ring holds
+        /// more records, it does not make one record longer.
+        /// </summary>
+        internal int MaxPayloadLength => _maxPayloadLength;
 
         /// <summary>
         /// True only for an event this lane accepts, so a caller can skip
@@ -93,7 +100,9 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (payloadLength < 0 || payloadLength > _payloadCapacity)
+            // Longer than one record of this lane may be, whatever room
+            // the ring happens to have.
+            if (payloadLength < 0 || payloadLength > _maxPayloadLength)
             {
                 CountDrop();
                 return false;

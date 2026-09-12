@@ -61,6 +61,7 @@ namespace Zantetsu.Observability
     internal sealed unsafe class TraceLane : IDisposable
     {
         private readonly int _payloadCapacity;
+        private readonly int _maxPayloadLength;
         private readonly int _indexCapacity;
         private readonly TraceLaneEventMask _enabled;
         private readonly long _blockBytes;
@@ -74,12 +75,37 @@ namespace Zantetsu.Observability
         /// Validates the capacities and takes the lane's whole allocation in
         /// one call. A lane that cannot be built allocates nothing.
         /// </summary>
-        internal TraceLane(int payloadCapacity, int indexCapacity, TraceLaneEventMask enabled)
+        /// <remarks>
+        /// The longest record the lane accepts and the size of the ring it
+        /// holds records in are two different things: the ring has to be big
+        /// enough for the longest record, but it is normally much bigger, and
+        /// growing it must not quietly raise the length a single record may
+        /// have.
+        /// </remarks>
+        internal TraceLane(
+            int payloadCapacity,
+            int maxPayloadLength,
+            int indexCapacity,
+            TraceLaneEventMask enabled)
         {
             if (payloadCapacity <= 0)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(payloadCapacity), payloadCapacity, "Payload capacity must be positive.");
+            }
+
+            if (maxPayloadLength <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxPayloadLength), maxPayloadLength, "Max payload length must be positive.");
+            }
+
+            if (maxPayloadLength > payloadCapacity)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxPayloadLength),
+                    maxPayloadLength,
+                    "Max payload length must fit in the payload ring.");
             }
 
             if (indexCapacity <= 0)
@@ -89,6 +115,7 @@ namespace Zantetsu.Observability
             }
 
             _payloadCapacity = payloadCapacity;
+            _maxPayloadLength = maxPayloadLength;
             _indexCapacity = indexCapacity;
             _enabled = enabled;
 
@@ -119,8 +146,11 @@ namespace Zantetsu.Observability
 
         internal int IndexCapacity => _indexCapacity;
 
-        /// <summary>The longest payload one record of this lane can carry.</summary>
-        internal int MaxPayloadLength => _payloadCapacity;
+        /// <summary>
+        /// The longest payload one record of this lane can carry, which is at
+        /// most - and usually far less than - <see cref="PayloadCapacity"/>.
+        /// </summary>
+        internal int MaxPayloadLength => _maxPayloadLength;
 
         /// <summary>Bytes this lane holds, for a test to say it was taken and given back.</summary>
         internal long AllocatedBytes => _block == null ? 0L : _blockBytes;
@@ -143,7 +173,13 @@ namespace Zantetsu.Observability
         {
             RequireLive();
             return new TraceLaneWriter(
-                _payload, _index, _cursors, _payloadCapacity, _indexCapacity, _enabled);
+                _payload,
+                _index,
+                _cursors,
+                _payloadCapacity,
+                _maxPayloadLength,
+                _indexCapacity,
+                _enabled);
         }
 
         /// <summary>
