@@ -139,16 +139,11 @@ namespace Zantetsu.Core.Tests
                 () => CaptureRunRootOsProvisioner.Create().ProvisionNew(operation), Throws.Exception,
                 "a Run root reached through a reparse point is never provisioned");
 
-            // A post-creation check may leave an empty directory behind, which
-            // the contract allows; what must never happen is a provisioned Run
-            // root with anything in it.
-            string behindTheLink = Path.Combine(real, "runs", "run-1");
-            if (Directory.Exists(behindTheLink))
-            {
-                Assert.That(
-                    Directory.GetFileSystemEntries(behindTheLink), Is.Empty,
-                    "a refused provision must not leave a populated Run root");
-            }
+            // The junction is never traversed, so nothing is created behind
+            // it - not even an empty directory to be cleaned up later.
+            Assert.That(
+                Directory.Exists(Path.Combine(real, "runs", "run-1")), Is.False,
+                "a Run root must never be created through a junction");
         }
 
         [Test]
@@ -203,6 +198,38 @@ namespace Zantetsu.Core.Tests
                 "an existing final marker is a failure, never an overwrite");
 
             Assert.That(File.ReadAllText(operation.FinalPath), Is.EqualTo("existing"));
+        }
+
+        [Test]
+        public void WriteAtomic_RefusesADirectoryThatDoesNotResolveToTheOperationsPath()
+        {
+            string real = Path.Combine(_root, "real");
+            string link = Path.Combine(_root, "link");
+            Directory.CreateDirectory(real);
+
+            if (!TryCreateDirectoryJunction(link, real))
+            {
+                Assert.Ignore("This environment does not allow creating a directory junction.");
+            }
+
+            // The operation names its marker under the junction, so the
+            // directory the writer opens resolves somewhere else than the
+            // operation asked for. The Run root itself is created behind the
+            // junction by this test, not by the provisioner, so the writer is
+            // the only thing under examination.
+            CaptureRunRootLayout layout = new CaptureRunRootLayout(
+                link, Path.Combine(_root, "final"), 1);
+            CaptureRunMarkerWriteOperation operation = MakeBatch(layout).StagingInitialization;
+            Directory.CreateDirectory(Path.Combine(real, "runs", "run-1"));
+
+            Assert.That(
+                () => CaptureRunMarkerOsAtomicWriter.Create().WriteAtomic(operation), Throws.Exception,
+                "a directory that resolves elsewhere is never written to");
+
+            // And nothing was written through the link either.
+            Assert.That(
+                Directory.GetFileSystemEntries(Path.Combine(real, "runs", "run-1")), Is.Empty,
+                "no marker and no temporary entry may appear in the real directory");
         }
 
         [Test]

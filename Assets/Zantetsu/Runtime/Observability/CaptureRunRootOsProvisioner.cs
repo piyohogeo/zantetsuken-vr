@@ -7,18 +7,34 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Creates one brand-new Capture Run root directory on the real
-    /// filesystem, verifies it by handle, and issues the receipt only when
-    /// every check has passed. It creates nothing inside the root.
+    /// filesystem, relative to a parent it has already verified, and issues
+    /// the receipt only when every check has passed. It creates nothing inside
+    /// the root.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The run root is created with <c>CreateDirectoryW</c> so an existing
-    /// directory fails rather than being adopted, and is then opened
-    /// no-follow: a reparse point, symbolic link, or junction anywhere on the
-    /// path it was created through is refused instead of followed, and the
-    /// identity that is verified afterwards is the handle's, not the path
-    /// string's. The final path behind that handle must still name the run
-    /// root the operation asked for, and the directory must be empty.
+    /// The parent is opened first and is accepted only when it is a directory,
+    /// is not itself a reparse point, and still resolves to the path the run
+    /// root's parent was named as. That last comparison is what catches
+    /// indirection: the open does not follow a link at the parent's own name,
+    /// but the OS does resolve the ancestors above it, so a junction anywhere
+    /// on the way makes the handle's real path differ from the path that was
+    /// asked for - and the attempt is refused there, before anything is
+    /// created.
+    /// </para>
+    /// <para>
+    /// The run root itself is then created <em>relative to that verified
+    /// handle</em> with a single leaf name, never through a path, so it can
+    /// never come into existence behind a link. An existing run root collides
+    /// and fails; it is never adopted.
+    /// </para>
+    /// <para>
+    /// The created directory is then checked through its own handle: a
+    /// directory, not a reparse point, resolving to the run root that was
+    /// asked for, and empty - enumerated from that handle, so nothing between
+    /// the check and the path can be substituted, and an enumeration that
+    /// stops for any reason other than running out of entries is a failure
+    /// rather than an empty answer.
     /// </para>
     /// <para>
     /// Nothing inside the root is provisioned here - no <c>chunks</c>
@@ -37,28 +53,33 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class CaptureRunRootOsProvisioner : ICaptureRunRootProvisioner
     {
+        private const uint FileListDirectory = 0x00000001u;
+        private const uint FileReadAttributes = 0x00000080u;
+        private const uint Synchronize = 0x00100000u;
         private const uint FileShareRead = 0x00000001u;
         private const uint FileShareWrite = 0x00000002u;
         private const uint FileShareDelete = 0x00000004u;
         private const uint OpenExisting = 3u;
         private const uint FileFlagOpenReparsePoint = 0x00200000u;
         private const uint FileFlagBackupSemantics = 0x02000000u;
+        private const uint FileAttributeNormal = 0x00000080u;
         private const uint FileAttributeDirectory = 0x00000010u;
         private const uint FileAttributeReparsePoint = 0x00000400u;
         private const uint FileNameNormalized = 0x00000000u;
-        private const int ErrorAlreadyExists = 183;
-        private const int ErrorPathNotFound = 3;
-
-        private static readonly IntPtr InvalidHandleValue = new IntPtr(-1);
+        private const uint FileCreateDisposition = 2u;
+        private const uint FileDirectoryFile = 0x00000001u;
+        private const uint FileOpenReparsePointOption = 0x00200000u;
+        private const uint FileSynchronousIoNonAlert = 0x00000020u;
+        private const uint ObjCaseInsensitive = 0x00000040u;
+        private const int StatusSuccess = 0;
+        private const int StatusObjectNameCollision = unchecked((int)0xC0000035);
+        private const int ErrorNoMoreFiles = 18;
+        private const int FileIdBothDirectoryInfoClass = 10;
+        private const int FileIdBothDirectoryRestartInfoClass = 11;
 
         internal static CaptureRunRootOsProvisioner Create()
         {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                throw new CaptureArtifactNoFollowUnavailableException(
-                    "Capture Run root provisioning requires Windows no-follow directory handles.");
-            }
-
+            RequireWindows();
             return new CaptureRunRootOsProvisioner();
         }
 
@@ -67,8 +88,9 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// One synchronous attempt: create the exact run root, verify it by
-        /// handle, and issue the receipt.
+        /// One synchronous attempt: verify the parent, create the exact run
+        /// root relative to it, verify what was created, and issue the
+        /// receipt.
         /// </summary>
         public CaptureRunRootProvisionReceipt ProvisionNew(CaptureRunRootProvisionOperation operation)
         {
@@ -77,93 +99,102 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(operation));
             }
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                throw new CaptureArtifactNoFollowUnavailableException(
-                    "Capture Run root provisioning requires Windows no-follow directory handles.");
-            }
-
-            string runRoot = operation.RunRoot;
+            RequireWindows();
 
             // The trusted base root was already trusted by the caller, and the
             // operation guarantees the run root sits inside it at a segment
-            // boundary, so neither is re-derived, re-normalized, or re-checked
-            // as a string here.
-            if (!CreateDirectoryW(runRoot, IntPtr.Zero))
+            // boundary, so neither is re-derived or re-checked as a string
+            // here. What is split out is only the leaf to create and the
+            // parent to create it under.
+            string runRoot = operation.RunRoot;
+            string parentPath = Path.GetDirectoryName(runRoot);
+            string leafName = Path.GetFileName(runRoot);
+
+            if (string.IsNullOrEmpty(parentPath) || string.IsNullOrEmpty(leafName))
             {
-                int error = Marshal.GetLastWin32Error();
-                if (error == ErrorAlreadyExists)
-                {
-                    // An existing run root is never adopted: this attempt has
-                    // no way to know whose it is.
-                    throw new IOException(
-                        "The Capture Run root already exists; an existing root is never provisioned.");
-                }
-
-                if (error == ErrorPathNotFound)
-                {
-                    throw new DirectoryNotFoundException(
-                        "The Capture Run root's parent does not exist (win32 error " + error + ").");
-                }
-
-                throw new IOException(
-                    "The Capture Run root could not be created (win32 error " + error + ").");
+                throw new ArgumentException(
+                    "The provision operation must name a Run root inside a parent directory.",
+                    nameof(operation));
             }
 
-            // From here the directory exists. Everything below only observes
-            // it, and a failure deliberately leaves it empty rather than
-            // guessing at a delete.
-            using (SafeFileHandle handle = OpenDirectoryNoFollow(runRoot))
+            using (SafeFileHandle parent = OpenDirectoryNoFollow(parentPath))
             {
-                if (handle.IsInvalid)
+                if (parent.IsInvalid)
                 {
                     int error = Marshal.GetLastWin32Error();
                     throw new IOException(
-                        "The created Capture Run root could not be opened without following links (win32 error "
+                        "The Capture Run root's parent could not be opened without following links (win32 error "
                         + error + ").");
                 }
 
-                if (!GetFileInformationByHandle(handle, out ByHandleFileInformation information))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    throw new IOException(
-                        "The created Capture Run root's identity could not be read (win32 error "
-                        + error + ").");
-                }
+                RequireVerifiedDirectory(
+                    parent, parentPath, "The Capture Run root's parent");
 
-                if ((information.FileAttributes & FileAttributeDirectory) == 0)
+                // Created relative to the verified parent: one leaf name,
+                // no path resolved again, so the run root can never come into
+                // existence behind a link.
+                using (SafeFileHandle created = CreateDirectoryRelative(parent, leafName))
                 {
-                    throw new IOException("The created Capture Run root is not a directory.");
-                }
+                    RequireVerifiedDirectory(created, runRoot, "The created Capture Run root");
 
-                if ((information.FileAttributes & FileAttributeReparsePoint) != 0)
-                {
-                    throw new IOException(
-                        "The created Capture Run root is a reparse point; it is never followed.");
-                }
-
-                // What the handle really is, compared with what was asked for.
-                string finalPath = ReadFinalPath(handle);
-                if (!PathsAreTheSameEntry(finalPath, runRoot))
-                {
-                    throw new IOException(
-                        "The created Capture Run root resolves to a different location than the operation named.");
-                }
-
-                if (!IsDirectoryEmpty(finalPath))
-                {
-                    throw new IOException("The created Capture Run root is not empty.");
+                    if (!IsDirectoryEmpty(created))
+                    {
+                        throw new IOException("The created Capture Run root is not empty.");
+                    }
                 }
             }
 
             return new CaptureRunRootProvisionReceipt(this, operation);
         }
 
+        private static void RequireWindows()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                throw new CaptureArtifactNoFollowUnavailableException(
+                    "Capture Run root provisioning requires Windows no-follow directory handles.");
+            }
+        }
+
+        /// <summary>
+        /// Accepts a handle only as a directory that is not a reparse point
+        /// and still resolves to the path it was named as. The path comparison
+        /// is what detects indirection introduced by an ancestor, which the
+        /// open itself does not prevent.
+        /// </summary>
+        private static void RequireVerifiedDirectory(
+            SafeFileHandle handle, string expectedPath, string what)
+        {
+            if (!GetFileInformationByHandle(handle, out ByHandleFileInformation information))
+            {
+                int error = Marshal.GetLastWin32Error();
+                throw new IOException(
+                    what + "'s identity could not be read (win32 error " + error + ").");
+            }
+
+            if ((information.FileAttributes & FileAttributeDirectory) == 0)
+            {
+                throw new IOException(what + " is not a directory.");
+            }
+
+            if ((information.FileAttributes & FileAttributeReparsePoint) != 0)
+            {
+                throw new IOException(what + " is a reparse point; it is never followed.");
+            }
+
+            string finalPath = ReadFinalPath(handle, what);
+            if (!PathsAreTheSameEntry(finalPath, expectedPath))
+            {
+                throw new IOException(
+                    what + " resolves to a different location than the operation named.");
+            }
+        }
+
         private static SafeFileHandle OpenDirectoryNoFollow(string path)
         {
             return CreateFileW(
                 path,
-                0u,
+                FileReadAttributes | Synchronize,
                 FileShareRead | FileShareWrite | FileShareDelete,
                 IntPtr.Zero,
                 OpenExisting,
@@ -171,15 +202,92 @@ namespace Zantetsu.Observability
                 IntPtr.Zero);
         }
 
-        private static string ReadFinalPath(SafeFileHandle handle)
+        /// <summary>
+        /// Creates one new directory named by a single leaf, resolved by the
+        /// kernel against the given parent handle rather than against any
+        /// path, and hands back its own handle.
+        /// </summary>
+        private static SafeFileHandle CreateDirectoryRelative(SafeFileHandle parent, string leafName)
+        {
+            IntPtr nameBuffer = IntPtr.Zero;
+            IntPtr nameStringPtr = IntPtr.Zero;
+            try
+            {
+                nameBuffer = Marshal.StringToHGlobalUni(leafName);
+
+                UnicodeString nameString = new UnicodeString
+                {
+                    Length = (ushort)(leafName.Length * sizeof(char)),
+                    MaximumLength = (ushort)((leafName.Length + 1) * sizeof(char)),
+                    Buffer = nameBuffer
+                };
+
+                nameStringPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeString)));
+                Marshal.StructureToPtr(nameString, nameStringPtr, false);
+
+                ObjectAttributes attributes = new ObjectAttributes
+                {
+                    Length = (uint)Marshal.SizeOf(typeof(ObjectAttributes)),
+                    RootDirectory = parent.DangerousGetHandle(),
+                    ObjectName = nameStringPtr,
+                    Attributes = ObjCaseInsensitive,
+                    SecurityDescriptor = IntPtr.Zero,
+                    SecurityQualityOfService = IntPtr.Zero
+                };
+
+                long allocationSize = 0;
+                int status = NtCreateFile(
+                    out IntPtr rawHandle,
+                    FileListDirectory | FileReadAttributes | Synchronize,
+                    ref attributes,
+                    out IoStatusBlock ioStatusBlock,
+                    ref allocationSize,
+                    FileAttributeNormal,
+                    FileShareRead | FileShareWrite | FileShareDelete,
+                    FileCreateDisposition,
+                    FileDirectoryFile | FileOpenReparsePointOption | FileSynchronousIoNonAlert,
+                    IntPtr.Zero,
+                    0);
+
+                if (status == StatusObjectNameCollision)
+                {
+                    // An existing run root is never adopted: this attempt has
+                    // no way to know whose it is.
+                    throw new IOException(
+                        "The Capture Run root already exists; an existing root is never provisioned.");
+                }
+
+                if (status != StatusSuccess || rawHandle == IntPtr.Zero)
+                {
+                    throw new IOException(
+                        "The Capture Run root could not be created under its verified parent (NTSTATUS 0x"
+                        + status.ToString("X8") + ").");
+                }
+
+                return new SafeFileHandle(rawHandle, true);
+            }
+            finally
+            {
+                if (nameStringPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(nameStringPtr);
+                }
+
+                if (nameBuffer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(nameBuffer);
+                }
+            }
+        }
+
+        private static string ReadFinalPath(SafeFileHandle handle, string what)
         {
             uint required = GetFinalPathNameByHandle(handle, null, 0u, FileNameNormalized);
             if (required == 0u)
             {
                 int error = Marshal.GetLastWin32Error();
                 throw new IOException(
-                    "The created Capture Run root's final path could not be read (win32 error "
-                    + error + ").");
+                    what + "'s final path could not be read (win32 error " + error + ").");
             }
 
             char[] buffer = new char[required];
@@ -188,8 +296,7 @@ namespace Zantetsu.Observability
             {
                 int error = Marshal.GetLastWin32Error();
                 throw new IOException(
-                    "The created Capture Run root's final path could not be read (win32 error "
-                    + error + ").");
+                    what + "'s final path could not be read (win32 error " + error + ").");
             }
 
             return new string(buffer, 0, (int)written);
@@ -198,7 +305,7 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Compares a handle's normalized final path with the path that was
         /// asked for, allowing only for the extended-length prefix the OS adds
-        /// and the trailing separator a root may carry.
+        /// and a trailing separator.
         /// </summary>
         private static bool PathsAreTheSameEntry(string finalPath, string requestedPath)
         {
@@ -218,43 +325,65 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Enumerates through the handle's own resolved path, so a parent
-        /// swapped after verification cannot redirect what is inspected.
+        /// Enumerates the directory through its own handle. An enumeration
+        /// that ends for any reason other than running out of entries is a
+        /// failure, never an empty answer.
         /// </summary>
-        private static bool IsDirectoryEmpty(string canonicalPath)
+        private static bool IsDirectoryEmpty(SafeFileHandle directory)
         {
-            IntPtr find = FindFirstFileW(canonicalPath + "\\*", out Win32FindData data);
-            if (find == InvalidHandleValue)
-            {
-                int error = Marshal.GetLastWin32Error();
-                throw new IOException(
-                    "The created Capture Run root could not be enumerated (win32 error " + error + ").");
-            }
-
+            const int BufferSize = 4096;
+            IntPtr buffer = Marshal.AllocHGlobal(BufferSize);
             try
             {
-                do
+                int informationClass = FileIdBothDirectoryRestartInfoClass;
+                while (true)
                 {
-                    if (data.FileName == "." || data.FileName == "..")
+                    if (!GetFileInformationByHandleEx(
+                        directory, informationClass, buffer, (uint)BufferSize))
                     {
-                        continue;
+                        int error = Marshal.GetLastWin32Error();
+                        if (error == ErrorNoMoreFiles)
+                        {
+                            return true;
+                        }
+
+                        throw new IOException(
+                            "The created Capture Run root could not be enumerated from its handle (win32 error "
+                            + error + ").");
                     }
 
-                    return false;
+                    informationClass = FileIdBothDirectoryInfoClass;
+
+                    // FILE_ID_BOTH_DIR_INFO: NextEntryOffset at 0,
+                    // FileNameLength at 60, and the WCHAR name at 104.
+                    int offset = 0;
+                    while (true)
+                    {
+                        IntPtr entry = new IntPtr(buffer.ToInt64() + offset);
+                        int nextEntryOffset = Marshal.ReadInt32(entry, 0);
+                        int nameLength = Marshal.ReadInt32(entry, 60);
+                        string name = Marshal.PtrToStringUni(
+                            new IntPtr(entry.ToInt64() + 104), nameLength / sizeof(char));
+
+                        if (name != "." && name != "..")
+                        {
+                            return false;
+                        }
+
+                        if (nextEntryOffset == 0)
+                        {
+                            break;
+                        }
+
+                        offset += nextEntryOffset;
+                    }
                 }
-                while (FindNextFileW(find, out data));
             }
             finally
             {
-                FindClose(find);
+                Marshal.FreeHGlobal(buffer);
             }
-
-            return true;
         }
-
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
-        private static extern bool CreateDirectoryW(
-            string lpPathName, IntPtr lpSecurityAttributes);
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern SafeFileHandle CreateFileW(
@@ -270,6 +399,13 @@ namespace Zantetsu.Observability
         private static extern bool GetFileInformationByHandle(
             SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandleEx(
+            SafeFileHandle hFile,
+            int fileInformationClass,
+            IntPtr lpFileInformation,
+            uint dwBufferSize);
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern uint GetFinalPathNameByHandle(
             SafeFileHandle hFile,
@@ -277,16 +413,19 @@ namespace Zantetsu.Observability
             uint cchFilePath,
             uint dwFlags);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern IntPtr FindFirstFileW(
-            string lpFileName, out Win32FindData lpFindFileData);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern bool FindNextFileW(
-            IntPtr hFindFile, out Win32FindData lpFindFileData);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool FindClose(IntPtr hFindFile);
+        [DllImport("ntdll.dll", ExactSpelling = true)]
+        private static extern int NtCreateFile(
+            out IntPtr fileHandle,
+            uint desiredAccess,
+            ref ObjectAttributes objectAttributes,
+            out IoStatusBlock ioStatusBlock,
+            ref long allocationSize,
+            uint fileAttributes,
+            uint shareAccess,
+            uint createDisposition,
+            uint createOptions,
+            IntPtr eaBuffer,
+            uint eaLength);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct ByHandleFileInformation
@@ -303,23 +442,30 @@ namespace Zantetsu.Observability
             public uint FileIndexLow;
         }
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private struct Win32FindData
+        [StructLayout(LayoutKind.Sequential)]
+        private struct UnicodeString
         {
-            public uint FileAttributes;
-            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
-            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
-            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
-            public uint FileSizeHigh;
-            public uint FileSizeLow;
-            public uint Reserved0;
-            public uint Reserved1;
+            public ushort Length;
+            public ushort MaximumLength;
+            public IntPtr Buffer;
+        }
 
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-            public string FileName;
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ObjectAttributes
+        {
+            public uint Length;
+            public IntPtr RootDirectory;
+            public IntPtr ObjectName;
+            public uint Attributes;
+            public IntPtr SecurityDescriptor;
+            public IntPtr SecurityQualityOfService;
+        }
 
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
-            public string AlternateFileName;
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoStatusBlock
+        {
+            public int Status;
+            public IntPtr Information;
         }
     }
 }

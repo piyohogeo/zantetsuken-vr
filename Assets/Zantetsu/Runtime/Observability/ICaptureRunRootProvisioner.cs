@@ -27,8 +27,10 @@ namespace Zantetsu.Observability
     /// <item>the target is exactly the run root named by the operation,</item>
     /// <item>the trusted base root was already trusted by the caller,</item>
     /// <item>the target run root does not exist when the attempt begins,</item>
-    /// <item>no reparse point, symbolic link, or junction on the ancestor or
-    /// target path is followed,</item>
+    /// <item>the run root is never created through a reparse point, symbolic
+    /// link, or junction: indirection at the target's own name is not
+    /// followed, and indirection anywhere above it is detected by identity
+    /// and refused before anything is created,</item>
     /// <item>the target directory is created new,</item>
     /// <item>the filesystem identity and final path after creation correspond
     /// to the expected run root,</item>
