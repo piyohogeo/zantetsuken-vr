@@ -174,6 +174,8 @@ namespace Zantetsu.Core.Tests
             TraceLaneSetProfile profile = new TraceLaneSetProfile(
                 recordBytes,
                 16,
+                recordBytes + TraceRecordHeader.Bytes,
+                2,
                 new[]
                 {
                     new TraceLaneSettings(
@@ -223,7 +225,7 @@ namespace Zantetsu.Core.Tests
                 Assert.Throws<InvalidOperationException>(() => drainer.Drain(destination));
 
                 Assert.That(
-                    set.AllocatedBytes, Is.EqualTo(profile.TotalStorageBytes),
+                    set.AllocatedBytes, Is.EqualTo(profile.LaneStorageBytes),
                     "sealing releases no lane storage");
 
                 TestContext.Out.WriteLine("Phase 0.12 checkpoint");
@@ -299,6 +301,8 @@ namespace Zantetsu.Core.Tests
             TraceLaneSetProfile profile = new TraceLaneSetProfile(
                 recordBytes,
                 events.Length,
+                recordBytes + TraceRecordHeader.Bytes,
+                2,
                 new[]
                 {
                     new TraceLaneSettings(
@@ -382,6 +386,8 @@ namespace Zantetsu.Core.Tests
                     TraceLaneSetProfile profile = new TraceLaneSetProfile(
                         recordBytes,
                         events.Length,
+                        recordBytes + TraceRecordHeader.Bytes,
+                        2,
                         new[]
                         {
                             new TraceLaneSettings(

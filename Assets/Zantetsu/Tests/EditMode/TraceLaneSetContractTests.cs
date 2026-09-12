@@ -27,6 +27,11 @@ namespace Zantetsu.Core.Tests
         private const int MaxPayloadLength = 4;
         private const int NormalDrainMaxRecordCount = 16;
 
+        // The history is not this fixture's subject; these are the smallest
+        // valid settings that carry a record of MaxPayloadLength.
+        private const int HistoryPageSize = 64;
+        private const int HistoryPageCount = 2;
+
         private static TraceLaneEventMask OnlyA => TraceLaneEventMask.None.With(KindA);
 
         private static TraceLaneEventMask OnlyB => TraceLaneEventMask.None.With(KindB);
@@ -45,7 +50,8 @@ namespace Zantetsu.Core.Tests
             };
 
             TraceLaneSetProfile profile = new TraceLaneSetProfile(
-                MaxPayloadLength, NormalDrainMaxRecordCount, lanes);
+                MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                lanes);
             long totalWhenBuilt = profile.TotalStorageBytes;
 
             // The caller keeps its own array and edits it afterwards.
@@ -73,9 +79,9 @@ namespace Zantetsu.Core.Tests
             TraceLaneSet set = new TraceLaneSet(profile);
             try
             {
-                Assert.That(profile.TotalStorageBytes, Is.GreaterThan(0L));
+                Assert.That(profile.LaneStorageBytes, Is.GreaterThan(0L));
                 Assert.That(
-                    set.AllocatedBytes, Is.EqualTo(profile.TotalStorageBytes),
+                    set.AllocatedBytes, Is.EqualTo(profile.LaneStorageBytes),
                     "the lanes hold exactly what the profile said they would");
             }
             finally
@@ -88,32 +94,41 @@ namespace Zantetsu.Core.Tests
         public void AProfileThatCannotBeHeldIsRefusedBeforeAnythingIsAllocated()
         {
             Assert.Throws<ArgumentNullException>(
-                () => new TraceLaneSetProfile(MaxPayloadLength, NormalDrainMaxRecordCount, null));
+                () => new TraceLaneSetProfile(
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    null));
 
             // No lanes at all.
             Assert.Throws<ArgumentException>(
                 () => new TraceLaneSetProfile(
-                    MaxPayloadLength, NormalDrainMaxRecordCount, new TraceLaneSettings[0]));
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    new TraceLaneSettings[0]));
 
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => new TraceLaneSetProfile(0, NormalDrainMaxRecordCount, OneLane(64, 4)));
+                () => new TraceLaneSetProfile(
+                    0, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    OneLane(64, 4)));
 
             // Nothing may be drained at all.
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => new TraceLaneSetProfile(MaxPayloadLength, 0, OneLane(64, 4)));
+                () => new TraceLaneSetProfile(
+                    MaxPayloadLength, 0, HistoryPageSize, HistoryPageCount, OneLane(64, 4)));
 
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => new TraceLaneSetProfile(
-                    MaxPayloadLength, NormalDrainMaxRecordCount, OneLane(0, 4)));
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    OneLane(0, 4)));
 
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => new TraceLaneSetProfile(
-                    MaxPayloadLength, NormalDrainMaxRecordCount, OneLane(64, 0)));
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    OneLane(64, 0)));
 
             // A payload ring too small for the longest record the Run allows.
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => new TraceLaneSetProfile(
-                    MaxPayloadLength, NormalDrainMaxRecordCount, OneLane(MaxPayloadLength - 1, 4)));
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    OneLane(MaxPayloadLength - 1, 4)));
 
             // A bad lane later in the profile is caught just as early.
             TraceLaneSettings[] secondLaneIsBad =
@@ -123,7 +138,8 @@ namespace Zantetsu.Core.Tests
             };
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => new TraceLaneSetProfile(
-                    MaxPayloadLength, NormalDrainMaxRecordCount, secondLaneIsBad));
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    secondLaneIsBad));
         }
 
         // -------------------------------------------------------------------
@@ -235,7 +251,9 @@ namespace Zantetsu.Core.Tests
                 new TraceLaneSettings(OnlyB, 64, 4),
             };
             TraceLaneSet set = new TraceLaneSet(
-                new TraceLaneSetProfile(MaxPayloadLength, NormalDrainMaxRecordCount, lanes));
+                new TraceLaneSetProfile(
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    lanes));
             try
             {
                 TraceLaneWriter full = set.CreateWriter(0);
@@ -318,7 +336,9 @@ namespace Zantetsu.Core.Tests
             };
 
             TraceLaneSet set = new TraceLaneSet(
-                new TraceLaneSetProfile(MaxPayloadLength, NormalDrainMaxRecordCount, lanes));
+                new TraceLaneSetProfile(
+                    MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                    lanes));
             NativeArray<int> firstAccepted = new NativeArray<int>(1, Allocator.TempJob);
             NativeArray<int> secondAccepted = new NativeArray<int>(1, Allocator.TempJob);
             JobHandle both = default;
@@ -405,7 +425,7 @@ namespace Zantetsu.Core.Tests
             TraceLaneSet set = new TraceLaneSet(profile);
             try
             {
-                Assert.That(set.AllocatedBytes, Is.EqualTo(profile.TotalStorageBytes));
+                Assert.That(set.AllocatedBytes, Is.EqualTo(profile.LaneStorageBytes));
                 Assert.That(set.LaneCount, Is.EqualTo(2));
             }
             finally
@@ -439,7 +459,9 @@ namespace Zantetsu.Core.Tests
                 new TraceLaneSettings(OnlyB, 16, 8),
             };
 
-            return new TraceLaneSetProfile(MaxPayloadLength, NormalDrainMaxRecordCount, lanes);
+            return new TraceLaneSetProfile(
+                MaxPayloadLength, NormalDrainMaxRecordCount, HistoryPageSize, HistoryPageCount,
+                lanes);
         }
 
         private static TraceLaneSettings[] OneLane(int payloadCapacity, int indexCapacity)

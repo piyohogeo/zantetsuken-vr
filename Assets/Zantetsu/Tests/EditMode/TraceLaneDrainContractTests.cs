@@ -24,6 +24,11 @@ namespace Zantetsu.Core.Tests
 
         private const int MaxPayloadLength = 4;
 
+        // The history is not this fixture's subject; these are the smallest
+        // valid settings that carry a record of MaxPayloadLength.
+        private const int HistoryPageSize = 64;
+        private const int HistoryPageCount = 2;
+
         // -------------------------------------------------------------------
         // How much one drain takes
         // -------------------------------------------------------------------
@@ -297,7 +302,12 @@ namespace Zantetsu.Core.Tests
         private static TraceLaneSet Set(int normalDrainMaxRecordCount, params TraceLaneSettings[] lanes)
         {
             return new TraceLaneSet(
-                new TraceLaneSetProfile(MaxPayloadLength, normalDrainMaxRecordCount, lanes));
+                new TraceLaneSetProfile(
+                MaxPayloadLength,
+                normalDrainMaxRecordCount,
+                HistoryPageSize,
+                HistoryPageCount,
+                lanes));
         }
 
         private static bool Write(TraceLaneWriter writer, TraceEventType kind, params byte[] bytes)
