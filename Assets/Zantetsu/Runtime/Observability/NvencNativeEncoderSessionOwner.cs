@@ -65,7 +65,8 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// A conversion collection, and only that, reports this: the command
-        /// has not completed yet and nothing about it changed.
+        /// has not completed yet and was not consumed, so the same one is
+        /// collected again to come back for it.
         /// </summary>
         private const uint StatusPending = 4;
 
@@ -1233,16 +1234,18 @@ namespace Zantetsu.Observability
         /// </para>
         /// <para>
         /// False is only ever "not yet": the callback has not published, or the
-        /// GPU has not reached this command in the time allowed. Nothing
-        /// changed, and nothing is claimed about why. Everything else - a
+        /// GPU has not reached this command in the time allowed. The command is
+        /// not consumed - asking about the same one again is how a caller comes
+        /// back for it - and nothing is claimed about why. Everything else - a
         /// callback that failed, a refused wait or reset, a generation or slot
         /// that is not outstanding, a broken ABI - throws, because a caller
         /// that cannot tell those apart from "not yet" would wait for a
         /// completion that is never coming.
         /// </para>
         /// <para>
-        /// No timeout, handle, HRESULT, or native result type crosses this
-        /// boundary.
+        /// The caller says how long to wait; what comes back is only true or
+        /// false. No handle, raw failure value, or native result type is
+        /// returned across this boundary.
         /// </para>
         /// </remarks>
         internal bool TryCollectConversionCommand(

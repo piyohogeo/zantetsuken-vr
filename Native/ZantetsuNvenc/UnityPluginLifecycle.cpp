@@ -784,7 +784,7 @@ ZantetsuNvencCollectSessionConversionCommandV1(
 
     if (status == zantetsu::NvencConversionCollectStatus::Pending)
     {
-        // Nothing happened and nothing is claimed about why.
+        // The command was not consumed and nothing is claimed about why.
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_PENDING;
         return 1;
     }

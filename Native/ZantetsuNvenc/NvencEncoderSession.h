@@ -69,8 +69,13 @@ namespace zantetsu
     ///
     /// Pending is the ordinary "not yet": the callback has not published, or
     /// the GPU has not reached this command's generation within the time the
-    /// caller allowed. Nothing about the command changes, and nothing is
-    /// invented to describe it - no HRESULT, no Win32 error.
+    /// caller allowed. The command is not consumed - it stays outstanding, the
+    /// slot does not go idle, and the very same generation can be collected
+    /// again. Nothing is invented to describe it either: no HRESULT, no Win32
+    /// error. It does not mean nothing happened at all; a first attempt that
+    /// runs out of time may already have registered this command's fence
+    /// event, which the next attempt then waits on rather than registering
+    /// again.
     ///
     /// Failed is everything that means a safe completion could not be
     /// established: what the callback recorded, a refused registration, a wait
@@ -339,9 +344,10 @@ namespace zantetsu
         /// outstanding, and a second collection are all refused as failures
         /// rather than reported as something still to come.
         ///
-        /// Only Completed returns the slot to idle. Pending leaves the slot,
-        /// both events, the fence registration, and the generation exactly as
-        /// they were.
+        /// Only Completed returns the slot to idle. Pending does not consume
+        /// the command: the slot stays outstanding with its generation, and
+        /// collecting that same generation again is exactly how a caller comes
+        /// back for it.
         NvencConversionCollectStatus TryCollectConversionCommand(
             uint32_t syncSlotIndex,
             uint64_t generation,
