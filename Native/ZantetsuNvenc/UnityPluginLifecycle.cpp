@@ -613,6 +613,7 @@ ZantetsuNvencPrepareSessionConversionCommandsV1(
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
     destination->lastHResult = 0;
+    destination->lastWin32Error = 0;
 
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
@@ -620,6 +621,7 @@ ZantetsuNvencPrepareSessionConversionCommandsV1(
     if (!session->TryPrepareConversionCommands())
     {
         destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;
     }
@@ -643,6 +645,7 @@ ZantetsuNvencReleaseSessionConversionCommandsV1(
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
     destination->lastHResult = 0;
+    destination->lastWin32Error = 0;
 
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
@@ -650,6 +653,7 @@ ZantetsuNvencReleaseSessionConversionCommandsV1(
     if (!session->TryReleaseConversionCommands())
     {
         destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->lastWin32Error = static_cast<uint32_t>(session->LastWin32Error());
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;
     }
@@ -731,6 +735,7 @@ ZantetsuNvencCancelSessionConversionCommandV1(
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
     destination->lastHResult = 0;
+    destination->lastWin32Error = 0;
 
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
@@ -763,14 +768,21 @@ ZantetsuNvencCollectSessionConversionCommandV1(
 
     destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
     destination->lastHResult = 0;
+    destination->lastWin32Error = 0;
 
     zantetsu::NvencEncoderSession* session =
         reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
 
+    // The HRESULT reported here is the one this command's callback recorded,
+    // not whatever the session last failed at.
+    HRESULT callbackHResult = S_OK;
+    DWORD win32Error = 0;
     if (!session->TryCollectConversionCommand(
-            syncSlotIndex, generation, timeoutMilliseconds))
+            syncSlotIndex, generation, timeoutMilliseconds,
+            &callbackHResult, &win32Error))
     {
-        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->lastHResult = static_cast<int32_t>(callbackHResult);
+        destination->lastWin32Error = static_cast<uint32_t>(win32Error);
         destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
         return 1;
     }

@@ -302,28 +302,32 @@ namespace zantetsu
             uint32_t syncSlotIndex, uint64_t generation);
 
         /// Waits for exactly one armed command to complete and returns its slot
-        /// to idle. The caller is a worker: this touches the fence and its
-        /// event, and nothing else - no Unity API, no immediate context, no
-        /// drawing. An older generation, a slot that has nothing outstanding,
-        /// and a second collection are all refused.
+        /// to idle. The caller is a worker: this touches the command's two
+        /// events and its fence, and nothing else - no Unity API, no immediate
+        /// context, no drawing.
+        ///
+        /// There are two things to wait for, in this order: the callback
+        /// finishing on the CPU, which is what publishes its result, and then -
+        /// only if it succeeded - the GPU reaching the generation. A callback
+        /// that failed is reported without waiting on a fence that will never
+        /// advance. Both waits share one deadline, so a timeout means the whole
+        /// collection took too long rather than twice as long.
+        ///
+        /// The callback's own HRESULT and the last Win32 error are written out
+        /// for the caller; an older generation, a slot that has nothing
+        /// outstanding, and a second collection are all refused.
         bool TryCollectConversionCommand(
-            uint32_t syncSlotIndex, uint64_t generation, uint32_t timeoutMilliseconds);
+            uint32_t syncSlotIndex,
+            uint64_t generation,
+            uint32_t timeoutMilliseconds,
+            HRESULT* callbackHResult,
+            DWORD* win32Error);
 
         /// Runs one armed conversion. The render callback calls this and
         /// nothing else does: it draws both planes and signals, without
         /// waiting, polling, allocating, logging, or touching NVENC. A second
         /// callback for the same command draws nothing.
         void RunConversionCommand(ConversionCommandEventDataV1& data);
-
-        /// Copies one prepared NV12 input surface into a destination the
-        /// caller owns, for a contract test that has to see that a conversion
-        /// really wrote both planes.
-        ///
-        /// It hands back no pointer, descriptor, or state, and is deliberately
-        /// absent from the plugin ABI, so nothing managed and nothing outside
-        /// this build can reach it. Production copies nothing and reads nothing
-        /// back.
-        bool TryCopyInputSurfaceTo(uint32_t slotIndex, ID3D11Texture2D* destination);
 
         /// Creates the fixed set of output bitstream buffers, one per slot and
         /// exactly once per owner. The encoder must already be initialized and
@@ -417,18 +421,31 @@ namespace zantetsu
         /// One conversion command slot. The fence and its event belong to this
         /// slot for the life of the session; the event data is the stable
         /// buffer the render callback reads.
+        /// One conversion command slot. The fence and both events belong to
+        /// this slot for the life of the session; the event data is the stable
+        /// buffer the render callback reads.
+        ///
+        /// There are two events because there are two completions. The fence
+        /// event says the GPU finished the work; the callback event says the
+        /// callback finished publishing what it did, which is the only way a
+        /// callback that never reached its Signal can be reported at all.
         struct ConversionCommandSlot
         {
             ID3D11Fence* fence;
             HANDLE completionEvent;
+            HANDLE callbackEvent;
             uint64_t lastGeneration;
             ConversionCommandEventDataV1 eventData;
             volatile LONG state;
             HRESULT lastHResult;
         };
 
-        void ReleaseConversionCommandSlot(ConversionCommandSlot& slot);
-        void RollBackPreparedConversionCommands(uint32_t count);
+        /// Gives one slot's handles and fence back, in the reverse of the order
+        /// they were taken. A handle the OS refuses to close is kept, with its
+        /// Win32 error, and stops the release there: ownership is never dropped
+        /// on an assumption.
+        bool TryReleaseConversionCommandSlot(ConversionCommandSlot& slot);
+        bool RollBackPreparedConversionCommands(uint32_t count);
         void ReleaseConversionDeviceInterfaces();
         bool AnyConversionCommandHeld() const;
         bool AreConversionCommandsPrepared() const;

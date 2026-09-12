@@ -171,13 +171,16 @@ typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
 #define ZANTETSU_NVENC_SESSION_V1_CONVERSION_COMMAND_COUNT 8
 
 /// What a conversion command preparation, release, cancellation, or collection
-/// came to. All of it is D3D11 and Win32 work, so an HRESULT is the only raw
-/// value; a refusal that failed no call leaves it at zero.
+/// came to. This boundary is both D3D11 work - devices, fences, drawing - and
+/// Win32 handle work, so both raw values are here, and only the kind of call
+/// that actually failed sets one. A collection reports the HRESULT of the
+/// callback it waited for, not some earlier unrelated failure of the session.
 typedef struct ZantetsuNvencSessionConversionResultV1
 {
     uint32_t abiVersion;
     uint32_t status;
     int32_t lastHResult;
+    uint32_t lastWin32Error;
 } ZantetsuNvencSessionConversionResultV1;
 
 /// One conversion to arm: which source, which encode sample slot, which sync
@@ -423,9 +426,14 @@ ZantetsuNvencCancelSessionConversionCommandV1(
     uint32_t destinationSize);
 
 // Waits for exactly one armed command and returns its slot to idle. Called from
-// a worker: it touches the fence and its event only. An older generation, a
-// slot with nothing outstanding, a second collection, a timeout, and a callback
-// that recorded a failure are all reported as FAILED.
+// a worker: it touches the command's two events and its fence only.
+//
+// The callback's completion is waited for first, because that is what publishes
+// the result and the only edge a callback that never signalled arrives on; the
+// fence is waited for after it, and only when the callback succeeded. Both
+// share one deadline. An older generation, a slot with nothing outstanding, a
+// second collection, a timeout, and a callback that recorded a failure are all
+// reported as FAILED, with that callback's own HRESULT.
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencCollectSessionConversionCommandV1(
     uint64_t sessionOwner,

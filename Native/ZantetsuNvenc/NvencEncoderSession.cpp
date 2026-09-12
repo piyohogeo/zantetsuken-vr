@@ -877,13 +877,32 @@ namespace zantetsu
         data.session->RunConversionCommand(data);
     }
 
-    void NvencEncoderSession::ReleaseConversionCommandSlot(ConversionCommandSlot& slot)
+    bool NvencEncoderSession::TryReleaseConversionCommandSlot(
+        ConversionCommandSlot& slot)
     {
+        // A close that the OS refuses leaves this session owning the handle.
+        // Nothing after it is released either, so the fence cannot outlive the
+        // event that names its completion.
+        if (slot.callbackEvent != nullptr)
+        {
+            if (!::CloseHandle(slot.callbackEvent))
+            {
+                _lastWin32Error = ::GetLastError();
+                return false;
+            }
+
+            slot.callbackEvent = nullptr;
+        }
+
         if (slot.completionEvent != nullptr)
         {
-            HANDLE handle = slot.completionEvent;
+            if (!::CloseHandle(slot.completionEvent))
+            {
+                _lastWin32Error = ::GetLastError();
+                return false;
+            }
+
             slot.completionEvent = nullptr;
-            ::CloseHandle(handle);
         }
 
         if (slot.fence != nullptr)
@@ -892,16 +911,24 @@ namespace zantetsu
             slot.fence = nullptr;
             fence->Release();
         }
+
+        return true;
     }
 
-    /// Unwinds what this preparation took, in reverse. Nothing here can be
-    /// refused, so it always completes.
-    void NvencEncoderSession::RollBackPreparedConversionCommands(uint32_t count)
+    /// Unwinds what this preparation took, in reverse. A refused close stops
+    /// the unwinding there: that slot and the ones before it stay held, and so
+    /// do the device interfaces.
+    bool NvencEncoderSession::RollBackPreparedConversionCommands(uint32_t count)
     {
         for (uint32_t i = count; i > 0; --i)
         {
-            ReleaseConversionCommandSlot(_conversionSlots[i - 1]);
+            if (!TryReleaseConversionCommandSlot(_conversionSlots[i - 1]))
+            {
+                return false;
+            }
         }
+
+        return true;
     }
 
     /// The device and context interfaces, given back in the reverse of the
@@ -940,7 +967,8 @@ namespace zantetsu
         for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
         {
             if (_conversionSlots[i].fence != nullptr ||
-                _conversionSlots[i].completionEvent != nullptr)
+                _conversionSlots[i].completionEvent != nullptr ||
+                _conversionSlots[i].callbackEvent != nullptr)
             {
                 return true;
             }
@@ -959,7 +987,8 @@ namespace zantetsu
         for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
         {
             if (_conversionSlots[i].fence == nullptr ||
-                _conversionSlots[i].completionEvent == nullptr)
+                _conversionSlots[i].completionEvent == nullptr ||
+                _conversionSlots[i].callbackEvent == nullptr)
             {
                 return false;
             }
@@ -1050,8 +1079,11 @@ namespace zantetsu
             if (FAILED(fenceHr) || fence == nullptr)
             {
                 _lastHResult = fenceHr;
-                RollBackPreparedConversionCommands(i);
-                ReleaseConversionDeviceInterfaces();
+                if (RollBackPreparedConversionCommands(i))
+                {
+                    ReleaseConversionDeviceInterfaces();
+                }
+
                 return false;
             }
 
@@ -1063,12 +1095,31 @@ namespace zantetsu
             if (completionEvent == nullptr)
             {
                 _lastWin32Error = ::GetLastError();
-                RollBackPreparedConversionCommands(i + 1);
-                ReleaseConversionDeviceInterfaces();
+                if (RollBackPreparedConversionCommands(i + 1))
+                {
+                    ReleaseConversionDeviceInterfaces();
+                }
+
                 return false;
             }
 
             _conversionSlots[i].completionEvent = completionEvent;
+
+            // The other half of the completion: the callback says on this one
+            // that it has finished and published what it did.
+            HANDLE callbackEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (callbackEvent == nullptr)
+            {
+                _lastWin32Error = ::GetLastError();
+                if (RollBackPreparedConversionCommands(i + 1))
+                {
+                    ReleaseConversionDeviceInterfaces();
+                }
+
+                return false;
+            }
+
+            _conversionSlots[i].callbackEvent = callbackEvent;
             _conversionSlots[i].lastGeneration = 0;
             _conversionSlots[i].lastHResult = S_OK;
             _conversionSlots[i].state =
@@ -1110,7 +1161,14 @@ namespace zantetsu
 
         _conversionCommandsReleaseAttempted = true;
 
-        RollBackPreparedConversionCommands(kConversionCommandSlotCount);
+        if (!RollBackPreparedConversionCommands(kConversionCommandSlotCount))
+        {
+            // Stopped at a handle the OS refused to close: that slot and the
+            // ones before it stay with the session, and so do the device
+            // interfaces.
+            return false;
+        }
+
         ReleaseConversionDeviceInterfaces();
         return true;
     }
@@ -1229,10 +1287,13 @@ namespace zantetsu
         ID3D11DeviceContext* context = _immediateContext;
         if (context == nullptr || _context4 == nullptr)
         {
+            // Nothing was drawn and nothing will signal, so the waiter is told
+            // on the callback's own edge instead.
             slot.lastHResult = E_FAIL;
             ::InterlockedExchange(
                 &slot.state,
                 static_cast<LONG>(ConversionCommandState::AwaitingCollection));
+            ::SetEvent(slot.callbackEvent);
             return;
         }
 
@@ -1380,24 +1441,44 @@ namespace zantetsu
         if (savedDepthStencilState != nullptr) { savedDepthStencilState->Release(); }
 
         // A failure is recorded for the waiter, never thrown and never
-        // retried here.
+        // retried here. The order matters: what happened is published first,
+        // then the state, and only then is the waiter woken - so a worker that
+        // wakes sees both, and cannot return the slot to idle while this
+        // callback is still writing to it.
         slot.lastHResult = signalHr;
 
         ::InterlockedExchange(
             &slot.state,
             static_cast<LONG>(ConversionCommandState::AwaitingCollection));
+
+        ::SetEvent(slot.callbackEvent);
     }
 
     bool NvencEncoderSession::TryCollectConversionCommand(
-        uint32_t syncSlotIndex, uint64_t generation, uint32_t timeoutMilliseconds)
+        uint32_t syncSlotIndex,
+        uint64_t generation,
+        uint32_t timeoutMilliseconds,
+        HRESULT* callbackHResult,
+        DWORD* win32Error)
     {
+        if (callbackHResult != nullptr)
+        {
+            *callbackHResult = S_OK;
+        }
+
+        if (win32Error != nullptr)
+        {
+            *win32Error = 0;
+        }
+
         if (syncSlotIndex >= kConversionCommandSlotCount)
         {
             return false;
         }
 
         ConversionCommandSlot& slot = _conversionSlots[syncSlotIndex];
-        if (slot.fence == nullptr || slot.completionEvent == nullptr)
+        if (slot.fence == nullptr || slot.completionEvent == nullptr ||
+            slot.callbackEvent == nullptr)
         {
             return false;
         }
@@ -1419,57 +1500,83 @@ namespace zantetsu
             return false;
         }
 
+        // One deadline for the whole collection, so waiting for the callback
+        // and then for the GPU cannot add up to twice the timeout.
+        const ULONGLONG deadline =
+            ::GetTickCount64() + static_cast<ULONGLONG>(timeoutMilliseconds);
+
+        // The callback first: it is what publishes the result, and it is the
+        // only edge a callback that never reached its Signal arrives on.
+        const DWORD callbackWait =
+            ::WaitForSingleObject(slot.callbackEvent, timeoutMilliseconds);
+        if (callbackWait != WAIT_OBJECT_0)
+        {
+            const DWORD error = ::GetLastError();
+            _lastWin32Error = error;
+            if (win32Error != nullptr)
+            {
+                *win32Error = error;
+            }
+
+            return false;
+        }
+
+        // What the callback recorded, whether or not the GPU was ever asked to
+        // do anything.
+        const HRESULT callbackResult = slot.lastHResult;
+        if (callbackHResult != nullptr)
+        {
+            *callbackHResult = callbackResult;
+        }
+
+        if (FAILED(callbackResult))
+        {
+            // Nothing signalled, so there is no fence to wait on. The command
+            // stays outstanding rather than being returned to idle.
+            return false;
+        }
+
         if (slot.fence->GetCompletedValue() < generation)
         {
             const HRESULT hr =
                 slot.fence->SetEventOnCompletion(generation, slot.completionEvent);
             if (FAILED(hr))
             {
-                slot.lastHResult = hr;
+                if (callbackHResult != nullptr)
+                {
+                    *callbackHResult = hr;
+                }
+
                 return false;
             }
 
-            const DWORD waited =
-                ::WaitForSingleObject(slot.completionEvent, timeoutMilliseconds);
-            if (waited != WAIT_OBJECT_0)
+            const ULONGLONG now = ::GetTickCount64();
+            const DWORD remaining = now >= deadline
+                ? 0u
+                : static_cast<DWORD>(deadline - now);
+
+            const DWORD fenceWait =
+                ::WaitForSingleObject(slot.completionEvent, remaining);
+            if (fenceWait != WAIT_OBJECT_0)
             {
-                _lastWin32Error = ::GetLastError();
+                const DWORD error = ::GetLastError();
+                _lastWin32Error = error;
+                if (win32Error != nullptr)
+                {
+                    *win32Error = error;
+                }
+
                 return false;
             }
         }
 
-        // The value really reached, and the callback really succeeded.
         if (slot.fence->GetCompletedValue() < generation)
-        {
-            return false;
-        }
-
-        if (FAILED(slot.lastHResult))
         {
             return false;
         }
 
         ::InterlockedExchange(
             &slot.state, static_cast<LONG>(ConversionCommandState::Idle));
-        return true;
-    }
-
-    bool NvencEncoderSession::TryCopyInputSurfaceTo(
-        uint32_t slotIndex, ID3D11Texture2D* destination)
-    {
-        if (slotIndex >= kEncodeSampleSlotCount || destination == nullptr ||
-            _immediateContext == nullptr)
-        {
-            return false;
-        }
-
-        ID3D11Texture2D* texture = _slots[slotIndex].inputTexture;
-        if (texture == nullptr)
-        {
-            return false;
-        }
-
-        _immediateContext->CopyResource(destination, texture);
         return true;
     }
 

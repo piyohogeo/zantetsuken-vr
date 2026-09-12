@@ -189,6 +189,7 @@ namespace Zantetsu.Observability
             internal uint AbiVersion;
             internal uint Status;
             internal int LastHResult;
+            internal uint LastWin32Error;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -1084,6 +1085,21 @@ namespace Zantetsu.Observability
             }
 
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            // Resolved and checked before anything is armed: a callback this
+            // build cannot get would otherwise leave a command armed on the
+            // native side with no event to run it.
+            if (_conversionEventCallback == IntPtr.Zero)
+            {
+                _conversionEventCallback =
+                    new IntPtr((long)ZantetsuNvencGetConversionEventCallbackV1());
+
+                if (_conversionEventCallback == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException(
+                        "The native side reported no conversion render callback.");
+                }
+            }
+
             NativeConversionArmRequestV1 request = new NativeConversionArmRequestV1
             {
                 AbiVersion = AbiVersion,
@@ -1117,18 +1133,6 @@ namespace Zantetsu.Observability
                     + armed.LastHResult.ToString("X8") + ").");
             }
 
-            if (_conversionEventCallback == IntPtr.Zero)
-            {
-                _conversionEventCallback =
-                    new IntPtr((long)ZantetsuNvencGetConversionEventCallbackV1());
-
-                if (_conversionEventCallback == IntPtr.Zero)
-                {
-                    throw new InvalidOperationException(
-                        "The native side reported no conversion render callback.");
-                }
-            }
-
             try
             {
                 CommandBuffer commands = new CommandBuffer();
@@ -1150,13 +1154,24 @@ namespace Zantetsu.Observability
                 // The event never reached the render thread, so the command is
                 // taken back - unless its callback has already started, in
                 // which case it stays armed to be collected and still counts
-                // as in flight.
-                NativeConversionResultV1 cancelled = default;
-                int cancelWritten = ZantetsuNvencCancelSessionConversionCommandV1(
-                    _sessionOwner, (uint)syncSlotIndex, generation, ref cancelled,
-                    (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+                // as in flight. Whatever the cancellation itself does, it never
+                // replaces the failure that brought us here.
+                bool cancelled = false;
+                try
+                {
+                    NativeConversionResultV1 cancelResult = default;
+                    int cancelWritten = ZantetsuNvencCancelSessionConversionCommandV1(
+                        _sessionOwner, (uint)syncSlotIndex, generation,
+                        ref cancelResult,
+                        (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+                    cancelled = cancelWritten == 1 && cancelResult.Status == StatusOk;
+                }
+                catch (Exception)
+                {
+                    cancelled = false;
+                }
 
-                if (cancelWritten != 1 || cancelled.Status != StatusOk)
+                if (!cancelled)
                 {
                     System.Threading.Interlocked.Increment(
                         ref _conversionCommandsInFlight);
@@ -1465,7 +1480,8 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException(
                     "The conversion commands could not be " + what + " (status "
                     + result.Status + ", HRESULT 0x"
-                    + result.LastHResult.ToString("X8") + ").");
+                    + result.LastHResult.ToString("X8") + ", win32 error "
+                    + result.LastWin32Error + ").");
             }
         }
 

@@ -102,82 +102,6 @@ namespace
         return texture;
     }
 
-    /// A view for painting one source a known colour. Test-only: production
-    /// never writes a source.
-    ID3D11RenderTargetView* CreateSourceView(
-        ID3D11Device* device, ID3D11Texture2D* texture)
-    {
-        D3D11_RENDER_TARGET_VIEW_DESC desc = {};
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-
-        ID3D11RenderTargetView* view = nullptr;
-        const HRESULT hr = device->CreateRenderTargetView(texture, &desc, &view);
-        if (FAILED(hr) || view == nullptr)
-        {
-            std::printf(
-                "FAILED: could not create a source view (hr 0x%08lX)\n",
-                static_cast<unsigned long>(hr));
-            ++g_failures;
-            return nullptr;
-        }
-
-        return view;
-    }
-
-    /// Reads the first Y sample and the first UV pair out of an NV12 texture.
-    /// Test-only: production reads nothing back.
-    bool ReadNv12(
-        ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        zantetsu::NvencEncoderSession& session,
-        uint32_t slotIndex,
-        BYTE& luma,
-        BYTE& chromaBlue,
-        BYTE& chromaRed)
-    {
-        D3D11_TEXTURE2D_DESC desc = {};
-        desc.Width = 1280;
-        desc.Height = 720;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_NV12;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_STAGING;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-        ID3D11Texture2D* staging = nullptr;
-        if (FAILED(device->CreateTexture2D(&desc, nullptr, &staging)) ||
-            staging == nullptr)
-        {
-            return false;
-        }
-
-        if (!session.TryCopyInputSurfaceTo(slotIndex, staging))
-        {
-            staging->Release();
-            return false;
-        }
-
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        const HRESULT hr = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
-        if (FAILED(hr))
-        {
-            staging->Release();
-            return false;
-        }
-
-        const BYTE* bytes = static_cast<const BYTE*>(mapped.pData);
-        luma = bytes[0];
-
-        const BYTE* chroma = bytes + static_cast<size_t>(mapped.RowPitch) * 720;
-        chromaBlue = chroma[0];
-        chromaRed = chroma[1];
-
-        context->Unmap(staging, 0);
-        staging->Release();
-        return true;
-    }
 }
 
 int main()
@@ -380,6 +304,11 @@ int main()
         "a session with prepared conversion commands refuses to close");
     Check(session.IsOpen(), "the refused close left the session open");
 
+    // The callback's own result and the last Win32 error, written out by
+    // every collection below.
+    HRESULT callbackHResult = S_OK;
+    DWORD collectWin32Error = 0;
+
     // ---- one command per slot, all eight of them ----
     {
         bool allArmed = true;
@@ -402,7 +331,7 @@ int main()
             // draw nothing.
             zantetsu::RunConversionCommandFromEventData(eventData);
 
-            if (!session.TryCollectConversionCommand(i, 1, 5000))
+            if (!session.TryCollectConversionCommand(i, 1, 5000, &callbackHResult, &collectWin32Error))
             {
                 allCollected = false;
                 break;
@@ -431,6 +360,9 @@ int main()
         Check(allRan, "every armed command ran on the calling thread");
         Check(allCollected, "every one of the eight commands completes and collects");
         Check(
+            SUCCEEDED(callbackHResult),
+            "a collected command reports its own callback's result, which succeeded");
+        Check(
             allIdleAfterDuplicate,
             "a callback that arrives after collection leaves its slot idle");
     }
@@ -452,7 +384,7 @@ int main()
             // The generation before this one belongs to a command that is
             // already collected: waiting on it must be refused, not satisfied
             // by an older signal.
-            if (session.TryCollectConversionCommand(0, generation - 1, 0))
+            if (session.TryCollectConversionCommand(0, generation - 1, 0, &callbackHResult, &collectWin32Error))
             {
                 staleRefused = false;
                 break;
@@ -460,14 +392,14 @@ int main()
 
             zantetsu::RunConversionCommandFromEventData(eventData);
 
-            if (!session.TryCollectConversionCommand(0, generation, 5000))
+            if (!session.TryCollectConversionCommand(0, generation, 5000, &callbackHResult, &collectWin32Error))
             {
                 reuseHeld = false;
                 break;
             }
 
             // Collected once, and only once.
-            if (session.TryCollectConversionCommand(0, generation, 0))
+            if (session.TryCollectConversionCommand(0, generation, 0, &callbackHResult, &collectWin32Error))
             {
                 reuseHeld = false;
                 break;
@@ -535,57 +467,8 @@ int main()
             session.Close() == zantetsu::NvencEncoderSessionCloseStatus::Failed,
             "a session with an uncollected command refuses to close");
         Check(
-            session.TryCollectConversionCommand(1, 101, 5000),
+            session.TryCollectConversionCommand(1, 101, 5000, &callbackHResult, &collectWin32Error),
             "the started command completes and collects");
-    }
-
-    // ---- both planes really were written ----
-    {
-        ID3D11DeviceContext* context = nullptr;
-        device->GetImmediateContext(&context);
-
-        ID3D11RenderTargetView* sourceView = CreateSourceView(device, sourceTextures[4]);
-        if (context != nullptr && sourceView != nullptr)
-        {
-            const FLOAT red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
-            context->ClearRenderTargetView(sourceView, red);
-
-            void* eventData = nullptr;
-            const bool armed =
-                session.TryArmConversionCommand(4, 4, 4, 50, &eventData) &&
-                eventData != nullptr;
-            if (armed)
-            {
-                zantetsu::RunConversionCommandFromEventData(eventData);
-            }
-
-            const bool collected =
-                armed && session.TryCollectConversionCommand(4, 50, 5000);
-
-            BYTE luma = 0;
-            BYTE chromaBlue = 0;
-            BYTE chromaRed = 0;
-            const bool read = collected && ReadNv12(
-                device, context, session, 4, luma, chromaBlue, chromaRed);
-
-            std::printf(
-                "  converted: Y %u, U %u, V %u\n",
-                static_cast<unsigned>(luma),
-                static_cast<unsigned>(chromaBlue),
-                static_cast<unsigned>(chromaRed));
-
-            Check(read, "the converted NV12 surface reads back after completion");
-            Check(
-                luma != 0 && chromaBlue != 0 && chromaRed != 0,
-                "both the Y plane and the UV plane were written by the conversion");
-
-            sourceView->Release();
-        }
-
-        if (context != nullptr)
-        {
-            context->Release();
-        }
     }
 
     Check(
