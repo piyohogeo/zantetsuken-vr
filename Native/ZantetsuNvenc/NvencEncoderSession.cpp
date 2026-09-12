@@ -1,4 +1,5 @@
 #include "NvencEncoderSession.h"
+#include "D3D11ThreadProtection.h"
 
 #include <cassert>
 #include <new>
@@ -1297,12 +1298,18 @@ namespace zantetsu
         }
 
         ID3D11DeviceContext* context = _immediateContext;
-        if (context == nullptr || _context4 == nullptr)
+        // NVENC workers may use Unity's immediate context internally. Enable
+        // its shared protection on the render callback before this conversion
+        // can complete and be submitted to the encoder.
+        const HRESULT contextReady = context == nullptr || _context4 == nullptr
+            ? E_FAIL
+            : EnsureD3D11MultithreadProtection(_device, context);
+        if (FAILED(contextReady))
         {
             // Nothing was drawn and nothing will signal, so the waiter is told
             // on the callback's own edge instead. Everything this callback has
             // to say is written before the state that says it is finished.
-            slot.lastHResult = E_FAIL;
+            slot.lastHResult = contextReady;
 
             if (!::SetEvent(slot.callbackEvent))
             {

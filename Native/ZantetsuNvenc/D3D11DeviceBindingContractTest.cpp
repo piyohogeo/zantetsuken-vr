@@ -14,6 +14,7 @@
 #include <d3d11.h>
 
 #include "D3D11DeviceBinding.h"
+#include "D3D11ThreadProtection.h"
 
 namespace
 {
@@ -32,7 +33,7 @@ namespace
     }
 
     /// One real D3D11 device on the software rasterizer.
-    ID3D11Device* CreateWarpDevice()
+    ID3D11Device* CreateWarpDevice(UINT creationFlags = 0)
     {
         ID3D11Device* device = nullptr;
         D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
@@ -41,7 +42,7 @@ namespace
             nullptr,
             D3D_DRIVER_TYPE_WARP,
             nullptr,
-            0,
+            creationFlags,
             nullptr,
             0,
             D3D11_SDK_VERSION,
@@ -58,6 +59,99 @@ namespace
         }
 
         return device;
+    }
+
+    // Uses only CPU-side D3D state on a private WARP device: no worker,
+    // rendering, Present, encoding, event, or GPU-completion wait is needed.
+    void CheckThreadProtection(UINT creationFlags)
+    {
+        ID3D11Device* device = CreateWarpDevice(creationFlags);
+        if (device == nullptr)
+        {
+            return;
+        }
+
+        ID3D11DeviceContext* context = nullptr;
+        device->GetImmediateContext(&context);
+        Check(context != nullptr, "the WARP device supplies its immediate context");
+        if (context == nullptr)
+        {
+            device->Release();
+            return;
+        }
+
+        if ((creationFlags & D3D11_CREATE_DEVICE_SINGLETHREADED) != 0)
+        {
+            const UINT flagsBefore = device->GetCreationFlags();
+            Check((flagsBefore & D3D11_CREATE_DEVICE_SINGLETHREADED) != 0,
+                "the rejected WARP device was created SINGLETHREADED");
+
+            // A SINGLETHREADED device may omit this interface entirely. The
+            // helper must reject the creation flag before it requires QI.
+            ID3D11Multithread* optionalMultithread = nullptr;
+            const HRESULT optionalQueryHr = context->QueryInterface(
+                __uuidof(ID3D11Multithread), reinterpret_cast<void**>(&optionalMultithread));
+            const bool hasProtection = SUCCEEDED(optionalQueryHr) && optionalMultithread != nullptr;
+            const BOOL protectionBefore = hasProtection
+                ? optionalMultithread->GetMultithreadProtected() : FALSE;
+
+            Check(zantetsu::EnsureD3D11MultithreadProtection(device, context) == E_INVALIDARG,
+                "a SINGLETHREADED device is rejected before protection is required");
+            Check(device->GetCreationFlags() == flagsBefore,
+                "rejecting SINGLETHREADED leaves device creation flags unchanged");
+            if (hasProtection)
+            {
+                Check(optionalMultithread->GetMultithreadProtected() == protectionBefore,
+                    "rejecting SINGLETHREADED leaves its protection state unchanged");
+            }
+
+            if (optionalMultithread != nullptr) { optionalMultithread->Release(); }
+            context->Release();
+            device->Release();
+            return;
+        }
+
+        ID3D11Multithread* multithread = nullptr;
+        const HRESULT queryHr = context->QueryInterface(
+            __uuidof(ID3D11Multithread), reinterpret_cast<void**>(&multithread));
+        Check(SUCCEEDED(queryHr) && multithread != nullptr,
+            "the WARP immediate context exposes multithread protection");
+        if (FAILED(queryHr) || multithread == nullptr)
+        {
+            if (multithread != nullptr) { multithread->Release(); }
+            context->Release();
+            device->Release();
+            return;
+        }
+
+        // This test owns the device and has no other threads using it, so it
+        // can establish a deterministic OFF precondition without affecting
+        // another component's shared-device state.
+        multithread->SetMultithreadProtected(FALSE);
+        Check(!multithread->GetMultithreadProtected(),
+            "protection is OFF before the production helper runs");
+
+        Check(FAILED(zantetsu::EnsureD3D11MultithreadProtection(nullptr, context)),
+            "a missing device is rejected");
+        Check(FAILED(zantetsu::EnsureD3D11MultithreadProtection(device, nullptr)),
+            "a missing context is rejected");
+        Check(FAILED(zantetsu::EnsureD3D11MultithreadProtection(nullptr, nullptr)),
+            "missing device and context are rejected");
+        Check(!multithread->GetMultithreadProtected(),
+            "rejected missing inputs leave protection OFF");
+
+        Check(SUCCEEDED(zantetsu::EnsureD3D11MultithreadProtection(device, context)),
+            "the production helper accepts an initially unprotected context");
+        Check(multithread->GetMultithreadProtected() != FALSE,
+            "the production helper turns protection ON");
+        Check(SUCCEEDED(zantetsu::EnsureD3D11MultithreadProtection(device, context)),
+            "repeated protection preparation succeeds");
+        Check(multithread->GetMultithreadProtected() != FALSE,
+            "repeated preparation leaves protection ON");
+
+        multithread->Release();
+        context->Release();
+        device->Release();
     }
 }
 
@@ -141,6 +235,11 @@ int main()
 
     // 7. The one reference this test still owns, released once.
     owned->Release();
+
+    // 8. Worker use of an immediate context requires a compatible device and
+    //    shared D3D protection. Exercise the exact helper used by the plugin.
+    CheckThreadProtection(0);
+    CheckThreadProtection(D3D11_CREATE_DEVICE_SINGLETHREADED);
 
     if (g_failures != 0)
     {

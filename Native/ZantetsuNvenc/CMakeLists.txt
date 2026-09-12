@@ -164,6 +164,7 @@ target_include_directories(ZantetsuNvencSdkVersionContract
 add_library(ZantetsuNvenc SHARED
     D3D11DeviceBinding.cpp
     D3D11DeviceBinding.h
+    D3D11ThreadProtection.h
     NvencDriverApi.cpp
     NvencDriverApi.h
     NvencEncoderSession.cpp
@@ -204,6 +205,7 @@ target_link_libraries(ZantetsuNvenc PRIVATE d3d11)
 # is never installed, copied, or shipped.
 add_executable(ZantetsuNvencD3D11DeviceBindingContractTest
     D3D11DeviceBinding.cpp
+    D3D11ThreadProtection.h
     D3D11DeviceBindingContractTest.cpp)
 
 set_target_properties(ZantetsuNvencD3D11DeviceBindingContractTest PROPERTIES
@@ -240,6 +242,7 @@ target_include_directories(ZantetsuNvencDriverApiContractTest
 # real driver. Like the driver test, it is run only when asked.
 add_executable(ZantetsuNvencSessionCapabilityContractTest
     D3D11DeviceBinding.cpp
+    D3D11ThreadProtection.h
     NvencDriverApi.cpp
     NvencEncoderSession.cpp
     NvencSessionCapabilityContractTest.cpp)
