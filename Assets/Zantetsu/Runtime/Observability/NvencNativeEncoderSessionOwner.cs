@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
+using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Zantetsu.Observability
 {
@@ -42,6 +44,20 @@ namespace Zantetsu.Observability
         /// sets.
         /// </summary>
         internal const int SourceSurfaceCount = 8;
+
+        /// <summary>
+        /// How many GPU conversion command slots one session has. Fixed, and
+        /// its own count: a command binds one source to one encode sample slot
+        /// for one frame.
+        /// </summary>
+        internal const int ConversionCommandSlotCount = 8;
+
+        /// <summary>
+        /// How many encode sample slots one session prepares. Fixed, and its
+        /// own count: a sample slot holds an NV12 input surface, an output
+        /// bitstream buffer, and a completion event.
+        /// </summary>
+        internal const int EncodeSampleSlotCount = 8;
 
         private const uint StatusOk = 1;
         private const uint StatusUnsupported = 2;
@@ -168,6 +184,34 @@ namespace Zantetsu.Observability
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct NativeConversionResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastHResult;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeConversionArmRequestV1
+        {
+            internal uint AbiVersion;
+            internal uint SyncSlotIndex;
+            internal uint SourceSlotIndex;
+            internal uint SampleSlotIndex;
+            internal ulong Generation;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeConversionArmResultV1
+        {
+            internal uint AbiVersion;
+            internal uint Status;
+            internal int LastHResult;
+            internal int Reserved;
+            internal ulong EventData;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct NativeOutputBufferResultV1
         {
             internal uint AbiVersion;
@@ -230,6 +274,36 @@ namespace Zantetsu.Observability
             uint destinationSize);
 
         [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencPrepareSessionConversionCommandsV1(
+            ulong sessionOwner, ref NativeConversionResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencReleaseSessionConversionCommandsV1(
+            ulong sessionOwner, ref NativeConversionResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern ulong ZantetsuNvencGetConversionEventCallbackV1();
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencArmSessionConversionCommandV1(
+            ulong sessionOwner, ref NativeConversionArmRequestV1 request,
+            uint requestSize, ref NativeConversionArmResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencCancelSessionConversionCommandV1(
+            ulong sessionOwner, uint syncSlotIndex, ulong generation,
+            ref NativeConversionResultV1 destination, uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
+        private static extern int ZantetsuNvencCollectSessionConversionCommandV1(
+            ulong sessionOwner, uint syncSlotIndex, ulong generation,
+            uint timeoutMilliseconds, ref NativeConversionResultV1 destination,
+            uint destinationSize);
+
+        [DllImport(NativeLibraryName, CallingConvention = CallingConvention.StdCall)]
         private static extern int ZantetsuNvencPrepareSessionOutputBuffersV1(
             ulong sessionOwner, ref NativeOutputBufferResultV1 destination,
             uint destinationSize);
@@ -249,6 +323,17 @@ namespace Zantetsu.Observability
         private bool _completionEventsPrepareAttempted;
         private bool _completionEventsReleaseAttempted;
         private bool _completionEventsPrepared;
+        // The render callback this plugin wants a conversion issued with,
+        // asked for once and kept here. Neither it nor an event data pointer
+        // is ever handed to a caller.
+        private IntPtr _conversionEventCallback;
+        // How many issued conversions have not been collected yet. Kept here
+        // so a release is refused before its one attempt is spent, the way
+        // every other ordering refusal is.
+        private int _conversionCommandsInFlight;
+        private bool _conversionCommandsPrepareAttempted;
+        private bool _conversionCommandsReleaseAttempted;
+        private bool _conversionCommandsPrepared;
         private bool _outputBuffersPrepareAttempted;
         private bool _outputBuffersReleaseAttempted;
         private bool _outputBuffersPrepared;
@@ -678,6 +763,12 @@ namespace Zantetsu.Observability
                     "This session's output buffers are still prepared; they are released before its source surfaces.");
             }
 
+            if (_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion commands are still prepared; they are released before its source surfaces.");
+            }
+
             if (_inputSurfacesPrepared)
             {
                 throw new InvalidOperationException(
@@ -787,6 +878,12 @@ namespace Zantetsu.Observability
                     "This session's output buffers are still prepared; they are released before its input surfaces.");
             }
 
+            if (_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion commands are still prepared; they are released before its input surfaces.");
+            }
+
             if (_inputSurfacesReleaseAttempted)
             {
                 throw new InvalidOperationException(
@@ -811,6 +908,323 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
+        /// Creates this session's fixed set of GPU conversion command slots -
+        /// all of them, or none.
+        /// </summary>
+        /// <remarks>
+        /// The fences, their events, and the event data each command is issued
+        /// with are the native side's; no handle, pointer, or slot state is
+        /// exposed here. The source surfaces, the NV12 input surfaces, and the
+        /// conversion pipeline come first; the output buffers and completion
+        /// events come after.
+        /// </remarks>
+        internal void PrepareConversionCommands()
+        {
+            RequireUsableSession("prepare conversion commands on");
+
+            // The surfaces a conversion reads and writes come first. Checked
+            // before this preparation's one attempt is spent.
+            if (!_sourceSurfacesBound)
+            {
+                throw new InvalidOperationException(
+                    "This session's source surfaces are not bound; they come before its conversion commands.");
+            }
+
+            if (!_inputSurfacesPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's input surfaces are not prepared; they come before its conversion commands.");
+            }
+
+            if (_conversionCommandsPrepareAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion command preparation was already attempted; it is not attempted again.");
+            }
+
+            _conversionCommandsPrepareAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeConversionResultV1 result = default;
+            int written = ZantetsuNvencPrepareSessionConversionCommandsV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+
+            RequireConversionResult(written, result, "prepared");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _conversionCommandsPrepared = true;
+        }
+
+        /// <summary>
+        /// Releases that whole set.
+        /// </summary>
+        /// <remarks>
+        /// The output buffers and completion events are released first, and no
+        /// command may still be in flight: a session that fails either refuses
+        /// here, before this release's one attempt is spent.
+        /// </remarks>
+        internal void ReleaseConversionCommands()
+        {
+            RequireUsableSession("release conversion commands from");
+
+            if (!_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session has no prepared conversion commands to release.");
+            }
+
+            if (_completionEventsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's completion events are still prepared; they are released before its conversion commands.");
+            }
+
+            if (_outputBuffersPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's output buffers are still prepared; they are released before its conversion commands.");
+            }
+
+            // A command that has been issued and not collected is still the
+            // render thread's. Checked before this release's one attempt is
+            // spent, so the caller can still release once it is collected.
+            int inFlight = System.Threading.Volatile.Read(
+                ref _conversionCommandsInFlight);
+            if (inFlight != 0)
+            {
+                throw new InvalidOperationException(
+                    "This session still has "
+                    + inFlight
+                    + " uncollected conversion command(s); they are collected before the set is released.");
+            }
+
+            if (_conversionCommandsReleaseAttempted)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion command release was already attempted; it is not attempted again.");
+            }
+
+            _conversionCommandsReleaseAttempted = true;
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeConversionResultV1 result = default;
+            int written = ZantetsuNvencReleaseSessionConversionCommandsV1(
+                _sessionOwner, ref result,
+                (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+
+            RequireConversionResult(written, result, "released");
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+
+            _conversionCommandsPrepared = false;
+        }
+
+        /// <summary>
+        /// Arms one conversion and issues its render event: source surface,
+        /// encode sample slot, sync slot, and generation, bound together in one
+        /// call on the main thread.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The event data the native side hands back lives in that command's
+        /// slot and is read by the render callback when it runs, so it is
+        /// passed straight to the render event and never kept, copied, wrapped,
+        /// or shown to anyone here. Neither it nor the callback address leaves
+        /// this type.
+        /// </para>
+        /// <para>
+        /// Only a failure to issue the event unwinds the arming: the command is
+        /// taken back, and if its callback has already started it is kept
+        /// instead, because it will signal and must be collected.
+        /// </para>
+        /// </remarks>
+        internal void IssueConversionCommand(
+            int syncSlotIndex, int sourceSlotIndex, int sampleSlotIndex, ulong generation)
+        {
+            RequireUsableSession("issue a conversion command on");
+
+            if (!_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion commands are not prepared; there is nothing to issue.");
+            }
+
+            if (syncSlotIndex < 0 || syncSlotIndex >= ConversionCommandSlotCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(syncSlotIndex), syncSlotIndex,
+                    "The sync slot index is outside the fixed set.");
+            }
+
+            if (sourceSlotIndex < 0 || sourceSlotIndex >= SourceSurfaceCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(sourceSlotIndex), sourceSlotIndex,
+                    "The source slot index is outside the fixed set.");
+            }
+
+            if (sampleSlotIndex < 0 || sampleSlotIndex >= EncodeSampleSlotCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(sampleSlotIndex), sampleSlotIndex,
+                    "The encode sample slot index is outside the fixed set.");
+            }
+
+            if (generation == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(generation), generation,
+                    "A generation is greater than zero.");
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeConversionArmRequestV1 request = new NativeConversionArmRequestV1
+            {
+                AbiVersion = AbiVersion,
+                SyncSlotIndex = (uint)syncSlotIndex,
+                SourceSlotIndex = (uint)sourceSlotIndex,
+                SampleSlotIndex = (uint)sampleSlotIndex,
+                Generation = generation,
+            };
+
+            NativeConversionArmResultV1 armed = default;
+            int written = ZantetsuNvencArmSessionConversionCommandV1(
+                _sessionOwner, ref request,
+                (uint)Marshal.SizeOf(typeof(NativeConversionArmRequestV1)),
+                ref armed,
+                (uint)Marshal.SizeOf(typeof(NativeConversionArmResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native conversion arming was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(armed.AbiVersion);
+
+            if (armed.Status != StatusOk || armed.EventData == 0)
+            {
+                throw new InvalidOperationException(
+                    "The conversion command could not be armed (status "
+                    + armed.Status + ", HRESULT 0x"
+                    + armed.LastHResult.ToString("X8") + ").");
+            }
+
+            if (_conversionEventCallback == IntPtr.Zero)
+            {
+                _conversionEventCallback =
+                    new IntPtr((long)ZantetsuNvencGetConversionEventCallbackV1());
+
+                if (_conversionEventCallback == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException(
+                        "The native side reported no conversion render callback.");
+                }
+            }
+
+            try
+            {
+                CommandBuffer commands = new CommandBuffer();
+                try
+                {
+                    commands.IssuePluginEventAndData(
+                        _conversionEventCallback,
+                        0,
+                        new IntPtr((long)armed.EventData));
+                    Graphics.ExecuteCommandBuffer(commands);
+                }
+                finally
+                {
+                    commands.Dispose();
+                }
+            }
+            catch (Exception)
+            {
+                // The event never reached the render thread, so the command is
+                // taken back - unless its callback has already started, in
+                // which case it stays armed to be collected and still counts
+                // as in flight.
+                NativeConversionResultV1 cancelled = default;
+                int cancelWritten = ZantetsuNvencCancelSessionConversionCommandV1(
+                    _sessionOwner, (uint)syncSlotIndex, generation, ref cancelled,
+                    (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+
+                if (cancelWritten != 1 || cancelled.Status != StatusOk)
+                {
+                    System.Threading.Interlocked.Increment(
+                        ref _conversionCommandsInFlight);
+                }
+
+                throw;
+            }
+
+            System.Threading.Interlocked.Increment(ref _conversionCommandsInFlight);
+#else
+            throw new InvalidOperationException(
+                "The native encoder session is not available on this platform.");
+#endif
+        }
+
+        /// <summary>
+        /// Waits for exactly one issued conversion to complete and returns its
+        /// slot to use. Returns false when it did not complete in time or the
+        /// callback recorded a failure.
+        /// </summary>
+        /// <remarks>
+        /// For a worker thread: it touches the command's fence and its event
+        /// and nothing else - no Unity API, no graphics context, no drawing.
+        /// An older generation, a slot with nothing outstanding, and a second
+        /// collection are all refused by the native side.
+        /// </remarks>
+        internal bool TryCollectConversionCommand(
+            int syncSlotIndex, ulong generation, uint timeoutMilliseconds)
+        {
+            if (_sessionOwner == 0 || _closeAttempted)
+            {
+                return false;
+            }
+
+            if (syncSlotIndex < 0 || syncSlotIndex >= ConversionCommandSlotCount)
+            {
+                return false;
+            }
+
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            NativeConversionResultV1 result = default;
+            int written = ZantetsuNvencCollectSessionConversionCommandV1(
+                _sessionOwner, (uint)syncSlotIndex, generation, timeoutMilliseconds,
+                ref result, (uint)Marshal.SizeOf(typeof(NativeConversionResultV1)));
+
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native conversion collection was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                return false;
+            }
+
+            // Collected: this one is no longer the render thread's.
+            System.Threading.Interlocked.Decrement(ref _conversionCommandsInFlight);
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>
         /// Creates this session's fixed set of output bitstream buffers - all
         /// of them, or none.
         /// </summary>
@@ -824,12 +1238,18 @@ namespace Zantetsu.Observability
         {
             RequireUsableSession("prepare output buffers on");
 
-            // The input surfaces come first. Checked before this
-            // preparation's one attempt is spent.
+            // The input surfaces and the conversion commands come first.
+            // Checked before this preparation's one attempt is spent.
             if (!_inputSurfacesPrepared)
             {
                 throw new InvalidOperationException(
                     "This session's input surfaces are not prepared; they come before its output buffers.");
+            }
+
+            if (!_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion commands are not prepared; they come before its output buffers.");
             }
 
             if (_outputBuffersPrepareAttempted)
@@ -936,6 +1356,12 @@ namespace Zantetsu.Observability
                     "This session's output buffers are still prepared; they are released before the session is closed.");
             }
 
+            if (_conversionCommandsPrepared)
+            {
+                throw new InvalidOperationException(
+                    "This session's conversion commands are still prepared; they are released before the session is closed.");
+            }
+
             if (_inputSurfacesPrepared)
             {
                 throw new InvalidOperationException(
@@ -1019,6 +1445,27 @@ namespace Zantetsu.Observability
                     "The completion events could not be " + what + " (status "
                     + result.Status + ", win32 error " + result.LastWin32Error
                     + ", NVENCSTATUS " + result.LastNvencStatus + ").");
+            }
+        }
+
+        private static void RequireConversionResult(
+            int written, NativeConversionResultV1 result, string what)
+        {
+            if (written != 1)
+            {
+                throw new InvalidOperationException(
+                    "The native conversion-command call was refused; it returned "
+                    + written + ".");
+            }
+
+            RequireAbiVersion(result.AbiVersion);
+
+            if (result.Status != StatusOk)
+            {
+                throw new InvalidOperationException(
+                    "The conversion commands could not be " + what + " (status "
+                    + result.Status + ", HRESULT 0x"
+                    + result.LastHResult.ToString("X8") + ").");
             }
         }
 

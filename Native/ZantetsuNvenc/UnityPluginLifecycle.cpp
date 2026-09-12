@@ -587,6 +587,198 @@ ZantetsuNvencReleaseSessionInputSurfacesV1(
     return 1;
 }
 
+// The render event this plugin issues a conversion with. It runs on the render
+// thread, does exactly one armed command, and returns: no waiting, no polling,
+// no NVENC, no managed call, no logging, and no allocation.
+static void UNITY_INTERFACE_API ZantetsuNvencConversionEvent(int eventId, void* data)
+{
+    // The event id names nothing here: a conversion is identified entirely by
+    // the event data the arming handed back.
+    (void)eventId;
+    zantetsu::RunConversionCommandFromEventData(data);
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencPrepareSessionConversionCommandsV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionConversionResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryPrepareConversionCommands())
+    {
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionConversionCommandsV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionConversionResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryReleaseConversionCommands())
+    {
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+uint64_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencGetConversionEventCallbackV1(void)
+{
+    return reinterpret_cast<uint64_t>(&ZantetsuNvencConversionEvent);
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencArmSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    const ZantetsuNvencSessionConversionArmRequestV1* request,
+    uint32_t requestSize,
+    ZantetsuNvencSessionConversionArmResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionConversionArmResultV1) ||
+        request == nullptr ||
+        requestSize != sizeof(ZantetsuNvencSessionConversionArmRequestV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    if (request->abiVersion != ZANTETSU_NVENC_SESSION_V1_VERSION)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+    destination->reserved = 0;
+    destination->eventData = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    void* eventData = nullptr;
+    if (!session->TryArmConversionCommand(
+            request->syncSlotIndex,
+            request->sourceSlotIndex,
+            request->sampleSlotIndex,
+            request->generation,
+            &eventData) ||
+        eventData == nullptr)
+    {
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->eventData =
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(eventData));
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCancelSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    uint32_t syncSlotIndex,
+    uint64_t generation,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionConversionResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryCancelArmedConversionCommand(syncSlotIndex, generation))
+    {
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCollectSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    uint32_t syncSlotIndex,
+    uint64_t generation,
+    uint32_t timeoutMilliseconds,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize)
+{
+    if (destination == nullptr ||
+        destinationSize != sizeof(ZantetsuNvencSessionConversionResultV1) ||
+        sessionOwner == 0)
+    {
+        return 0;
+    }
+
+    destination->abiVersion = ZANTETSU_NVENC_SESSION_V1_VERSION;
+    destination->lastHResult = 0;
+
+    zantetsu::NvencEncoderSession* session =
+        reinterpret_cast<zantetsu::NvencEncoderSession*>(sessionOwner);
+
+    if (!session->TryCollectConversionCommand(
+            syncSlotIndex, generation, timeoutMilliseconds))
+    {
+        destination->lastHResult = static_cast<int32_t>(session->LastHResult());
+        destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_FAILED;
+        return 1;
+    }
+
+    destination->status = ZANTETSU_NVENC_SESSION_V1_STATUS_OK;
+    return 1;
+}
+
 int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencPrepareSessionOutputBuffersV1(
     uint64_t sessionOwner,

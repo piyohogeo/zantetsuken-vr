@@ -19,7 +19,7 @@
 #ifndef ZANTETSU_NVENC_ENCODER_SESSION_H
 #define ZANTETSU_NVENC_ENCODER_SESSION_H
 
-#include <d3d11.h>
+#include <d3d11_4.h>
 #include <windows.h>
 
 #include <nvEncodeAPI.h>
@@ -64,6 +64,11 @@ namespace zantetsu
     /// an encode sample slot are bound to each other only while a frame is in
     /// flight, so they are never the same array.
     constexpr uint32_t kSourceSurfaceSlotCount = 8;
+
+    /// The fixed number of GPU conversion command slots. A conversion binds
+    /// one source surface to one encode sample slot for one frame, so it is
+    /// its own set again: a command slot is not a source and not a sample.
+    constexpr uint32_t kConversionCommandSlotCount = 8;
 
     /// The one encoded size, which is also the one input surface size and the
     /// one accepted source size: this bring-up neither scales nor crops.
@@ -131,6 +136,28 @@ namespace zantetsu
         uint32_t enableEncodeAsync;
         uint32_t enableOutputInVideoMemory;
     };
+
+    class NvencEncoderSession;
+
+    /// What one armed conversion carries to its render callback. It lives
+    /// inside its command slot and is not written again until that command's
+    /// completion has been collected, so the render thread reads exactly what
+    /// the arming wrote - the data is read when the callback runs, not when the
+    /// event is issued. It is never allocated per issue, shared between slots,
+    /// placed on a stack, or pinned from managed memory.
+    struct ConversionCommandEventDataV1
+    {
+        NvencEncoderSession* session;
+        uint32_t syncSlotIndex;
+        uint32_t sourceSlotIndex;
+        uint32_t sampleSlotIndex;
+        uint32_t reserved;
+        uint64_t generation;
+    };
+
+    /// The render callback's one entry point. Called on the render thread with
+    /// the pointer the arming returned, and nowhere else.
+    void RunConversionCommandFromEventData(void* eventData);
 
     class NvencEncoderSession
     {
@@ -238,6 +265,66 @@ namespace zantetsu
         /// and leaves the shaders alone.
         bool TryReleaseInputSurfaces();
 
+        /// Creates the fixed set of GPU conversion command slots, exactly once
+        /// per owner: the device and context interfaces the signalling needs,
+        /// then one fence and one auto-reset event per slot. The encoder must
+        /// be initialized, the sources bound, and the input surfaces and
+        /// conversion pipeline prepared; nothing that comes after may be held.
+        /// All of it succeeds or none of it does, and a failure releases what
+        /// it took in reverse. Nothing is degraded, retried, or recreated.
+        bool TryPrepareConversionCommands();
+
+        /// Releases the whole set in reverse order, exactly once per owner. A
+        /// slot that is armed, running, or waiting to be collected stops this
+        /// before the release's one attempt is spent: a command in flight is
+        /// not torn down underneath the render thread.
+        bool TryReleaseConversionCommands();
+
+        /// Binds one conversion to exactly one source surface, one encode
+        /// sample slot, one sync slot, and one generation, and hands back the
+        /// event data pointer the caller issues the render event with.
+        ///
+        /// Every index, the preparation of everything it uses, the slot being
+        /// idle, and the generation being newer than that slot's last are all
+        /// checked before anything is written. The generation is the fence
+        /// value this command will signal; there is no separate counter.
+        bool TryArmConversionCommand(
+            uint32_t syncSlotIndex,
+            uint32_t sourceSlotIndex,
+            uint32_t sampleSlotIndex,
+            uint64_t generation,
+            void** eventData);
+
+        /// Takes back an armed command whose render event could not be issued.
+        /// Only a command whose callback has not started can be taken back; one
+        /// that is already running is kept, because it will signal.
+        bool TryCancelArmedConversionCommand(
+            uint32_t syncSlotIndex, uint64_t generation);
+
+        /// Waits for exactly one armed command to complete and returns its slot
+        /// to idle. The caller is a worker: this touches the fence and its
+        /// event, and nothing else - no Unity API, no immediate context, no
+        /// drawing. An older generation, a slot that has nothing outstanding,
+        /// and a second collection are all refused.
+        bool TryCollectConversionCommand(
+            uint32_t syncSlotIndex, uint64_t generation, uint32_t timeoutMilliseconds);
+
+        /// Runs one armed conversion. The render callback calls this and
+        /// nothing else does: it draws both planes and signals, without
+        /// waiting, polling, allocating, logging, or touching NVENC. A second
+        /// callback for the same command draws nothing.
+        void RunConversionCommand(ConversionCommandEventDataV1& data);
+
+        /// Copies one prepared NV12 input surface into a destination the
+        /// caller owns, for a contract test that has to see that a conversion
+        /// really wrote both planes.
+        ///
+        /// It hands back no pointer, descriptor, or state, and is deliberately
+        /// absent from the plugin ABI, so nothing managed and nothing outside
+        /// this build can reach it. Production copies nothing and reads nothing
+        /// back.
+        bool TryCopyInputSurfaceTo(uint32_t slotIndex, ID3D11Texture2D* destination);
+
         /// Creates the fixed set of output bitstream buffers, one per slot and
         /// exactly once per owner. The encoder must already be initialized and
         /// the input surfaces already prepared. All of the slots must succeed;
@@ -316,6 +403,40 @@ namespace zantetsu
         void RollBackPreparedOutputBitstreamBuffers(uint32_t count);
         bool AnyOutputBitstreamBufferHeld() const;
 
+        /// How far one conversion command has got. Idle is the only state a
+        /// command can be armed from, and the only state the set can be
+        /// released in.
+        enum class ConversionCommandState : LONG
+        {
+            Idle = 0,
+            Armed = 1,
+            Running = 2,
+            AwaitingCollection = 3,
+        };
+
+        /// One conversion command slot. The fence and its event belong to this
+        /// slot for the life of the session; the event data is the stable
+        /// buffer the render callback reads.
+        struct ConversionCommandSlot
+        {
+            ID3D11Fence* fence;
+            HANDLE completionEvent;
+            uint64_t lastGeneration;
+            ConversionCommandEventDataV1 eventData;
+            volatile LONG state;
+            HRESULT lastHResult;
+        };
+
+        void ReleaseConversionCommandSlot(ConversionCommandSlot& slot);
+        void RollBackPreparedConversionCommands(uint32_t count);
+        void ReleaseConversionDeviceInterfaces();
+        bool AnyConversionCommandHeld() const;
+        bool AreConversionCommandsPrepared() const;
+
+        /// Whether any slot is anything other than idle - armed, running, or
+        /// waiting to be collected.
+        bool AnyConversionCommandBusy() const;
+
         /// One source surface, as far as it exists: the 2D interface
         /// reference this session got from the caller's resource and the view
         /// the conversion reads it through.
@@ -371,6 +492,18 @@ namespace zantetsu
         ID3D11VertexShader* _conversionVertexShader = nullptr;
         ID3D11PixelShader* _conversionLumaPixelShader = nullptr;
         ID3D11PixelShader* _conversionChromaPixelShader = nullptr;
+
+        // The interfaces the conversion signalling needs, taken once from
+        // the exact device and its exact immediate context.
+        ID3D11Device5* _device5 = nullptr;
+        ID3D11DeviceContext* _immediateContext = nullptr;
+        ID3D11DeviceContext4* _context4 = nullptr;
+
+        // The fixed set of conversion command slots, kept apart from both the
+        // source surfaces and the encode sample slots.
+        ConversionCommandSlot _conversionSlots[kConversionCommandSlotCount] = {};
+        bool _conversionCommandsPrepareAttempted = false;
+        bool _conversionCommandsReleaseAttempted = false;
 
         // The fixed set of source surfaces this session binds, kept apart
         // from the encode sample slots.

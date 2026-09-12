@@ -57,14 +57,16 @@ namespace zantetsu
     {
         // Destroying an owner that still holds an encoder, a completion-event
         // handle or registration, an output bitstream buffer, an input
-        // surface, a conversion shader, or a source surface binding is a
-        // contract violation, not a state
+        // surface, a conversion shader, a conversion command, or a source
+        // surface binding is a contract violation, not a state
         // this handles: the caller releases and closes first, and an owner
         // whose release or close was refused is kept. Nothing is unregistered,
         // closed, released, or destroyed implicitly here.
         assert(!AnyCompletionEventHeld());
         assert(!AnyOutputBitstreamBufferHeld());
         assert(!AnyInputSurfaceHeld());
+        assert(!AnyConversionCommandHeld());
+        assert(!AnyConversionCommandBusy());
         assert(!AnySourceSurfaceHeld());
         assert(_encoder == nullptr);
 
@@ -840,6 +842,7 @@ namespace zantetsu
         // this release's one attempt is spent, so the caller can still release
         // them once the rest is gone.
         if (AnyInputSurfaceHeld() ||
+            AnyConversionCommandHeld() ||
             AnyOutputBitstreamBufferHeld() ||
             AnyCompletionEventHeld())
         {
@@ -854,6 +857,619 @@ namespace zantetsu
         _sourceSurfacesReleaseAttempted = true;
 
         RollBackBoundSourceSurfaces(kSourceSurfaceSlotCount);
+        return true;
+    }
+
+    void RunConversionCommandFromEventData(void* eventData)
+    {
+        if (eventData == nullptr)
+        {
+            return;
+        }
+
+        ConversionCommandEventDataV1& data =
+            *static_cast<ConversionCommandEventDataV1*>(eventData);
+        if (data.session == nullptr)
+        {
+            return;
+        }
+
+        data.session->RunConversionCommand(data);
+    }
+
+    void NvencEncoderSession::ReleaseConversionCommandSlot(ConversionCommandSlot& slot)
+    {
+        if (slot.completionEvent != nullptr)
+        {
+            HANDLE handle = slot.completionEvent;
+            slot.completionEvent = nullptr;
+            ::CloseHandle(handle);
+        }
+
+        if (slot.fence != nullptr)
+        {
+            ID3D11Fence* fence = slot.fence;
+            slot.fence = nullptr;
+            fence->Release();
+        }
+    }
+
+    /// Unwinds what this preparation took, in reverse. Nothing here can be
+    /// refused, so it always completes.
+    void NvencEncoderSession::RollBackPreparedConversionCommands(uint32_t count)
+    {
+        for (uint32_t i = count; i > 0; --i)
+        {
+            ReleaseConversionCommandSlot(_conversionSlots[i - 1]);
+        }
+    }
+
+    /// The device and context interfaces, given back in the reverse of the
+    /// order they were taken.
+    void NvencEncoderSession::ReleaseConversionDeviceInterfaces()
+    {
+        if (_context4 != nullptr)
+        {
+            ID3D11DeviceContext4* context4 = _context4;
+            _context4 = nullptr;
+            context4->Release();
+        }
+
+        if (_immediateContext != nullptr)
+        {
+            ID3D11DeviceContext* context = _immediateContext;
+            _immediateContext = nullptr;
+            context->Release();
+        }
+
+        if (_device5 != nullptr)
+        {
+            ID3D11Device5* device5 = _device5;
+            _device5 = nullptr;
+            device5->Release();
+        }
+    }
+
+    bool NvencEncoderSession::AnyConversionCommandHeld() const
+    {
+        if (_device5 != nullptr || _immediateContext != nullptr || _context4 != nullptr)
+        {
+            return true;
+        }
+
+        for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
+        {
+            if (_conversionSlots[i].fence != nullptr ||
+                _conversionSlots[i].completionEvent != nullptr)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool NvencEncoderSession::AreConversionCommandsPrepared() const
+    {
+        if (_device5 == nullptr || _immediateContext == nullptr || _context4 == nullptr)
+        {
+            return false;
+        }
+
+        for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
+        {
+            if (_conversionSlots[i].fence == nullptr ||
+                _conversionSlots[i].completionEvent == nullptr)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool NvencEncoderSession::AnyConversionCommandBusy() const
+    {
+        for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
+        {
+            const LONG state = ::InterlockedCompareExchange(
+                const_cast<volatile LONG*>(&_conversionSlots[i].state),
+                static_cast<LONG>(ConversionCommandState::Idle),
+                static_cast<LONG>(ConversionCommandState::Idle));
+            if (state != static_cast<LONG>(ConversionCommandState::Idle))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool NvencEncoderSession::TryPrepareConversionCommands()
+    {
+        if (_encoder == nullptr || _closeAttempted || _functionList == nullptr)
+        {
+            return false;
+        }
+
+        // The conversion commands come after everything they draw from and
+        // into, and before everything that is prepared on top of them.
+        if (!_encoderInitialized ||
+            !AreSourceSurfacesFullyBound() ||
+            !AreInputSurfacesFullyPrepared() ||
+            AnyConversionCommandHeld() ||
+            AnyOutputBitstreamBufferHeld() ||
+            AnyCompletionEventHeld())
+        {
+            return false;
+        }
+
+        // One owner, one preparation - settled before D3D11 is touched.
+        if (_conversionCommandsPrepareAttempted)
+        {
+            return false;
+        }
+
+        _conversionCommandsPrepareAttempted = true;
+
+        // The exact device, and the exact immediate context that device hands
+        // out. Both are asked for their newer interface rather than assumed to
+        // have it, and each is owned from the moment it exists.
+        const HRESULT deviceHr = _device->QueryInterface(
+            __uuidof(ID3D11Device5), reinterpret_cast<void**>(&_device5));
+        if (FAILED(deviceHr) || _device5 == nullptr)
+        {
+            _lastHResult = deviceHr;
+            ReleaseConversionDeviceInterfaces();
+            return false;
+        }
+
+        _device->GetImmediateContext(&_immediateContext);
+        if (_immediateContext == nullptr)
+        {
+            _lastHResult = E_FAIL;
+            ReleaseConversionDeviceInterfaces();
+            return false;
+        }
+
+        const HRESULT contextHr = _immediateContext->QueryInterface(
+            __uuidof(ID3D11DeviceContext4), reinterpret_cast<void**>(&_context4));
+        if (FAILED(contextHr) || _context4 == nullptr)
+        {
+            _lastHResult = contextHr;
+            ReleaseConversionDeviceInterfaces();
+            return false;
+        }
+
+        for (uint32_t i = 0; i < kConversionCommandSlotCount; ++i)
+        {
+            ID3D11Fence* fence = nullptr;
+            const HRESULT fenceHr = _device5->CreateFence(
+                0, D3D11_FENCE_FLAG_NONE, __uuidof(ID3D11Fence),
+                reinterpret_cast<void**>(&fence));
+            if (FAILED(fenceHr) || fence == nullptr)
+            {
+                _lastHResult = fenceHr;
+                RollBackPreparedConversionCommands(i);
+                ReleaseConversionDeviceInterfaces();
+                return false;
+            }
+
+            _conversionSlots[i].fence = fence;
+
+            // Auto-reset and unsignalled: one waiter is released per
+            // completion, and a stale signal never satisfies the next wait.
+            HANDLE completionEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (completionEvent == nullptr)
+            {
+                _lastWin32Error = ::GetLastError();
+                RollBackPreparedConversionCommands(i + 1);
+                ReleaseConversionDeviceInterfaces();
+                return false;
+            }
+
+            _conversionSlots[i].completionEvent = completionEvent;
+            _conversionSlots[i].lastGeneration = 0;
+            _conversionSlots[i].lastHResult = S_OK;
+            _conversionSlots[i].state =
+                static_cast<LONG>(ConversionCommandState::Idle);
+        }
+
+        return AreConversionCommandsPrepared();
+    }
+
+    bool NvencEncoderSession::TryReleaseConversionCommands()
+    {
+        if (_encoder == nullptr || _closeAttempted)
+        {
+            return false;
+        }
+
+        if (!AnyConversionCommandHeld())
+        {
+            return false;
+        }
+
+        // Everything prepared on top of the commands goes first, and no
+        // command may be in flight. Both are checked before this release's one
+        // attempt is spent.
+        if (AnyOutputBitstreamBufferHeld() || AnyCompletionEventHeld())
+        {
+            return false;
+        }
+
+        if (AnyConversionCommandBusy())
+        {
+            return false;
+        }
+
+        if (_conversionCommandsReleaseAttempted)
+        {
+            return false;
+        }
+
+        _conversionCommandsReleaseAttempted = true;
+
+        RollBackPreparedConversionCommands(kConversionCommandSlotCount);
+        ReleaseConversionDeviceInterfaces();
+        return true;
+    }
+
+    bool NvencEncoderSession::TryArmConversionCommand(
+        uint32_t syncSlotIndex,
+        uint32_t sourceSlotIndex,
+        uint32_t sampleSlotIndex,
+        uint64_t generation,
+        void** eventData)
+    {
+        if (eventData == nullptr)
+        {
+            return false;
+        }
+
+        *eventData = nullptr;
+
+        if (_encoder == nullptr || _closeAttempted)
+        {
+            return false;
+        }
+
+        if (syncSlotIndex >= kConversionCommandSlotCount ||
+            sourceSlotIndex >= kSourceSurfaceSlotCount ||
+            sampleSlotIndex >= kEncodeSampleSlotCount)
+        {
+            return false;
+        }
+
+        // Everything this command will touch has to be completely prepared.
+        if (!AreConversionCommandsPrepared() ||
+            !AreSourceSurfacesFullyBound() ||
+            !AreInputSurfacesFullyPrepared())
+        {
+            return false;
+        }
+
+        ConversionCommandSlot& slot = _conversionSlots[syncSlotIndex];
+
+        // A generation is a lease: it only ever moves forward, and it is the
+        // fence value this command signals.
+        if (generation <= slot.lastGeneration)
+        {
+            return false;
+        }
+
+        // Idle is the only state a command is armed from. Taken atomically, so
+        // a slot cannot be armed twice.
+        const LONG previous = ::InterlockedCompareExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::Armed),
+            static_cast<LONG>(ConversionCommandState::Idle));
+        if (previous != static_cast<LONG>(ConversionCommandState::Idle))
+        {
+            return false;
+        }
+
+        slot.lastGeneration = generation;
+        slot.lastHResult = S_OK;
+        slot.eventData.session = this;
+        slot.eventData.syncSlotIndex = syncSlotIndex;
+        slot.eventData.sourceSlotIndex = sourceSlotIndex;
+        slot.eventData.sampleSlotIndex = sampleSlotIndex;
+        slot.eventData.reserved = 0;
+        slot.eventData.generation = generation;
+
+        *eventData = &slot.eventData;
+        return true;
+    }
+
+    bool NvencEncoderSession::TryCancelArmedConversionCommand(
+        uint32_t syncSlotIndex, uint64_t generation)
+    {
+        if (syncSlotIndex >= kConversionCommandSlotCount)
+        {
+            return false;
+        }
+
+        ConversionCommandSlot& slot = _conversionSlots[syncSlotIndex];
+        if (slot.lastGeneration != generation)
+        {
+            return false;
+        }
+
+        // Only a command whose callback has not started can be taken back. One
+        // that is already running will signal, so it is kept rather than
+        // guessed about.
+        const LONG previous = ::InterlockedCompareExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::Idle),
+            static_cast<LONG>(ConversionCommandState::Armed));
+        return previous == static_cast<LONG>(ConversionCommandState::Armed);
+    }
+
+    void NvencEncoderSession::RunConversionCommand(ConversionCommandEventDataV1& data)
+    {
+        if (data.syncSlotIndex >= kConversionCommandSlotCount)
+        {
+            return;
+        }
+
+        ConversionCommandSlot& slot = _conversionSlots[data.syncSlotIndex];
+
+        // Armed to running, once. A second callback for the same command finds
+        // it no longer armed and draws nothing.
+        const LONG previous = ::InterlockedCompareExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::Running),
+            static_cast<LONG>(ConversionCommandState::Armed));
+        if (previous != static_cast<LONG>(ConversionCommandState::Armed))
+        {
+            return;
+        }
+
+        ID3D11DeviceContext* context = _immediateContext;
+        if (context == nullptr || _context4 == nullptr)
+        {
+            slot.lastHResult = E_FAIL;
+            ::InterlockedExchange(
+                &slot.state,
+                static_cast<LONG>(ConversionCommandState::AwaitingCollection));
+            return;
+        }
+
+        const uint32_t sourceSlot = data.sourceSlotIndex;
+        const uint32_t sampleSlot = data.sampleSlotIndex;
+
+        // ---- what this callback is about to change ----
+        D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        context->IAGetPrimitiveTopology(&savedTopology);
+
+        ID3D11InputLayout* savedInputLayout = nullptr;
+        context->IAGetInputLayout(&savedInputLayout);
+
+        ID3D11VertexShader* savedVertexShader = nullptr;
+        context->VSGetShader(&savedVertexShader, nullptr, nullptr);
+
+        ID3D11PixelShader* savedPixelShader = nullptr;
+        context->PSGetShader(&savedPixelShader, nullptr, nullptr);
+
+        ID3D11GeometryShader* savedGeometryShader = nullptr;
+        context->GSGetShader(&savedGeometryShader, nullptr, nullptr);
+
+        ID3D11HullShader* savedHullShader = nullptr;
+        context->HSGetShader(&savedHullShader, nullptr, nullptr);
+
+        ID3D11DomainShader* savedDomainShader = nullptr;
+        context->DSGetShader(&savedDomainShader, nullptr, nullptr);
+
+        ID3D11ShaderResourceView* savedShaderResource = nullptr;
+        context->PSGetShaderResources(0, 1, &savedShaderResource);
+
+        UINT savedViewportCount =
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+        D3D11_VIEWPORT savedViewports[
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+        context->RSGetViewports(&savedViewportCount, savedViewports);
+
+        ID3D11RasterizerState* savedRasterizer = nullptr;
+        context->RSGetState(&savedRasterizer);
+
+        ID3D11RenderTargetView* savedTargets[
+            D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+        ID3D11DepthStencilView* savedDepthStencil = nullptr;
+        context->OMGetRenderTargets(
+            D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedTargets, &savedDepthStencil);
+
+        ID3D11BlendState* savedBlend = nullptr;
+        FLOAT savedBlendFactor[4] = {};
+        UINT savedSampleMask = 0;
+        context->OMGetBlendState(&savedBlend, savedBlendFactor, &savedSampleMask);
+
+        ID3D11DepthStencilState* savedDepthStencilState = nullptr;
+        UINT savedStencilReference = 0;
+        context->OMGetDepthStencilState(
+            &savedDepthStencilState, &savedStencilReference);
+
+        // ---- the one fixed state this conversion draws with ----
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context->IASetInputLayout(nullptr);
+        context->VSSetShader(_conversionVertexShader, nullptr, 0);
+
+        // Nothing between the vertex and pixel stages: a geometry, hull, or
+        // domain shader left bound would change what is drawn.
+        context->GSSetShader(nullptr, nullptr, 0);
+        context->HSSetShader(nullptr, nullptr, 0);
+        context->DSSetShader(nullptr, nullptr, 0);
+
+        // The default states: no blending, no depth or stencil, solid fill,
+        // no scissor.
+        context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+        context->OMSetDepthStencilState(nullptr, 0);
+        context->RSSetState(nullptr);
+
+        ID3D11ShaderResourceView* sourceView =
+            _sourceSlots[sourceSlot].shaderResourceView;
+        context->PSSetShaderResources(0, 1, &sourceView);
+
+        // The Y plane, one output pixel per source pixel.
+        ID3D11RenderTargetView* lumaTarget =
+            _slots[sampleSlot].inputLumaRenderTargetView;
+        context->OMSetRenderTargets(1, &lumaTarget, nullptr);
+
+        D3D11_VIEWPORT lumaViewport = {};
+        lumaViewport.TopLeftX = 0.0f;
+        lumaViewport.TopLeftY = 0.0f;
+        lumaViewport.Width = static_cast<FLOAT>(kInputSurfaceWidth);
+        lumaViewport.Height = static_cast<FLOAT>(kInputSurfaceHeight);
+        lumaViewport.MinDepth = 0.0f;
+        lumaViewport.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &lumaViewport);
+
+        context->PSSetShader(_conversionLumaPixelShader, nullptr, 0);
+        context->Draw(3, 0);
+
+        // The UV plane, one output pixel per 2x2 source block.
+        ID3D11RenderTargetView* chromaTarget =
+            _slots[sampleSlot].inputChromaRenderTargetView;
+        context->OMSetRenderTargets(1, &chromaTarget, nullptr);
+
+        D3D11_VIEWPORT chromaViewport = lumaViewport;
+        chromaViewport.Width = static_cast<FLOAT>(kInputSurfaceWidth / 2);
+        chromaViewport.Height = static_cast<FLOAT>(kInputSurfaceHeight / 2);
+        context->RSSetViewports(1, &chromaViewport);
+
+        context->PSSetShader(_conversionChromaPixelShader, nullptr, 0);
+        context->Draw(3, 0);
+
+        // ---- give the pipeline back exactly as it was ----
+        ID3D11ShaderResourceView* noShaderResource = nullptr;
+        context->PSSetShaderResources(0, 1, &noShaderResource);
+        context->OMSetRenderTargets(
+            D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedTargets, savedDepthStencil);
+        context->RSSetViewports(savedViewportCount, savedViewports);
+        context->RSSetState(savedRasterizer);
+        context->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
+        context->OMSetDepthStencilState(savedDepthStencilState, savedStencilReference);
+        context->DSSetShader(savedDomainShader, nullptr, 0);
+        context->HSSetShader(savedHullShader, nullptr, 0);
+        context->GSSetShader(savedGeometryShader, nullptr, 0);
+        context->PSSetShader(savedPixelShader, nullptr, 0);
+        context->VSSetShader(savedVertexShader, nullptr, 0);
+        context->IASetInputLayout(savedInputLayout);
+        context->IASetPrimitiveTopology(savedTopology);
+        context->PSSetShaderResources(0, 1, &savedShaderResource);
+
+        // The signal goes after both passes, so a completed fence means the
+        // whole conversion is done and the source can be used again.
+        const HRESULT signalHr = _context4->Signal(slot.fence, data.generation);
+
+        // A getter hands back a reference; every one of them goes back here.
+        if (savedInputLayout != nullptr) { savedInputLayout->Release(); }
+        if (savedVertexShader != nullptr) { savedVertexShader->Release(); }
+        if (savedPixelShader != nullptr) { savedPixelShader->Release(); }
+        if (savedGeometryShader != nullptr) { savedGeometryShader->Release(); }
+        if (savedHullShader != nullptr) { savedHullShader->Release(); }
+        if (savedDomainShader != nullptr) { savedDomainShader->Release(); }
+        if (savedShaderResource != nullptr) { savedShaderResource->Release(); }
+        if (savedRasterizer != nullptr) { savedRasterizer->Release(); }
+        for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+        {
+            if (savedTargets[i] != nullptr) { savedTargets[i]->Release(); }
+        }
+        if (savedDepthStencil != nullptr) { savedDepthStencil->Release(); }
+        if (savedBlend != nullptr) { savedBlend->Release(); }
+        if (savedDepthStencilState != nullptr) { savedDepthStencilState->Release(); }
+
+        // A failure is recorded for the waiter, never thrown and never
+        // retried here.
+        slot.lastHResult = signalHr;
+
+        ::InterlockedExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::AwaitingCollection));
+    }
+
+    bool NvencEncoderSession::TryCollectConversionCommand(
+        uint32_t syncSlotIndex, uint64_t generation, uint32_t timeoutMilliseconds)
+    {
+        if (syncSlotIndex >= kConversionCommandSlotCount)
+        {
+            return false;
+        }
+
+        ConversionCommandSlot& slot = _conversionSlots[syncSlotIndex];
+        if (slot.fence == nullptr || slot.completionEvent == nullptr)
+        {
+            return false;
+        }
+
+        // Exactly one outstanding command is collectable: this slot's current
+        // generation. An older one, or a slot with nothing outstanding, is
+        // refused rather than waited on.
+        if (slot.lastGeneration != generation)
+        {
+            return false;
+        }
+
+        const LONG state = ::InterlockedCompareExchange(
+            &slot.state,
+            static_cast<LONG>(ConversionCommandState::Idle),
+            static_cast<LONG>(ConversionCommandState::Idle));
+        if (state == static_cast<LONG>(ConversionCommandState::Idle))
+        {
+            return false;
+        }
+
+        if (slot.fence->GetCompletedValue() < generation)
+        {
+            const HRESULT hr =
+                slot.fence->SetEventOnCompletion(generation, slot.completionEvent);
+            if (FAILED(hr))
+            {
+                slot.lastHResult = hr;
+                return false;
+            }
+
+            const DWORD waited =
+                ::WaitForSingleObject(slot.completionEvent, timeoutMilliseconds);
+            if (waited != WAIT_OBJECT_0)
+            {
+                _lastWin32Error = ::GetLastError();
+                return false;
+            }
+        }
+
+        // The value really reached, and the callback really succeeded.
+        if (slot.fence->GetCompletedValue() < generation)
+        {
+            return false;
+        }
+
+        if (FAILED(slot.lastHResult))
+        {
+            return false;
+        }
+
+        ::InterlockedExchange(
+            &slot.state, static_cast<LONG>(ConversionCommandState::Idle));
+        return true;
+    }
+
+    bool NvencEncoderSession::TryCopyInputSurfaceTo(
+        uint32_t slotIndex, ID3D11Texture2D* destination)
+    {
+        if (slotIndex >= kEncodeSampleSlotCount || destination == nullptr ||
+            _immediateContext == nullptr)
+        {
+            return false;
+        }
+
+        ID3D11Texture2D* texture = _slots[slotIndex].inputTexture;
+        if (texture == nullptr)
+        {
+            return false;
+        }
+
+        _immediateContext->CopyResource(destination, texture);
         return true;
     }
 
@@ -1214,10 +1830,11 @@ namespace zantetsu
             return false;
         }
 
-        // The completion events and the output buffers go first: an input
-        // surface is not taken out from under resources that were prepared on
-        // top of it.
-        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld())
+        // The completion events, the output buffers, and the conversion
+        // commands go first: an input surface is not taken out from under
+        // resources that were prepared on top of it.
+        if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
+            AnyConversionCommandHeld())
         {
             return false;
         }
@@ -1262,6 +1879,13 @@ namespace zantetsu
         }
 
         if (!AreInputSurfacesFullyPrepared())
+        {
+            return false;
+        }
+
+        // The conversion commands come before the buffers too. Checked before
+        // this preparation's one attempt is spent.
+        if (!AreConversionCommandsPrepared())
         {
             return false;
         }
@@ -1465,12 +2089,14 @@ namespace zantetsu
     {
         // An encoder is not destroyed while this session still holds any
         // completion-event handle or registration, output bitstream buffer,
-        // input surface, conversion shader, or source surface binding -
-        // prepared, half-prepared, or half-released. A session left holding only shaders is holding
+        // input surface, conversion shader, conversion command, or source
+        // surface binding - prepared, half-prepared, half-released, or still in
+        // flight. A session left holding only shaders is holding
         // something, and is refused here as well. Refused before the close
         // attempt is spent, so the caller can still close once everything is
         // gone.
         if (AnyCompletionEventHeld() || AnyOutputBitstreamBufferHeld() ||
+            AnyConversionCommandHeld() || AnyConversionCommandBusy() ||
             AnyInputSurfaceHeld() || AnySourceSurfaceHeld())
         {
             return NvencEncoderSessionCloseStatus::Failed;

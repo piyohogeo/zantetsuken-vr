@@ -166,6 +166,44 @@ typedef struct ZantetsuNvencSessionSourceSurfaceResultV1
     int32_t lastHResult;
 } ZantetsuNvencSessionSourceSurfaceResultV1;
 
+/// How many GPU conversion command slots one session prepares. Fixed, and its
+/// own count again: a command binds a source to a sample slot for one frame.
+#define ZANTETSU_NVENC_SESSION_V1_CONVERSION_COMMAND_COUNT 8
+
+/// What a conversion command preparation, release, cancellation, or collection
+/// came to. All of it is D3D11 and Win32 work, so an HRESULT is the only raw
+/// value; a refusal that failed no call leaves it at zero.
+typedef struct ZantetsuNvencSessionConversionResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastHResult;
+} ZantetsuNvencSessionConversionResultV1;
+
+/// One conversion to arm: which source, which encode sample slot, which sync
+/// slot, and the generation that is also the fence value it will signal.
+typedef struct ZantetsuNvencSessionConversionArmRequestV1
+{
+    uint32_t abiVersion;
+    uint32_t syncSlotIndex;
+    uint32_t sourceSlotIndex;
+    uint32_t sampleSlotIndex;
+    uint64_t generation;
+} ZantetsuNvencSessionConversionArmRequestV1;
+
+/// What an arming came to, and the opaque event data pointer the caller issues
+/// the render event with. The pointer names memory inside the command slot; it
+/// is not allocated per arming, is valid until that command's completion is
+/// collected, and is not something to read, write, or free.
+typedef struct ZantetsuNvencSessionConversionArmResultV1
+{
+    uint32_t abiVersion;
+    uint32_t status;
+    int32_t lastHResult;
+    int32_t reserved;
+    uint64_t eventData;
+} ZantetsuNvencSessionConversionArmResultV1;
+
 /// What an NV12 input surface preparation or release came to. Creating the
 /// textures is D3D11's work and registering them is the driver's, so both raw
 /// values are here - and only the call that actually failed sets one.
@@ -319,6 +357,82 @@ int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
 ZantetsuNvencReleaseSessionInputSurfacesV1(
     uint64_t sessionOwner,
     ZantetsuNvencSessionInputSurfaceResultV1* destination,
+    uint32_t destinationSize);
+
+// Creates the fixed set of GPU conversion command slots on that exact session,
+// once: the device and context interfaces the signalling needs, then a fence
+// and an auto-reset event per slot. All of them are prepared or none are.
+//
+// Returns 1 when the result was written, 0 - leaving the destination untouched
+// - when the destination is null, its size is not exactly the struct's, or the
+// owner handle is zero. The encoder must be initialized, the sources bound, and
+// the input surfaces and conversion pipeline prepared. A preparation that fails
+// reports FAILED with the raw HRESULT of the call that failed and releases what
+// it took, in reverse.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencPrepareSessionConversionCommandsV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize);
+
+// Releases that whole set in reverse order, once.
+//
+// Returns 1 when the result was written, 0 under the same conditions as the
+// preparation. The output buffers and completion events are released first, and
+// no command may be armed, running, or waiting to be collected: a session that
+// fails either condition reports FAILED without spending the release.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencReleaseSessionConversionCommandsV1(
+    uint64_t sessionOwner,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize);
+
+// Returns the render event callback this plugin wants issued for a conversion,
+// as an integer. The caller passes it to the graphics API that issues plugin
+// events, together with the event data an arming returned, and keeps both to
+// itself.
+uint64_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencGetConversionEventCallbackV1(void);
+
+// Arms exactly one conversion command and hands back the event data pointer to
+// issue it with.
+//
+// Returns 1 when the result was written, 0 when either pointer is null, either
+// size is wrong, the owner handle is zero, or the request's ABI version is not
+// this one. An arming that is refused - an index out of range, something not
+// prepared, a slot that is not idle, or a generation that is not newer than
+// that slot's last - reports FAILED with a zero event data pointer and changes
+// nothing.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencArmSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    const ZantetsuNvencSessionConversionArmRequestV1* request,
+    uint32_t requestSize,
+    ZantetsuNvencSessionConversionArmResultV1* destination,
+    uint32_t destinationSize);
+
+// Takes back an armed command whose render event could not be issued. Only a
+// command whose callback has not started is taken back; one already running is
+// kept, because it will signal, and that is reported as FAILED.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCancelSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    uint32_t syncSlotIndex,
+    uint64_t generation,
+    ZantetsuNvencSessionConversionResultV1* destination,
+    uint32_t destinationSize);
+
+// Waits for exactly one armed command and returns its slot to idle. Called from
+// a worker: it touches the fence and its event only. An older generation, a
+// slot with nothing outstanding, a second collection, a timeout, and a callback
+// that recorded a failure are all reported as FAILED.
+int32_t ZANTETSU_NVENC_API ZANTETSU_NVENC_CALL
+ZantetsuNvencCollectSessionConversionCommandV1(
+    uint64_t sessionOwner,
+    uint32_t syncSlotIndex,
+    uint64_t generation,
+    uint32_t timeoutMilliseconds,
+    ZantetsuNvencSessionConversionResultV1* destination,
     uint32_t destinationSize);
 
 // Creates the fixed set of output bitstream buffers on that exact session's

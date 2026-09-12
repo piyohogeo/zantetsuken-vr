@@ -1,7 +1,10 @@
 using System;
+using System.Collections;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.TestTools;
 using Zantetsu.Observability;
 
 namespace Zantetsu.Observability.StandaloneTests
@@ -396,6 +399,20 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.PrepareInputSurfaces());
 
+                // The output buffers wait for the conversion commands, and
+                // asking too early costs nothing.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareOutputBuffers());
+
+                owner.PrepareConversionCommands();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.PrepareConversionCommands());
+
                 owner.PrepareOutputBuffers();
                 Assert.That(owner.IsOpen, Is.True);
 
@@ -420,6 +437,8 @@ namespace Zantetsu.Observability.StandaloneTests
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseOutputBuffers());
                 Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseConversionCommands());
+                Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseInputSurfaces());
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseSourceSurfaces());
@@ -443,6 +462,14 @@ namespace Zantetsu.Observability.StandaloneTests
 
                 Assert.Throws<InvalidOperationException>(
                     () => owner.ReleaseSourceSurfaces());
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseInputSurfaces());
+
+                owner.ReleaseConversionCommands();
+                Assert.That(owner.IsOpen, Is.True);
+
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseConversionCommands());
 
                 owner.ReleaseInputSurfaces();
                 Assert.That(owner.IsOpen, Is.True);
@@ -476,6 +503,210 @@ namespace Zantetsu.Observability.StandaloneTests
             // Closed once; disposing again asks the native side for nothing.
             owner.Dispose();
             Assert.That(owner.IsOpen, Is.False);
+        }
+
+        /// <summary>
+        /// The Player issues real conversion render events: every sync slot
+        /// runs, one slot is reused sixteen times, two commands with different
+        /// source and sample slots ride the same frame, a worker collects each
+        /// completion off the render thread, and Unity keeps rendering
+        /// afterwards.
+        /// </summary>
+        /// <remarks>
+        /// Nothing is mapped, encoded, or read back here: what is pinned is
+        /// that the callback really runs through Unity's render thread, that a
+        /// completion is distinguished by its generation rather than by time,
+        /// that two commands in one frame do not overwrite each other's event
+        /// data, and that the session refuses to give up its resources while a
+        /// command is uncollected.
+        /// </remarks>
+        [UnityTest]
+        public IEnumerator Player_RunsAndCollectsItsConversionCommands()
+        {
+            Assert.That(
+                NvencNativeEncoderSessionOwner.TryOpen(
+                    out NvencNativeEncoderSessionOwner owner),
+                Is.True,
+                "this Player's device must be able to open an encoder session.");
+
+            CaptureFrameProfile captureProfile = new CaptureFrameProfile(
+                7,
+                45.0,
+                CaptureSource.UnityRenderTexture,
+                CaptureEye.Left,
+                new CaptureImageRect(
+                    0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
+                0,
+                CapturePixelFormat.Rgba32);
+
+            CaptureFrameRenderTargetPool pool = new CaptureFrameRenderTargetPool(
+                NvencNativeEncoderSessionOwner.SourceSurfaceCount, captureProfile);
+
+            bool prepared = false;
+
+            try
+            {
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+                new NvencBringUpCapabilityProbeExecutionCoordinator(
+                    new NvencBringUpCapabilityProbe(owner)).Execute();
+                owner.InitializeEncoder(profile);
+
+                IntPtr[] sources =
+                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
+                pool.CopyNativeTexturePointers(sources);
+                owner.BindSourceSurfaces(sources);
+                owner.PrepareInputSurfaces();
+                owner.PrepareConversionCommands();
+                prepared = true;
+
+                // Every sync slot runs one command, each against its own
+                // source and its own encode sample slot.
+                for (int slot = 0;
+                    slot < NvencNativeEncoderSessionOwner.ConversionCommandSlotCount;
+                    slot++)
+                {
+                    owner.IssueConversionCommand(slot, slot, slot, 1);
+                }
+
+                // A command that has been issued but not collected holds the
+                // session's resources, and refusing that costs nothing.
+                Assert.Throws<InvalidOperationException>(
+                    () => owner.ReleaseConversionCommands());
+                Assert.Throws<InvalidOperationException>(() => owner.Dispose());
+                Assert.That(owner.IsOpen, Is.True);
+
+                for (int slot = 0;
+                    slot < NvencNativeEncoderSessionOwner.ConversionCommandSlotCount;
+                    slot++)
+                {
+                    yield return CollectOnWorker(owner, slot, 1, result =>
+                        Assert.That(
+                            result, Is.True,
+                            "sync slot " + slot + " must complete its first command."));
+                }
+
+                // One slot, sixteen reuses. Only the generation tells them
+                // apart, and an older one is never accepted as this one.
+                for (ulong generation = 2; generation <= 17; generation++)
+                {
+                    ulong current = generation;
+
+                    Assert.That(
+                        owner.TryCollectConversionCommand(0, current, 0),
+                        Is.False,
+                        "a generation that has not been issued must not complete.");
+
+                    owner.IssueConversionCommand(0, 0, 0, current);
+
+                    Assert.That(
+                        owner.TryCollectConversionCommand(0, current - 1, 0),
+                        Is.False,
+                        "an older generation must not be satisfied by a newer signal.");
+
+                    yield return CollectOnWorker(owner, 0, current, result =>
+                        Assert.That(
+                            result, Is.True,
+                            "generation " + current + " must complete."));
+
+                    Assert.That(
+                        owner.TryCollectConversionCommand(0, current, 0),
+                        Is.False,
+                        "a completion is collected once.");
+                }
+
+                // Two commands in one frame, on different sync slots, with
+                // different sources and different sample slots: each carries
+                // its own event data, so neither overwrites the other.
+                owner.IssueConversionCommand(2, 3, 5, 100);
+                owner.IssueConversionCommand(6, 1, 7, 200);
+
+                yield return CollectOnWorker(owner, 2, 100, result =>
+                    Assert.That(result, Is.True, "the first same-frame command completes."));
+                yield return CollectOnWorker(owner, 6, 200, result =>
+                    Assert.That(result, Is.True, "the second same-frame command completes."));
+
+                // Unity still renders after the callbacks handed the pipeline
+                // back.
+                yield return null;
+                AssertUnityStillRenders();
+            }
+            finally
+            {
+                if (prepared)
+                {
+                    owner.ReleaseConversionCommands();
+                    owner.ReleaseInputSurfaces();
+                    owner.ReleaseSourceSurfaces();
+                }
+
+                owner.Dispose();
+                pool.Dispose();
+            }
+
+            Assert.That(owner.IsOpen, Is.False);
+        }
+
+        /// <summary>
+        /// Collects one completion on a worker thread - never the main thread -
+        /// and reports what it got once that thread has finished.
+        /// </summary>
+        private static IEnumerator CollectOnWorker(
+            NvencNativeEncoderSessionOwner owner,
+            int syncSlotIndex,
+            ulong generation,
+            Action<bool> check)
+        {
+            bool collected = false;
+            Thread worker = new Thread(() =>
+            {
+                collected = owner.TryCollectConversionCommand(
+                    syncSlotIndex, generation, 5000);
+            });
+
+            worker.Start();
+            while (worker.IsAlive)
+            {
+                yield return null;
+            }
+
+            worker.Join();
+            check(collected);
+        }
+
+        /// <summary>
+        /// Draws one known colour through Unity's own pipeline and reads it
+        /// back, so a callback that left the pipeline broken would show up.
+        /// </summary>
+        private static void AssertUnityStillRenders()
+        {
+            RenderTexture target = new RenderTexture(4, 4, 0, RenderTextureFormat.ARGB32);
+            Texture2D source = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            Texture2D readback = new Texture2D(4, 4, TextureFormat.RGBA32, false);
+            RenderTexture previous = RenderTexture.active;
+
+            try
+            {
+                source.SetPixel(0, 0, new Color32(0, 255, 0, 255));
+                source.Apply();
+
+                Graphics.Blit(source, target);
+
+                RenderTexture.active = target;
+                readback.ReadPixels(new Rect(0, 0, 4, 4), 0, 0);
+                readback.Apply();
+
+                Color32 pixel = readback.GetPixel(2, 2);
+                Assert.That(pixel.g, Is.GreaterThan((byte)200));
+                Assert.That(pixel.r, Is.LessThan((byte)64));
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                UnityEngine.Object.Destroy(readback);
+                UnityEngine.Object.Destroy(source);
+                target.Release();
+                UnityEngine.Object.Destroy(target);
+            }
         }
 
         /// <summary>The input layout the fixed profile describes.</summary>
