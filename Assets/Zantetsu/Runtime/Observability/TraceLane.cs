@@ -119,10 +119,9 @@ namespace Zantetsu.Observability
             _indexCapacity = indexCapacity;
             _enabled = enabled;
 
-            int entrySize = UnsafeUtility.SizeOf<TraceLaneIndexEntry>();
             long cursorBytes = CursorBlockBytes;
-            long indexBytes = (long)entrySize * indexCapacity;
-            _blockBytes = cursorBytes + indexBytes + payloadCapacity;
+            long indexBytes = IndexBytesFor(indexCapacity);
+            _blockBytes = StorageBytesFor(payloadCapacity, indexCapacity);
 
             _block = (byte*)UnsafeUtility.Malloc(_blockBytes, CursorBlockBytes, Allocator.Persistent);
             if (_block == null)
@@ -141,6 +140,31 @@ namespace Zantetsu.Observability
         /// cache line, so the five cursors share no line with the index ring.
         /// </summary>
         private const int CursorBlockBytes = 64;
+
+        /// <summary>
+        /// How many unmanaged bytes a lane of these capacities takes. A
+        /// profile that adds lanes up before any of them exists asks this, so
+        /// the figure it validates and the figure actually allocated come from
+        /// one place rather than two expressions kept in step by hand.
+        /// </summary>
+        /// <exception cref="OverflowException">
+        /// The capacities describe more bytes than can be counted.
+        /// </exception>
+        internal static long StorageBytesFor(int payloadCapacity, int indexCapacity)
+        {
+            checked
+            {
+                return CursorBlockBytes + IndexBytesFor(indexCapacity) + (long)payloadCapacity;
+            }
+        }
+
+        private static long IndexBytesFor(int indexCapacity)
+        {
+            checked
+            {
+                return (long)UnsafeUtility.SizeOf<TraceLaneIndexEntry>() * indexCapacity;
+            }
+        }
 
         internal int PayloadCapacity => _payloadCapacity;
 
