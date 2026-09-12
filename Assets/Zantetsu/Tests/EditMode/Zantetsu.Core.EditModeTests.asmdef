@@ -1,6 +1,7 @@
 {
     "name": "Zantetsu.Core.EditModeTests",
     "rootNamespace": "Zantetsu.Core.Tests",
+    "allowUnsafeCode": true,
     "references": [
         "Zantetsu.Core",
         "Zantetsu.Trace",
