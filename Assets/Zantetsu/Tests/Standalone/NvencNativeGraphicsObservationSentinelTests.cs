@@ -565,7 +565,7 @@ namespace Zantetsu.Observability.StandaloneTests
                     slot < NvencNativeEncoderSessionOwner.ConversionCommandSlotCount;
                     slot++)
                 {
-                    owner.IssueConversionCommand(slot, slot, slot, 1);
+                    Assert.That(owner.TryIssueConversionCommand(slot, slot, slot, 1), Is.True);
                 }
 
                 // A command that has been issued but not collected holds the
@@ -597,7 +597,7 @@ namespace Zantetsu.Observability.StandaloneTests
                         () => owner.TryCollectConversionCommand(0, current, 0),
                         "a generation that has not been issued is not a pending completion.");
 
-                    owner.IssueConversionCommand(0, 0, 0, current);
+                    Assert.That(owner.TryIssueConversionCommand(0, 0, 0, current), Is.True);
 
                     Assert.Throws<InvalidOperationException>(
                         () => owner.TryCollectConversionCommand(0, current - 1, 0),
@@ -616,8 +616,8 @@ namespace Zantetsu.Observability.StandaloneTests
                 // Two commands in one frame, on different sync slots, with
                 // different sources and different sample slots: each carries
                 // its own event data, so neither overwrites the other.
-                owner.IssueConversionCommand(2, 3, 5, 100);
-                owner.IssueConversionCommand(6, 1, 7, 200);
+                Assert.That(owner.TryIssueConversionCommand(2, 3, 5, 100), Is.True);
+                Assert.That(owner.TryIssueConversionCommand(6, 1, 7, 200), Is.True);
 
                 yield return CollectOnWorker(owner, 2, 100, result =>
                     Assert.That(result, Is.True, "the first same-frame command completes."));
@@ -749,8 +749,8 @@ namespace Zantetsu.Observability.StandaloneTests
                         record, out NvencSourceReadCompletedEvidence _),
                     "a record whose conversion was never issued is not pending.");
 
-                owner.IssueConversionCommand(
-                    sync.SlotIndex, 0, sample.SlotIndex, (ulong)sync.Generation);
+                Assert.That(owner.TryIssueConversionCommand(
+                    sync.SlotIndex, 0, sample.SlotIndex, (ulong)sync.Generation), Is.True);
 
                 // It converges, within a bounded number of frames rather than a
                 // blocking wait. Every attempt that is not the completion is a
@@ -901,11 +901,6 @@ namespace Zantetsu.Observability.StandaloneTests
                 builtSurface = surface;
                 builtToken = workToken;
 
-                // The picture is only meaningful once its conversion has
-                // actually written the surface.
-                owner.IssueConversionCommand(
-                    sync.SlotIndex, 0, sample.SlotIndex, (ulong)sync.Generation);
-
                 NvencNativeSourceReadCompletedSource completionSource =
                     new NvencNativeSourceReadCompletedSource(owner);
 
@@ -913,6 +908,16 @@ namespace Zantetsu.Observability.StandaloneTests
                     backendOwner, workToken, work, sample, sync, submitCredit,
                     completionCredit, surface, workSlots, sampleSlots, syncSlots,
                     submitCredits, completionCredits);
+
+                // The picture is only meaningful once its conversion has
+                // actually written the surface, and the conversion is issued
+                // the way the admission boundary issues it: through the
+                // production issuer, from the record itself.
+                NvencNativeGpuConversionCommandIssuer issuer =
+                    new NvencNativeGpuConversionCommandIssuer(owner);
+                Assert.That(
+                    issuer.TryIssue(record), Is.True,
+                    "the production issuer must issue this record's conversion.");
 
                 bool converted = false;
                 for (int attempt = 0; attempt < 600 && !converted; attempt++)

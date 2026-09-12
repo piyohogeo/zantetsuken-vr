@@ -72,6 +72,7 @@ namespace Zantetsu.Observability
         private readonly NvencSubmitToOutputCreditPool _submitToOutputCredits;
         private readonly NvencFrameCompletionCreditPool _frameCompletionCredits;
         private readonly NvencFixedSpscQueue<NvencSubmissionRecord> _submissionQueue;
+        private readonly INvencGpuConversionCommandIssuer _conversionCommandIssuer;
         private readonly NvencRunChunkContext _context;
         private readonly Guid _backendOwner;
 
@@ -83,6 +84,7 @@ namespace Zantetsu.Observability
             NvencSubmitToOutputCreditPool submitToOutputCredits,
             NvencFrameCompletionCreditPool frameCompletionCredits,
             NvencFixedSpscQueue<NvencSubmissionRecord> submissionQueue,
+            INvencGpuConversionCommandIssuer conversionCommandIssuer,
             NvencRunChunkContext context,
             Guid backendOwner)
         {
@@ -121,6 +123,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(submissionQueue));
             }
 
+            if (conversionCommandIssuer == null)
+            {
+                throw new ArgumentNullException(nameof(conversionCommandIssuer));
+            }
+
             if (context == null)
             {
                 throw new ArgumentNullException(nameof(context));
@@ -144,6 +151,7 @@ namespace Zantetsu.Observability
             _submitToOutputCredits = submitToOutputCredits;
             _frameCompletionCredits = frameCompletionCredits;
             _submissionQueue = submissionQueue;
+            _conversionCommandIssuer = conversionCommandIssuer;
             _context = context;
             _backendOwner = backendOwner;
         }
@@ -240,6 +248,40 @@ namespace Zantetsu.Observability
                         submitToOutputCredit, frameCompletionCredit, surface,
                         _workSlots, _sampleSlots, _syncSlots, _submitToOutputCredits, _frameCompletionCredits);
 
+                    // Issue the conversion exactly once, after the surface is
+                    // the backend's and before the record can be dequeued. A
+                    // render callback that runs the instant this returns finds
+                    // a surface that is already transferred, and a worker can
+                    // never take a record whose conversion was not issued.
+                    bool issued;
+                    try
+                    {
+                        issued = _conversionCommandIssuer.TryIssue(record);
+                    }
+                    catch (Exception)
+                    {
+                        // Whether a command exists - and so whether the GPU is
+                        // reading the source - cannot be established. Nothing
+                        // is enqueued, recorded, returned, or fabricated, and
+                        // the same failure propagates.
+                        _processState.TryPoison();
+                        throw;
+                    }
+
+                    if (!issued)
+                    {
+                        // Known: no command exists and none will, so the source
+                        // is not being read. Everything goes back in reverse,
+                        // the queue and the context are untouched, and the
+                        // process is not poisoned - but this is an invariant
+                        // violation rather than an ordinary submit status.
+                        RollbackAfterTransferAndThrow(
+                            new InvalidOperationException(
+                                "GPU conversion command issuer refused an accepted record; internal invariant violated."),
+                            workSlot, sampleSlot, syncSlot,
+                            submitToOutputCredit, frameCompletionCredit, surface, token);
+                    }
+
                     try
                     {
                         if (!_submissionQueue.TryEnqueue(record))
@@ -247,16 +289,16 @@ namespace Zantetsu.Observability
                             throw new InvalidOperationException("Submission queue rejected an accepted record; internal invariant violated.");
                         }
                     }
-                    catch (Exception enqueueFailure)
+                    catch (Exception)
                     {
-                        // Post-transfer invariant violation: release every
-                        // reservation in reverse order and release the
-                        // transferred surface while still holding the gate,
-                        // then propagate. If the cleanup itself throws,
-                        // aggregate it with the original.
-                        RollbackAfterTransferAndThrow(
-                            enqueueFailure, workSlot, sampleSlot, syncSlot,
-                            submitToOutputCredit, frameCompletionCredit, surface, token);
+                        // The conversion is already issued, so the render
+                        // callback may be reading the source at this moment.
+                        // Nothing is rolled back and nothing is fabricated:
+                        // the surface and every reservation stay held, the
+                        // process is poisoned, and the invariant violation
+                        // propagates.
+                        _processState.TryPoison();
+                        throw;
                     }
 
                     // Register the accepted frame id exactly once, inside the

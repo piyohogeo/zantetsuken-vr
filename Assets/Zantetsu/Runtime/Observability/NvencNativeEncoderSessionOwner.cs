@@ -1301,7 +1301,8 @@ namespace Zantetsu.Observability
         /// <summary>
         /// Arms one conversion and issues its render event: source surface,
         /// encode sample slot, sync slot, and generation, bound together in one
-        /// call on the main thread.
+        /// call on the main thread. True means the command is issued and the
+        /// render callback may run at any moment.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -1312,12 +1313,21 @@ namespace Zantetsu.Observability
         /// this type.
         /// </para>
         /// <para>
-        /// Only a failure to issue the event unwinds the arming: the command is
-        /// taken back, and if its callback has already started it is kept
-        /// instead, because it will signal and must be collected.
+        /// False says one thing only: no command is outstanding and none will
+        /// be. That is either the native side refusing to arm, which changes
+        /// nothing, or a failure to issue the event whose command was then
+        /// taken back. It is not backpressure and not a reason to try again.
+        /// </para>
+        /// <para>
+        /// Everything else throws, because whether a command exists - and so
+        /// whether the source is being read - cannot be established: a callback
+        /// that has already started, a cancellation that failed or could not be
+        /// read, or a broken ABI. A command that could not be taken back still
+        /// counts as in flight, and the failure that caused it propagates
+        /// unchanged.
         /// </para>
         /// </remarks>
-        internal void IssueConversionCommand(
+        internal bool TryIssueConversionCommand(
             int syncSlotIndex, int sourceSlotIndex, int sampleSlotIndex, ulong generation)
         {
             RequireUsableSession("issue a conversion command on");
@@ -1397,12 +1407,24 @@ namespace Zantetsu.Observability
 
             RequireAbiVersion(armed.AbiVersion);
 
-            if (armed.Status != StatusOk || armed.EventData == 0)
+            if (armed.Status == StatusFailed)
+            {
+                // The native side refused to arm, so nothing is outstanding
+                // and nothing was changed.
+                return false;
+            }
+
+            if (armed.Status != StatusOk)
             {
                 throw new InvalidOperationException(
-                    "The conversion command could not be armed (status "
-                    + armed.Status + ", HRESULT 0x"
-                    + armed.LastHResult.ToString("X8") + ").");
+                    "The native conversion arming returned an undefined status: "
+                    + armed.Status + ".");
+            }
+
+            if (armed.EventData == 0)
+            {
+                throw new InvalidOperationException(
+                    "The native conversion arming reported success without event data.");
             }
 
             try
@@ -1444,12 +1466,17 @@ namespace Zantetsu.Observability
                 {
                     System.Threading.Interlocked.Increment(
                         ref _conversionCommandsInFlight);
+                    throw;
                 }
 
-                throw;
+                // Taken back before its callback started: nothing is
+                // outstanding, which is something the caller can act on rather
+                // than a failure it cannot.
+                return false;
             }
 
             System.Threading.Interlocked.Increment(ref _conversionCommandsInFlight);
+            return true;
 #else
             throw new InvalidOperationException(
                 "The native encoder session is not available on this platform.");

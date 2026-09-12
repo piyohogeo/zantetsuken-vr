@@ -189,6 +189,7 @@ namespace Zantetsu.Core.Tests
                 h.SubmitToOutputCredits,
                 h.FrameCompletionCredits,
                 h.SubmissionQueue,
+                new AlwaysIssuingConversionCommandIssuer(),
                 h.Context,
                 h.Owner);
 
@@ -448,5 +449,19 @@ namespace Zantetsu.Core.Tests
                 return snapshot;
             }
         }
+
+        /// <summary>
+        /// Stands in for the conversion issuer: this fixture is about accepted
+        /// frame snapshots, not about what the GPU is asked to do.
+        /// </summary>
+        private sealed class AlwaysIssuingConversionCommandIssuer
+            : INvencGpuConversionCommandIssuer
+        {
+            public bool TryIssue(in NvencSubmissionRecord record)
+            {
+                return true;
+            }
+        }
+
     }
 }
