@@ -52,13 +52,13 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The lane array is copied, so a caller that keeps and edits its own
-    /// array afterwards changes nothing here. That total counts the lanes'
-    /// unmanaged storage only - not the objects that hold them.
+    /// array afterwards changes nothing here. Those totals count unmanaged
+    /// storage only - not the objects that hold it.
     /// </para>
     /// <para>
     /// This is not <c>CaptureTraceProfile</c> and does not replace it: it
-    /// describes the variable-length lanes alone, and nothing in the existing
-    /// trace configuration is read or changed.
+    /// describes the variable-length lanes and the paged history behind them,
+    /// and nothing in the existing trace configuration is read or changed.
     /// </para>
     /// </remarks>
     internal sealed class TraceLaneSetProfile

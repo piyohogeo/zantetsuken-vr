@@ -24,13 +24,28 @@ namespace Zantetsu.Observability
     internal struct TraceRecordHeader
     {
         /// <summary>
+        /// The bytes the length field itself takes, which is what stands in
+        /// front of the length <see cref="RecordLength"/> counts.
+        /// </summary>
+        internal const int LengthFieldSize = sizeof(int);
+
+        /// <summary>The bytes <see cref="RecordKind"/> takes.</summary>
+        internal const int RecordKindSize = sizeof(int);
+
+        /// <summary>
         /// The bytes one header takes: the two fields below and nothing else.
         /// A contract test holds this to the size the runtime gives the
         /// struct.
         /// </summary>
-        internal const int Bytes = sizeof(int) + sizeof(int);
+        internal const int Bytes = LengthFieldSize + RecordKindSize;
 
-        /// <summary>How many payload bytes follow this header.</summary>
+        /// <summary>
+        /// The kind and the payload together: <see cref="RecordKindSize"/>
+        /// plus the payload's own length. The length field in front of it is
+        /// not part of what it counts, so one record takes
+        /// <see cref="LengthFieldSize"/> + this many bytes in a page, and the
+        /// next record starts that far on.
+        /// </summary>
         internal int RecordLength;
 
         /// <summary>What kind of record the payload belongs to.</summary>
