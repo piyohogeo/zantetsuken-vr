@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・固定Capture Profile／同期映像／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-09-11 |
+| 最終更新 | 2026-09-12 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -31,7 +31,7 @@
 
 - 生涯切断数や全Pending Cut数ではなく、実際にBatchへ投入する`TemporaryRenderCapRecordSet`、対象の共用Geometry、固定長`SelectedTemporaryClipPlaneSet`が一時描画コストを決める。Geometry Commit済みの境界は一時描画費用へ含めず、Hybrid Clip容量を超えた面について追加のClip Plane評価・対応Stencil Volume submitを行わない。
 
-- 切断対象の表示とStencil Volumeは、幾何切断に必要なTopologyを持つ同じ共用Geometryを正本とし、一度の切断・Cap生成結果を両用途へ使用する。通常切断は正負二集合とし、各側最大一つの物理所有者へまとめる。Compound Physics Proxyは独立した物理表現として残し、製品用Strict Solid Cut Meshは生成・常駐・Fallbackのいずれにも使用せず、Global Solid Reconstructionは将来研究だけに隔離する。
+- 切断対象の表示とStencil Volumeは、幾何切断に必要なTopologyを持つ同じ共用Geometryを正本とし、一度の切断・Cap生成結果を両用途へ使用する。通常切断の正常成功は正負二集合、各側一つのFinal Physics OwnerとLogicalFragmentとする。Compound Physics Proxyは独立した物理表現として残し、製品用Strict Solid Cut Meshは生成・常駐・Fallbackのいずれにも使用せず、Global Solid Reconstructionは将来研究だけに隔離する。
 
 - 建物由来の動的分裂子には7.2.2の独立World D6を使うが、倒壊防止や変位上限を保証しない。一般外部Jointを製品切断対象から外し、正負二集合・点Anchor・Graphなしの方針を維持する。
 
@@ -55,13 +55,13 @@ Phase 0.55でSlash操作を先に調整し、4.50～4.52でProp＋動作中NPC�
 
 - 街区1つ、切断可能プロップ約10種、NPC 1体、刀1本。建物を切断対象に含め、道路は切断対象に含めない。
 
-- 単一切断、連続切断、処理中の再切断を検証する。処理中の再切断は先行`LogicalCutOperation`が公開済みで、Geometry Commit／cook／Physicsだけが未完了の区間を保証対象とする。先行Operation未公開の親とその仮表示領域への後続切断は受付けない。
+- 単一切断、連続切断、処理中の再切断を検証する。処理中の再切断は先行`LogicalCutOperation`が公開済みで、Geometry Work／Geometry Commitだけが未完了の区間を保証対象とする。先行Operation未公開の親とその仮表示領域への後続切断は受付けない。
 
 - 即時clip表示、仮断面、後追い共用VP Geometry切断、Convex差し替えまでを一連で実装。
 
 - 切断対象は閉じた静的メッシュと、切断時に姿勢を固定できるHumanoidに限定。
 
-- 非空の切断結果は寸法だけで消去せず通常Fragmentとして扱い、専用Convexを持たない共用Geometryは既存の物理所有者へ所属させる。
+- 非空の切断結果は寸法だけで消去せず通常Fragmentとして扱い、専用Convexを持たない共用Geometryも同SideのFinal Physics Ownerへ所属させる。
 
 - PCVRを対象とし、実アプリの両眼描画90fpsを性能目標とする。XRコンポジタの再投影は瞬間的な取りこぼしへの安全網であり、常用前提にしない。
 
@@ -126,20 +126,20 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 ## 4. システムアーキテクチャ
 
-共通Player終了出口へ送るのは、共用Geometry切断またはFragment／Boundary／Operation構築で既存境界から表面化した予期しない内部エラー、4.5.4で定めるCPU backing容量の不成立、同節のGPU backing容量の不成立、5.6の必須Stencil構成の不成立の4条件とする。製品PlayerのComposition Root上の共通Player lifecycle境界が、Renderer初期化より前からPlayer寿命を通じて単一の非永続終了要求latchを所有する。Renderer初期化処理と切断Coordinatorはこの境界へ報告し、切断受付・Commitも同じlatchを参照する。Workerの異常は既存の通知・回収境界でMainへ渡し、Workerはlatchや終了APIを直接操作しない。Mainが最初に扱った原因でlatchを一方向に確定し、同じMain Threadで直列に処理する新規切断受付と未公開切断成果物のCommitを閉じてから、既存ログへbest effortで一度記録し、製品Playerの終了APIを一度呼ぶ。「終了要求後」はAPI呼出し後ではなくlatch確定後を指す。エラーに関わる未公開成果物を公開せず、初期化中はGameplayを開始しない。同一sessionでのrollback・整合回復、全Job／資源回収、ログ永続化、Trace／Captureのトリガー・post-roll・freeze・保存・Publication・CaptureComplete・durable flush完了、終了所要時間は保証しない。ログが使えなくても終了を妨げず、回収・保存を待たない。任意の保存は非待機のbest effortに限る。内部エラーの全検出は保証せず、このためのValidator・詳細Reason・永続schema・復旧基盤を追加しない。通常の世代失効・出力予約不足、物理Fallback／ProvisionalFaultFrozen、Capture-only Fail Fast／Poison、Tool／Benchmark／Trace・Capture Run単位の失敗は既存境界を維持する。
+共通Player終了出口へ送るのは、共用Geometry切断またはFragment／Boundary／Operation構築で既存境界から表面化した予期しない内部エラー、4.5.4で定めるCPU backing容量の不成立、同節のGPU backing容量の不成立、5.6の必須Stencil構成の不成立の4条件とする。製品PlayerのComposition Root上の共通Player lifecycle境界が、Renderer初期化より前からPlayer寿命を通じて単一の非永続終了要求latchを所有する。Renderer初期化処理と切断Coordinatorはこの境界へ報告し、切断受付・Commitも同じlatchを参照する。Workerの異常は既存の通知・回収境界でMainへ渡し、Workerはlatchや終了APIを直接操作しない。Mainが最初に扱った原因でlatchを一方向に確定し、同じMain Threadで直列に処理する新規切断受付と未公開切断成果物のCommitを閉じてから、既存ログへbest effortで一度記録し、製品Playerの終了APIを一度呼ぶ。「終了要求後」はAPI呼出し後ではなくlatch確定後を指す。エラーに関わる未公開成果物を公開せず、初期化中はGameplayを開始しない。同一sessionでのrollback・整合回復、全Job／資源回収、ログ永続化、Trace／Captureのトリガー・post-roll・freeze・保存・Publication・CaptureComplete・durable flush完了、終了所要時間は保証しない。ログが使えなくても終了を妨げず、回収・保存を待たない。任意の保存は非待機のbest effortに限る。内部エラーの全検出は保証せず、このためのValidator・詳細Reason・永続schema・復旧基盤を追加しない。通常の世代失効・出力予約不足、7.1の個別物理退役、Capture-only Fail Fast／Poison、Tool／Benchmark／Trace・Capture Run単位の失敗は既存境界を維持する。
 
-> **状態モデル** 各切断対象はStable Geometry、必要なGeometry／Physics工程が未完了の受付済みPending Cuts、全切断履歴を保持するCutBoundaryRecord群を持つ。バックグラウンド成果物が`Ready`になっただけではTemporary Rendererを外さず、4.5.6の直接出力・必要転送と公開条件を満たした後、描画フレーム境界でVP Geometry参照公開と`GeometryState = Committed`がともに成功した後にだけ対応するTemporary Clip／Cap描画Recordを`TemporaryRenderCapRecordSet`から除去する。Pending Cut自体は必要工程が正常完了または既存規則で終端するまで維持する。CutBoundaryRecord、Cut Plane、論理FragmentはStable側へ移して保持し、点Anchorは各Cellの継承済み集合を保持する。Collider未完成は別の物理状態軸で管理する。
+> **状態モデル** 生存LogicalFragmentごとの一回の物理置換は7.1の短寿命PhysicsSplitTransactionが所有する。正負Final PhysicsとLogical Publicationを一体で公開した後はTransactionを終了し、各子は一Final Physics Ownerを専有する。Pending CutはGeometry責務だけを残し、4.5.6の祖先順Geometry CommitまたはBranch退役で完了する。具体的GeometryとCutBoundaryRecordは後着でき、Job完了・CPU範囲Published・GPU転送はGeometry Pipeline内部で扱う。
 
 ### 4.1 コンポーネント境界
 
 | サブシステム | 責務 |
 | --- | --- |
 | Blade Pose Adapter | OpenXR Grip Poseへ持ち手別のGripToKatanaOffsetを適用し、BladeAxis、EdgeDirection、SideNormal、追跡有効性を提供 |
-| Cut State | Stable世代、必要なGeometry／Physics工程が未完了の受付済みPending Cut列、Temporary Render Boundary列、永続CutBoundaryRecord／論理破片、ジョブ状態、上限管理 |
+| Cut State | LogicalFragmentの生存性、各Source最大1件のActive PhysicsSplitTransaction、Pending CutとGeometry依存、採用面・Side・親子履歴、受付上限を管理する |
 | Temporary Slice Renderer | clip、論理破片の分離オフセット、仮断面、切断縁演出 |
 | Visual Slice Worker | 4.5.2で導入を採用した未来Rig PoseのJobベイク・VP入力準備、VP入力の三角形切断、断面生成、属性補間、VPプールへの正負Index直接出力 |
 | Physics Slice Worker | Convex平面クリップ、質量特性計算、Collider Bake／cooking |
-| Commit Controller | 世代検証後、描画フレーム／物理ステップ境界で安全に差し替え。7.9の任意分割・物理GCも既存担当の公開・退役境界へ接続する。Phase 4.3で建物World D6の生成・退役を同じ境界へ接続する |
+| Commit Controller | 8章のauthority照合、Final Physics／Logical Publicationの一体切替、4.5.6のGeometry Commit、7.1の単独退役を担当する。建物D6と7.9の任意処理も同じ公開・退役境界へ接続する |
 | Blade Gesture／Plane Detector | Grip／Tracking、Gate、accepted samples、Stroke BeginとPlane候補を作る。対象Hitを決定しない |
 | Slash Latch／Frame Estimator | LatchReadyとValid／固定軸を独立に返す交換可能境界。内部方式は19.1へ集約 |
 | Latch Coordinator | LatchReady・有効Plane／Frameが揃った後、19.1.6の容量確認を公開直前に行い、空きがある場合だけ一度Waveを公開する |
@@ -167,25 +167,17 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 - Phase 4.53以降は実Hitと独立に候補範囲を列挙し、BaseObjectGenerationと予測前提を使って投機計算する。候補だけではPending Cutを作らず、未準備・不採用・範囲外の実Hitは現在状態経路へ進む。
 
-- 実命中時に`SlashHitConfirmed`を記録し、対象状態を変更せず更新前の基底世代、実姿勢、採用切断面と物理入力Snapshotを確定する。任意Phase 4.55の対象剛体だけ19.5.1でLocal Planeを採用／Fallback確定し、未実装・対象外は実命中PoseからSourceSlashPlaneに対応する面を得る。Mesh／Colliderの完成待ちや投機成果物のReady状態を面選択条件にしない。
+- 実HitはPhysics Scene上の現在Convexとの交差で確認し、`SlashHitConfirmed`を記録する。Transaction中の旧／Provisional Convexへの実Hitも観測できるが、受付処理はSourceの生存性、Active Transactionなし、Final Physics入力Snapshot、7.6のrobust support、7.7の容量の順に確認する。Activeな同じSourceと仮表示領域への要求は分類・ID発行・仕事登録前に見送り、保存・再実行しない。同じObjectIdの別LogicalFragmentは並行できる。
 
-- 命中した確定済み親LogicalFragmentが、`LogicalCutOperation`未公開のPending Cutによって置換予定である場合、その親とPending Cutの面から得る仮表示領域への後続切断を受付けない。対象状態、`ObjectGeneration`、先行Pending Cutとその仕事を変更せず、後続用のCutOperationId、Pending Cut、仕事を作らず、要求を保存・再実行しない。この制限は当該親と仮表示領域だけに適用し、無関係な確定済み対象へ広げない。先行Operationが公開された時点で解除し、Geometry Commit／cook／Physicsの未完了だけを理由に継続しない。
+- 対象状態を変える前に実姿勢と採用Local Planeを確定する。任意Phase 4.55の対象剛体は19.5.1、対象外・未実装は現在Poseからの面を使う。No-opまたは容量見送りは表示・物理・Anchor・世代・既存仕事を変更せず、新しいCutOperationId、Pending Cut、Transactionを作らない。
 
-- Pending Cutの受付、対象世代更新、即時表示、Provisional生成より前に、7.6の現在採用Convex集合を同じSnapshot・面・epsilonで分類する。一方の配分候補が0件なら正常な片側空No-opとして、未完了切断数が既存容量設定の`MaxIncompleteCutOperationCount`以上なら混雑見送りとして終了する。どちらも対象状態、`ObjectGeneration`、支持、表示、物理、既存履歴を変更せず、LogicalCutOperation、論理子、CutBoundaryRecord、Pending Cut、切断／cook／Commit仕事を作らない。No-op用の投機成果物は公開せず既存の不採用・回収経路へ流し、見送った要求を保存・再実行しない。Hitの観測と既存の非破壊通知は残せる。
+- 受付を通過した場合だけCutOperationId、Source、採用面、受付Snapshot、Pending CutとPhysicsSplitTransactionを登録し、受付前の基底世代を保持してObjectGeneration更新・未完了件数加算を同じMain境界で行う。必要な4.5.2の入力準備後に即時clip／Stencil／仮Capを開始し、Physics Workを開始、Geometry Workを登録する。直前祖先Geometryが未CommitならGeometry Kernelだけを待たせる。点Anchor配分などの必要入力未完了は既存Work依存で待つ。
 
-- 上記の受付を通過した場合だけ、正の`CutOperationId`、親LogicalFragment、更新前の基底世代、採用面、対象の`ObjectGeneration`更新、Pending Cut追加を原子的に公開する。この時点では論理子、CutBoundaryRecord、LogicalCutOperationを公開しない。受付済みPending Cutの即時clip／Stencil／仮Capは採用面を使い、4.5.2の必要なベイク・VP変換後に開始する。物理固定を描画省略条件にせず、固定側のOffset／Impulseは0とする。点Anchor配分が未完了なら物理適用は既存Work依存で待ち、支持待ち専用状態を作らない。
+- 7.1の正負Final Physics CommitとLogicalCutOperation／正負2子のPublicationを外部的に一体で行う。Hit／Query／Temporary表示の追従先を子へ切り替え、Transactionを終了する。Geometry結果、実Cap、CutBoundaryRecord、GPU転送はこのPublicationの前提にしない。以後はGeometry未完成でも子の再切断、即時複数面表示、物理処理、後続Geometry Work登録を開始できる。
 
-- 受付後の通常処理で正負各最大1の非空の直接子と実在する切断面参照を5.6に従って構築した時点で、Fragment、CutBoundaryRecord、LogicalCutOperationを原子的に公開する。Pending Cut由来の即時表示を同じ採用面のOperation由来表示へ重複なく引き継ぎ、対応GeometryのCommitまで継続する。
+- 投機成果物は8章と19.5.1の入力・Pose・面条件が一致する場合だけ再利用する。未完成なら同じ採用面で既存仕事を継続し、不採用なら現在状態経路を使う。未Commitの祖先CPU Geometryを後続切断Kernelへ貸し出さず、表示切断の実行・Commitは4.5.6に従う。個別物理失敗は7.1、共用Geometry／論理構築の予期しない内部エラーは4章に従う。
 
-- FixedSupportAnchorの子Cellへの所属は、7.1の入力CellのAnchor集合、採用面、local位置とframe写像から決め、確定子と同じ境界で公開する。No-opまたは受付見送りでは公開しない。各物理所有者は配分されたAnchorが一つでもあれば固定、なければ動的とする。受付時に暫定子、Side PathまたはAnchor専用状態を作らない。
-
-- 投機成果物が命中したSlash／Segment、確定した`SlashFrame`、基底対象世代と一致し、対応する有効なPending Cutと`CutOperationId`が現在も一致し、通常の予測姿勢検証または任意Phase 4.55の19.5.1剛体Local Plane採用検証を通れば、確定した操作Local Planeに一致する表示・物理成果物を描画フレーム／物理ステップ境界でコミットする。Actorを予測World姿勢へ移動しない。
-
-- Pending Cutの受付情報は一時描画集合とは別に、当該切断に必要なGeometry／Physics工程が正常完了または既存規則で終端するまで維持する。Geometry CommitによりPending Clip／Capを`TemporaryRenderCapRecordSet`から回収しても、未完了の有効な物理工程とそのCommit照合を失効させない。公開済み`LogicalCutOperation`が履歴に存在することだけでは受付または工程の有効性を証明しない。
-
-- 投機成果物が未完成なら、19.5.1で採用したLocal Planeは維持し、その面の既存Jobを継続／優先化する。投機Local Planeが不採用または存在しない場合だけ、実命中のSourceSlashPlaneを実姿勢へ変換したLocal Planeで表示／Stencil共用VP GeometryとConvex切断を優先ジョブへ投入する。通常の未完了、世代失効による成果物不採用、4.5.3の予約不足、物理側の既存終端は各節の規則に従い、操作Local Planeを変更する理由にしない。共用Geometry切断・論理構築で表面化した予期しない内部エラーは4章の共通Player終了に従う。Operation公開前後で同じ採用面の仮表示を引き継ぎ、Geometry Commitまで継続する。
-
-- Readyは有効な表示切断CPU出力の完成を表す。4.5.6の必要転送と現在の参照・frame・世代条件を満たした後、描画境界でVP Geometry参照公開とGeometryState＝Committedを原子的に行う。成功後だけ対応Temporary描画を回収し、CutBoundaryRecord、Cut Plane、論理Fragmentと再切断に必要な履歴は保持する。Collider未完成はPendingPhysicsSplit／PendingAnchoredSplit等で別に追跡する。
+- Physics責務を終えたPending Cutは、自分のGeometry Commitまたは生存Branch不要による終端まで残す。BoundaryはGeometry Commit時に後着し、実体化した面のTemporary表示だけを回収する。公開済みOperationが履歴にあるだけでは後着成果物の採用authorityを証明しない。
 
 ### 4.3 バックグラウンド実行モデル
 
@@ -215,7 +207,7 @@ TryGetState(WorkToken, out WorkItemState) -> bool
 
 `EvaluationWorkItem`は`TaskId`、`PriorityClass`、`HasDeadline`、有限・非負の単調時計値`DeadlineTimestamp`、Job種別／Batch Key、推定費用Bucket、入力世代Snapshot、成果物所有者を持つ入力Descriptorであり、`EnqueueSequence`を持たない。Deadlineなしは`HasDeadline=false`かつ`DeadlineTimestamp=0`で表し、NaN／Infやsentinel最大値を保存しない。受付順は`Descriptor検証 -> Accepting／Sequence残量検査 -> Queue Slot予約 -> Sequence発行とRecord公開`へ固定する。最後まで成功した受付だけについて、Dispatcher instance内で1から単調増加する`uint EnqueueSequence`を内部`QueuedWorkRecord`へ保存する。0を未設定に予約してwrap／再利用せず、`uint.MaxValue`を発行済みならSlot予約前に`SequenceExhausted`として停止する。Descriptor不正、容量不足、NotAccepting、SequenceExhaustedではRecordを公開せずSequenceを消費しない。
 
-`WorkToken`は受付済み内部Recordを世代付きで参照する不透明Handleであり、bit layoutやEnqueueSequenceを公開契約にしない。`TryGetState`が返す診断Snapshotは同じ内部RecordのStateとEnqueueSequenceを読み出せるが、呼出側はSequenceを書き戻せない。Traceの`Value1`も内部Recordの値だけを正本とする。`EnqueueOutcome`は`Invalid=0`、`Accepted=1`、`CapacityExceeded=2`、`InvalidDescriptor=3`、`SequenceExhausted=4`、`NotAccepting=5`の固定値とし、受付失敗時の`WorkToken`はInvalidとする。DispatcherはUnity Object、切断Geometry、MobPlan内容を解釈せず、Jobの構築とCommitも行わない。DAG Coordinatorが依存完了を判定し、ReadyになったWork ItemだけをDispatcherへ渡す。将来Backendが依存Graphや費用モデルを内部化しても、この受付・取消・Dispatch・Completion境界と`WorkToken`を維持する。
+`WorkToken`は受付済み内部Recordを世代付きで参照する不透明Handleであり、bit layoutやEnqueueSequenceを公開契約にしない。`TryGetState`が返す診断Snapshotは同じ内部RecordのStateとEnqueueSequenceを読み出せるが、呼出側はSequenceを書き戻せない。Traceの`Value1`も内部Recordの値だけを正本とする。`EnqueueOutcome`は`Invalid=0`、`Accepted=1`、`CapacityExceeded=2`、`InvalidDescriptor=3`、`SequenceExhausted=4`、`NotAccepting=5`の固定値とし、受付失敗時の`WorkToken`はInvalidとする。DispatcherはUnity Object、切断Geometry、MobPlan内容を解釈せず、Jobの構築とCommitも行わない。DAG Coordinatorが依存完了を判定し、ReadyになったWork ItemだけをDispatcherへ渡す。後続表示切断は直前祖先Geometry Commitの後にだけ実行可能とする。将来Backendが依存Graphや費用モデルを内部化しても、この受付・取消・Dispatch・Completion境界と`WorkToken`を維持する。
 
 初期`PriorityClass`は数値を固定し、値が小さいほど高優先とする。
 
@@ -239,7 +231,7 @@ V1の異常処理は、無効Descriptorの受付拒否、容量超過、Schedule
 
 観測は既存`TaskScheduled／TaskStarted／TaskCompleted／TaskCancelled／CommitRejected／ResultDisposed`を使用する。V1 Dispatcherを通るTask lifecycle Eventでは共通`TaskId`をWork Tokenへ一致させ、`Value0=PriorityClass`、`Value1=EnqueueSequence`とし、いずれもuint値をbinary64へ正確に格納する。Deadlineと費用BucketはProfiler側へ記録し、既存Trace schemaへ追加fieldを設けない。受付失敗はV1では個別Trace Eventを増やさずOutcomeとCounterへ反映する。Profiler CounterはClass別Queued数、Running数、Schedule数、CapacityExceeded数、SequenceExhausted数、Deadline超過数、最古待機時間、Critical予約枠残数、Tickごとの推定／実Worker時間を最低限とする。切断受付側は片側空No-opと混雑見送りを`CutNoOpCount`／`CutAdmissionSkippedCount`で区別し、専用Trace Eventや公開enumを追加しない。V1はDeadline超過を自動修復せず、機能固有Fallbackを継続して計測事実だけを残す。
 
-命中済みのGeometry出力はClass 2のConfirmedGeometryとする。物理に必要なCPU MetadataはGPU転送前に利用可能にし、物理が表示仕上げを待つ循環を作らない。実データ依存はDAGで解決し、優先度だけで物理の先着を保証せず、preemption・優先度継承・別Schedulerを追加しない。導入採用後の未来用Jobベイクは入力準備から既存DAG・Dispatch予算へ含め、命中Deadlineに応じたClass 3／4で投入・完了回収する。候補全件を同期ベイクしてから切断Jobだけを投入しない。Schedule済みJobの非preemptiveな共有枠占有は既存規則に従う。
+命中済みGeometryはClass 2のConfirmedGeometryとする。物理はSource Final Physics、採用面とAnchor入力から進め、後続Geometry Kernelや描画仕上げを待つ依存を作らない。実データ依存は既存DAGで解決し、優先度だけで先着を保証しない。採用後の未来用Jobベイクも入力準備から同じDAG・Dispatch予算へ含め、候補全件を同期ベイクしてから切断Jobだけを投入しない。Schedule済みJobの非preemptiveな共有枠占有は既存規則に従う。
 
 ### 4.5 実行時表示Geometryと描画段階
 
@@ -289,11 +281,11 @@ CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Jobへ
 | Reserved | 所有Jobだけが読み書きする出力予約。他Job・転送処理は触れない |
 | Published | 書込み完了後に公開した読取り専用範囲。複数読者が参照可能 |
 
-VPプールへのJobアクセスは既存Published入力と自分のReserved出力に限る。外部読者へ未公開の出力は、先行Jobの完了回収後にMain ThreadのアロケータがReserved所有権を後続Jobへ移せる。共有書込みは許可せず、完了・回収後に実使用部分をPublishedにし、未使用予約を解除する。再切断等の読者が使うPublished入力は寿命まで保持し、書き換えない。世代・成果物の採否は既存規則で確認し、PublishedをGPU転送の自動トリガーやGeometryState＝Committedとみなさない。安全属性の解除はJob完了確認や実データ依存の解除ではない。
+VPプールへのJobアクセスは内部Published入力と自分のReserved出力に限る。同一Geometry Work内部の段階間所有権移管はJob完了回収後に行い、共有書込みを許可しない。実使用部分を内部Publishedにし、未使用予約を解除する。切断間の入力は直前祖先のCommitted Geometryに限り、未Commit成果物を後続切断へ公開しない。Publishedはアロケータ内部の読取り許可であり、Geometry Commit・GPU転送・Gameplay／Trace状態を表さない。安全属性の解除でJob完了や実データ依存を省略しない。
 
 概念上の切断Job入力は全体VB／IB view、入力Geometry参照、新規Vertex／Index書込み許可範囲、出力は結果と実書込み量とする。型・field列・enum数値は固定しない。表示切断に厳密Count→確保→Writeを必須にせず、出力予約不足では範囲外へ書く前に容量不足で終了し、部分成果物を公開せず再予約・再実行できる。7.9の新Index領域も同じ予約規則を使う。形状不正・世代不一致の救済や切断受付の再試行へ広げず、範囲外書込み後の例外回復を設けない。
 
-Published Vertexは上書き・再利用せず、子から継承参照する。移動はInstance Transform／frame写像で扱い、継承のためだけに全頂点を複製・書換えしない。Indexは共有Instance、旧世代Job、転送、投入済み描画等の寿命・実行順序を満たした後に再利用できる。親表示を外しただけでFreeにせず、既存のJob・資源退役へ接続する。通常更新ごとの全Job／GPU待ちは行わない。
+Published Vertexは上書き・再利用せず、子から継承参照する。移動はInstance Transform／frame写像で扱い、継承のためだけに全頂点を複製・書換えしない。CPU Index rangeは旧GeometryのCPU正本参照とCPU／Job／転送元読者がなくなれば再利用できる。CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理する。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
 
 0.93の再利用対象は主に退役Indexと、Vertex／Indexの未使用・失敗予約であり、未公開予約の回収はVertex追記方針に反しない。単純な空き領域のbest-effort再利用でよく、最適配置、断片化解消、コンパクションを要求しない。表示Instance／Geometry参照の退役は物理GCとは別であり、0.93へ7.9の生存物体終了を前倒ししない。
 
@@ -333,19 +325,27 @@ GPUカリングの責務は独自描画側に置くが、0.9xで高度な遮蔽�
 
 正負の実使用Index数をn0、n1、予約先頭をbaseとすると、正側は`[base, base+n0)`、負側は`[base+n0, base+n0+n1)`を参照する。片側Geometryが空ならその側の要素数は0とし、paddingやダミーIndexを置かない。末尾の未使用予約は初期化・転送せず既存アロケータで解除する。負側開始位置に必要なn0は切断内の件数計算や出力順序で決め、別Count JobとMain Thread往復を必須にしない。切断・Cap生成の作業領域と予約不足時の4.5.3の扱いは維持する。
 
-正負両Geometryが一つの物理所有者へ付く場合も、二つの部分範囲参照をそのまま同じ所有者へ対応付け、一所有者一参照へ統合しない。Material・frame等に必要な描画分割は残し、連続配置や1回の転送を全Passでの厳密1 drawと同一視しない。
+正負のGeometryは同SideのFinal Physics Ownerへ対応付ける。Material・frame等に必要な描画分割はRenderer側で扱い、連続配置や1回の転送を全Passでの厳密1 drawと同一視しない。
 
 継承Vertexは既存番号を使い、新規交点・Cap頂点等だけを追記する。Triangle切断、正負への振り分け、必要な非交差IndexコピーとTopology参照更新は通常の出力生成に含める。面集合、Triangle内頂点順、属性、windingを保存し、表示・Stencil・再切断は同じIndex正本を使用する。
 
-新規Index列は実使用範囲`[base, base+n0+n1)`だけを一度のSetDataでGPUへ送る。正負別の2回転送、未使用予約の転送、中間配置の先行転送と後の再転送を行わない。対象全体のGeometryが無変更で既存GPU Index範囲をそのまま再利用できる場合は、新規Index書込み・当該切断のIndex SetDataは0回とする。受付前No-opもこれに含む。1物体結果でもGeometryが変わる場合や、Triangle非交差でも正負配分に新Indexが必要な場合は省略しない。
+新規Index列は実使用範囲`[base, base+n0+n1)`だけを一度のSetDataでGPUへ送る。正負別の2回転送、未使用予約の転送、中間配置の先行転送と後の再転送を行わない。対象全体のGeometryが無変更で既存GPU Index範囲をそのまま再利用できる場合は、新規Index書込み・当該切断のIndex SetDataは0回とする。受付前No-opもこれに含む。Geometryが変わる場合や、Triangle非交差でも正負配分に新Indexが必要な場合は省略しない。
 
 この1回／0回は通常切断の当該新規Index出力だけの転送回数である。Vertex、Descriptor、初回Mesh→VP準備、GPU容量拡張時の再転送は別とする。先行準備で転送済みの有効な出力は再利用し、命中だけを理由に再転送しない。未転送入力範囲の継承時に必要な転送は、GPU転送済み範囲の再利用による0回と区別する。
 
-正負Indexの配置はFinal採否によって変えない。有効なCPU範囲の完成後は、配置確定のためだけにcookや最終物理採否を待たず転送できる。現在の有効な追従先／frame、世代と転送順序が揃えば描画境界でGeometry Commitし、後の物理変更は参照の対応付けで扱う。CPUのPublished、GPU転送、表示Committed、物理Commitを同義にしない。未転送の継承Vertexも既存の必要範囲管理で扱う。
+表示Geometryの外部状態変更境界はGeometry Commitだけとする。Geometry Workは共用Geometryと描画方式に依存しない参照・Topology Metadataを生成し、Color／Depth／ShadowCaster／Stencil／Culling／Indirect描画のDescriptor、Draw List、Batch、Indirect Argumentsを出力・成功条件・Commit条件に含めない。Job完了、CPU Published、GPU更新の準備・発行・完了は内部処理であり、別の公開Ready／Upload状態を作らない。
 
-物理は必要なCPU情報と物理成果物が揃えば既存の安全な境界で先に適用し、表示転送を待たない。表示も物理成功を先取りせず、現在有効な構成へ追従する。Geometry Commitまでは5章の選択平面・Cap上限・品質例外等の規則で仮表示を継続する。両用途のGeometry Commit後に対応Temporary描画だけを回収し、残る物理工程のPendingを維持する。
+Geometry Workは受付時に登録できるが、同Branchの直前祖先Geometry Commit後のCommitted Geometryを入力としてKernelを実行する。初回は登録済み基底Geometryを使う。Geometryが内部で先に完成しても、7.1のFinal Physics／Logical Publication前にはCommitしない。出力予約不足だけは4.5.3の非公開再予約・再実行を使い、後続Physics／Logical Publicationを待たせる条件にはしない。
 
-LogicalCutOperation公開へGPU転送・Geometry Commitを条件追加せず、公開済みのCPU子Geometryは物理未完了でも再切断できる。世代失効した旧結果を表示待ち解消だけのために公開しない。旧Indexは既存Job・GPU・共有参照寿命後にFreeし、通常更新で全Job／GPUを待たない。Stable Unsplitでは採用済み構成へ追従し、来ないFinal成功を待たない。ProvisionalFaultFrozenと確定空は既存の維持・非表示・回収規則へ従い、共用Geometryの予期しない内部エラーは4章に従う。
+Geometry Commitでは正負の具体的Geometry／RenderFragment参照、frame、実在CutBoundaryRecord、実体化済みCutと残るTemporary集合を一つの整合した状態として公開し、当該GeometryStateをCommittedとする。当該CutのTemporary Clip／Capだけを外し、後続面を新基底へ付け替え、Pending CutのGeometry責務と未完了件数を一度だけ完了する。Surface BoundaryがなければRecordは0件、Geometry空SideにはRendererもダミーGeometryも作らずFinal Physics子を残す。
+
+RendererはCommit済みGeometryとTemporary集合から経路固有Descriptorを構築し、一つの描画状態Snapshot内の全Passで同じGeometry・面集合・frameを使う。CommitはDraw List生成、Render Thread命令発行、GPU転送／Draw完了、XR提出、実画面表示、次フレームを待たない。必要なGPU更新が新Geometryを読むDrawより先に実行される順序をVP転送／Rendererが保証する。収集前のCommitは当該収集、収集後のCommitは次回収集から使い、表示済み証明は要求しない。
+
+Cut AのGeometry未完了中にA子のCut Bが物理・論理公開済みでも、Aを先にCommitして`G0 + Temporary A + Temporary B -> GA + Temporary B -> GAB`へ進む。A子が既に置換済みならGAを現在のB子孫の表示基底へ対応付け、A子をliveへ戻さない。B KernelはA Commit後に実行する。同じPlayer LoopでA Commit後にBを完了・Commitできれば続けてよく、中間GAを一度描く義務はない。中間Commitの省略、子孫による祖先の代替materialize、Geometry Transactionを作らない。
+
+A正側だけがBで再切断されていれば、A負側はGA-へ、B枝はGA+とTemporary Bへ進む。BがAbortしてその枝が退役済みならA負側だけを表示へCommitする。全子孫が退役し、表示・後続Geometry Work・他の生存読者に不要なら履歴完成だけの計算を続けずPendingを終端・回収する。未完成Operation Traceは21章の既存Incomplete扱いとする。履歴Recordは置換済み中間Geometryを強く所有しない。
+
+採否は8章のPending／Branch authorityで照合し、別Fragmentの世代更新や子孫切断だけで祖先Geometryを失効させない。共用Geometryの予期しない内部エラーは4章の共通Player終了へ送り、後続へ代替Geometryを推測適用しない。
 
 Phase 5.6の追加分割で必要になる面の配分、新Index領域への振り分けコピー・転送・旧範囲退役は7.9へ置く。通常切断へ全島列挙を前倒ししない。配置・転送回数は既存計測で確認し、新しいRuntime監視、品質Gate、数値SLAを追加しない。
 
@@ -373,11 +373,11 @@ Stencilは仮断面キャップのマスク生成に使い、表示と同じ6章
 
 即時Rendererが当該RenderFragmentへ適用するGeometry未Commitの切断面をTemporaryClipConstraintCandidateSetとする。Operation公開前は受付済みPending Cut、公開後は当該Fragmentに関係する未Commit切断履歴から導出し、祖先半空間を維持する。Cap Record集合とは役割を分け、支持による候補除外は行わない。
 
-候補は既存のPending Cut列とCutBoundary Record公開列を受付の古い順に走査し、未Commit祖先制約を子孫制約より必ず先に置くstable順で選ぶ。Pending CutからOperation由来Recordへ移る際も同じ受付位置を保ち、同じ切断面を重複登録しない。選択結果は候補列の先頭から最大12面のdependency-closed prefixとし、ある子孫境界を選ぶために必要な未Commit祖先境界が選択外なら、その子孫も選ばない。通常の公開処理は祖先を子孫より先に列へ追加する不変条件を持ち、復元データがこの順序を満たさない場合は新しい順へ並べ替えず、違反境界以降をIgnoredとして背景Geometry完成へ委ねる。ID値によるsortや別の優先度Metadataを追加せず、左右眼、Color、Depth、ShadowCaster、Stencil Volumeの全Passで同じ選択結果を共有する。カメラ距離、眼、Pass、毎フレームの可視性で順序を変えない。候補追加、LogicalCutOperation公開、Geometry Commit、RenderFragmentとCutBoundaryの対応関係変更のいずれかが候補資格または依存関係を変えた場合、状態変更を公開する同じ描画更新境界で再構築する。
+候補は既存のPending Cut列とLogicalCutOperation公開列を受付の古い順に走査し、未Commit祖先制約を子孫制約より必ず先に置くstable順で選ぶ。Pending CutからOperation由来Recordへ移る際も同じ受付位置を保ち、同じ切断面を重複登録しない。選択結果は候補列の先頭から最大12面のdependency-closed prefixとし、ある子孫境界を選ぶために必要な未Commit祖先境界が選択外なら、その子孫も選ばない。通常の公開処理は祖先を子孫より先に列へ追加する不変条件を持ち、復元データがこの順序を満たさない場合は新しい順へ並べ替えず、違反境界以降をIgnoredとして背景Geometry完成へ委ねる。ID値によるsortや別の優先度Metadataを追加せず、左右眼、Color、Depth、ShadowCaster、Stencil Volumeの全Passで同じ選択結果を共有する。カメラ距離、眼、Pass、毎フレームの可視性で順序を変えない。候補追加、LogicalCutOperation公開、Geometry Commit、RenderFragmentとCutBoundaryの対応関係変更のいずれかが候補資格または依存関係を変えた場合、状態変更を公開する同じ描画更新境界で再構築する。
 
 D3D11／Shader Model 5のPoC Profileは`RasterClipPlaneCapacity = 8`、`PixelClipPlaneCapacity = 4`、`TemporaryClipPlaneCapacity = 12`を初期値とする。`SV_ClipDistance`と`SV_CullDistance`の合計component上限8をRaster側の正本とし、このShader Variantでは`SV_CullDistance`を使用しない。先頭8面をVertex Shaderから`SV_ClipDistance0/1`の合計8 componentへ出力し、未使用componentは全頂点で正の有限値へ固定する。続く最大4面だけを固定長per-instance配列と`PixelClipCount`からPixel Shaderの`clip()`で評価する。面数や平面値によるMaterial、Keyword、Pass、Draw分割、可変長Buffer、動的Loop上限の増加を行わない。MSAA時は先頭8面のRasterizer clippingによるcoverageを正本とし、Pixel fallback境界との微小なedge品質差は短時間の品質低下として許容する。
 
-dependency-closed prefixへ入らない後発Pending Cut／境界は`IgnoredTemporaryClipBoundarySet`とし、`SelectedTemporaryClipPlaneSet`へ含めず、Color／Depth／Shadowのclip制約として使わず、対応Stencil Volumeをsubmitしない。Cap板Recordは既存Batchへ残り得る。Pending Cutまたは公開済みCutBoundaryRecord、Geometry状態、Logical Fragment、切断履歴、世代、点Anchor配分と所有者単位の固定／動的、共用Geometry／Convex Job、物理Commit、優先度付けは変更・破棄せず、背景Geometry Commitで正しい形状へ収束させる。無視された新しい面は一時的に即時表示されず、影もその面より前の形状となり得るが、選択済み祖先の外側にGeometryを復活させずSiblingを重ねないbounded degradationとする。Plane overflowを理由に既存Jobをcancel、再発行、同期完了してはならない。
+dependency-closed prefixへ入らない後発Pending Cut／境界は`IgnoredTemporaryClipBoundarySet`とし、`SelectedTemporaryClipPlaneSet`へ含めず、Color／Depth／Shadowのclip制約として使わず、対応Stencil Volumeをsubmitしない。Cap板Recordは既存Batchへ残り得る。Pending Cutまたは公開済みLogicalCutOperation、Geometry状態、Logical Fragment、切断履歴、世代、点Anchor配分と所有者単位の固定／動的、共用Geometry／Convex Job、物理Commit、優先度付けは変更・破棄せず、背景Geometry Commitで正しい形状へ収束させる。無視された新しい面は一時的に即時表示されず、影もその面より前の形状となり得るが、選択済み祖先の外側にGeometryを復活させずSiblingを重ねないbounded degradationとする。Plane overflowを理由に既存Jobをcancel、再発行、同期完了してはならない。
 
 `TemporaryRenderCapRecordSet`、Cap Bounds Polygon、StencilのColor割当て、Cap板側のDraw ListはPlane overflow時にもcompaction／部分更新しない。Stencil Volumeは既存の可視性・Color分類に従い、`SelectedTemporaryClipPlaneSet`に選ばれた境界に対応するものだけをsubmitする。Cap板RecordはIgnored境界のものも従来Batchへ残してよい。対応Volumeも別RecordのResidual Stencilもないsampleは初期値128のままなので板はColor／Depthを書かない。通常Colorでは別RecordのResidual Stencilが到達し得る非互換Capを分離し、最後の統合Colorでは混入、欠落、余計なCapおよび誤ったDepthを許容する。Ignored Capを隠すための追加Mesh生成、有効フラグ、Buffer compaction、個別Draw除去、代替VFXは追加しない。
 
@@ -418,7 +418,7 @@ Temporary Stencil Capは次の品質例外を持つ。これらを検出、証�
 | `TemporaryRenderCapRecordSet`から描く即時仮断面 | 固定グレー | 赤 |
 | Geometry Commit済みの共用Geometryに含まれる実Cap | 固定グレー | 緑 |
 
-CPU成果物がReadyでもGeometry Commit前は仮断面のままとし、Commit後は計算経路やPhysics完了状態によらず実断面とする。デバッグ有効時は再切断中も既存実Capは緑、新しい仮Capは赤として共存できる。Stable移行による色解除・色保持モードは設けない。
+Geometry Commit前は仮断面、Commit後は計算経路によらず実断面とする。デバッグ有効時は再切断中も既存実Capは緑、新しい仮Capは赤として共存できる。Stable移行による色解除・色保持モードは設けない。
 
 色値とデバッグ有効状態はGlobal Shader Constantまたは既存のDraw／Fragment Descriptorで指定する。色変更だけを目的とする既存Vertex／Indexの書換え、VB／IB再生成・SetData、Geometry複製は行わない。切断成果物自体の生成・転送・Commitは従来どおり行う。
 
@@ -468,11 +468,11 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
 
 - `LogicalCutOperation`公開前の即時Capは、親`RenderFragment × Pending Cutの採用面`から導出し、確定した論理子や境界を先取りしない。公開後のキャップの幾何可視性は元Object単位ではなく、`論理破片 × 切断面`の`CapRecord`単位で判定する。同じ切断面でも正負破片の断面Normalは逆向きになるため、片側が裏向きでも反対側を自動的に省略しない。支持による描画省略を行わない。
 
-- LogicalCutOperationは通常処理で正負各最大1の非空直接子と実在する切断面参照が確定した後に一度だけ構築・公開する。CutOperationId、ParentLogicalFragmentId、ParentObjectGeneration、直接子ID、CutBoundaryIdと採用面・Side・Geometry参照の対応を保持する。非空とはGeometryまたはPhysics Convexが残る側を含み、両方空の側にダミー子を作らない。各Sideに存在するGeometryと実Capは、そのSideを保って維持する。両SideのGeometryが同じ物理所有者へ所属してもこの規則は変わらず、空側へGeometryやCapを補わない。
+- LogicalCutOperationは7.1.2のFinal Physicsと同じ境界で、親、正負2子、採用面とSide対応を一度だけ公開する。具体的GeometryとCutBoundaryRecordを待たず、各SideのGeometryと実Capは4.5.6のGeometry Commitで後着する。空のGeometryを補うダミーRendererは作らない。
 
-- DirectChildCountは1または2とし、正負各最大1とする。CutBoundaryCountは既存の0～256、IDは0を予約した正の32bit intとし、CutOperationId／LogicalFragmentLocalId／CutBoundaryLocalIdはObjectIdの寿命中に種別ごとに非再利用とする。ParentObjectGenerationはuint全域とし入力Snapshotと一致させる。親・子・境界のIDは種別内で重複なく構成し、世代・参照は既存公開条件で照合する。構築中に表面化した予期しない内部エラーは4章に従う。
+- DirectChildCountは2とし、正負各1とする。CutBoundaryCountは既存の0～256、IDは0を予約した正の32bit intとし、CutOperationId／LogicalFragmentLocalId／CutBoundaryLocalIdはObjectIdの寿命中に種別ごとに非再利用とする。ParentObjectGenerationはuint全域とし入力Snapshotと一致させる。親・子・境界のIDは種別内で重複なく構成し、世代・参照は既存公開条件で照合する。構築中に表面化した予期しない内部エラーは4章に従う。
 
-- CutBoundaryRecordは再切断と表示に必要な採用面・Side・子Geometry／frame参照を表す。島の接続Edgeや異なる二物理所有者を必須にせず、複数Contour／Capを一つのLoopへ潰さない。確定空側には架空参照を作らず、子1件や境界0件を正常結果として扱う。公開済み参照と切断履歴は既存の世代・資源寿命へ従う。
+- CutBoundaryRecordはGeometry Commitで確定する採用面・Side・子Geometry／frame参照を表す。複数Contour／Capを一つのLoopへ潰さず、Geometryが空のSideには架空参照を作らない。境界0件も正常であり、子数は変更しない。履歴は退役Geometry／Actorを強く所有しない。
 
 - `TemporaryRenderCapRecordSet`内の現在のWorld Cap Planeについて、各眼の値を`d = dot(CapNormal, EyePosition - CapPoint)`とし、`dLeft < -FacingEpsilon && dRight < -FacingEpsilon`の場合だけCapRecordをFacingで除外する。等号とepsilon帯を含むその他の場合はSingle Pass Instanced用Recordを残す。Frustum外判定も同じ段階で行い、互換Group内に幾何可視な実描画CapがなければStencil Clear／Volume／Cap処理を丸ごと省略する。判定は現在フレームだけから行い、過去の可視状態を保持しない。epsilon境界の往復による投入切替と頭部微動時の点滅を許容する。通常のclip済み破片カラー描画とShadowCasterは消さない。
 
@@ -543,58 +543,57 @@ Half-edge、edge hash、圧縮adjacency、Contour表現、三角形化、局所�
 
 ### 6.5 公開と失敗
 
-切断CPU出力の完成後はGeometry Validatorを挟まず、4.5.6のGeneration・参照・所有権・現在frame・必要転送の公開条件を満たした時点で、表示とStencilへ同じGeometry Commitで公開する。待ち合わせは正常な未完了であり、用途別世代を作らない。Generation不一致や失効した投機成果物は既存の不採用・回収に従い、共通Player終了へ送らない。
+切断CPU出力の完成後はRuntime出力Validatorを挟まず、4.5.6のFinal／Logical公開後・祖先順Geometry Commitへ進む。待ち合わせは正常な未完了であり、用途別世代を作らない。8章のauthorityを失った成果物は不採用・回収し、共通Player終了へ送らない。
 
 出力予約不足は4.5.3の非公開終了・再予約・再実行に従い、切断受付の再試行へ広げない。共用Geometry切断または論理構築で表面化した予期しない内部エラーは4章、CPU／GPUの絶対容量不成立は4.5.4に従う。物理・支持のCommit単位、Actor状態、世代・資源寿命は変更しない。
 
 ## 7. 物理切断
 
-### 7.1 一時状態
+### 7.1 PhysicsSplitTransactionとLogicalFragment退役
 
-ColliderのBake／cookingは即切断表示開始と初回仮運動のクリティカルパスに含めない。必要なベイク・VP変換後にclipと仮断面を表示し、入力Cellの点Anchorを7.1の規則で配分でき、容量と構築条件を満たせば、旧cook済みConvexを再利用するProvisional Rigidbodyを正負各最大1生成する。固定側も描画するが動かさない。Anchor配分等の必要なJob未完了は既存Work依存で待ち、世代不一致・不正入力は既存検証で不採用にする。Actor／Shape／Constraint容量や原子的構築の不成立では有効な旧物理を維持し、部分的なProvisionalを公開しない。
+一つの生存LogicalFragmentを置換するActive PhysicsSplitTransactionは最大1件とする。同じObjectId内の別LogicalFragmentは並行できる。Transactionは受付Snapshot・採用面・Sourceの物理所有変更authority、Provisional／未公開Final資源、点Anchor配分とCanonical Mass Budgetを一回の物理分裂のために保持する。Geometry DAG、公開子孫・current leaf、Cut履歴、Upgrade、Geometry完了待ち、最終資源回収待ちは所有しない。既存CutOperationId、Pending Cut、Work Token、生存性と所有参照を使い、新しい公開Transaction ID・状態／Reason enumを追加しない。
 
-- 刀は旧Colliderを含む物理Colliderへ接触させず、Edge Direction Gateを通過してLatchしたSlashWave SegmentのSweepだけでHitを判定する。生存Waveの判定はその後の刀のGate状態に依存しない。プレイヤーの手・身体も初期仕様ではプロップ／破片へ接触Impulseを与えず、移動制限は7.2.3の非接触Locomotion経路で扱う。
+#### 7.1.1 未公開構築とProvisional公開
 
-- 配分されたConvex／CellのAnchorが一つでもあればその所有者全体を固定し、なければ動的とする。両側AnchorなしはProvisionalPhysicsSplit、固定側を含む場合はProvisionalAnchoredSplitとして、安全な物理境界で各側最大1 Actorを原子的に作る。固定側はStaticまたはKinematicとし、固定用の外部Joint／Constraintを生成・継承しない。建物由来子のMetadataとD6は7.2.2に従う。構築前提を満たさない場合はPendingPhysicsSplit／PendingAnchoredSplitで旧物理を維持する。
+受付後は4.5.2の必要入力準備を経て即時clip／Stencil／仮Capを開始し、Final Convex／cookを並行して進める。点AnchorやWork入力未完了、未Schedule、Queue／Bake枠待ち、物理Step待ちは通常のPendingであり、構築不能とみなさない。
 
-- Provisional Shapeの配分、OBB質量近似、Separation Constraintは19.5.1の確定操作Local Planeを共通入力とする。予測Planeを採用済みなら、未完成Meshを理由にSourceSlashPlaneから別の配分を作らない。Provisional Shapeは元Actorのcook済みConvex Geometryとlocal poseを共有参照し、Provisional生成のためのConvex切断、Mesh複製、`Physics.BakeMesh`を行わない。受付前No-opとProvisional配分は7.6の同じ現在採用Convex集合、Snapshot、面、epsilonによる分類を共有する。各Convexの全頂点が片側ならその側だけへ、平面と交差するかepsilon内／分類不能なら両側へ配分候補を置く。連続切断では現在Provisional Actorが参照するShape集合へ同じ規則を適用し、Geometry Resourceを再利用する。Geometry共有がBackend上で安全に成立しない場合は同期cookへ落とさず単一FragmentGroupを正式採用できる。
+必要入力が揃った時点で、7.6のrobust support分類に従う正負2 Actor、旧Cooked ConvexのShape Instance、必要なSibling D6とBuilding World D6を一度だけall-or-none構築する。Provisional公開前にFinal一式が公開可能ならProvisionalを省略して直接Final Commitする。それ以外でProvisional一式の構築を試みて成立しなければ未公開成果物を破棄し、Transaction Abortとする。旧物理を維持したFinalだけの継続、再試行Queue、厳密予約Protocol、Actor／Joint Poolを必須にしない。
 
-- 旧Cooked Convex GeometryをProvisional Shape Instanceへ結び付ける前に、そのGeometryの`ProvisionalCollisionResourceLease`を取得する。現在有効な旧物理状態を変更せずProvisional物理一式を未公開状態で構築し、全Actor／Shape／Constraint／必要Leaseが揃った後だけ安全な物理境界で原子的に公開する。構築途中の成果物を物理StepやGameplayへ公開せず、失敗時は未公開成果物だけを破棄する。内部の破棄順序は実装詳細とする。Leaseは、そのLeaseが保護するShape／Actorの参照が解消し、Sceneへ投入済みならShape除去と必要な物理Stepが完了した後に一度だけ返す。他のLeaseが保護する参照の消失は待たず、Geometry自体は最後のLease返却前に破棄しない。Final Shape交換、新世代Provisional置換、連続切断、世代失効でも同じ寿命規則を使い、Timeoutの有無によらず実際の破棄・置換時に適用する。
+旧Cooked Convex GeometryをProvisional Shape Instanceへ結び付ける前に当該GeometryのProvisionalCollisionResourceLeaseを取得する。公開までは現在の旧物理を変更せず、途中のActor／Shape／ConstraintをGameplayや物理Stepへ部分公開しない。cleanupの内部順序は実装詳細であり、参照するShape／Actorと必要なPhysics Stepの寿命を満たして当該Leaseを一度だけ返す。別Leaseの参照消失は待たず、Geometry自体は全参照と最後のLease返却前に破棄しない。Timeoutだけで退役・Lease返却しない。
 
-- 同じProvisional分裂系譜のSibling Actor間はCollision responseを無効化するが、それ以外の静的／動的WorldとのCollisionは通常どおり全て有効にする。交差Convexの複製により、表示より早い接触、Sibling側へ張り出すGhost Contact、同じ外部物体から複数Actorへの接触、短時間のImpulse重複を許容する。これらを切断失敗またはSolverへ投入禁止な初期penetrationとはみなさず、非finite state、Profile上限を超える速度／角速度、Constraint破綻だけを公開後Fault Frozen対象とする。
+構築に成功したProvisional一式は、安全なPhysics境界で旧ActorをSceneから外す操作と正負2 Actorおよび必要なConstraintのScene投入をall-or-noneに切り替える。LogicalFragmentは未分裂のまま、両ActorのHitを同じSource LogicalFragmentへ解決する。旧資源の回収は既存の参照・Physics Step寿命規則に従う。
+
+Provisional生成のためにConvex切断、Mesh複製、Physics.BakeMeshを行わない。同系譜Sibling間のCollision responseだけを無効にし、外界とのCollisionは有効にする。旧Convex共有によるGhost Contact、早い接触、外部物体へのImpulse重複を許容する。点Anchorを持つ所有者は固定しOffset／Impulseは0、持たない側だけを動かす。GeometryのSide空／非空を物理固定の条件にしない。
 
 - 同じ切断で生じたProvisional Sibling間の`ProvisionalSeparationConstraint`は、Unity `ConfigurableJoint`によるanchor-offset D6へ固定する。`autoConfigureConnectedAnchor=false`とし、生成時の採用切断面法線をJoint所有Actorのlocal spaceへ変換して`axis`に設定する。`secondaryAxis`は同じlocal spaceの非平行なfinite方向から決定論的に直交化する。接線2軸の並進と全相対回転をLocked、XをLimitedとする。対称Linear Limitを`±1 m`、法線方向のanchor offsetを`1 m`として、生成時の相対位置を内向き境界、外向き`2 m`を反対側境界とする。これはJoint座標系での設定区間であり、毎Stepの厳密な変位保証ではない。両anchorは、生成時のWorld位置関係をJoint X座標の内向き境界へ置くよう、それぞれのRigidbody local spaceで設定する。軸の符号、Jointを置くSibling側、offsetを置くanchor側、直交基底の具体的な選択は実装詳細とする。Drive、Spring／Damper、Projection、Gameplay用Break Force／Torqueは使わず、存続中のaxis、secondaryAxis、anchor、connected anchor、Linear Limitを更新しない。
 
-- 法線上限到達による停止・引戻し・Impulse・jitter・表示の違和感、分離の引止めとJoint除去後の運動差を正常なProvisional近似として許容する。上限到達そのものを検出・記録・Fault化せず、Limit拡張や代替方式による救済を行わない。独自の毎Step分離追跡・Pose／Velocity補正は行わないが、既存の安全SnapshotとFault監視は維持する。上限到達に伴う運動でも非finite、既存の異常速度条件、実際のConstraint runtime破綻は従来どおり封じ込める。Timeoutでも有効なProvisionalを維持するため、引止め時間の上限は保証しない。
+D6上限での停止・引戻し・Impulse・jitter・表示の違和感、引止めと除去後の運動差は正常な近似として許容し、検出・再中心化・Limit拡張・独自Pose／Velocity補正を行わない。法線上限は上記固定値だけで、物体寸法・Impulse・速度・経過時間から求めない。待機時間の上限は保証せず、Kerfは0とする。
 
-- D6を既存Actor／Shape／Constraintの原子的構築に含め、生成不能は既存`ConstraintCreationFailed`／原子的構築不能に従い、一部Actorだけを公開しない。Final handoff、新世代Provisionalへの置換、Fault FrozenまたはActor退役では、既存の物理Step・資源寿命に従ってD6を一度だけ外す。除去自体によるActor pose／COM線速度／角速度の補償・巻戻しは行わず、Fault時の既存封じ込めは別途維持する。Shape除去と`ProvisionalCollisionResourceLease`返却の順序は変えない。`BuildingWorldD6Constraint`とは別のConstraintとして扱う。
-
-- 公開済みProvisional GroupはGroup単位の固定容量二重Buffer`ProvisionalLastFinitePhysicsSnapshot`を持つ。各Slot Headerは`ObjectId`、`ObjectGeneration`、既存物理Clockの`FixedStepId`、`ActorCount`を、Entryは対応する正の`LogicalFragmentLocalId`昇順のWorld pose、COM線速度、角速度を持つ。Fixed Step完了後に非公開Staging Slotへ全Actorを同じStepから収集し、Actor集合、ID順、世代、件数、全数finiteを検証した後だけ、公開Slot indexを1回のatomic storeで切り替える。途中失敗、Fault検出、Actor集合変更、世代変更ではStagingを破棄して直前の完全な公開Slotを維持し、Actorごとの部分更新を公開しない。Provisional Actor集合の初回公開も全Actor分のStep境界Snapshot作成成功と同じ原子的Commitへ含め、2 Slotは同じGroup内で交互に使うがGroup破棄までは別Groupへ再割当しない。
-
-- いずれかのActorで非finite state、線速度／角速度のProfile上限超過、またはConstraint runtime破綻を検出した場合は、対応`LogicalFragmentLocalId`昇順に全Faultを収集し、固定優先順位`NonFiniteActorState > ConstraintRuntimeFailed > LinearVelocityLimitExceeded > AngularVelocityLimitExceeded`、同順位では最小LogicalFragmentLocalIdの原因をPrimary Faultとする。進行中のSnapshot Stagingを必ず破棄し、次の物理ステップ境界でGroup全体を最後に公開済みの完全なGroup Snapshotへ復元して`ProvisionalFaultFrozen`へexactly onceで遷移させる。全Sibling Constraintを外し、全ActorをKinematic化し、速度／角速度0、蓄積Force／Torque消去をGroup単位で原子的に行う。Faultを検出した現StepのActor値は、全数finiteに見える場合でも封じ込め入力に使用しない。完全Snapshotがない、または全Actorの原子的封じ込めを事前検証できない場合はGroup全Actor／ShapeをPhysics Sceneからまとめて除外し、完全Snapshotがあれば表示をそのGroup姿勢へ残し、なければ全該当表示を非表示にする。部分Kinematic化、個別Actorだけの復帰、旧Groupへの再合流を行わない。
-
-- `ProvisionalFaultFrozen`では共用Geometryの背景処理だけを継続できるが、新しいProvisional分裂、Final Collider handoff、Dynamicへの自動復帰、切断Impulseを禁止する。到着済みまたは後着の物理成果物はCommitせず回収し、Cooked Geometry LeaseはFrozen Actor／ShapeをSceneから除去する最終破棄まで維持する。Primary Faultは`ProvisionalRuntimeFaultReason`、封じ込め結果は独立した`ProvisionalFaultContainmentDisposition`として確定し、原因を結果で上書きしない。このSnapshotは物理安全のFail-closed専用であり、表示―物理誤差の蓄積、補間、すり合わせには使用しない。
-
+ProvisionalSeparationConstraintはFinal handoff、置換、AbortまたはActor退役で既存Step・参照寿命後に一度だけ外し、除去のためのpose／COM線速度／角速度補償を行わない。BuildingWorldD6Constraintは別のActor寿命で維持し、7.2.2に従う。
 
 - 固定を設定する入力には、必要な1個以上のfiniteな点FixedSupportAnchorと、その初期Logical Convex Cell、Fragment Physics Frame内local位置を明示する。初期Cellとlocal位置は不変とし、現在所属は各Cellが保持するAnchor集合で表す。Anchor内に単一のmutableな現在Cellを持たせず、支持を設定しない入力には点Anchorを要求しない。
 
 - 各切断では入力Cellが現在持つAnchorだけを、受付Snapshot、採用面、同じframeと既存のfiniteかつ非負なanchorEpsilon=eで分類する。`s = dot(planeNormal, anchorPosition) + planeDistance`がs>eなら正側、s<-eなら負側、-e<=s<=eなら両側へ継承する。無効値をOnPlaneへ分類しない。非交差Cellは対応する子へ継承し、OnPlaneでは同じAnchor値を有効な各子集合へ1回ずつ格納する。
 
-- 同Sideの別Convex、旧Shapeを共有するSibling、反対側へ付属する表示GeometryへAnchorを複写しない。所有者単位で継承集合の有無を集約すればよい。内接削減、再cook、Collider頂点や祖先全一覧からAnchorを再生成・再発見せず、最近傍検索・包含探索・間接支持判定を行わない。
+- 同Sideの別Convexや、旧Shapeを共有するだけのSiblingへAnchorを複写しない。所有者単位で継承集合の有無を集約すればよい。内接削減、再cook、Collider頂点や祖先全一覧からAnchorを再生成・再発見せず、最近傍検索・包含探索・間接支持判定を行わない。
 
-- Anchorを持つ所有者では離れたGeometry／Convexも全体を固定する。Phase 5.6で独立しAnchorなしになった所有者は動的となる。固定側のOffset、速度、切断Impulseは0とし、自由側だけを動かす。Provisional構築不能時は既存Pendingで旧物理を維持し、従来の自由側解析表示を使える。
+- 点分類はcookを待たず入力と採用面から先行でき、少数Anchorは同期実行してよい。投機結果は8章の対象authorityと既存Anchor世代、採用面、入力Cell、frame、継承集合との一致を確認して採用する。未完了JobはWork依存で待ち、不正入力・世代不一致は既存検証と回収へ従う。支持付き対象は19.5.1の初期リベース対象外のままとする。
 
-- 点分類はcookを待たず入力と採用面から先行でき、少数Anchorは同期実行してよい。投機結果は既存Object／Anchor世代、採用面、入力Cell、frame、継承集合との一致を確認して採用する。未完了JobはWork依存で待ち、不正入力・世代不一致は既存検証と回収へ従う。支持付き対象は19.5.1の初期リベース対象外のままとする。
+#### 7.1.2 Final PhysicsとLogical Publication
 
-- 断面間の小さな見た目上のめり込み、見えている切断隙間に旧Colliderが残ることに加え、Provisional Shapeが表示Fragmentより張り出してめり込む前に外界へ衝突することを許容する。Constraintの法線方向上限は本節の固定値だけとし、物体寸法、想定Impulse、速度、経過時間から動的に算出しない。Kerfは常に0であり、仮分離Offsetとは別パラメータとする。
+正常成功には正負各1のFinal Physics Owner、各側のfiniteで正の質量・慣性、必要なAnchor、frame、containment、cook、Actor／Shape／D6を成立させる。片側を成立させられない場合は一Owner成功や片側だけの公開に変換せずAbortする。Final handoffのpose／COM線速度／角速度と質量継承は7.2に従う。
 
-- 後続斬撃の候補識別と系譜消費は公開済みの現在LogicalFragmentRefを、命中後の幾何切断はその共用Geometryを参照する。実HitのNarrowphase形状は19.1.7の現在採用中のPhysics Convex集合を使い、Provisional／旧Convexを含み得る。Hit形状と切断する共用Geometryを同一視しない。先行`LogicalCutOperation`が未公開の親とその仮表示領域には4.2の受付制限を適用する。Operation公開後は先行cook、Geometry Commit、Physics完了を待たず公開済みの子Logical Fragmentを再切断し、旧世代成果物はGeneration Rejectする。新世代Provisional構築は現ActorのPose／速度と共有Shape参照を基底に原子的に置換し、Actor、Shape Instance、Constraintの固定容量を超えた場合は新しい子だけを部分公開せず現物理Groupを維持する。
+正負2子ID、親・子・面・Sideを持つLogicalCutOperation、Final Owner参照、Anchor／frame、Hit／QueryとTemporary表示対応を未公開で準備する。安全な物理境界と同じMain Thread更新区間で、Final Physics Commit、Sourceの現在対象終了、Operationと2子公開、Hit／Query／Temporary追従先切替、Transaction終了、Pending CutからPhysics authorityを外す処理を行う。途中に新規受付、Query結果のLogical解決、他の所有変更、Renderer状態収集を挟まず、旧完全状態または新完全状態だけを観測させる。単一CPU命令のatomic storeは要求しない。
 
-- Convex生成と`Physics.BakeMesh`をバックグラウンドで完了させ、成果物と世代が有効なら各Provisional ActorのCollider、mass、center of mass、inertiaをFinal値へ物理ステップ境界で原子的に置換する。単一Group Fallbackの場合だけ、このCommit時に複数Rigidbodyへ初分裂する。Bakeの遅延や失敗は即時表示または有効なProvisional運動を巻き戻す理由にしない。
+Geometry Work、具体的Vertex／Index、実Cap、CutBoundaryRecord、GPU転送をPublication前提にしない。成功後は生存LogicalFragmentとFinal Physics Ownerが1対1となり、Geometry未完成でも各子を再切断・単独退役できる。親の現在対象終了は祖先Pending／Geometry Workの失効を意味せず、Geometry責務は4.5.6へ残す。Canonical Mass Budgetは成功時に正負Final Ownerへ移管する。
 
-- Collider差し替えとRigidbody分裂は物理ステップ境界で行う。
+#### 7.1.3 Abort・Staleと単独退役
 
-- Pending／Provisionalが予算時間を超えた場合はTraceへ`PhysicsSplitTimeout`を記録してcookをConfirmedPhysics優先度へ引き上げ、負荷待ちである限り現時点で有効な単一GroupまたはProvisional Actorを維持して処理を待たせる。Final Convex、質量または支持を成立させられないと確定した場合は、簡易Proxy、Compound Primitive、Geometry消去へ分岐せず、利用可能な既存物理表現を正式採用して終端できる。Provisional状態を短命とみなすProfile期限、Actor／Shape／Constraint上限、異常速度上限はT-091後に校正し、期限超過だけを理由にPose／速度を巻き戻さない。
+Provisional一式の構築不能、またはLogical Publication前にFinal Physicsを成立させられないと確定した場合はTransaction AbortとしてSourceを退役する。待機、PhysicsSplitTimeoutだけではAbortしない。同じTransactionのProvisionalについて既存Unity／物理所有／Constraint管理境界から継続不能異常が判明した場合もAbortし、成功後のFinal Ownerに同様の異常が判明した場合は対応LogicalFragmentを退役する。既存境界から明示されたnonfinite stateや実際のConstraint破綻を扱うが、包括的毎Step監視、速度Profile、Snapshot、復元・Kinematic Freezeを設けない。正常なD6 Limit到達は異常にしない。4章の共用Geometry／論理構築、絶対backing容量、必須Stencilの致命条件は共通Player終了を維持し、個別物理退役との相互Fallbackを作らない。
+
+退役はPhase 4の共通低レベル処理とし、対象LogicalFragmentの生存性・Hit・Query・新規受付、通常／Temporary表示を終了し、Active Transactionがあれば終端する。当該対象へ未公開成果物をCommitせず、旧Final／Provisional／未公開Finalの当該所有Actor・Shape・システム所有D6をSceneから除去する。Geometry参照とRenderer登録を退役し、Schedule済みJob、CPU範囲、Leaseは読者と必要Stepの終了後に回収する。Siblingへ質量・Anchor・Geometryを移送せず、親へ再合流しない。Source消失による質量消失・接触変化を許容し、旧物理の恒久採用や復旧を行わない。IDとCut履歴を再利用・書換えせず、履歴が資源を強く所有しない。
+
+成功／Abort後の遅延回収は必要な小さいcleanup情報へ移管し、Transactionを延命しない。外部authority喪失は8章のStale回収であり、古いTransactionが現在のSourceや他の所有資源を退役させてはならない。
 
 ### 7.2 Convex切断と運動継承
 
@@ -604,7 +603,7 @@ ColliderのBake／cookingは即切断表示開始と初回仮運動のクリテ�
 
 - 出力数が不定なため、`ConvexCountJob -> Native領域確保 -> ConvexWriteJob -> ValidationJob`を基本Pipelineとする。内接削減は既存Writeの出力生成内で、Validation・質量特性計算・cookより前に完了する。Count側は通常clipの中間出力と局所置換に必要な補面の作業容量を確保し、最終上限Lを中間領域の上限に流用しない。初期の次数3方式では削除1回当たり最大1枚の補面を見込む。多数破片は同種段階をBatch化し、1破片ごとの極小Job乱発を避ける。削減専用のScheduler・Worker・必須追加Jobは作らない。
 
-- 交差するConvexだけを切り、片側に完全にあるColliderはそのまま該当破片へ移す。
+- 7.6のrobust supportで分割対象としたConvexだけを採用面d = 0で切り、その他は同節のSideへ未切断で継承する。
 
 - 正負それぞれの出力Convexについて、通常clip・交点共有・重複統合後に頂点数がLを超えた場合だけ内接削減する。上限内では候補生成も削除も行わない。削除対象は今回のclipで生成した交点のうち、閉性・凸性・非退化性を保つ局所置換ができる頂点に限る。入力から継承した頂点は過去の切断で生成されたものも含め削除・移動せず、残す頂点の座標も変えない。重複統合元に継承頂点（OnPlane頂点を含む）が1つでもあれば継承扱いとし、代表座標には継承座標を使って削減対象外とする。統合元がすべて今回生成した交点の場合だけ削減候補にできる。「今回生成」の区別は切断中の作業情報だけで持つ。
 
@@ -612,37 +611,37 @@ ColliderのBake／cookingは即切断表示開始と初回仮運動のクリテ�
 
 - 初期方式では削除ごとに変更近傍の次数・候補資格・評価値を更新し、次数が4以上になった点を候補から外す。任意の3隣接点や古い評価値で四面体式を使い続けない。次数3という候補条件とΔVによる削除順は唯一の製品合格方式には固定しない。同じ実装・入力条件では決定的に処理し、各削除で頂点数を減らしてL以下または候補不足で終了する。別順探索・巻戻し・全組合せ最適化は行わず、全入力で上限到達する保証は置かない。候補選択構造は実装に任せ、削除ごとの全Hull再検証や全候補の形状複製を要求しない。一般次数の削除、中点融合、一般凸包再構築や複数方式の選択基盤を今回の実装範囲へ追加しない。
 
-- 切断前ConvexをP、採用面の片側半空間をH、通常clip結果をC、削減結果をQとして、幾何学的に`Q ⊆ C = P ∩ H ⊆ P`を保つ。単なる体積減少を包含の代わりにせず、Cの頂点の一部を残す閉凸境界として角を内側へ削る。数値誤差は既存Convex検証とFinalContainmentEpsilonに従い、新しい誤差Profileや完全証明器を作らない。最終出力は既存Validationへ通し、候補不足で上限超過が残る場合や既存の形状・質量・cook条件を成立させられない場合は7.3／7.6の既存物理正式採用と回収へ終端する。新しいFallback形状・再試行段階・復旧状態を作らず、有効な縮小結果は通常成功とする。
+- 分割対象のConvexについて、切断前ConvexをP、採用面の片側半空間をH、通常clip結果をC、削減結果をQとして、幾何学的に`Q ⊆ C = P ∩ H ⊆ P`を保つ。単なる体積減少を包含の代わりにせず、Cの頂点の一部を残す閉凸境界として角を内側へ削る。数値誤差は既存Convex検証とFinalContainmentEpsilonに従い、新しい誤差Profileや完全証明器を作らない。最終出力は既存Validationへ通し、候補不足で上限超過が残る場合や既存の形状・質量・cook条件を成立させられない場合は7.1のTransaction AbortとSource退役へ終端する。新しいFallback形状・再試行段階・復旧状態を作らず、有効な縮小結果は通常成功とする。
 
 - 採用した削減済みB-repをCollider用Mesh、次回切断、Fast Simulationの同形状再cookの共通基底とし、削減前の大きい形状へ戻さない。自前B-repの内接性をcook後の実形状・Solver挙動すべての証明とはせず、既存のcook・handoff確認を使う。専用のcook結果抽出基盤は追加しない。点Anchorは既存Cell系譜を継承し、削除頂点から再構築しない。
 
 - 質量特性のRuntime正本は共用Cut GeometryやStrict Solid Cut Meshではなく、切断対象のPhysics Convex B-repとする。表示Triangle全体の体積積分、Convex同士のBoolean Union、重複領域の厳密な控除は行わない。
 
-- 切断前の各Physics Convexはbinary64でfiniteかつ0以上の`PhysicsConvexMassWeight`を持つ。同一FragmentGroupのConvexを`LogicalConvexFragmentLocalId`昇順へ並べ、IEEE 754 binary64の左畳みで`weightSum = (((0 + w0) + w1) + ...)`を求める。加算の再関連付け、並列Reduction、FMAによる式変更をCommit用結果では禁止し、各入力と各中間和がfinite、最終`weightSum > 0`、親Rigidbody質量がfiniteかつ正であることを必須とする。各Convexの配分質量は`assignedMass_i = parentMass * (weight_i / weightSum)`とする。Weight 0のConvexは衝突形状として保持できるが質量・慣性項へ寄与せず、全Weight 0、非有限、加算overflowではFinal分裂Commitを禁止して現有効物理状態を維持する。
+- 切断前の各Physics Convexはbinary64でfiniteかつ0以上の`PhysicsConvexMassWeight`を持つ。同じSource Final Physics OwnerのConvexを`LogicalConvexFragmentLocalId`昇順へ並べ、IEEE 754 binary64の左畳みで`weightSum = (((0 + w0) + w1) + ...)`を求める。加算の再関連付け、並列Reduction、FMAによる式変更をCommit用結果では禁止し、各入力と各中間和がfinite、最終`weightSum > 0`、親Rigidbody質量がfiniteかつ正であることを必須とする。各Convexの配分質量は`assignedMass_i = parentMass * (weight_i / weightSum)`とする。Weight 0のConvexは衝突形状として保持できるが質量・慣性項へ寄与せず、全Weight 0、非有限、加算overflowではFinal分裂Commitせず7.1のAbortへ進む。
 
-- Provisional Actorの一時質量は、Cap Bounds等で既に必要な現在Source Actorの保守的OBBと今回のCut Planeだけを使う固定長切断から求める。OBB正負側のfiniteかつ非負な近似体積を`V+`／`V-`とし、両側にDirect Childが存在して`V+ + V-`がfiniteかつ正なら`M+ = budgetMass * (V+ / (V+ + V-))`、`M- = budgetMass - M+`の固定順でSide Budgetを作る。OBB体積が全0、非finite、または演算不能なら存在する正負Sideへ等分し、片側だけなら全量をその側へ残す。同一Sideには最大1物理子だけを作り、そのSide Budgetを割り当てる。蓄積全Cut PlaneでOBBを再clipせず、連続切断は現在ChildのCanonical Mass Budgetと現在OBBへこの一段処理を繰り返す。正でないChild mass、非finite、underflowで有効質量を作れない場合はProvisional分裂せず単一Group Fallbackへ送る。
+- Provisional Actorの一時質量は、現在Source Actorの保守的OBBと今回のCut Planeの固定長切断から求める。OBB正負側のfiniteかつ非負な近似体積をV+／V-とし、和がfiniteかつ正なら`M+ = budgetMass * (V+ / (V+ + V-))`、`M- = budgetMass - M+`の順でSide Budgetを作る。OBB体積が全0、非finite、または演算不能なら正負へ等分する。各Sideの予定物理子にそのBudgetを割り当てる。蓄積全Cut PlaneでOBBを再clipせず、現在SourceのCanonical Mass BudgetとOBBだけを使う。いずれかの子にfiniteな正質量を成立させられなければ7.1のAbortへ進む。
 
-- Provisional center of massはclip済みOBBの近似重心、inertiaはその保守的OBB／AABB箱慣性を割当質量で求め、近似が非finiteなら直前Actor inertiaを`provisionalMass / sourceMass`でscaleする。これらは短命なSolver用近似であり、Gameplay上の質量正本または次世代の`PhysicsConvexMassWeight`入力に使用しない。別途immutableな`CanonicalMassBudget`として切断直前の正規親質量とWeight系譜を保持し、Final Commitは必ずそこから本節の正規計算を行う。連続Provisional切断では現在Childへ割り当てたCanonical Mass Budgetをさらに分割し、一時Actor massから正本を作り直さない。
+- Provisional center of massはclip済みOBBの近似重心、inertiaはその保守的OBB／AABB箱慣性を割当質量で求め、近似が非finiteなら直前Actor inertiaを`provisionalMass / sourceMass`でscaleする。これらは短命なSolver用近似であり、Gameplay上の質量正本または次世代の`PhysicsConvexMassWeight`入力に使用しない。別途immutableな`CanonicalMassBudget`として切断直前の正規親質量とWeight系譜を保持し、Final Commitは必ずそこから本節の正規計算を行う。次の切断はFinal公開済みの子を入力とし、一時Actor massから正本を作り直さない。
 
 - Compound Convex同士が重なっていても生のConvex体積を単純加算して親質量を決めず、重複領域を二重計上しない。Weightは接触Geometryの体積そのものではなく、親の質量を保存しながら各Convexへ割り当てる物理近似Metadataである。
 
 - 切断後はRigidbodyの動的／固定予定にかかわらず、各物理Commit対象Fragmentが所有するConvexだけを同じLocal ID順とbinary64左畳みで再集計し、`fragmentWeightSum`がfiniteかつ正であることを原子的Commitの必須条件とする。Weight 0のConvexを複数保持できるのは、同じFragment内に正のWeightを持つConvexが1個以上ある場合だけである。
 
-- `fragmentWeightSum == 0`の子には質量0のRigidbody／任意の最小質量を生成せず、共用Geometryを消去しない。Weight不成立を片側空へ読み替えず、単一FragmentGroupまたは有効なProvisional Actor集合を正式採用してGeometryをその現在構成へ追従させる。部分的なFinal Rigidbody／Collider Commitや実装固有の質量再配分を行わない。
+- `fragmentWeightSum == 0`の子には質量0のRigidbody／任意の最小質量を生成しない。Weight不成立を正常な片側空へ読み替えず7.1のAbortへ進み、部分的なFinal Commitや質量再配分を行わない。
 
 - 非交差ConvexのWeightは所属する子Fragmentへそのまま継承する。交差Convexは、そのConvexに割り当て済みのWeightだけを正負の採用出力Convexの有効体積比で分け、内接削減した側は削減後の体積を使う。体積比は`positiveVolume / (positiveVolume + negativeVolume)`とその補数を、正側、負側の固定順binary64加算から求め、両体積がfiniteかつProfileの`epsVolume`より大きいことを要求する。複数世代の切断でも子孫Weightの合計を親Weightと一致させ、最終的な全物理Fragmentの質量合計を切断直前Rigidbodyの質量と一致させる。非有限体積、体積和0、演算overflow、許容誤差外の質量不一致では正確経路をCommitしない。
 
-- 出力の片側体積が`epsVolume`以下なら、その側へ質量0／任意最小質量のRigidbodyを作らず、共用Geometryも消去しない。正当なWeight配分を成立させられない場合は現有効物理状態を正式採用し、極小体積除算や恣意的な質量移送を行わない。
+- 分割出力の片側体積が`epsVolume`以下、または正当なWeight配分を成立させられない場合は7.1のAbortへ進む。極小体積除算、任意最小質量、恣意的な質量移送で補わない。
 
 - 各出力Convexは内接削減後の採用形状からbinary64で`convexVolume`、局所重心、密度1の局所慣性`I_unitDensity`を計算する。正のWeightを持つConvexでは`convexVolume > epsVolume`を必須とし、`densityScale = assignedMass / convexVolume`、`I_assigned = I_unitDensity * densityScale`で割当質量へ変換する。`I_unitDensity * assignedMass`とはしない。1つの物理Fragmentを構成する全ConvexをLocal ID順の質量加重平均と平行軸の定理で合成して`centerOfMass`と慣性テンソルを得る。重なったConvexの重心・慣性もWeight付きCompound近似として受理し、厳密なUnion Solidの質量特性とはみなさない。
 
 - 専用Physics Convexを持たない表示部分には独立質量を作らず、7.6に従って既存の物理所有者へ所属させる。表示部分の数を理由に質量を増減せず、極小Rigidbodyや質量移送を発生させない。
 
-- Final質量特性の品質低下順は、`Convex多面体の正確な局所積分 -> ConvexごとのOBB箱慣性のWeight付き合成 -> Fragment全体OBB／AABB箱慣性`とする。Weight和0／非finite、親質量不正はGeometry近似では修復せず、現有効な単一FragmentGroupまたはProvisional Actor集合を維持する。正のWeightを持つConvexの体積不正または局所慣性不正だけをOBB以下へFallbackできる。下位経路でも同じassignedMass、親質量保存、finite、正の主慣性、決定的な軸規約を必須とし、同期Render Mesh積分やStrict Solid生成へFallbackしない。どの段階も成立しなければ現物理を正式採用してTraceし、受付済み操作を不要な再試行待ちへ残さない。
+- Final質量特性の品質低下順は、`Convex多面体の正確な局所積分 -> ConvexごとのOBB箱慣性のWeight付き合成 -> Fragment全体OBB／AABB箱慣性`とする。Weight和0／非finite、親質量不正はGeometry近似では修復せず、7.1のAbortへ進む。正のWeightを持つConvexの体積不正または局所慣性不正だけをOBB以下へFallbackできる。下位経路でも同じassignedMass、親質量保存、finite、正の主慣性、決定的な軸規約を必須とし、同期Render Mesh積分やStrict Solid生成へFallbackしない。どの段階も成立しなければ7.1のAbortへ進む。
 
-- Parent ActorからProvisional Actorを初めて作る時だけ、速度継承の正本点を`FragmentRenderAnchor`とする。Source ActorのCOM線速度から`v_anchor = v_sourceCOM + omega_source x (anchor - COM_source)`を求め、`v_provisionalCOM = v_anchor + omega_source x (COM_provisional - anchor)`、`omega_provisional = omega_source`を設定し、切断命中時の表示Fragment poseとAnchor点速度を連続させる。単一Group FallbackからFinalへ初分裂する場合も同じ初回分裂式を使用する。質量変更前後の運動量、角運動量、運動エネルギー保存は要求しない。
+- Parent ActorからProvisional Actorを初めて作る時だけ、速度継承の正本点を`FragmentRenderAnchor`とする。Source ActorのCOM線速度から`v_anchor = v_sourceCOM + omega_source x (anchor - COM_source)`を求め、`v_provisionalCOM = v_anchor + omega_source x (COM_provisional - anchor)`、`omega_provisional = omega_source`を設定し、切断命中時の表示Fragment poseとAnchor点速度を連続させる。Provisionalを省略して直接Finalへ分裂する場合も同じ初回分裂式を使用する。質量変更前後の運動量、角運動量、運動エネルギー保存は要求しない。
 
-- ProvisionalからFinal Colliderへのhandoffでは物理Actorを正本とし、ActorのWorld pose、COM線速度、角速度をそのまま維持して、Final Shape、center of mass、inertiaだけを同一Actorへ置換する。Render Anchorを維持するためのActor pose補正や、新COMに合わせた線速度変換を行わない。Final Geometryは各Source Provisional Shapeの切断結果として同じFragment Physics Frameに保持し、由来Convexのhalf-space内に`FinalContainmentEpsilon`付きで収まることをCommit前に検証する。証明不能、許容外への張り出し、local frame不一致ではFinal Shapeを公開せず、利用可能な既存の物理表現を正式採用して終端する。19.5.1の採用Local Plane由来のFinalでもこの包含／local frame検証を省略せず、命中時Snapshotまたは予測Pose／速度へActorを戻さない。これによりFinal Collider自体を瞬間移動させて外界へ再penetrationさせる経路を作らない。表示GeometryはActorへ従属し、local origin／frame差によりFinal Commit時に瞬間的な位置・姿勢差が出ても許容する。分離ImpulseはProvisional生成時に一度だけ加え、Final Commitで重ねて再適用しない。単一GroupからFinalへ初分裂する場合だけCommit時に小さな分離Impulseを加える。Final Shape交換直後のSibling pairは既存の一時衝突抑止を使用できるが、外界とのGhost Contact履歴を理由にpose／velocityを巻き戻さない。
+- ProvisionalからFinal Colliderへのhandoffでは物理Actorを正本とし、ActorのWorld pose、COM線速度、角速度をそのまま維持して、Final Shape、center of mass、inertiaだけを同一Actorへ置換する。Render Anchorを維持するためのActor pose補正や、新COMに合わせた線速度変換を行わない。Final Geometryは各Source Provisional Shapeの切断結果として同じFragment Physics Frameに保持し、由来Convex内に収まり、分割したものは採用面のhalf-space内にも`FinalContainmentEpsilon`付きで収まることをCommit前に検証する。証明不能、許容外への張り出し、local frame不一致ではFinal Shapeを公開せず、7.1のAbortへ進む。19.5.1の採用Local Plane由来のFinalでもこの包含／local frame検証を省略せず、命中時Snapshotまたは予測Pose／速度へActorを戻さない。これによりFinal Collider自体を瞬間移動させて外界へ再penetrationさせる経路を作らない。表示GeometryはActorへ従属し、local origin／frame差によりFinal Commit時に瞬間的な位置・姿勢差が出ても許容する。分離ImpulseはProvisional生成時に一度だけ加え、Final Commitで重ねて再適用しない。Provisionalを省略して直接Finalへ分裂する場合だけCommit時に小さな分離Impulseを加える。Final Shape交換直後のSibling pairは既存の一時衝突抑止を使用できるが、外界とのGhost Contact履歴を理由にpose／velocityを巻き戻さない。
 
 - Final handoffはSource Logical Convex CellのAnchor local位置と所属系譜を同じ子Cellへ引き継ぎ、Collider頂点・Shape共有・再cookからAnchorを再構築しない。物理固定は採用側が継承したAnchorの有無で決め、固定側のOffset／Impulseは0とする。
 
@@ -657,15 +656,15 @@ ColliderのBake／cookingは即切断表示開始と初回仮運動のクリテ�
 | 現在採用Hull外にだけ存在する表示GeometryへのSlashWave Segmentは実Hitにならず、切れない | No-op専用Hull、表示Geometryでの二次受付判定、失われた当たり範囲の再生成 |
 | 子への質量配分・重心・慣性が削減前の正確な切断結果と異なる | 削減前の質量特性を別正本とする補正。親質量保存は維持する |
 
-初期方式の小さいΔVの優先は局所順位であり、見た目・接触・最終体積損失の最適性を保証しない。本節の不変条件を満たす削除順の変更により、採用形状・体積損失・接触・質量配分が初期方式と異なることを人間判断で許容する。同じ実装・入力条件での決定性は維持するが、実装変更をまたぐ同一形状は保証しない。保証は本上限対策で形状を外へ膨らませないことであり、あらゆる運動変化やpenetrationの完全防止ではない。表示Geometryの簡略化・削除、不正な閉性・凸性、非finite、正体積不成立、世代不一致の公開を許容しない。Actor pose／物理frame、Final包含、支持・資源寿命の既存契約は維持する。
+初期方式の小さいΔVの優先は局所順位であり、見た目・接触・最終体積損失の最適性を保証しない。本節の不変条件を満たす削除順の変更により、採用形状・体積損失・接触・質量配分が初期方式と異なることを人間判断で許容する。同じ実装・入力条件での決定性は維持するが、実装変更をまたぐ同一形状は保証しない。保証は本上限対策で形状を外へ膨らませないことであり、あらゆる運動変化やpenetrationの完全防止ではない。内接削減による表示Geometryの簡略化・削除、不正な閉性・凸性、非finite、正体積不成立、世代不一致の公開を許容しない。Actor pose／物理frame、Final包含、支持・資源寿命の既存契約は維持する。
 
 7.9の追加分割は本節のConvex Kernel、Weight・質量、初回物理分裂の速度継承を再利用するが、命中・Pending・Provisionalを経由せず、攻撃／分離ImpulseとOffsetを加えない。本節の通常切断用の分離Impulse規則を任意分割へ適用しない。
 
 #### 7.2.1 通常切断の正負二集合と非Union
 
-一つの論理切断対象の共用Geometryと採用Convex集合へ同じ採用面を適用し、正負の面集合とConvex集合を作る。各側最大1の論理子・物理所有者へまとめ、正常な確定物理出力は合計1または2とする。この1／2はCompoundのConvex数、閉Shell・Contour・Cap数の上限ではなく、既存の容量条件は維持する。複数世代の系譜やScene全体のActor数を2個に制限しない。同Sideの離れた島を連結成分列挙で物体化せず、Geometry／Convexを離れたまま同じ所有者へ所属させる。全GeometryのHull、Union、隙間を埋める形状やJointを作らない。
+一つの論理切断対象の共用GeometryとSource Final Physics Convex集合へ同じ採用面を適用する。受付・分割対象の選別は7.6に従い、正常成功は正負各1のFinal Physics OwnerとLogicalFragment、合計2子とする。これはConvex数、閉Shell・Contour・Cap数やScene全体のActor数の上限ではない。同Sideの離れた島は列挙して物体化せず、同じ所有者へ所属させる。全GeometryのHull、Union、隙間を埋める形状やJointを作らない。
 
-LogicalFragmentは連結成分ではなく正負集合と再切断範囲を表す。共有Unity Rigidbodyを理由に指定された論理対象以外の全Siblingへ後続切断を広げず、祖先全体を切り直さない。Operation公開前の受付制限と、公開後のCPU子Geometryによる再切断は4.2に従う。
+LogicalFragmentは連結成分ではなく正負集合と再切断範囲を表す。他のSiblingや祖先全体へ切断対象を広げない。Operation公開後はGeometry未完了でも子を受付け、後続Kernelは直前祖先Geometry Commitを待つ（4.2／4.5.6）。
 
 同Sideの島は相対姿勢・運動を共有し、一部への接触や外力が離れた部分へ作用すること、Anchorと同じ所有者に属する部品の空中浮遊、疎な集合のBounds拡大と同じ論理対象内の離れた部分への同一平面切断を許容する。部品間の接着意図は保持せず、後の追加分割で独立してよい。島ごとの独立化は7.9の任意処理だけとし、分割不能・未検出・未実装のままでも通常切断は完成する。遅れて分離した結果を最初から独立していた場合の軌道へ補償しない。Actor数の削減に比例してShape・Broadphase・Solver費用が減る保証はなく、効果は既存Profilerで測定する。
 
@@ -673,7 +672,7 @@ LogicalFragmentは連結成分ではなく正負集合と再切断範囲を表�
 
 - 正負の別Rigidbody間でCollider overlapが大Impulseを生じる場合は、同一Cut Operation由来Sibling間だけ既存の一時衝突抑止を使用できる。外界接触を維持し、既存の相対分離閾値・Timeoutで再有効化する。安全に戻せなければ抑止を維持してTraceし、物理終端を理由に必要な抑止を強制解除しない。
 
-- 検証済み左右ConvexをWritable MeshDataへ出力し、Main ThreadでUnity Meshへ適用する。そのMesh ID列をIJobParallelForへ渡し、Physics.BakeMesh(meshId, true, cookingOptions)を背景実行する。同じMeshを複数Jobから同時にBakeしない。完了後にSlashId、ObjectGeneration、入力Physics世代、Cooking Profileを照合し、安全な物理境界で有効な成果物だけ適用する。Schedule済みの古い成果物は完了後に回収する。7.9の非命中処理は同じKernelを使うが架空CutOperationを作らない。
+- 検証済み左右ConvexをWritable MeshDataへ出力し、Main ThreadでUnity Meshへ適用する。そのMesh ID列をIJobParallelForへ渡し、Physics.BakeMesh(meshId, true, cookingOptions)を背景実行する。同じMeshを複数Jobから同時にBakeしない。完了後にSlashId、入力PhysicsとCooking Profile、および8章の対象authorityを照合し、安全な物理境界で有効な成果物だけ適用する。Schedule済みの古い成果物は完了後に回収する。7.9の非命中処理は同じKernelを使うが架空CutOperationを作らない。
 
 #### 7.2.2 建物由来子のWorld D6と製品Jointスコープ
 
@@ -690,11 +689,11 @@ LogicalFragmentは連結成分ではなく正負集合と再切断範囲を表�
 
 建物由来をRuntimeのBounds、名前、Material等から推測しない。建物Metadataの製品生成はPhase 5.5へ置き、Phase 4.3では手書きSynthetic入力を使う。
 
-通常切断と7.9の追加分割は、`IsBuildingDerived=true`の場合だけ、Provisionalを含む実際の1→2物理所有者の原子的公開時に一度だけ、両子のDepthを親から1段進める。非建物の系譜は`IsBuildingDerived=false`とDepth 0を維持する。Depthは非負とし、整数型とwrapを避ける飽和方法は実装詳細へ置く。再採番・専用枯渇状態は設けない。正常な1物体結果、受付前No-op、Stable Unsplit、未公開候補の不成立・世代失効では進めない。Provisionalを2 Actorで公開した後にFinalが片側空となる場合や、既存Provisionalを正式採用する場合も、公開済みDepthを再加算・巻戻ししない。Final handoff、COM／inertia更新、Fast Simulation Upgrade、単なるActor内部更新は新しい分裂に数えず、存続するActorのD6基準姿勢・Limitをリセットしない。
+通常切断では`IsBuildingDerived=true`の場合だけ、Provisional構築前（省略時はFinal構築前）に予定子Depthを飽和する親Depth＋1で求め、必要なBuilding World D6へ使用する。Final Physics／Logical Publication時に同じ値を正負の正式子へ公開し、Abortでは公開しない。非建物はfalse／0を維持する。Depthは非負とし、整数型と飽和方法は実装詳細へ置く。7.9の追加分割も同じ予定値で構築し、成功公開時だけ子へ継承する。No-op、不採用、Staleでは更新しない。Final handoff、COM／inertia更新、Fast Simulation Upgradeで再加算、存続D6再生成、基準姿勢・anchor・Limitのリセットをしない。
 
 **適用と設定**
 
-D6生成対象は、`IsBuildingDerived=true`かつ点Anchorなしの動的所有者で、成功した1→2物理分裂の新しい子だけとする。点Anchorが一つでもある子はStaticまたはKinematicとし、建物D6を付けない。初期建物そのものへのD6追加は必須範囲に含めない。
+D6生成対象は、`IsBuildingDerived=true`かつ点Anchorなしの動的所有者で、1→2物理分裂の予定子（Provisionalを含む）だけとする。点Anchorが一つでもある子はStaticまたはKinematicとし、建物D6を付けない。初期建物そのものへのD6追加は必須範囲に含めない。
 
 基準位置・回転は子Actorを公開する物理境界でのWorld poseとし、生成直後の相対並進・相対回転が0となるようActor側／World側AnchorとJoint frameを構成する。予測姿勢・命中Snapshot・祖先姿勢へ巻き戻さない。World Y方向の並進はFree、水平2軸の並進と全3軸の回転はLimitedとし、水平2軸には同一距離Limit、全回転軸には生成時姿勢に対する同一の対称角度Limitを使う。
 
@@ -707,9 +706,9 @@ D6生成対象は、`IsBuildingDerived=true`かつ点Anchorなしの動的所有
 | `ProvisionalSeparationConstraint` | 正負Sibling | Provisional期間の旧Convex共有中の再侵入抑止 |
 | `BuildingWorldD6Constraint` | World | 当該Actor寿命にわたる水平移動・回転のbest-effort制限 |
 
-両者は統合しない。通常切断ではProvisional子、Provisionalを経由しなければ初めて1→2公開するFinal子の公開前構築へ必要D6を含める。成功したD6はFinal handoff／Upgradeで作り直さない。再分裂では親D6を付け替え・複製せず、新しい動的子ごとに現在World poseを基準として生成し、親D6は親Actorと同じ既存物理Step・参照寿命後に一度だけ退役する。1物体結果の不要Actorや物理GC対象も同じ所有資源寿命に従う。専用Lease、Constraint世代、親子参照表を追加しない。
+両者は統合しない。通常切断ではProvisional子、Provisionalを経由しなければ初めて1→2公開するFinal子の公開前構築へ必要D6を含める。成功したD6はFinal handoff／Upgradeで作り直さない。再分裂では親D6を付け替え・複製せず、新しい動的子ごとに現在World poseを基準として生成し、親D6は親Actorと同じ既存物理Step・参照寿命後に一度だけ退役する。Abort・退役や物理GCの対象も同じ所有資源寿命に従う。専用Lease、Constraint世代、親子参照表を追加しない。
 
-必要D6は既存Constraint容量とActor／Shapeの原子的構築へ含め、D6なしの対象子を成功扱い・部分公開しない。設定・生成・公開を成立させられない場合は既存のConstraint容量／生成・原子的構築不能規則で現在有効な物理を維持する。一時的な実行枠不足は既存Pending、要求構成を成立させられない場合は既存物理の正式採用へ進む。7.9の任意分割では候補全体を不採用とし、親Actor・Depth・D6を変更しない。専用状態、Fallback Reason、Retry Queue、代替Constraintを設けない。
+必要D6は既存Constraint容量とActor／Shapeのall-or-none構築へ含め、D6なしの対象子を成功扱いしない。通常切断の必要入力・実行・物理Step待ちは7.1のPending、構築不能はAbortへ送る。7.9の任意分割では候補全体を不採用とし、親Actor・Depth・D6を変更しない。専用状態、Reason、Retry Queue、代替Constraintを設けない。
 
 **製品入力の限定**
 
@@ -719,7 +718,7 @@ D6生成対象は、`IsBuildingDerived=true`かつ点Anchorなしの動的所有
 
 **人間承認済みの許容とPhase境界**
 
-倒壊抑制が効かないこと、垂直方向の無制限移動、建物Root／Platformへ追従しないこと、独立したWorld基準と世代ごとの移動・回転の累積を許容する。小さいLimitでのjitter・drift・Solver未収束、接触・分離Impulse・Sibling抑止との競合、不自然な隙間・姿勢、penetration・接触Impulse・表示不連続もD6で防ぐ保証を置かない。動的建物子ごとのJoint数・Solver CPU・メモリ・生成退役費用の増加、一般Joint付き製品の除外、建物D6付き物体の初期未来予測対象外を許容する。拘束効果の監視・救済や性能SLAを追加せず、非finite・異常速度等の一般Fault、世代Commit、メモリ・資源寿命は維持する。
+倒壊抑制が効かないこと、垂直方向の無制限移動、建物Root／Platformへ追従しないこと、独立したWorld基準と世代ごとの移動・回転の累積を許容する。小さいLimitでのjitter・drift・Solver未収束、接触・分離Impulse・Sibling抑止との競合、不自然な隙間・姿勢、penetration・接触Impulse・表示不連続もD6で防ぐ保証を置かない。動的建物子ごとのJoint数・Solver CPU・メモリ・生成退役費用の増加、一般Joint付き製品の除外、建物D6付き物体の初期未来予測対象外を許容する。拘束効果の監視・救済や性能SLAを追加せず、7.1の既存境界から判明した異常、8章のauthority、メモリ・資源寿命に従う。
 
 Runtime本体と既知Constraintの識別境界は、ロードマップ上の独立Phase 4.3で通常切断へ接続する。Phase 4の汎用物理、4.1のGeometry／Cook Baseline、4.2のPlayer非接触を再オープンせず、4.50より前にT-094で完了する。製品Recipeは5.5、任意分割・GCへの統合は5.6／5.7で確認し、これらや未来予測本体を4.3の完了条件へ前倒ししない。
 
@@ -741,18 +740,18 @@ Player Body／Handとプロップ／破片のPhysX Layer接触を無効化し、
 
 ### 7.3 Collider Cooking Profile
 
-ランタイム生成するPhysics Proxyは、7.2の上限超過出力に対する内接削減を含む自前のConvexクリップと検証器でwatertight、面向き、凸性、退化三角形、重複頂点、極短辺、自己交差、頂点・面数上限を保証してからcookへ渡し、上限対策をCooker任せにしない。契約を満たしたMeshでは`EnableMeshCleaning`と`WeldColocatedVertices`を無効化する構成を有力候補とし、Unityへ重複作業をさせない。検証に失敗した入力を軽量ProfileのままBakeせず、利用可能な既存物理表現を正式採用して終端する。
+ランタイム生成するPhysics Proxyは、7.2の上限超過出力に対する内接削減を含む自前のConvexクリップと検証器でwatertight、面向き、凸性、退化三角形、重複頂点、極短辺、自己交差、頂点・面数上限を保証してからcookへ渡し、上限対策をCooker任せにしない。契約を満たしたMeshでは`EnableMeshCleaning`と`WeldColocatedVertices`を無効化する構成を有力候補とし、Unityへ重複作業をさせない。検証に失敗した入力を軽量ProfileのままBakeせず、通常切断では7.1のAbortへ進む。
 
-初回の物理分裂には原則Fast Cookを使い、`PendingPhysicsSplit`を早く終了させる。物理分裂後、余剰CPU時間に同一形状をFast Simulationで再Bakeし、価値のある破片だけを低優先度で昇格させる。両Profileの単独比較に加え、この二段階運用が総コストを下げるか実測する。
+初回の物理分裂には原則Fast Cookを使い、物理処理のPendingを早く終了させる。物理分裂後、余剰CPU時間に同一形状をFast Simulationで再Bakeし、価値のある破片だけを低優先度で昇格させる。両Profileの単独比較に加え、この二段階運用が総コストを下げるか実測する。
 
 | Profile | `MeshColliderCookingOptions`候補 | 目的 |
 | --- | --- | --- |
-| Fast Cook | `None` | 任意の追加工程を省き、Bake待ちキューと`PendingPhysicsSplit`滞留を短縮 |
+| Fast Cook | `None` | 任意の追加工程を省き、Bake待ちキューと物理処理のPending滞留を短縮 |
 | Fast Simulation | `CookForFasterSimulation` | 追加cookを許容し、完成後の破片衝突・Query負荷を低減 |
 
 Fast Simulationへの昇格候補は、長寿命、プレイヤー近傍、接触／Query頻度が高い、今後も動く見込みがある破片を優先する。遠距離またはSleep済みの破片はFast Cookのまま残してよい。Upgrade同時実行数、待ちキュー、二重Meshの一時メモリへ上限を設ける。
 
-使用中のFast Cook Meshを別Profileで再Bakeせず、同じ形状を持つ別のFast Simulation Meshを生成してバックグラウンドBakeする。成果物は`ObjectGeneration`を保持し、再切断などで世代が変わった場合は適用せず回収する。Bake完了後は物理ステップ境界で`cookingOptions`と`sharedMesh`を同時に切り替える。接触中は接触キャッシュ再構築やWakeによる跳ねを避けるため原則延期し、Sleep中または非接触時を優先する。安全な機会が来なければFast Cookを維持する。
+使用中のFast Cook Meshを別Profileで再Bakeせず、同じ形状を持つ別のFast Simulation Meshを生成してバックグラウンドBakeする。成果物は対象Final Ownerと入力Physicsの既存参照・世代を保持し、その所有構成が再切断等で変わった場合は8章に従い適用せず回収する。Bake完了後は物理ステップ境界で`cookingOptions`と`sharedMesh`を同時に切り替える。接触中は接触キャッシュ再構築やWakeによる跳ねを避けるため原則延期し、Sleep中または非接触時を優先する。安全な機会が来なければFast Cookを維持する。
 
 `None`はcook自体の省略ではない。`UseFastMidphase`はConvexでの効果を前提にせず、別測定で利益が確認された場合だけProfileへ加える。`Physics.BakeMesh`と適用先`MeshCollider.cookingOptions`には必ず同じProfileを設定し、Bake後にMesh形状を変更しない。同一Meshを複数Workerから同時にBakeしない。
 
@@ -895,43 +894,32 @@ Suite完了時は`<BenchmarkRunId>.manifest.json`と`<BenchmarkRunId>.result.jso
 
 各RunのManifestにある`DatasetCaseId`、Triangle／Edge／Cap／Fragment／Convex／Vertex／Primitive／Cut Plane／Batch Size軸を説明変数、対応ResultのSamples／Aggregateを目的変数として、保守的なP95／P99容量式を作る。Suite LoaderはManifest／Result／Indexをjoinした機械可読tableを生成でき、容量式の各行から元のSuite／Run／Dataset caseへ戻れるようにする。実行時Schedulerは後にこの式と実測キュー長からDeadlineまでの完了見込みを推定できるが、初期実装では係数を最適化に直結させず、Worker時間予算、Batch Size、同時Bake数を決める根拠として使用する。コード変更時も同一Dataset case系列を比較する。
 
-### 7.6 片側空判定と共用Geometryの物理所属
+### 7.6 robust supportによる受付と正負二Owner
 
-切断操作の登録・対象世代更新・即時表示・Provisional生成より前に、受付Snapshotで現在の論理切断対象に対応する採用Physics Convex集合を7.1と同じ平面分類へ渡す。この一回の分類結果をNo-op判定と受付後のProvisional Shape配分で共有し、同じSnapshot・面・epsilonの用途別分類を作らない。全頂点が明確に片側ならその側だけへ、横断・epsilon内・分類不能なら両側へ配分候補を置き、操作全体で一方の候補が0件の場合だけ片側空No-opとする。これは共用Geometryとの非交差証明ではなく切断の受付規則であり、表示Geometryの張り出しを面が通過しても片側空ならGeometryを切らない。7.2の内接削減で当たり範囲が縮み、表示だけの部分が切れなくなることも正式に許容し、二次受付判定や当たり範囲の復元を行わない。面と交差するConvexがないことと片側空を混同せず、出力Convex、交点、Cap、接続成分を生成して判定しない。
+切断受付入力はActive Transaction外のSource Final Physics Ownerが持つ現在Convex集合だけとする。Sourceの生存性とTransactionなしを先に確認し、受付Snapshot・採用面から各頂点のsigned distance dを一度求める。一つの有限・非負な距離epsilon eについて、d > +eをPositive support、d < -eをNegative support、-e <= d <= +eをNear-planeとする。等号・Near-planeはどちらのsupportにも数えず、集合全体に両supportがある場合だけ受付ける。非finite・分類不成立をNear-planeへ丸めず、既存入力Gate／内部エラー境界へ送る。
 
-No-opではLogicalCutOperation、論理子、CutBoundaryRecord、Pending Cutを作らず、ObjectGeneration、点Anchor、表示、Physics Proxy、運動、Constraint、既存所属を変更しない。即時clip／Stencil／仮Cap／Shadow近似、分離Offset／Impulse、Geometry／Convex切断、cook、Commitも起動しない。以前からある履歴・Pending仕事は維持し、省略した面を後から再生しない。命中観測と既存の非破壊通知は残せるが、No-op専用ID、履歴、Trace Eventは追加しない。
-
-物理Convex実装前のPhase 1～2だけは、共通入力Gateに合格したFixtureの低頂点1 Hullを同じ入口のPlaceholderとして使用できる。Phase 4以降は現在採用中のConvex集合とlocal poseに一本化し、No-op専用Bounds、代替Hull、その選択Mode・生成・更新・包含検証を製品経路へ残さない。候補検索、描画、Cap Bounds、質量近似、予測Gate等の他用途Boundsは変更しない。Provisional中や単一Group採用中も、その時点で物理へ使用しているConvex集合を入力とし、未完成の最終Convexを同期生成したりcookを待ったりしない。
-
-実命中では、先行成果物のReady状態にかかわらず同じ基底、採用面、現在入力Convex、local pose、epsilonと受付負荷からNo-op／受付を判断する。予測時の判定を再利用する実装はこれらの入力一致を確認し、不一致なら実命中時の現在入力で同じ分類を行う。受付後に有効な先行成果物と適用条件が揃えば直接確定でき、未完成なら同じ面の既存仮処理と後追い処理を使う。精密Convex処理で片側出力が空になっても入口のNo-opへ遡及せず、7.6の確定空規則で完了する。
-
-通常切断では、通常の形状・質量・cook・公開条件が成立した正負Convex集合の空／非空だけで、物理出力と非空Geometryの所属を決める。
-
-| 正側Convex集合 | 負側Convex集合 | 物理出力とGeometry所属 |
+| 各Convexのrobust support | Final切断・継承 | Provisional配分 |
 | --- | --- | --- |
-| 非空 | 非空 | 正負各1所有者。各側Geometryは同じ側へ所属 |
-| 非空 | 正常に空 | 正側1所有者。両側Geometryは正側へ所属 |
-| 正常に空 | 非空 | 負側1所有者。両側Geometryは負側へ所属 |
+| 正負両方 | 採用面d = 0で分割 | 両側 |
+| 正側だけ | 未切断で正側へ継承 | 正側 |
+| 負側だけ | 未切断で負側へ継承 | 負側 |
+| どちらもなし | 未切断でPositive側へ継承 | Positive側 |
 
-空はその側のConvex集合全体の正常な計算結果を指す。一つの元Convexの片側が空でも同Sideに他Convexがあれば非空である。cook失敗、不正Convex、Weight不成立、未計算を空とみなさず、既存の物理採否・回収を使う。全出力の消去を新しい正常結果にしない。
+同じdistanceとsupport分類を受付・Provisional配分・Convex分割可否へ共用する。分割対象B-repの実切断はd > 0／d < 0／d == 0で行い、eを実切断の正負分類、面offset、snap、Kerfへ流用しない。一方のrobust supportを欠くConvexはd = 0を横断していても未切断継承し、反対側へepsilon程度張り出す近似を許容する。点Anchor配分は7.1のCell規則を維持する。
 
-反対側へ付属してもGeometryの面集合、winding、切断Side、局所配置を反転・消去せず、追従先だけを対応付ける。専用Convex、包含・接触・被覆、表示単位のConvex対応や所属候補探索を要求しない。同じ所有者へ付く正負のIndex範囲はそのまま使用し、実Capと履歴を維持する。独立したGeometry所属不能、専用Convex生成、極小Rigidbody、表示消去、恣意的な質量移送を設けない。
+片側supportなしはNo-opであり、対象状態・世代・Anchor・表示・物理・既存履歴を変更せず、ID、Pending Cut、Transaction、切断／cook／Commit仕事を作らない。命中観測と非破壊通知は残せるが、要求を保存・再実行しない。接線・頂点／辺／Face接触だけ、反対側がepsilon以内だけ、全頂点Near-planeはNo-opとなる。別Convexが明確に正負へ分かれたCompoundは交差Convexなしでも受付け、Boundary 0の物理1→2を許容する。入力判定に出力Convex・Cap・連結成分や表示Geometryの二次判定を生成しない。
 
-採用集合は既存の世代・参照・物理構成の成立条件を満たすことを前提とし、不正な物理・参照をGeometry所属で救済しない。既存物理を正式採用した場合もその採用済み構成への追従として完了し、新しい所属探索や来ないFinal成功待ちを作らない。表示・Stencil・再切断は同じ所属・世代・frameを使用し、物理適用は表示転送を待たない。Actor pose／速度を表示都合で巻き戻さず、所属切替時の表示の位置・姿勢差は許容する。
+このmarginはcook成功を保証しない。受付後の片側Convex不成立、epsVolume以下、Weight／mass／inertia不成立、内接削減不能、cook・Anchor・必須D6・containment／frame不成立は7.1のAbortへ送る。正常成功は常に正負2 Final Ownerと2 LogicalFragmentで、Geometryは同Sideへ所属する。Geometry片側または両側が空でもPhysics子は残し、反対側へのGeometry付属、一子両Side、Merge／Alias、所有者共有を設けない。
 
-固定は7.1のCellが継承する点Anchorだけで決め、Geometryの反対側付属でAnchorを移送しない。質量・慣性は7.2の採用物理所有単位に適用し、独立物理が成立しなければ有効な既存構成を正式採用する。Collider、次回切断B-rep、Geometry追従先、資源所有権を一致させ、不要なProvisional参照は既存の安全な境界で退役する。物理終端は未完了のGeometry仕事の完了を意味しない。
-
-受付後の通常計算で、一方の共用GeometryとPhysics Convexがともに確定空なら、その側を正常な空出力として扱う。確定空は実Capと面積0 Triangleを含む面集合が0件であることを通常成果物から判断し、面積・体積0、投影上のつぶれ、Stencilの相殺・非描画、未計算、失敗を空の証拠にしない。空側のRenderer、Collider、Rigidbody、所属Fallback、ダミーGeometry、架空Cap、cook、消滅VFXを作らず、不要な仮処理を退役する。非空側と実在境界を5.6に従って確定し、Fragment、CutBoundaryRecord、`LogicalCutOperation`を原子的に公開する。非空側の必要なGeometry／Physics Commitと仮処理の退役を終えた後に受付済み切断を正常完了し、未完了件数を一度だけ除く。子1件または境界0件を許容し、受付前No-opへ戻さず、世代、過去の有効履歴、採用先の物理状態を巻き戻さない。
-
-共用Geometryが確定空でも有効なPhysics Convexが残る物理所有単位は、通常の物理条件、必要なcook、質量、支持を適用し、Rendererを持たない通常物体としてCommitする。空Renderer、ダミーMesh、専用物体種別、逆向きのGeometry―Convex対応、回収Metadataを作らない。Phase 5.5までは独立した遅延回収機構を実装せず、この物体は既存のObject／Level寿命まで物理作用と費用を持って存在できる。後続の任意の物理GCは7.9に従い、無効・延期・対象外なら同じ通常寿命まで残せる。GC予定を理由に本節の初回生成・必要なcookを省かない。
+Geometry空は実Cap・面積0 Triangleを含む面集合0件で判断し、未計算・失敗・体積0・Stencil非描画を空にしない。Geometry参照0件の子はRendererなしの通常物理対象であり、ダミーGeometry・Cap・消滅VFXを作らない。任意の7.9物理GCが未実装・対象外でも通常Object／Level寿命で維持する。Phase 1～3では15章のHarness合成Physics入力だけを使い、製品に代替Hull／Physics Modeを残さない。
 
 ### 7.7 切断受付上限
 
-受付済みでGeometry／Physics処理とCommitが未完了の切断に、既存容量設定の`MaxIncompleteCutOperationCount`を適用する。対象LogicalFragmentへの一回の受付済み切断を1件として全対象の合計を数え、実行待ち、実行中、依存待ち、Commit待ちを含める。子Geometry数、Convex数、Job数では多重計数せず、片側空No-op、受付見送り、Operation公開前の親／仮表示領域への後続要求、未命中の投機候補、任意のCollider Upgrade、7.9の任意分割・物理GCは数えない。
+既存容量設定のMaxIncompleteCutOperationCountは受付済みPending Cutを全対象合計で1件ずつ数える。Physics実行、Geometry依存待ち、Commit待ちを含め、Transaction、子、Job数を多重計数しない。Active Sourceへの見送り、No-op、未命中投機、Upgrade、7.9任意処理は数えない。
 
-Main Thread上の共通受付処理はPending Cut登録、対象世代更新、即時表示、Provisional生成より前に現在件数を検査し、上限未満の場合だけ受付と件数加算を同じ境界で行う。上限以上なら対象ごとに切断を見送り、対象状態、世代、表示、支持、物理、既存仕事を変更せず、新しい論理子、境界、LogicalCutOperation、Pending Cut、切断／cook／Commit仕事を作らない。同じ斬撃波の一部対象だけが切れることを許容し、見送った要求を保存、再実行、一括予約しない。
+Mainの受付処理は4.2のSource／Active確認と7.6のsupport判定の後、上限未満の場合だけPending登録と件数加算を一体で行う。満杯なら新規仕事や状態変更を行わず要求を保存・再実行しない。同じSlashの一部対象だけ切れることを許容する。
 
-受付済みの有効な切断はWorker時間、同時実行枠、cook枠、Queue満杯、締切超過だけでは取り消さず、既存Pending／DAGで実行可能になるまで保持する。表示CPU出力の完成だけでは件数を減らさず、現在の追従先・frame待ち、転送待ち、Geometry Commit待ちも既存Pending Cutと必要仕事を維持する。物理が先に完了すれば表示仕上げを待たず物理Commitし、表示の残工程を継続する。有効なCPU範囲の転送と現在の追従先・frameの公開条件が揃った場合は、4.5.6に従ってGeometryだけ先にCommitして対応Temporary描画を回収できるが、残る物理工程の受付情報と未完了件数を維持する。必要な表示・物理両工程の正常完了、または既存の物理終端・世代失効の規則に従う終端と安全な回収後にPending Cutを退役させ、件数を一度だけ減らす。共通Player終了は4章に従う。二重計数・二重減算、専用Scheduler、overflow Queue、待機用IDを追加しない。実キュー満杯時だけ4.4の切断Coordinator例外を使え、共用Geometryの内部エラーと4.5.4の容量不成立は4章へ送り、物理Faultと世代失効は負荷待ちと区別して既存規則で扱う。
+Physics TransactionはFinal／Logical Publicationで終了するがPendingは自分のGeometry CommitまたはBranch退役・Stale終端まで残り、一度だけ減算する。A Commit前にB／CのPhysicsとPendingが存在してよい。Queue／Bake枠／Step／期限待ちだけで取消さず、Geometry依存解消後のWorkだけを既存Dispatcherへ送る。Provisional構築を試みた後の不成立は待機へ戻さず7.1のAbortとする。終了後の遅延回収は件数・Transactionを延命せず既存所有責任へ渡す。新しい待機Queue、予約Protocol、Schedulerを作らない。
 
 `MaxIncompleteCutOperationCount`は0より大きい固定値として既存容量設定へ置き、独立Profile、動的最適化、ヒステリシス、全DAGの将来資源予約を追加しない。製品値はT-076／O-039の実測後に決め、それ以前は明示した保守的な試験値を使う。
 
@@ -953,10 +941,10 @@ Main Thread上の共通受付処理はPending Cut登録、対象世代更新、�
 
 #### 7.9.1 共通の対象と通常切断優先
 
-本節の物体は、一つの物理運動・所有単位と、そのConvex、共用Geometry、関連するLogicalFragment集合を指す。初期処理単位は原則1 Actor相当とし、複数Actorを含み得るFragmentGroupや同じObjectIdの全Siblingを無条件に一括対象にしない。開始・適用時の両方で次を確認する。
+本節の物体は、一つの生存LogicalFragmentと、それが専有するFinal Physics Owner、Convex、共用Geometryを指す。同じObjectIdの全Siblingを一括対象にせず、開始・適用時の両方で次を確認する。
 
 - 表示／Stencil共用GeometryとPhysics Proxyが確定し、所属・frame・参照が有効である。LogicalCutOperation公開済み、またはGeometryだけCommittedでは足りない。
-- 当該構成を変更する受付済み切断、未完了祖先制約、Anchor配分、Provisional引渡しがなく、通常の物理状態を採用している。Fault Frozenの復旧を本節へ委ねない。
+- Active PhysicsSplitTransaction、未完了祖先制約、Anchor配分やProvisional引渡しがなく、通常のFinal Physicsを採用している。
 - 計算用の不変な局所Geometryと現在の物理frameへの写像を保持でき、形状・scale・所属・支持の変化を既存の世代／前提照合で検出できる。共通の剛体並進・回転だけで静止を要求せず、適用は現在pose／速度へ接続する。
 
 Collider Upgrade等と所有構成を同時に書き換える対象は初期は見送ってよい。読み取り専用の予測Jobだけを理由に永久に対象外にはせず、7.9.4の失効・資源寿命で扱う。条件確認不能なら元物体を残し、判定修復や専用待機状態を作らない。
@@ -969,7 +957,7 @@ Collider Upgrade等と所有構成を同時に書き換える対象は初期は�
 
 初期方式は固定された対象局所frameの一枚の平面で、現在の共用面集合を横切らず正負の非空集合へ配分する。大きなIndex範囲も内部をTriangle単位等で調べ、既存数値許容内で欠落・重複なく配分できることを確認する。既存Boundsが使える箇所は使うが、通常切断へ全島列挙を前倒ししない。探索は有限の試行・作業量で打ち切り、GJK、全組合せ、最良平面、完全分離を要求しない。候補なし・確認不能は7.9.5へ送る。
 
-既存の表面・実Cap・面積0 Triangleを属性・winding・Topologyを保って配分し、新しい表示切断面やCapを生成しない。分割先別の新Index領域へ振り分けコピーし、必要範囲を転送する。比較ソートは必須でなく、Countと正負への書出しでよい。既存Vertexを参照し、全頂点複製、表示専用第二Index正本、全プールコンパクションは要求しない。新旧Indexの一時共存を許容し、旧範囲はJob・GPU・共有読者寿命後にFreeする。この処理を通常切断へ戻さない。
+既存の表面・実Cap・面積0 Triangleを属性・winding・Topologyを保って配分し、新しい表示切断面やCapを生成しない。分割先別の新Index領域へ振り分けコピーし、必要範囲を転送する。比較ソートは必須でなく、Countと正負への書出しでよい。既存Vertexを参照し、全頂点複製、表示専用第二Index正本、全プールコンパクションは要求しない。新旧Indexの一時共存を許容し、旧CPU範囲は4.5.3のCPU正本参照・Job・転送元読者寿命後に再利用する。この処理を通常切断へ戻さない。
 
 現在採用中のPhysics Convex B-repを同じ平面で分類し、非交差ConvexはB-rep・再利用可能なcook済み資源・Weightを継承する。交差Convexだけ7.2のclip、検証、質量計算、必要なcookを行い、共用Geometry全体の凸包再構築、Convex Union、未切断Shapeを両側へ複製するProvisionalを作らない。表示Geometryの対応有無にかかわらず全採用Convexを切断子または非交差継承として配分する。片側有効Convexなし、正質量不成立、実cook・検証不成立、資源・構成の成立不能では候補全体を不採用とし、元物体を残す。一時的な枠不足は7.9.5と区別する。
 
@@ -983,17 +971,17 @@ Anchor配分と通常の物理条件を成立させて公開する。建物由�
 
 現在のLogicalFragment／Cell表現で、各Geometry範囲の再切断対象・frame・支持・物理所有者を一意にする。必要な通常IDと子配分情報は既存の発行・系譜規則で作り、過去IDの再利用、過去Operationの直接子・作成時世代の書換えはしない。既存の切断履歴・実在境界を維持し、現在世代への対応を原子的に更新する。新しいGameplay Cut Plane、CutBoundary、SlashHitConfirmed、LogicalCutOperationは作らず、対応を安全に構築できない候補は見送る。
 
-公開後は専用分割片ではなく通常の切断対象とし、現在の共用Geometry・Convex・Anchor集合から再切断する。旧Actor・そのシステム所有Constraintと不要Shape／Mesh参照は7.9.4に従って退役する。公開後の実Faultは既存の安全規則へ従い、任意候補専用rollbackを追加しない。
+公開後は専用分割片ではなく通常の切断対象とし、現在の共用Geometry・Convex・Anchor集合から再切断する。旧Actor・そのシステム所有Constraintと不要Shape／Mesh参照は7.9.4に従って退役する。公開後の継続不能な個別物理異常は7.1のLogicalFragment退役へ従い、任意候補専用rollbackを追加しない。
 
 #### 7.9.3 表示なし物理物体の遅延回収
 
 物理GCはManaged GCや全参照追跡型GCではなく、共用Geometryが確定空の生存物理所有単位を終了するゲーム上の寿命Policyである。7.9.1を満たし、所属する共用Geometry全体の面集合が0件で、有効な非空Physics Convexを持つ対象だけを候補とする。実Cap・面積0 Triangle・全Renderer／submesh相当範囲を含め、画面外、遮蔽、Renderer無効、Stencil相殺・非描画、体積0、未完成・失敗を空の証拠にしない。
 
-一面でも共用Geometryが残る物体は回収せず、個別Convexを間引かない。Geometry／Convexとも確定空の通常出力と仮Actor・一時資源は従来の回収へ送る。対象自身の建物D6はActorと同じ寿命で退役する。Anchorなしだけを回収許可にしない。
+一面でも共用Geometryが残る物体は回収せず、個別Convexを間引かない。仮Actor・未公開一時資源は7.1の回収へ送る。対象自身の建物D6はActorと同じ寿命で退役する。Anchorなしだけを回収許可にしない。
 
 通常の外界接触や移動だけでは回収を禁止しない。当たり判定消失による周辺物体の運動変化を許容し、接触中の完全無影響証明、Sleep必須、過去Impulseの取消を要求しない。開始・適用時の候補条件が一致する場合だけ、安全な物理境界で当該所有単位とそのLogicalFragmentの生存・受付、Physics Scene、動的な所属Query等の登録を終了する。Level初期化時の固定PlayerLocomotionOccupancyは対象Objectの退役で変更しない。同じObjectId・祖先履歴を持つ無関係Siblingは削除しない。
 
-生存中の通常物体を丸ごと終了する接続は今回の追加責務とし、汎用破壊システムが既存とは仮定しない。登録解除・Actor／Shape／システム所有Constraint退役・後着成果物不採用を既存担当へ結び、資源は7.9.4の寿命に従う。回収対象の質量は世界から除去し、Siblingへの移送・再正規化をしない。分割の親質量保存と寿命終了を区別する。
+生存LogicalFragmentを終了する低レベル処理はPhase 4の7.1を再利用し、本節は表示なし物体を選ぶ遅延Policyだけを追加する。質量は世界から除去し、Siblingへの移送・再正規化をしない。正常分割時の親質量保存と退役時の質量消失を区別する。
 
 候補検出は既存物体一覧の有限件数巡回と確定Geometry件数等でよい。毎Frame全Mesh走査、逆被覆対応表、専用Asset前処理、VFXは追加しない。巡回順・頻度の高度な最適化や回収期限を初期要求にしない。
 
@@ -1001,7 +989,7 @@ Anchor配分と通常の物理条件を成立させて公開する。建物由�
 
 本節の所有構成変更・退役だけは、命中を伴わない公開を許可する。候補は既存Task／WorkTokenと成果物所有者、対象のObject・Geometry・Physics・Anchorの必要な世代・構成参照で識別する。準備・見送り・不採用だけではObjectGenerationを進めず、同じ基底の通常予測を失効させない。
 
-追加分割の公開では対象の既存ObjectGenerationと実際に変更するPhysics等の既存世代を同じ境界で進める。GCは退役を既存の生存性／世代付き参照へ反映する。いずれも旧所有構成への予測・Upgrade・後着成果物を適用しない。履歴ID・作成時世代を書き換えず、世代wrap・ID再利用・別対象への古い適用を許さない。世代を共有する範囲の他の受付済み必須切断まで失効する場合は任意Commitを見送り、新しい世代軸や広域lockで解決しない。
+追加分割の公開では対象の既存ObjectGenerationと実際に変更するPhysics等の既存世代を同じ境界で進める。GCは退役を既存の生存性／世代付き参照へ反映する。いずれも旧所有構成への予測・Upgrade・後着成果物を適用しない。履歴ID・作成時世代を書き換えず、世代wrap・ID再利用・別対象への古い適用を許さない。通常Transaction／Geometryの照合は8章に従い、別LogicalFragmentのObjectGeneration更新だけでは失効させない。
 
 通常切断の実Hit・受付・採否条件は緩めず、本節の仕事へPending Cutを作らず、MaxIncompleteCutOperationCountにも数えない。通常切断が先に受理されたら任意成果物を不採用にし、任意変更が先に公開済みなら以後の切断は更新後の対象へ適用する。中間の曖昧な受付対象を公開しない。
 
@@ -1070,33 +1058,15 @@ Anchor配分と通常の物理条件を成立させて公開する。建物由�
 
 ## 8. 世代管理と非同期制御
 
-各SlashはGestureのLatch時に単調増加する`SlashGeneration`を持つ。各切断対象は確定状態を示す`ObjectGeneration`を持ち、通常切断では`SlashWave Segment`のSweepによる実命中が確認され、Pending Cutを登録した時点でだけ更新する。空振り、候補列挙、投機ジョブ開始では対象世代を進めない。確定後の任意分割の公開・物理GC退役だけは7.9.4の非命中経路へ従い、準備・不採用では世代を進めず、通常切断の命中・Pending照合を緩めない。
+各SlashはSlashGenerationを持つ。ObjectGenerationはObject全体のPrediction・Cache・Reset／退役・Trace・Maintenanceの粗い識別へ残すが、別LogicalFragmentだけの更新を通常切断の単独Reject理由にしない。通常受付は4.2、非命中所有変更は7.9に従う。
 
-投機ジョブは開始時の`BaseObjectGeneration`、`SlashId`、`SlashGeneration`、対象`LogicalFragmentRef`、`SlashFrame`に加え、点Anchor配分を使用する場合は`AnchorGeneration`を保持する。点Anchor配分の結果を採用する際は、既存入力Snapshotと世代契約で同じ基底、採用面、入力Cell、frame、継承済みAnchor集合および`anchorEpsilon`との一致を確認する。所有者単位の固定／動的は配分された集合の有無から導出し、専用の成果物型や状態を要求しない。ジョブを強制キャンセルするのではなく、完成時およびCommit時に、実命中と各識別子・世代・前提条件を検証する。一致しない成果物はコミットせず破棄し、安全に再利用できる中間資産だけを回収する。これらの照合に新しい世代軸を追加しない。
+Physics CommitはSource生存性、SourceのActive CutOperationId、当該Transactionが持つ物理系譜・所有変更authority、既存Object生存性と4章の共通Player終了境界で照合する。自らのSource Final OwnerからProvisional構成への置換と通常のpose／速度／Sleep変化は失効理由にしない。別Transaction・Maintenance・GC・Upgrade・外部SystemのOwner／Shape／Constraint構成変更でauthorityを失った仕事はStale回収し、現在Sourceを退役させない。個別物理成立不能のAbortとは区別する。
 
-状態は物理分裂、Geometry完成度、非同期Work Result採否を分ける。固定／動的は採用物理所有者のAnchor集合から決め、未完了計算は既存Work依存で表す。
+Geometry Work／Commitは有効Pending、直前祖先Geometry Commit、当該Branchの生存子孫・表示・後続Work等の読者、表示を古いGeometryへ戻さないことを照合する。子孫切断や別FragmentのObjectGeneration更新だけで祖先を失効させず、履歴完成だけを継続理由にしない。Sourceが正常置換された後も必要な祖先Geometryを採用できる。非再利用LogicalFragment ID、Active CutOperation、既存Owner identity／世代、Pending親子関係で閉じ、新しい公開Fragment世代やObject終了latchを追加しない。
 
-| Object／FragmentGroupの物理状態 | 意味 | 許可される処理 |
-| --- | --- | --- |
-| Stable Unsplit | 今回の物理分裂を行わず、切断前の単一FragmentGroup、または既に原子的公開済みで利用可能なActor／Collider構成を正式採用した | 新規切断の物理基底に使用し、同じ未解決問題を時間だけで再試行しない。未完了のGeometry処理や非同期仕事は別に完了させる |
-| Pending Physics Split | Provisional構築不能時の保守Fallback。FragmentGroupの1 Rigidbody／旧Colliderを共有し、表示と論理破片だけが分離済み | Convex生成とBakeを待ちながら、後続切断と外力をGroup全体で受理 |
-| Pending Anchored Split | Provisional構築不能時の保守Fallback。固定側分類済みだがCollider未分裂で、旧Colliderを固定したまま自由側だけを衝突なしで仮表示 | Anchor配分結果を維持し、完全Convex切断とBakeを待つ。共有物理へ切断Impulseを与えない |
-| Provisional Physics Split | 全子Detachedと確定後、子ごとのRigidbodyが旧cook済みConvexを再利用して外界Collisionと分離運動を先行するが、Final Collider／質量特性は未完成 | Sibling Collisionを無効化し、Provisional Constraintで再侵入を抑えながら後続切断、外力、非同期cookを受理 |
-| Provisional Anchored Split | 点Anchor配分から固定／動的が定まった各物理所有者がProvisional Actorを持ち、Anchored子は固定、Detached子だけがDynamic。Final Collider／質量特性は未完成 | 固定側のOffset／Impulseを0に保ち、自由側の外界Collisionと分離運動、後続切断、非同期cookを受理 |
-| Provisional Fault Frozen | 公開後の非finite、速度上限超過、Constraint破綻をGroup単位で封じ込めた不可逆な物理安全状態 | 全Actorを直前のfinite姿勢でKinematic化するかGroup全体をPhysics Sceneから除外し、Constraint、外力、新規物理分裂、Final handoff、自動復帰を禁止する。表示Geometryの背景処理と最終破棄だけを許可 |
-| Stable Fast Cook | Fast Cook Colliderで物理分裂済み | 通常物理を継続し、必要なら低優先度Upgradeを予約 |
-| Physics Upgrade Pending | 別MeshをFast Simulationで再Bake中 | 現Colliderを維持し、世代変更時はUpgradeを破棄 |
-| Stable Fast Simulation | Fast Simulation Colliderへ安全に差し替え済み | 長寿命・高接触破片として通常物理を継続 |
+投機採用はBaseObjectGeneration、SlashId／SlashGeneration、LogicalFragmentRef、SlashFrameとPose／面・入力Snapshot、必要なら既存Anchor情報を照合する。Object全体を前提にしたPredictionは粗い世代不一致で不採用にできるが、受付後の通常Transaction／Geometryは上記の局所authorityへ従う。Jobを強制中断せず完了後に回収する。
 
-各物理所有者は継承AnchorがあればAnchored、なければDetachedとして扱う。固定側のOffset／Impulseは0とし、点配分が未完了なら物理適用をWork依存で待つ。表示の可否はこの区別に依存しない。
-
-| `CutBoundaryRecord.GeometryState` | 意味 | 許可される処理 |
-| --- | --- | --- |
-| Pending | 有効なCPU Geometry出力が未完成 | 5章の未Commit面・Sideによる仮表示を継続 |
-| Ready | 有効なCPU Geometry出力が完成 | 4.5.6に従い必要転送を行い、現在有効な追従先・frameと公開条件が揃えばCommit。ReadyだけではTemporary描画を外さない |
-| Committed | 共用VP Geometry参照の表示公開に成功済み | 対応Temporary描画だけを同時に回収。物理工程の完了は含意しない |
-
-WorkResultState.Readyは個々のWork成果物の完成であり、集合としての表示採用可能性ではない。AllocatorのPublishedはCPU読取り公開であり、GPU転送やGeometry Committedではない。
+物理PendingはTransaction内のWork依存であり、Logical Publication後にはPhysics Pendingを残さない。各Final OwnerのFast Cook／Fast SimulationとUpgradeの寿命は7.3へ分離する。固定／動的は所有Anchorから導出する。Geometryの外部状態変更は4.5.6のGeometry Commitだけとし、以下の汎用Work診断状態をGeometry Lifecycleへ転写しない。
 
 | 非同期`WorkResultState` | 意味 | 許可される処理 |
 | --- | --- | --- |
@@ -1107,7 +1077,7 @@ WorkResultState.Readyは個々のWork成果物の完成であり、集合とし�
 | Committed | 有効な成果物を境界タイミングで適用済み | 二重Commitを禁止し、解放処理へ進む |
 | Disposed | 成果物と一時領域を解放済み | 以後の適用・参照を禁止 |
 
-CutBoundaryRecordは少なくともCutBoundaryId、CutPlaneId、必要な子Geometry・Side・frame参照、GeometryStateと作成時ObjectGenerationを持つ。CutPlaneIdは採用面／local frame identityへ結合し、19.5.1のSourceSlashPlaneとSelectedObjectLocalCutPlaneを混同しない。Geometry Commit後も再切断と表示に必要な面・写像・履歴を保持する。境界を支持Edgeや必ず異なる二所有者の対として管理しない。
+CutBoundaryRecordはGeometry Commit時に実在Boundaryだけを後着公開し、CutBoundaryId、CutPlaneId、正負の別子へのSide参照、必要frameと作成時世代を持つ。面／frame identityは19.5.1の採用面へ結び、元SourceSlashPlaneと混同しない。再切断に必要な履歴は維持するが退役Geometry／Actorを強く所有せず、Boundary完成をLogical Publication条件にしない。
 
 Kerfは0、固定側のOffset／Impulseは0とする。固定を理由に仮描画を省略せず、同一位置の正負Capを通常Colorで常時両面描画しない。
 
@@ -1718,7 +1688,6 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-065 | Capture Fail Fast | 実行時のGraphics API、Format、Sample Count、Array Size、Layer、SubImageが固定Profileと違う場合は録画だけを停止し、構成差をTraceする | 確定 |
 | D-066 | Capture環境記録 | Unity／Package／Meta Runtime／Quest OS／GPU／Driver／Swapchain／Link設定をRun Manifestへ保存し、環境差のあるRunを同一条件として比較しない | 確定 |
 | D-067 | cooking非同期化 | Bake／cookingは即切断表示・初回仮運動のクリティカルパスから外す。表示は4.5.2の準備後に開始し、実Geometryは4.5.6の現在の参照・frameと転送条件で公開する。固定側も描画するが動かさない | 確定 |
-| D-068 | Pending物理共有 | `PendingPhysicsSplit`中は左右の表示破片を1つのFragmentGroup、Rigidbody、旧Colliderへ追従させ、小幅のめり込みと隙間内の旧Colliderを一時許容する | 廃止（D-132で保守Fallbackへ限定） |
 | D-069 | 物理分裂Commit | Bake済みConvexの完成後、物理ステップ境界で左右Rigidbodyへ分裂し、親の線速度・角速度から各重心位置の速度を継承する | 廃止（D-132でProvisional生成時の分裂とFinal handoffへ置換） |
 | D-070 | Cooking Profile | Cleaning／Welding無効化を有力候補とし、Fast Cook／Fast Simulationの費用と効果を同条件で実測する | 技術検証付き確定 |
 | D-071 | 二段階Collider | 初回はFast Cookで物理分裂し、価値のある破片だけを余剰時間に別MeshのFast Simulation Bakeへ昇格させる | 技術検証付き確定 |
@@ -1742,7 +1711,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-093 | 切断痕の許容 | 固定側のCapと実Geometry境界の細い亀裂、輪郭線、線状Z-fighting、軽微なチラツキを許容する。通常Capは片面描画とし、正常な正向き閉Shellの面状Z-fighting・Cap欠落・混入は5.2の明示的例外以外では不具合とする | 確定 |
 | D-094 | 状態の粒度 | 物理分裂、Geometry完成度、Work Result採否を独立管理する。所有者の固定／動的と表示の可否を分離する | 確定 |
 | D-095 | Anchorと公開の実装順 | Phase 1で正負子・切断履歴の公開と単純Anchor配分を合成入力で確認し、Phase 4で実Convex・Actor・cookへ接続する | 確定 |
-| D-098 | Pending Cutと描画集合 | 受付時はPending Cutだけ、正負の非空子・実在面参照の確定後にLogicalCutOperationを原子的に公開する。未公開親への後続受付は見送り、公開後はGPU／物理完了待ちへ制限を延長しない。仮表示Recordを同じ採用面で引き継ぎ、両用途Geometry Commit後だけ回収する。履歴と未完了物理工程は保持し、予期しない内部エラーはD-173の共通Player終了に従う | 確定 |
+| D-098 | Pending Cutと描画集合 | 4.2／4.5.6に従い、受付時のPending Cutと、Final Physicsと一体のLogical Publication、後着Geometry Commitを分離する。実体化した面のTemporaryだけを回収する | 確定 |
 | D-106 | Geometry／Cook性能Baseline | T-076を製品Geometry／Convex／Temporary Physics Proxy／cook完成後の性能Baselineとする。計算KernelのSingle-Thread µs/op、cook／Commitの単発Latency、Job Batchの定常Throughput／End-to-End latencyを分離して測り、保守的なP95／P99容量式を作る | 確定 |
 | D-107 | Benchmark Manifest分離 | GeometryBenchmarkRunManifestは単一Target／Stage／ExecutionMode／CookingProfile／Metric／Unitの1測定系列ごとに作り、BenchmarkSuiteIdで一回のHarness実行を束ねる。型・値域・組合せ・全property順・非該当値のJSON nullを固定し、canonical保存はclean Repositoryだけに許可する。既存TraceRunManifestとCodec／Golden Hash／bundle形式を変更しない | 確定 |
 | D-108 | Benchmark Result Bundle | 各Run Manifestへraw Samplesと固定Aggregateを持つGeometryBenchmarkResultを1対1対応させ、GeometryBenchmarkSuiteIndexがManifest／Result hashと件数を固定する。Suite開始・終了時に同じclean HEADを検証し、Repository外でIndexを最後に書いて原子的に確定する | 確定 |
@@ -1760,12 +1729,12 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-121 | 非Union標準Asset表現 | 共用Cut Geometryと幾何Topology、Compound Physics Proxy、必要な点Anchorを標準とする。別TopologyをUnionせず切断・Capし、通常結果を正負二集合へまとめる。Capは向きを保存してsum(W_i)>0で描く。製品用Strict Solidは生成・常駐・Fallbackせず、Global Solid Reconstructionは将来研究に限る | 確定 |
 | D-122 | Phase 0.2簡易Boundary Fill | Poly Pro Universeで有効性を確認したBlenderのNon-Manifold選択＋`F`相当を早期Fixture候補へ加える。本命は次数2のBoundary Loopを個別封鎖する`BoundaryLoopFill`、人手操作に近い`BlindNonManifoldFill`は厳格な事後Gate付きBenchmarkOnly探索とする。元Geometryを上書きせず、別Object／Componentの結合やBoolean Unionを行わず、失敗VariantだけをRejectする | 技術検証付き確定 |
 | D-124 | Player非接触 | D-131へ置換 | 廃止 |
-| D-127 | 即時Clip Plane予算 | D3D11 PoCは`SV_ClipDistance` 8面を性能／MSAA品質上の優先経路、Pixel Shader `clip()` 4面を固定Fallbackとし、RenderFragmentごとの容量超過面は5.2に従いPlane選択とColor／Depth／Shadowのclip制約から除外し、対応Stencil Volumeをsubmitしない。Operation公開前は受付済みPending Cut、公開後は当該Fragmentの未Commit面・Sideを候補とし、Pending Cut列とCutBoundary公開列を受付の古い順に辿る未Commit祖先優先のdependency-closed prefixを左右眼と全Passへ共有する。Operation公開時も同じ受付位置と面を維持し、重複登録しない。新しい後発境界の即時表示より祖先半空間とSibling分離を優先し、論理履歴、背景Geometry／Physics処理、Cap Record集合を変更しない。Ignored VolumeのCap板は残してよく、最後の統合Colorでの可視化と誤Depthを5.2の品質例外とする | T-089付き確定 |
+| D-127 | 即時Clip Plane予算 | D3D11 PoCは`SV_ClipDistance` 8面を性能／MSAA品質上の優先経路、Pixel Shader `clip()` 4面を固定Fallbackとし、RenderFragmentごとの容量超過面は5.2に従いPlane選択とColor／Depth／Shadowのclip制約から除外し、対応Stencil Volumeをsubmitしない。Operation公開前は受付済みPending Cut、公開後は当該Fragmentの未Commit面・Sideを候補とし、Pending Cut列とLogicalCutOperation公開列を受付の古い順に辿る未Commit祖先優先のdependency-closed prefixを左右眼と全Passへ共有する。Operation公開時も同じ受付位置と面を維持し、重複登録しない。新しい後発境界の即時表示より祖先半空間とSibling分離を優先し、論理履歴、背景Geometry／Physics処理、Cap Record集合を変更しない。Ignored VolumeのCap板は残してよく、最後の統合Colorでの可視化と誤Depthを5.2の品質例外とする | T-089付き確定 |
 | D-128 | Phase 0.2 Building Scope | Poly Pro UniverseのBuildingはSource Catalog全体を母集合として保持しつつ、人間が処理前に豆腐型と判定して固定した`EligibleBoxLikeBuilding`だけを自動選抜へ投入する。複雑形状の除外をGeometry失敗へ数えず、Catalog hashからEligibilityと理由を復元し、成功率をEligible集合内だけで報告する | 廃止。旧識別子を含む履歴として保持し、豆腐型Scope方針とv2表現はD-148へ継承 |
 | D-130 | 最小優先度Dispatcher | 初期`FutureEvaluationDispatcherV1`は固定PriorityClass、Deadline、受付成功時に内部Recordへ発行するstable EnqueueSequence、固定容量、Critical予約枠、Schedule前取消、Dispatch／Completion予算だけを扱うMain Thread Soft Real-Time Dispatcherとする。入力`EvaluationWorkItem`はSequenceを持たず、Schedule済みJobを中断しない。物理安全、命中済み物理、命中済み表示、近締切投機、Backgroundの順を固定する。Dispatcher APIは非待機を維持するが、受付済み切断の必須仕事が実Queue満杯になった場合だけ、切断Coordinatorは既存Schedule／Completion／Result適用を同期進行して一度再投入できる。進捗不能または次のPhysics Stepが必要ならPendingへ持ち越し、PlayerLoop／Commit再入、全切断待機、無限再試行を禁止する。内部実装は破棄・交換可能とし、Producer／DAG／Kernel／Commitから見えるAPI、不透明WorkToken、Trace、Generation契約を維持する。費用学習、aging、work stealing、厳密予約は実測後に必要なものだけV2へ追加する | T-090付き段階導入 |
 | D-131 | Player非接触の限定保証 | Player Body／Handとプロップ／破片はPhysX非接触とし、刀と斬撃波は論理SweepでInteractionする。人工移動はD-166の固定Occupancyへの候補次姿勢Overlap Rejectだけで扱い、実空間HMDはClampしない。Camera近傍視界保護（Fade／Vignette／Mask等）とその専用検出・状態・設定をPoC・初期製品から撤去し、代替機構を追加しない。Camera被り、未登録物体を含む内部視点、Near Planeでの内部面、5.2の仮Cap品質例外が隠されずに見えることを許容する。Camera overlapを切断・物理・Geometry Commit失敗へ昇格せず、そのためのCamera／物体の強制移動、完全Mesh検査、Stencil修復、Job取消・再発行、同期Fallbackを行わない | T-088付き確定。2026-09-10、人間承認により視界保護を撤去。通常視点のCap品質とStable Geometry契約は維持する |
-| D-132 | Provisional Rigidbody／Collision Proxy | 点Anchor配分と所有者単位の固定／動的の導出後、Final Convex cookを待たず各物理子へRigidbodyを作り、既存cook済みConvexを再cookなしで再利用する。非交差Convexは該当側だけ、交差／曖昧Convexは両側へShape Instanceを割り当て、同系譜Sibling Collisionだけを無効化して外界Collisionを全て有効にする。Ghost Contactと早い接触を許容する一方、Provisional質量は既存のOBB切断近似、失敗時は等Weightで親Canonical Mass Budgetを保存する。Final handoffでは物理Actorのpose／COM線速度／角速度を正本として動かさず、包含検証済みFinal Shapeとmass／COM／inertiaを同一Actorへ置換する。表示は物理Actorへ追従し、frame差による瞬間的な表示移動を許容する。点Anchor配分の未完了は既存Work依存とし、受付済み処理の一時的なActor／Shape／Constraint実行枠不足では既存物理を維持したPendingとして必要な処理を継続する。要求構成自体が固定上限を超える、Backend共有不可、または既存の安全規則に従って資源確保・原子的構築を成立させられない場合だけ、利用可能な既存物理表現を正式採用して`Stable Unsplit`で終端できる。Provisionalを現時点で生成できないことだけで後続のFinal物理処理を打ち切らない。公開後の非finite、速度超過、Constraint破綻ではGroup全体を不可逆な`ProvisionalFaultFrozen`へ封じ込める | T-091付き技術検証確定 |
-| D-133 | Final質量正本とProvisional近似 | Final質量特性はPhysics Convex B-repと`PhysicsConvexMassWeight`を正本とする。ConvexをLocal ID順binary64左畳みでfiniteかつ正和へ正規化して親質量を配分し、非交差Weightは継承、交差Weightだけを正負出力B-repの有効体積比で分ける。各出力の体積、重心、密度1慣性を求め、`assignedMass / convexVolume`でscaleして平行軸合成し、失敗時は規定のConvex OBB、Fragment OBB／AABB、現物理の正式採用の順へ低下する。cook待ちProvisionalだけは現在OBBの一段平面切断体積比、失敗時は等WeightでCanonical Mass Budgetを保存した近似mass／COM／inertiaを使用し、Finalへ昇格しない。handoffでは物理Actorのpose／速度とFinal Colliderの非張り出しを表示連続性、質量、運動量、角運動量、運動エネルギーの連続より優先する | T-085／T-091付き技術検証確定 |
+| D-132 | Provisional Rigidbody／Collision Proxy | 7.1の短寿命Transaction内で旧Cooked Convexを再cookせず共有し、必要な2 Actorをall-or-none公開する。7.2の質量近似・初回速度継承・Actor優先Final handoffを使う | T-091で確認。成功・Abort・退役は7.1を正本とする |
+| D-133 | Final質量正本とProvisional近似 | 7.2のPhysics Convex Weight、固定順の質量計算、規定OBB／AABB近似を使う。Provisional近似をFinal正本にせず、Final handoffでは物理Actorのpose／速度を表示連続性より優先する | T-085／T-091で確認。不成立の終端は7.1 |
 | D-134 | Mob軌道Cacheの段階導入 | `MobPlan.RootTrajectory`の初期生成方式を、副作用のない固定ステップ二相更新、Waypoint／Lane Desired Motion、固定長未来Sample Queue、再生補間、移動距離由来`ExplicitAnimationStateV1`、`PlanGeneration`による粗い全Plan／Group無効化とする。Nearは同じKernelをライブ実行し、Mid／Farは有効なQueueを主に再生する。初期成立条件へORCA、依存Graph、部分再計算、Flow Field、軌道圧縮、時空間予約を含めず、実測後の後段最適化とする | T-092付き段階導入 |
 | D-135 | 明示Animation State正本 | Current／Future AnimationのState、Clock、Transition、Blendの意味上の正本をゲーム側`ExplicitAnimationState`とGlobal FixedStepIdとする。Animator／AnimatorController／AnimatorControllerPlayableは任意のPose出力／Preview／Legacy Backendへ降格し、内部状態の読戻しやController逐次rolloutを標準MobPlan経路にしない。現在表示、未来切断、CPU Skinningは同じ対象Stepへ解決済みStateから交換可能なPose Evaluatorへ分岐する。ClipのLoop／Clamp、canonical duration、Source Time写像は`AnimationAssetSetVersion`へ結合したCatalogを正本とし、V1予測対象ではプロシージャルIKを無効化する。全骨Poseの全Mob／全Sample先行保存は行わない | T-018／T-044／T-046付き確定 |
 | D-136 | IK／Pose Layer scope | Phase 4.70のV1予測対象NPCはCatalog登録済みのリターゲット済みClip Poseだけを使い、Look、腕IK、Foot IK、左右反転等を現在表示と未来評価の双方で無効化する。補正や反転はLayer入力Snapshot、weight／mode、適用順、Generation、Identityをimmutableな共通Pose Evaluation Inputへ追加して全Backendで同じ処理を行える後段だけに許可する。VR Controller実測姿勢から表示するプレイヤー腕のTwo Bone IK等、Mob Predictionへ入力されないIKは別scopeとしてこの制限の対象外とする | D-009を置換。T-018付き確定 |
@@ -1778,7 +1747,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-143 | Phase 0.11 process-wide fail-stop | Production Composition Rootは非staticな`NvencCaptureProcessState`をprocessにつき厳密に1個生成し、Backend、Run Coordinator、Publication Serviceへ同じ参照を注入する。状態は`Running / Draining / PoisonedUntilProcessRestart`だけとし、native NVENC、GPU Completion、device lossまたはOS I/Oで安全な結果／所有権／Service静止を確認できない場合は一方向にPoisonする。Poison後は新規受付、Completion／Context terminalの推測生成、append、Finalize、Plan／Publication、OS lock解放、同process RecoveryおよびBackend再生成を禁止し、資源別Quarantine台帳や帰還後の再収束を行わない。実処理が後から帰還してもPoisonを解除せず、process再起動だけを復旧境界とする。Tier AはFixtureごとに独立したtest stateをfake構成へ注入し、ProductionにReset／Unpoison APIを設けない。実NVENCはUnity Editor process内で非対応とし、Tier B／Cと実Captureはstandalone Player／専用processで行う | D-138／D-142の制御喪失時契約を置換。正常経路、制御可能な失敗、Phase 0／0.1および次回processの既存Recoveryは維持する |
 | D-144 | Phase 0.11 Encode Sample固定容量 | `NvencBringUpProfileV1`はnative所有のNV12 Input Surface、対応するD3D11／NVENC登録・mapped所有状態、Output Bitstream Buffer、Completion EventおよびGPU変換完了証拠を論理的に束ねたCapture専用`NvencEncodeSampleSlot`を固定8組持つ。Work Slot 8件とは寿命の異なる別Poolとし、Accepted中だけ1件ずつ排他的に束縛する。Phase 0.11 ProducerのSource Surface Lease PoolとGPU変換同期資源も最大8 in-flightを支え、Work／Sample／Queue／Completionの実効上限を8へ揃える。Run開始前に8組と全固定資源を一括確保できなければ4組へ縮退せずCaptureだけをUnsupportedとし、Poison時は8組全てをprocess終了まで通常Poolへ戻さない。8組は短時間jitterの固定余裕であって267ms停止または持続30fpsの保証ではなく、nominal 120 FrameでBackpressureが1件でも出ればQualification失敗とする。可変容量、動的調整、追加WorkerまたはPool数比較をPhase 0.11へ追加しない | D-137／D-142／D-143を補足。Phase 0／0.1、Publication／Recoveryは変更しない |
 | D-145 | Phase 0.11 Ordered Worker並行動作と停止順 | Ordered Submit WorkerとOrdered Output WorkerはRun開始から同時に稼働し、Output WorkerはSubmit Workerのdrain／joinを待たず生成済みrecordをFIFO先頭から継続消費する。Main Thread CoordinatorもRun中からFrame Completionをbounded pollして正式状態へ反映し、固定8組を循環再利用して総数120 Frameを処理する。StopAccepting／`BeginDrain`後も両Workerは並行動作を続け、Submit Workerは全Accepted Workのrecordを各1件生成して先に停止し、Output Workerは残存record、D-147のowned Access Unit／同期Sink処理とCompletionをdrainする。Accepted件数Snapshotとrecord／Output／Sink／Frame Completion生成・反映件数が一致し、通常経路の未返却owned領域が0件になった後だけ停止前のOutput WorkerへFinalize／Abandonを要求し、必要なContext terminal resultの回収・登録後に同Workerを停止する。両Worker静止と通常資源ゼロ確認後だけTrace seal／Plan commitへ進む。共通`ICaptureEvidenceSession.TryJoin()`はBackend全体の最終joinのままとし、Submit停止確認、Finalize要求、terminal result回収はPhase 0.11内部の非公開lifecycle境界に限定する。逐次Worker実行、8件Barrier、Output join後の追加要求またはPoisonの正常Drain偽装を禁止する | D-142／D-144／D-147を補足。Phase 0／0.1、Queue数・容量、Worker数、永続Schemaは変更しない |
-| D-146 | Phase 0.11 NVENC Run固定interop lifecycle | `NvencBringUpProfileV1`はCapture開始前の非クリティカルなRun初期化区間で、単一Encoder Sessionと固定8組のnative session所有D3D11 NV12 Input Texture、Output Bitstream Buffer、Completion Eventを各1回だけ生成し、`NvEncRegisterResource`、`NvEncRegisterAsyncEvent`を各Slotにつき1回だけ行う。NV12 destinationはUnity管理資源ではなくnative sessionが所有するD3D11 textureとし、`DXGI_FORMAT_NV12`、1280×720、`D3D11_USAGE_DEFAULT`、CPU accessなしを固定する。bind flagsはGPU変換passが要求する最小集合として実装単位で確定し、ここでは固定しない。Unity objectとして存在するのはsource RGBA8 sRGB textureだけで、その`GetNativeTexturePtr()`取得はRun初期化区間に限定する。NV12 textureのpointerとregistered handleをmanagedへ公開せず、`Texture2D.CreateExternalTexture`等で別formatを名乗らせない。この区間のD3D11固定資源生成と直列化されたNVENC登録はrender threadを要求しない。render threadを要求するのはUnityが使用するimmediate contextへGPU変換commandを登録する部分だけとする。Run準備順は`Encoder initialize -> native NV12 texture 8枚の生成とNVENC登録 -> Output Bitstream Buffer 8個の生成 -> Completion Event 8個の生成と登録`に固定する。`enableEncodeAsync=1`、`enableOutputInVidmem=0`を固定し、全8組の生成・登録完了後だけ受付を開始する。途中失敗は取得済み資源を安全な逆順でrollbackし、4組への縮退、実行時再生成または再登録をせずUnsupportedとする。各Frameは既存SlotへGPU変換し、`NvEncMapInputResource -> NvEncEncodePicture -> Completion Event待機 -> NvEncLockBitstream(doNotWait=0) -> copy -> NvEncUnlockBitstream -> NvEncUnmapInputResource`だけを行う。待機とlock／copy／unlock／unmapはOutput Workerだけが行い、Main／Render／Submit Workerは行わない。正常Drainでは、全native call帰還、全Bitstream unlock、Context terminal回収と、全Slotが既にunmappedでGPU／NVENCから使用されていないことのadmission確認後に、Output Workerが`Completion Event登録解除とHANDLE close -> Output Bitstream Buffer破棄 -> Input Resource登録解除 -> native NV12 texture Release -> Encoder Session破棄 -> D3D11 device参照とdriver moduleの解放`を各1回だけ準備順の逆順で完了して停止する。通常teardownで改めてunmapを試みず、mapされたままのSlotがあることはteardownの前提違反として扱う。Backend全体`TryJoin()`と資源ゼロはnative teardown完了と両Worker停止の後だけ許可する。Run中のTexture／pointer／handle不変性を要求し、再生成、device reset、handle不整合または安全な解放証拠欠落では動的修復せずFail FastまたはD-143のPoisonへ進む。Poisonでは不明なnative資源にもnative NV12 textureにも推測的に触れずprocess終了まで一括保持する | NVIDIA公式WDDM非同期手順をD-137／D-142～D-145へ最小統合。Worker、Queue、Pool、Schema、性能SLAは追加しない |
+| D-146 | Phase 0.11 NVENC Run固定interop lifecycle | `NvencBringUpProfileV1`はCapture開始前の非クリティカルなRun初期化区間で、単一Encoder Sessionと固定8組のnative session所有D3D11 NV12 Input Texture、Output Bitstream Buffer、Completion Eventを各1回だけ生成し、`NvEncRegisterResource`、`NvEncRegisterAsyncEvent`を各Slotにつき1回だけ行う。NV12 destinationはUnity管理資源ではなくnative sessionが所有するD3D11 textureとし、`DXGI_FORMAT_NV12`、1280×720、`D3D11_USAGE_DEFAULT`、CPU accessなしを固定する。bind flagsはGPU変換passが要求する最小集合として実装単位で確定し、ここでは固定しない。Unity objectとして存在するのはsource RGBA8 sRGB textureだけで、その`GetNativeTexturePtr()`取得はRun初期化区間に限定する。NV12 textureのpointerとregistered handleをmanagedへ公開せず、`Texture2D.CreateExternalTexture`等で別formatを名乗らせない。この区間のD3D11固定資源生成と直列化されたNVENC登録はrender threadを要求しない。render threadを要求するのはUnityが使用するimmediate contextへGPU変換commandを登録する部分だけとする。Run準備順は21.15の6資源グループに従う。`enableEncodeAsync=1`、`enableOutputInVidmem=0`を固定し、全8組の生成・登録完了後だけ受付を開始する。途中失敗は取得済み資源を安全な逆順でrollbackし、4組への縮退、実行時再生成または再登録をせずUnsupportedとする。各Frameは既存SlotへGPU変換し、`NvEncMapInputResource -> NvEncEncodePicture -> Completion Event待機 -> NvEncLockBitstream(doNotWait=0) -> copy -> NvEncUnlockBitstream -> NvEncUnmapInputResource`だけを行う。待機とlock／copy／unlock／unmapはOutput Workerだけが行い、Main／Render／Submit Workerは行わない。正常Drainでは、全native call帰還、全Bitstream unlock、Context terminal回収と、全Slotが既にunmappedでGPU／NVENCから使用されていないことのadmission確認後に、Output Workerが21.15の6資源グループを各1回だけ準備順の逆順で解放して停止する。通常teardownで改めてunmapを試みず、mapされたままのSlotがあることはteardownの前提違反として扱う。Backend全体`TryJoin()`と資源ゼロはnative teardown完了と両Worker停止の後だけ許可する。Run中のTexture／pointer／handle不変性を要求し、再生成、device reset、handle不整合または安全な解放証拠欠落では動的修復せずFail FastまたはD-143のPoisonへ進む。Poisonでは不明なnative資源にもnative NV12 textureにも推測的に触れずprocess終了まで一括保持する | NVIDIA公式WDDM非同期手順をD-137／D-142～D-145へ最小統合。Worker、Queue、Pool、Schema、性能SLAは追加しない |
 | D-147 | Phase 0.11 owned Access Unit／Chunk Sink境界 | Output Worker内部を、NVENC Event待機・lock・Run開始時に1件だけ確保した16 MiB固定owned領域へのcopy・unlock・unmap・Encode Sample Slot一括返却を行うOutput Collectorと、そのowned Access Unitを一方向移譲されてaccepted FIFO順append、checked ByteLength、streaming hash、Frame Relation、owned領域返却を同期実行するRun Chunk Sinkへ責務分離する。両者は同じOutput Worker上で直列呼出しし、第三Worker、Queue、credit、独自Drain／Joinまたは永続Schemaを追加しない。Access UnitはWork Token、CaptureFrameId、owned領域、valid length、返却authorityだけを持つprocess-localな非copy／一回消費Leaseとし、Artifact／Registry／Session／Freeze／H.264解析情報を持たない。Slot返却はcopy・unlock・unmap完了後の単一境界とし、Sink結果より先の再利用と、その間に後続encodeが進み得ることを許容する。Frame CompletionはSink成功／失敗結果後にOutput Workerだけがexactly once生成する。append／Relation／counter失敗では修復・truncateせずchunk全体を`Abandoned`、所有権不明ではbuffer返却やCompletionを推測せずD-143のPoisonとしてowned領域もprocess終了まで保持する | D-142／D-144～D-146を補足。将来の別I/O Worker、Queue、Completion方式またはPhase 4.8互換を保証しない |
 | D-148 | pilot後のPhase 0.2成果物契約 | D-112～D-115およびD-128を置換する。Buildingは処理前に人間が選定したPPU豆腐型だけをEligibleとする方針を維持し、適格性・規則・除外理由をv2の`Phase02Eligibility／EligibilityRuleId／ScopeReason`へ記録する。旧Building専用識別子をv2の必須値として復活させない。5カテゴリ別Recipe、固定Blender／本隊移植Script、Geometry／Recipe／Role／Selection分離、tagged PlannedVariant出力、Entry単位provenanceとcohort、Catalogの全Source事前Triangle計数を禁止して通常Import後Reportへ置き、SourceFixtureIdを最大64文字、Manifestの割当hash名をBatchAllocationProfileContentSha256とする。CatalogをSource indexed root外へ置き、SourceBundleContentSha256で正確なSource Indexへ結合する。設計正本はDESIGNへ一本化し、candidate優先規則を廃止する。candidateはPhase 0.2完了時に削除する補助実施計画とする。Catalog v2の完全列挙EligibilityとRule Set／Entry Rule分離、Catalog Freeze時の全均衡batch Manifest一括確定、3種ordinalと7 stratum queue、完了frontier限定Report被覆、再生成を局所化する監査、最小quotaを10.2.2の正本とする。BuildingはGeneric Geometry、Vehicleは1 cm Voxel、Convexは単一Hullだけ。Codec頂点上限255とPhysicsCookInput上限128を分離し、Face数は頂点数から導出する。正式pilot Geometry直接採用、全Licensed再生成、一般Convex分割、製品Strict Solidを要求しない。変更済みLicensed選抜schemaはv2、ZCG／Bundle／Synthetic Validator v1のbytesは維持する | 一部廃止。人間によるBuilding個別選定とBuilding測定の扱いはD-150へ置換し、Profile責務・Pilot資源条件・Licensed監査の具体化はD-151へ継承し、Source／保存基底の上限・Review専用BakeはD-155へ部分置換し、他の成果物契約は継続。Phase 0.2先行branchも本隊に含む。後続Runtime上限・製品Recipeを変更しない |
 | D-149 | 剛体Local Plane実姿勢リベース | 19.5.1の自由飛行剛体だけ、予測Pose差の一致判定を世代・前提と実姿勢での面誤差Gateへ置き換える。攻撃SourceSlashPlaneは不変、命中前の仮Local Planeを命中時に一度だけ採用／Fallback確定し、7.6の受付判定と、受付済みのTemporary／Provisional／Stable／Finalへ共通使用する。面採否と受付判定はMesh／Collider Readyから独立し、未完成だけを理由に切断位置を変更しない。対象ごとの面差と固定点近似の未検出差を許容するが、Actor pose／速度を予測または命中Snapshotへ戻さず、Final包含・支持安全・世代検証を維持する | 確定。4.2／19.1／19.4／19.5の姿勢一致規則に対する限定例外。D-046のMob／Skinned契約は変更しない。O(1)直接予測式の標準採用とは独立 |
@@ -1793,11 +1762,11 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-158 | Phase 0.2 Preset直接参照への縮小 | Selection Profileの全11 rootを維持し、Generation／GateはRecipe／Gate Presetを直接参照、Selection／Auditは各1設定文書とする。共通Rules wrapper、RuleKey、Ruleごとの実装／Configuration hashとvalidator結合を廃止する。exact Preset Bundle内のpath／hash確認と専用Loaderを使い、実装identityは既存Script Bundleで保持する | 確定。Review、2M保存、128 MiB入出力、Dataset親closureを変更しない。汎用被覆検証やRule単位Goldenを追加しない |
 | D-159 | 可変長Trace移行 | Phase 0～0.11は既存固定長Trace仕様で完了判定し、Phase 0.12～0.14を同一移行系列の内部checkpointとして、0.14成立時に一度だけ可変長Traceへ切り替える。新runtimeはproducer専用の固定容量Payload RingとRuntime Index、事前確保Paged History、単一`trace.bin`の逐次形式を使う。永続Index、二ファイル形式、`RecordVersion`、Context Registry、Crash Recoveryを追加せず、既存bundle directory公開をv2へ更新し、v1 Loaderだけを維持する | 確定。詳細は21.16。旧新backendのRelease並行搭載、二重記録、v1再export、電源断durabilityを要求しない |
 | D-160 | コミット後の任意分割・物理GC | 7.9を正本として、確定後の単一平面による通常物体2個への追加分割と、共用面集合0の物理所有単位の寿命終了を独立した任意機能とする。既存BackgroundMaintenanceと非命中公開・退役を使い、追加分割は全体1未回収試行と入力別不成立抑止で管理する。通常切断・過去Commitを救済対象にせず、実行不能なら元物体を残す | 人間承認済み、2026-09-08。Phase 5.6／5.7は省略可能。許容事項は7.9.6、最小確認は7.9.7。実装・実測済みを意味しない |
-| D-161 | 実行時表示表現と描画ロードマップ | 4.5の読み込み時Mesh、切断時VP、CPU AoS／Index正本とGPUコピー、範囲所有権、Published Vertex追記、退役Index再利用を採用する。通常切断は単一Index予約へ正負を直接配置し、物理採否に依存する再集約を行わない。必要転送と現在の参照・frameで表示公開し、CPU読取り公開・再切断・物理適用とは分離する。Phase 0.9～0.94でStage 2まで比較する | 人間承認済み。準備・変換の表示開始負荷とGPU拡張STWを許容し、容量限界は4章の共通Player終了に従う。Stage 2高速化は必達でなく、効果が乏しければStage 1を採用できる。Phase 5.6のIndexコピー・新旧共存費用を許容する。実装・実測済みを意味しない |
+| D-161 | 実行時表示表現と描画ロードマップ | 4.5の読み込み時Mesh、切断時VP、CPU AoS／Index正本とGPUコピー、範囲所有権、Published Vertex追記、退役Index再利用を採用する。通常切断は単一Index予約へ正負を直接配置し、物理採否に依存する再集約を行わない。必要転送と現在の参照・frameで表示公開し、CPU範囲Publishedは内部処理とし、Final Physics／Logical Publication後のGeometry Commitと祖先順Kernelは4.5.6に従う。Phase 0.9～0.94でStage 2まで比較する | 人間承認済み。準備・変換の表示開始負荷とGPU拡張STWを許容し、容量限界は4章の共通Player終了に従う。Stage 2高速化は必達でなく、効果が乏しければStage 1を採用できる。Phase 5.6のIndexコピー・新旧共存費用を許容する。実装・実測済みを意味しない |
 | D-162 | 未来予測用SkinnedMesh Jobベイクの採否判断 | 4.5.2を正本として、Phase 4.65で不変Rig Poseから共通VP入力を生成する限定実装を同期経路と比較し、人間が導入の採否を決める。採用時だけ既存DAG／VPプールへの本体接続、4.71の未来VP準備、4.72の人形先行切断統合を行う。通常命中の同期BakeMeshと通常SkinnedMeshRenderer描画は維持する | 人間承認済み、2026-09-09。効果がなければ導入見送りも4.65の正常完了とし、人形の先行準備による命中時負荷削減を必達にしない。対応範囲の限定と非bit一致は4.5.2に従う。総時間短縮・翌フレーム完成は保証せず、4.52は採否待ちにしない。実装・本体実測済みを意味しない |
-| D-163 | 物理Convexの内接頂点削減 | 7.2を正本として、Runtimeの1 Convex上限L=128を入力登録と最終出力に適用し、超過出力だけ今回生成した交点を局所削除する。統合後も継承頂点を保護し、残存座標・内接性・形状妥当性・決定性と探索を伴わない終端を維持する。次数3＋ΔV順はPhase 4の初期実装方針とし、唯一の製品合格方式には固定しない。削減後形状を質量・cook・再切断の共通基底とし、行き詰まりは既存物理正式採用へ閉じる | 人間承認済み、2026-09-09。接触消失・累積縮小・物理的隙間・表示張り出しへのNo-op・質量特性の変化を7.2の範囲で許容する。不変条件を満たす削除順の変更による採用形状・体積損失・接触・質量配分の差異も許容し、実装変更をまたぐ同一形状は要求しない。全入力での上限到達や損失最適性は保証せず、親質量保存・形状妥当性・Final包含を維持する。Phase 4で実装・検証し、実装済みを意味しない |
-| D-164 | 正負二集合と直接Index出力 | 通常切断は正負各最大1所有者、固定は点Anchorの有無、所属はSideのConvex集合の正常な空／非空で決める。通常Indexは一つの予約へCapを含め正負連続出力し、新規転送1回・既存GPU範囲再利用時0回とする。島の独立化とIndex振り分けコピーは任意Phase 5.6へ置く | 人間承認済み、2026-09-10。一体運動・空中浮遊・接着情報喪失・遅延分離・分割不能・Bounds拡大・倒壊、支持による仮描画省略をしない費用、任意分割のIndexコピー／新旧共存を許容する。完全分離・倒壊防止・速度改善を必達にせず、幾何Topology・質量・資源寿命・一般物理Fault処理は維持する。旧機能は§17の限定例外で削除し、実装完了を意味しない |
-| D-165 | Phase 4.3 建物World D6と一般外部Joint撤去 | 7.2.2を正本とし、建物由来の動的な1→2物理分裂子へ独立World D6を一つ生成する。垂直並進Free、水平並進・全回転Limited、3値によるDepth別指数Limitを使う。一般外部Jointの継承・付け替え・GC保護・予測を撤去する。建物は製品の切断対象、道路は非対象とする（O-005解決）。Runtime本体は独立Phase 4.3、製品Recipeは5.5、任意分割・GC統合は5.6／5.7 | 人間承認済み、2026-09-10。7.2.2の品質・運動・費用・製品入力制限を許容する。Depthは建物由来のProvisionalを含む実際の1→2公開時に一度だけ進め、非建物の系譜はfalse／0を維持する。Final採否で再加算・巻戻し・基準姿勢リセットをしない。未対応Constraint付き動的近傍が必要な局所予測は後追い処理へ送る。実装・拘束効果の検証済みを意味しない |
+| D-163 | 物理Convexの内接頂点削減 | 7.2を正本として、Runtimeの1 Convex上限L=128を入力登録と最終出力に適用し、超過出力だけ今回生成した交点を局所削除する。統合後も継承頂点を保護し、残存座標・内接性・形状妥当性・決定性と探索を伴わない終端を維持する。次数3＋ΔV順はPhase 4の初期実装方針とし、唯一の製品合格方式には固定しない。削減後形状を質量・cook・再切断の共通基底とし、行き詰まりは7.1のAbortへ閉じる | 人間承認済み、2026-09-09。接触消失・累積縮小・物理的隙間・Physics Hull外だけの表示への非Hit・質量特性の変化を7.2の範囲で許容する。不変条件を満たす削除順の変更による採用形状・体積損失・接触・質量配分の差異も許容し、実装変更をまたぐ同一形状は要求しない。全入力での上限到達や損失最適性は保証せず、親質量保存・形状妥当性・Final包含を維持する。Phase 4で実装・検証し、実装済みを意味しない |
+| D-164 | 正負二集合と直接Index出力 | 7.2.1／7.6の正負集合と点Anchorによる固定判定、4.5.6の単一予約への正負Index連続出力・新規転送1回／再利用時0回を使う。島の独立化は任意Phase 5.6へ置く | 人間承認済み、2026-09-10。一体運動・空中浮遊・接着情報喪失・遅延分離・分割不能・Bounds拡大・倒壊と任意分割のIndexコピー／新旧共存を許容する。完全分離・倒壊防止・性能改善を必達にしない |
+| D-165 | Phase 4.3 建物World D6と一般外部Joint撤去 | 7.2.2を正本とし、建物由来の動的な1→2物理分裂子へ独立World D6を一つ生成する。垂直並進Free、水平並進・全回転Limited、3値によるDepth別指数Limitを使う。一般外部Jointの継承・付け替え・GC保護・予測を撤去する。建物は製品の切断対象、道路は非対象とする（O-005解決）。Runtime本体は独立Phase 4.3、製品Recipeは5.5、任意分割・GC統合は5.6／5.7 | 人間承認済み、2026-09-10。7.2.2の品質・運動・費用・製品入力制限を許容する。Depthは7.2.2の予定値をProvisionalと正式子で共有し、非建物はfalse／0を維持する。未対応Constraint付き動的近傍が必要な局所予測は後追い処理へ送る。実装・拘束効果の検証済みを意味しない |
 | D-166 | 固定Locomotion Occupancyと退出系撤去 | 7.2.3を正本としてLevel初期化時の固定Primitive集合と候補次姿勢Overlapによる要求全体Rejectだけを採用する。動的追従、ForcedOccupancyOverlapと退出状態・探索・専用ID・Profile・容量・作業領域、および退出系の専用試験を撤去し、Reject TraceからPolicyと侵入深度を削る。O-040を解決する | 人間承認済み、2026-09-10。切断・移動・退役後の通行境界不一致、未登録Geometryへの侵入、薄壁の飛越え、slide・部分移動なし、Lean後の人工移動停止、配置前提違反時の自動復旧なし、Reject詳細観測の喪失を許容する。Fade撤去と通常Geometry・物理契約は維持し、Runtime Occupancy更新は必要になった場合に別変更で決定する。実装済みを意味しない |
 | D-167 | 単一Segment SlashWave | 19.1のLatch／Frame／Span Candidate／Close境界、Raw候補とAcceptedSpanのrunning maximum、単一Segment、WaveLifetime、表示専用円弧と開発UIを採用する | 人間承認済み、2026-09-11。完了済み区間は再評価せず現在区間の増加領域へのHitを許容する。Estimator切替は生存Waveを変更せず、一時状態の寿命をWave内に閉じる。19.1.6の固定容量満杯時は有効な振りでも発射せず、同じ振りを遅延発射しない許容を追加承認。19.1.5.1のExpire先行処理により寿命末尾区間のHitが抜け得ることも許容 |
 | D-168 | 現在採用Convexと系譜Hit消費 | 19.1.7／19.1.9の4端点の閉凸包Sweep（退化を含む）と現在採用Convexを正本とし、直接消費したLogicalFragmentRefだけを一時保持、既存Operation履歴をO(N)走査する | 人間承認済み、2026-09-11。受付見送りでも同Slashでは再試行せず、無関係Fragmentは個別Hitできる。親API・Cache・通知・恒久履歴を追加しない |
@@ -1806,7 +1775,8 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-171 | 断面色と最小デバッグ | 5.3に従い通常は仮断面と実断面を共通トゥーンの固定グレー、デバッグ有効時は仮断面を赤、実断面を緑とする。実Capの固定負UV markerは表示色選択だけに使い、処理経路色と専用表示契約を撤去する | 人間承認済み、2026-09-11。元Assetの負UVによる通常表示・デバッグ表示の誤表示を許容し、UV検査・修正・登録拒否を追加しない。O-004を解決 |
 | D-172 | 建物Assetの一般化 | Structural Slab系列を撤去し、建物も一般Geometry／Compound Physics Proxy／点Anchor／World D6で扱う。確定済みPhase 0.2生成物の扱いは10.2.2、製品Recipeは15章に従う | 人間承認済み、2026-09-11。壁板数・Box対応・下端両側Anchor・入口用箱分割の固定条件を外し、物理近似とAnchor配置の違いを許容する |
 | D-173 | 共用Geometry切断／Player終了 | 共用Geometryの出力は6.4の構成契約で保証し、製品Runtimeの出力検査を撤去する。継続不能な4条件は4章の共通Player終了へ集約し、対象別の限定退役・復旧と終了前の完全診断保存保証を撤去する | 人間承認済み、2026-09-11。入力Gate・メモリ安全・通常の世代照合・予約不足再実行・物理Fault・通常Captureの保存契約は維持する |
-| D-174 | Provisional Sibling D6 | `ProvisionalSeparationConstraint`は7.1の固定anchor-offset D6を採用し、方式比較・動的Limit決定・Actor／Joint Pool導入判断を初期要件から外す | 人間承認済み、2026-09-11。D-132の方式とO-044の法線Limitを確定。有限区間による引止め・運動差を許容し、既存の安全監視と資源寿命は維持する |
+| D-174 | Provisional Sibling D6 | `ProvisionalSeparationConstraint`は7.1の固定anchor-offset D6を採用し、方式比較・動的Limit決定・Actor／Joint Pool導入判断を初期要件から外す | 人間承認済み、2026-09-11。D-132の方式とO-044の法線Limitを確定。有限区間による引止め・運動差を許容し、7.1の既存境界から判明した異常の扱いと資源寿命に従う |
+| D-175 | 短寿命PhysicsSplitTransactionとCommit直列Geometry | 4.2、4.5.6、7.1～7.7、8、21章に従い、Final Physics／Logical Publication、祖先順Geometry Commit、個別退役へ整理する | 人間承認済み、2026-09-12。物理成立不能によるSource退役と正常退役に起因するIncompleteOperationTraceを許容する。新しい公開ID、状態・Reason、監視・復旧、GPU部分範囲freeを設けない |
 
 ## 13. 未決事項
 
@@ -1845,7 +1815,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | O-039 | Geometry／Cook容量予算 | P95／P99容量式から、1フレーム当たりWorker時間、Deadline別の同時切断数、`MaxIncompleteCutOperationCount`、Batch Size、同時Bake数、Temporary Physics Proxy上限を決める | 先行計算完了率、命中後Pending時間、90fps安定性、受付見送り頻度 | T-076後 |
 | O-040 | Player壁境界応答 | 解決済み：D-166の固定Occupancyと候補次姿勢Overlap Rejectを採用し、退出系を撤去する | 通行境界と表示／物理の不一致、全体Reject・自動復旧なしを許容 | 2026-09-10 |
 | O-043 | Hybrid Clip予算校正 | Raster 8面を固定したままPixel fallbackを0～4面のどこへ置くか、Stable専用Shader分離 | GPU時間、MSAA edge品質、Shader register／varying | T-089後 |
-| O-044 | Provisional Physics Profile | MaxProvisionalActor／ShapeInstance／Constraint数、2 Slot × MaxProvisionalGroup分のGroup Snapshot固定容量、Provisional警告／Fallback開始時間、`FinalContainmentEpsilon`、異常線速度／角速度 | 生成／破棄CPU、Snapshot更新時間／メモリ、Broadphase、Solver時間、Ghost Contact、接触Impulse、連続切断、handoff品質 | T-091後 |
+| O-044 | Provisional Physics設定 | Actor／ShapeInstance／Constraint容量、Pending警告時間、FinalContainmentEpsilon | 生成／破棄CPU、Broadphase、Solver時間、Ghost Contact、接触Impulse、handoff品質 | T-091後。新しい監視・復旧契約は作らない |
 | O-045 | Mob軌道Cache Profile | Crowd StepのFixedStep倍率、Tier別Horizon／Refill閾値、最大Mob／Sample数、同時再計画Group数、Live Fallback予算、Hold許容時間、将来のGrid Cell／MaxNeighbors／ORCA Horizon | CPU、Nativeメモリ、Queue枯渇率、停止時間、重なり、先行切断Commit率 | T-092の計画単体結果で初期設定を決め、先行切断Commit率による判断はJobベイク採用時のPhase 4.72の統合結果へ遅延し、不採用時は要求しない。4.70の完了を塞がず、ORCA値は追加導入時だけ確定 |
 | O-046 | Animation Pose Evaluator | controllerなしPlayable／MixerとRetarget済みPose Tableの採用、Rig Pose Buffer形式・Bone順、Source Timeの数値精度、Main Thread／Job Batch予算、2 Source BlendおよびimmutableなLook／IK Layer入力の導入時期 | Pose誤差、Main Thread時間、Job Throughput、Pose Tableメモリ、Humanoid Retarget品質、先行切断採用率 | T-018後。人形の先行切断採用率による評価はJobベイク採用時のPhase 4.72とし、不採用時は要求せず、4.61の完了を塞がない。Loop／ClampとSource Timeの意味契約は未決にしない |
 | O-047 | 剛体リベース許容値 | RigidCutRebaseProfileV1の法線角度、Bounds内plane field差、左右眼ProxyPoint pixel差の閾値を少数の距離／サイズ／斬撃例で校正する。8点近似を真の切断線最大誤差としない | 投機再利用率、切断縁とVFXのズレ、VR知覚、命中時CPU | T-093／任意Phase 4.55。未校正でも有効な試験Profileを明示し、製品値の未設定を無制限許容にしない |
@@ -1867,9 +1837,9 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-002 | 即時分離 | 必要なベイク・VP変換後に仮分離が視認できる（4.5.2） | GPUタイムと入力から表示開始までのフレーム・残る準備費用を記録し、代表入力で4.5.2の同フレーム表示目標とフレーム全体の負荷を確認する |
 | T-003 | 複数Pending | 2〜4切断で画質と性能が許容範囲 | 切断数別にCPU/GPU、Draw、overdrawを比較 |
 | T-004 | Stencil断面 | 正常な正向きの共用Geometryで、5.2の明示的品質例外を除き穴・はみ出し・片眼ずれがない | 箱、凹形、人形の共用Geometryを通常の外部視点で両眼確認する。符号・Color・Plane overflowの扱いはT-066／T-067／T-089に従い、この試験へ重複展開しない。Camera内部／Near Plane近傍は5.2／D-131の品質例外に従う |
-| T-005 | Convex切断 | 7.2の上限内の閉凸出力を生成し、同節の接触変化の許容と既存の物理Commit条件を満たす | 少数合成Fixtureで上限内は削減なし、有効なL以下入力を切って129頂点以上になる削除可能例は128以下へ削減する。2回以上の削除を含め、重複統合後の継承頂点の保護、残存座標不変、閉凸性・内接性・非退化性と同じ実装・入力条件での決定性を確認し、特定の削除順との一致は合格条件にしない。候補不足は既存終端・回収、表示張り出しへのNo-opは許容結果として確認する。完了時間・接触変化・速度継承を既存計測で確認し、成功例を既存物理正式採用だけで代替して合格にしない |
+| T-005 | Convex切断 | 7.2の上限内の閉凸出力を生成し、同節の接触変化の許容と既存の物理Commit条件を満たす | 少数合成Fixtureで上限内は削減なし、有効なL以下入力を切って129頂点以上になる削除可能例は128以下へ削減する。2回以上の削除を含め、重複統合後の継承頂点の保護、残存座標不変、閉凸性・内接性・非退化性と同じ実装・入力条件での決定性を確認し、特定の削除順との一致は合格条件にしない。候補不足は既存終端・回収、Physics Hull外だけの表示への非Hitは許容結果として確認する。完了時間・接触変化・速度継承を既存計測で確認し、成功例をAbortだけで代替して合格にしない |
 | T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表10プロップを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
-| T-007 | 世代競合／公開前受付制限 | 先行Operation未公開の親と仮表示領域への後続切断を見送り、Operation公開後はGeometry／cook／Physics未完了でも、4.5.3のCPU読取り公開で確定子を再切断できる。GPU転送・集約完了を待たない。通常の世代不一致成果物を公開しない | AのOperation公開を遅らせ、仮表示領域へのBが状態、世代、未完了件数、Aの仕事を変えず見送られ、A公開後もBが再生されず新しいCを受付けることを確認する。無関係な確定済み対象はAの公開待ち中も受付可能とし、A公開後のCと既存Jobの完了順を反転して従来のGeneration Rejectも維持する |
+| T-007 | 受付制限と対象authority | 4.2／8章のSource単位の受付・失効と4.5.6の祖先順Geometryを確認する | AがActive中の同じSourceへの要求を見送り、保存・再実行しない。他のLogicalFragmentは同じObject内でも並行でき、他枝のObjectGeneration更新でAをRejectしない。AのFinal Physics／Logical公開後はGeometry未完了でも子のBを受付・公開できるが、B KernelはA Geometry Commitを待つ。同じTransactionのProvisional置換・pose／速度／Sleep変化は自己失効せず、外部authority変更はStale回収して現在Sourceを退役させない |
 | T-008 | Skinned切断 | 姿勢固定から静的破片への切替が見えない | Phase 4.52。歩行・走行・腕振り中に各部位を切断 |
 | T-009 | 入力モデル耐性 | 契約内モデルは自動前処理で切断可能になる | 変換検査とエラーレポートを確認 |
 | T-010 | 破片予算 | 連続プレイでCPU／メモリが上限内へ収束 | 10分間の連続切断ストレス試験 |
@@ -1911,13 +1881,13 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-048 | モブ先行切断 | 遠距離モブの計画済み明示Animation Stateから必要候補だけをPose評価し、命中前のMesh／Convex完了率を改善する | 距離、Tier、Horizon、Pose Evaluator Backend別にCommit率、破棄率、Pending時間、評価Bone数を比較し、全Mob／全Sampleの全骨Pose先行生成が実行されないことを確認する |
 | T-049 | Mob Trace完全性 | MobPlan生成から利用、無効化、再計画、切断Commitまで因果を追跡できる | MobId、PlanGeneration、SlashId、TaskIdで保存Traceを自動照合 |
 | T-050 | 断面表示一貫性 | 通常表示で仮断面と実断面が同じグレー・同じトゥーン応答となり、差し替えで陰影や輪郭が目立って変化しない | 共通トゥーン設定下で箱、凹形、人物を多方向に切断し、両眼映像とフレーム差分を確認する。既存FixtureでBase Texture／Material UV Transformを変更しても実断面色が変わらないことを確認する |
-| T-051 | 断面デバッグ表示 | 5.3の通常グレー／仮断面赤／実断面緑が描画対象に対応し、デバッグ切替でGeometryを書き換えない | Readyだが未Commit、Geometry Commit済みかつPhysics未完了、Physics完了を一連で確認し、再切断では既存実Capの緑と新しい仮Capの赤を維持する。色変更だけを目的とするVertex／Index書換え・VB／IB転送・Geometry複製がないことを確認する。処理経路別の色行列、色覚補助、専用パネル、独立性能SLAを要求しない |
+| T-051 | 断面デバッグ表示 | 5.3の通常グレー／仮断面赤／実断面緑が描画対象に対応し、デバッグ切替でGeometryを書き換えない | Final／Logical公開前、公開後Geometry未Commit、Geometry Commit後を一連で確認し、再切断では既存実Capの緑と新しい仮Capの赤を維持する。色変更だけを目的とするVertex／Index書換え・VB／IB転送・Geometry複製がないことを確認する。処理経路別の色行列、色覚補助、専用パネル、独立性能SLAを要求しない |
 | T-054 | Unity選択的録画 | 片眼映像、異常前後リング、限定静止画がFrameId／Traceと一致し、録画有効時も性能予算内 | 最新のTier C Phase 0.11 qualification成功を入口証拠とし、Phase 0.11ではWDDM非同期NVENC、固定2 WorkerのAccepted FIFO順submit／Output回収、reorderなし、Capture専用のSource／GPU同期／Encode Sample／Work固定8 in-flight、固定memory streaming verification、Fresh final全file hash 1回、CaptureCompleteでのReceipt再利用、Main／Render Thread非待機を前提にする。Phase 4.8で解像度、30／45fps、リング長、正式chunk長、GOP、Container、segment、durability頻度、index、seek、保持期間別のGPU／CPU時間、Dropped Frame、保存遅延を比較する。上限を外す場合はRegistry／Publication Planの計算量、payload copy／hash回数、停止時Publication時間を先に実測・改善し、必要な場合だけ代替EncoderまたはCapture経路を再評価する。Phase 0.11のchunk形式を製品用連続録画形式へそのまま昇格しない。T-054はPhase 0を再オープンせず、Phase 0.1／0.11のTier A～DへPhase 4.8の性能matrixを混入させず、両Phaseの完了条件にも含めない |
 | T-055 | OpenXR Projection Capture | D3D11固定ProfileでRelease前CopyがSwapchain所有権、Texture Array、左眼SubImage Rect／Array Indexを正しく扱い、提出画像を破損しない。MSAA、別API、想定外LayerはFail Fast | 正常Profileで非録画時との画像・Frame timing差を比較し、MSAA、D3D12、別Array Size、追加App Layerを故意に与えて録画停止とTrace理由を検査 |
 | T-056 | Capture相関と限界 | predictedDisplayTime、Pose、TestRunId、ゲーム内ID、画像が一意に対応し、Projection正常／最終HMD異常を区別できる | 意図的な描画不具合、Dropped Frame、Reprojection、Link品質低下を発生させ、Unity Capture、API Layer Capture、HMD観察を比較 |
 | T-057 | Capture環境識別 | Runtime／Driver／Swapchain等が変化したRunを別環境として識別し、固定Profile逸脱を見逃さない | Driver、Meta Runtime、Render Scale、Refresh Rate、Unity Packageを個別変更し、Run Manifest差分と比較拒否を確認 |
-| T-058 | Pending物理共有 | cookを意図的に遅延・失敗させても切断表示が同フレームに始まり、共有Collider中のめり込みと透明接触が許容範囲に収まる | Bake遅延を0～数秒へ変え、表示開始フレーム、分離量、接触差、Timeout品質低下、後続切断を測定 |
-| T-059 | 物理分裂Commit | FragmentGroupから左右Rigidbodyへの切替で位置・速度が連続し、Solverによる大きな跳ねやメインスレッド停止がない | 並進・回転・接触中にCommitし、重心速度誤差、Impulse、主スレッド時間、視覚フレーム差を記録 |
+| T-058 | Pending物理共有 | 4.5.2の入力準備条件に従って切断表示を開始し、cook遅延中の共有Colliderによるめり込みと透明接触が許容範囲に収まる | Bake遅延を0～数秒へ変え、表示開始フレーム、分離量、接触差、Timeout品質低下を測定する。処理中は同一Sourceへの再切断を拒否し、Final／Logical公開成功後は子への切断を受付可能とし、Final不成立時は7.1に従ってSourceを退役することを確認する |
+| T-059 | 物理分裂Commit | 7.1／7.2の初回分裂とFinal handoffのpose／速度・一体公開を確認する | 並進・回転・接触中の代表例で、Anchor点速度継承とFinal Actorのpose／速度維持、主スレッド時間、Impulse、視覚差を記録する |
 | T-060 | 二段階Cooking | Fast Cookで物理分裂を早め、選択的Fast Simulation昇格が再cook費用を上回るPhysics CPU削減を得る | Fast Cookのみ、Fast Simulationのみ、二段階を同一切断Traceで比較し、Bake時間P50／P95／P99、Pending時間、Upgrade率、10分間のPhysics CPUとピークメモリを測定 |
 | T-061 | Collider Upgrade Commit | 同形状の別Meshへの差し替えで位置・速度と接触が連続し、再切断済みの古いUpgradeが適用されない | Sleep、自由運動、接触中、同時再切断を再現し、Wake、接触Impulse、主スレッド時間、Generation Reject、Mesh回収を確認する。内接削減済みの採用形状を再cookへ渡し、削減前へ復元されないことも確認する。接触中延期は7.3を維持する |
 | T-064 | 全体低重力プレイ | 一般プレイヤーが空中物体を狙いやすく、世界全体の浮遊感とゲームテンポが許容でき、全軌道系で重力が一致する | 0.35G／0.5G／0.7G／1.0Gを同一投擲・切断Scenarioで比較し、滞空時間、斬撃成功率、主観評価、Physics／予測／VFXの軌道差を記録 |
@@ -1927,8 +1897,8 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-068 | 両眼Cap可視性Cull | Facingでは両眼ともepsilonを越えて明確に裏向きのCapだけを除外し、片眼可視・epsilon帯内・正負Capを誤って除外せずStencil仕事を削減する | 左右眼のFacing一致／不一致、epsilon境界の内外、正負Cap、Frustum内外の固定配置でCull判定、Stencil Draw／GPU時間、左右眼画像差を比較する |
 | T-069 | Convex Job Pipeline | Convex分割と複数`Physics.BakeMesh`がメインスレッドを停止させず、世代不一致成果物を適用せず、Pending物理共有から安全に分裂できる | 破片数、面数、同時Slash数、Fast Cook／Fast Simulationを変え、各Job段階時間、Schedule数、Worker占有、Main Thread Commit時間、Bake P50／P95／P99、Generation Reject、物理差し替え時Impulseを測定。同一Mesh同時Bakeを不変条件として検出する |
 | T-071 | Global Solid Reconstruction研究 | Voxel／SDF Union、内部充填、Surface Projectionから自己交差のないGlobal Solidを再構成できるかを将来研究する。製品Phase、代表Asset合格条件、Fallbackには使用しない | 開始時期未定。研究を開始する場合だけ独立DatasetとArtifact Schemaを新設し、標準Closed Component／Stencil／Compound Convex経路へ影響しない比較として実施する |
-| T-072 | 固定物体の即時切断 | cook遅延中もAnchorを持つ所有者全体が固定され、Anchorなし側だけが仮分離する。固定を理由に仮描画を省略しない | 単一・両側・OnPlane Anchor、同Sideの離れた島、連続切断、先行結果Reject、cook遅延／失敗を少数例で確認する。固定側の誤Impulse・変位がなく、全体固定による浮遊とAnchor喪失後の大型物体の落下・回転を許容する |
-| T-074 | 点Anchorと論理切断公開 | 点Anchorの直接継承、正負の論理子・切断面参照・世代の原子的公開を確認する | 受付時はPending Cutだけ、通常処理で確定後に子1／2件・実在境界を公開する。OnPlane両側継承、子の再切断による他方集合の不変、非identityなlocal frameを確認する。世代不一致成果物を公開しない。切断履歴と有効なOperation作成Traceを復元し、欠落・重複・件数不一致・未完了束を成功根拠にしない |
+| T-072 | 固定物体の即時切断 | cook遅延中もAnchorを持つ所有者全体が固定され、Anchorなし側だけが仮分離する。固定を理由に仮描画を省略しない | 単一・両側・OnPlane Anchor、同Sideの離れた島、連続切断、先行結果Rejectを少数例で確認する。cook遅延caseでは固定・仮分離と固定側の誤Impulse・変位がないことを確認し、全体固定による浮遊とAnchor喪失後の大型物体の落下・回転を許容する。cook失敗caseではFinalを部分公開せず、7.1に従ってSourceを退役することを確認する |
+| T-074 | 点Anchorと論理切断公開 | 7.1の点Anchor継承とFinal Physics／Logical Publication、後着Boundaryを確認する | Phase 1のHarness内合成Final成功／失敗入力で正負2子の一体公開またはSource退役を確認する。OnPlane両側継承、非identityなlocal frame、子再切断時のSibling不変を含む。Phase 3でGeometry Commit時のBoundary 0／後着、Operation／ChildからのTrace相関を確認し、実物理はPhase 4へ接続する。8章に従って他枝の世代更新とauthority喪失を区別する。欠落・重複・件数不一致・IncompleteOperationTraceを完全Traceの合格根拠にしない |
 | T-076 | Geometry／Cook Microbenchmark | 製品のCPU側の共用VP Geometry切断、Convex切断、T-077検証済みTemporary Physics Proxy生成、`Physics.BakeMesh`を工程別に再現測定し、単発レイテンシとJob定常処理容量を分離して、入力規模からP95／P99完了時間を見積もれる。 | 公開合成DatasetをRelease Player相当／Burst有効でWarm-up後に反復する。計算KernelのSingle-Thread µs/op、Bake／Commitの直列単発Latency、Job Batchのcuts／triangles／convexes／cooks per second、Schedule／Complete latency、Worker占有、Main Thread Commit、GC／Nativeメモリ、失敗率を規模別に保存する。Target×Stage×ExecutionMode許可規則、Metric／Unit組合せ、系列一意性を検査し、`ColliderCommit + SingleThreadKernel`と`PlaneClassification + MainThreadCommit`をRejectする。ManifestのDatasetCaseIdと全規模軸をResultへjoinし、Samples／P50／P95／P99と容量式の説明変数を一意に復元する。同一Suiteへ同じDatasetId・異なるDatasetContentSha256を持つLatency／Throughput等を混在させたFixtureをjoin前にSuite Rejectし、別Suiteまたは別DatasetIdなら受理する。Bytes／Count Samples `[1,2]`からMean `1.5`を取得順binary64左畳みで再計算し、101件以上のPercent系列でもCountを範囲違反にしない。対象処理の失敗がRejectedではなくFailureRateへ入ること、一部計測不能時の件数、全試行計測不能時のSuite Rejectを検査する。Manifest／Result相互ID・hash・件数、Aggregate再計算、Result差し替え、欠落／余分Entry、開始／終了clean検証、途中HEAD変更、Repository外一時出力、Index-last原子的確定、未知Schema／property Rejectを試験する。Manifest 64 KiB、Result 64 MiB／100万Sample、Index 64 MiB／10万Entryと呼び出し側のより小さい上限、宣言件数超過、非seek入力、過剰nesting、末尾dataを配列確保前にRejectし、全Loaderに無制限APIが存在しないことを確認する |
 | T-077 | Temporary Physics Proxy正しさ | Temporary Physics Proxyが有限で決定的なGeometryを生成し、watertight、面向き、凸性またはCompound規約、PhysX上限を満たす | 中央／端／非交差、薄形状、極端なAspect、複数Fragment、退化Bounds、NaN入力を合成し、同一入力Hashからの出力一致、有限頂点、Bounds逸脱、切断側分類、体積、凸性、Primitive重複、上限、Validation Reasonを検査する。不正結果は物理へ公開せず、合格実装だけをT-076へ渡す |
 | T-078 | 早期Fixture選抜・再現性 | 5カテゴリ別Recipe、均衡batch、用途別Bindingとfrontierから下流入力を再現できる | 10.2.2のBuilding限定preflight・監査・再利用を検査し、全Source事前計数なしでCatalog／Manifestを確定し、通常Import失敗を当該SourceのReportへ終端記録して他Sourceを続行する。全カテゴリの小Pilot、最低12 unique Source／Render5帯／PhysicsCookInput6 Source／Building2 Sourceのquota、固定順位、一括Manifest確定後の再開／同一frontier、Eligibilityと結果の分離、Resource終端、再開時の完了Artifact再利用、Reviewによる直接membership変更禁止、cohort別再評価を検証する。Licensedは各カテゴリ最低1 SourceかつEnvironment Tree／Rock両方の固定監査sampleのGeometry・対応EntryだけをReview専用bake等なしでclean再生成し、事前toleranceの意味的等価を確認する。全Licensedの2回生成は要求しない。公開Synthetic／Goldenは2回のbyte一致、非公開Dataset／対応表／画像の漏洩防止を確認する |
@@ -1936,10 +1906,10 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | T-080 | Vehicle 1 cm Voxel Variant | Object境界とmeter基準1 cmのRecipeを再現する | Body／Exception Objectを別々に処理し、Transform／階層と親参照を保持する。D-155の2M以内の有効基底を正式保存し、200k超は用途Bindingなしで保持する。Triangleが減る／同じ／増える基底を省略せず、Presetの最大数以下の限定Post-Decimate、1回Ratio、NoOp／Alias、Resource分類を検証する。相対Voxel64／128／256へ読み替えない。ZCG後のBounds／中心／表面偏差とRenderCutInput Gateを再実行し、Licensed Solid体積／watertight／自己交差Gateを要求しない |
 | T-081 | canonical成果物・用途・Synthetic | 10.2.2のSchema／Bundle／Artifact／Binding／Report／Index／Receiptをboundedに検証する | 10.2.2のBuilding判定記録v1の一対一照合／canonical上限／判定一致Goldenと失敗境界とCatalog v2の全property／Rule×Eligibility×ScopeReason許可表、Rule Set hash、Batch Manifest v1の全一括割当／ordinal／7 queue／重複Source／外部hash／Report prefix、v2選抜schema、未知値／不正tag、成功出力参照必須・失敗出力禁止、Process／Selection分離、Recipe×Role許可表、NoOp／Alias先行参照、親hashとBlind由来制限、各Entryのprovenance、cohort、Catalog／frontier被覆、Bundle drift、file許可リスト、Receipt欠落を検査する。ZCG Golden／Numeric Kernel、単一Hull4／16／64／128 Cook入力、129 Role拒否、255 Codec成功、3／256／複数Hull拒否とFace／index導出上限を確認する。公開Triangle Positive8／Negative4、Cut期待値、既存Synthetic Solid Validatorのepsilon／1 ULP／BVH／共有simplex検査を維持し、Licensedへ混在させない |
 | T-082 | Capture Draft／Publication Recovery | 現行Record中心のライブCaptureをDraft中心へ置換し、最終Manifest確定前にもrequest、readback、PNG encodeを相関できる。freeze後はStaged Draftだけを原子的に最終Recordへ昇格し、Trace先行公開とCapture再試行を一意に復元できる | Factory／Registry／Submission／Scheduler／readback completionをDraftで通し、Drop Reason 0～9の固定値、既存1～4互換、各経路との一意対応、unknown Reject、lease予約失敗、Registry満杯、readback／encode失敗、PNG staging失敗、取消、freeze drain Timeoutのrollbackと`Pending -> Dropped`終端化を検査する。`受付停止 -> producer稼働中のbounded drain -> producer取消／join／静止 -> Terminal Intent Queue最終完全drain -> Queue／私有Buffer所有権照合 -> 残存Pending強制Drop -> 通常Trace producer静止 -> 通常FIFO完全Drain -> terminal列構築／専用Append -> Recorder Freeze -> Snapshot -> Summary`を各境界で停止させる。drain中とjoin直前の成功Stage／通常Drop Intentが最終drainで必ず処理され、完成済みPNGを理由9へ誤分類しないこと、drain中のEncoded／通常Drop EventとBarrier前残存Eventが通常領域だけへ入り、最大強制Drop＋RingFrozenが専用reserveへall-or-noneで入り、通常領域満杯でも`AwaitingFreezeTerminal`から早期Frozenしないことを確認する。terminal EventType／TestRunId／ID順／末尾Ring／件数、通常Queue非空時Append、直接APIの状態違反、PostRoll／reserve境界、通常領域overflow時Incomplete、reserve不足Profileを検査する。DroppedにPNGがなくてもFinalizerが成功し、StagedのPNG欠落、DroppedへのPNG混入、Pending残存、TestRunId／Context不一致、重複ID、件数不一致では最終Recordを1件も公開しない。Plan Schema v1のRunInitializationIdを含むproperty順／型／null禁止／最短integer／NFC、16 MiB／10万Entry／path／呼出側上限、非seek `limit + 1`を検査する。信頼base rootから`runs/run-{TestRunId}`を導出し、OS排他lockの同時取得拒否とprocess crash解放、staging作成直後／各init tmp・Rename／final作成／各ready確定でのcrashを再現する。片側root、空／tmp-only root、ready片側、完了後staging削除済みfinal-onlyを正しく復旧し、marker／InitializationId／Root hash／Peer hash不一致、同一／祖先base root、別Run再利用を隔離する。許可marker／tmp集合、rooted／UNC／drive／`.`／`..`／空segment／backslash／case-fold衝突／symlink／junction／reparse point／TOCTOU差し替えをRejectし、固定path導出とRun root内解決を要求する。staging file flush、Plan-last commit marker、Trace公開前durabilityを検査する。Trace公開前の各失敗点でFrozen入力とdurable stagingを保持し、Summary payload変更時はManifest hashではなくtrace／bundle index hashだけが変わることを確認する。Trace公開後はManifest hashを変えず、PNGだけ／sidecarだけ公開後のクラッシュから一致側を保持して欠落側だけを再試行し、内容衝突だけをhard errorとして上書きしない。`capture.index.tmp`書込中／flush後／rename前、Index確定直後／通知前／cleanup途中の各クラッシュを再現し、tmpを完了証拠にせず、Planと同一なら再利用、partialなら削除再生成、canonicalな所有不一致なら隔離する。全期待PNG／sidecar成功後に同じcanonical bytesの`capture.index`をPlan削除前にdurable確定し、CaptureCompleteと期待集合を復元する。Artifact検証は全長配列を作らない固定memory streaming length／hashを共通正本とし、Phase 0／0.1のdurabilityを維持する。Phase 0.11 Fresh専用条件ではfinal全hash 1回のPublish Receiptを同一CaptureCompleteへ再利用し、Recoveryはprocess-local証拠を捨てて再検証する。後日のArtifact削除／改変検出、pre-trace orphan隔離、明示放棄時のTraceOnlyCaptureIncomplete、bounded staging／verification buffer枯渇時のbackpressureも検査する |
-| T-083 | 共用Geometry切断 | 共通契約を満たす入力を任意平面で切り、実Capを含む各非空出力が同じ閉鎖・edge／vertex manifold・局所winding整合を継承し、4.5.6の正負直接配置と転送・公開条件を満たしてから、表示とStencilへ同じ世代・Triangle集合としてCommitされる | 箱、凹形、複数の閉Component、全体反転、skinning後Self-intersection、別TopologyのCoincident／Nested Componentを切る。planeがvertex／edge／faceを通る場合、同一点複数port、極小／面積0 Triangleを含め、元surfaceと逆向きのCap boundary、Cap内部Edgeの2 incidence、単一vertex fan、canonical position、finite属性、再切断後の同契約を小さいFixtureのオフラインHarnessで検査する。面積0 Triangleを含む非空GeometryとTriangle数0の空出力を区別し、後者へdummy Mesh／Cap／Rendererを作らない。受付後に一方のGeometryとConvexがともに確定空となるFixtureでは、確定前にLogicalCutOperationを公開せず、子1件／境界0件の確定結果を出力構築後に原子的に公開する。用途別の二度目の切断／Cap生成／Uploadと製品Runtime出力Validatorがなく、世代不一致の通常不採用と出力予約不足時の非公開を確認する。出力予約不足だけは4.5.3の再予約・再実行を許容し、プール容量限界は4.5.4に従う。全Mesh self-intersection／inside-outside検査、旧救済経路、方式別試験を追加しない |
+| T-083 | 共用Geometry切断 | 共通契約を満たす入力を任意平面で切り、実Capを含む各非空出力が同じ閉鎖・edge／vertex manifold・局所winding整合を継承し、4.5.6の正負直接配置と転送・公開条件を満たしてから、表示とStencilへ同じ世代・Triangle集合としてCommitされる | 箱、凹形、複数の閉Component、全体反転、skinning後Self-intersection、別TopologyのCoincident／Nested Componentを切る。planeがvertex／edge／faceを通る場合、同一点複数port、極小／面積0 Triangleを含め、元surfaceと逆向きのCap boundary、Cap内部Edgeの2 incidence、単一vertex fan、canonical position、finite属性、再切断後の同契約を小さいFixtureのオフラインHarnessで検査する。面積0 Triangleを含む非空GeometryとTriangle数0の空出力を区別し、後者へdummy Mesh／Cap／Rendererを作らない。合成Final成功で2子を先に公開し、Geometryが片側または両側空でも子数を変えずRendererなしとする。Boundary 0／後着と祖先順Commitを確認する。用途別の二度目の切断／Cap生成／Uploadと製品Runtime出力Validatorがなく、世代不一致の通常不採用と出力予約不足時の非公開を確認する。出力予約不足だけは4.5.3の再予約・再実行を許容し、プール容量限界は4.5.4に従う。全Mesh self-intersection／inside-outside検査、旧救済経路、方式別試験を追加しない |
 | T-084 | 共用Geometry入力Gate | 正常な閉Meshと全体反転を受理し、Boundary Edge、局所winding不整合、3面以上Edge、複数fan共有Vertexを切断可能Geometryとして登録しない。属性seamと別Topologyの同位置Componentを混同しない | 正向き箱、全体反転、複数の閉Component、Self-intersection、別TopologyのCoincident／Nested Component、UV／Normal seamを受理する。開放Boundary、1／3／4面Edge、T-junction、局所反転、複数fan共有Vertex、共有position不一致、NaN／Inf、不正index／Topology参照を入力準備時にRejectする。Runtime生成の面積0 TriangleをGeometry全体の空と誤判定せず、片側空No-opはこの入力Gateではなく7.6の現在Convex分類で判定する。全Mesh自己交差、inside／outside、signed volume、向き正規化を実行せず、同じ不合格行列をStencil描画試験へ重複させない |
-| T-085 | Convex質量特性と質量保存 | 重複Compound Convex、非交差Convex、複数Convexを横断する切断、連続切断でも共用Cut Geometry／Union Solidを積分せず、親質量を保存した子の質量・重心・慣性を決定論的に生成できる | 単一箱、重ならないCompound、部分／完全重複Compound、凹形状を覆う複数Convex、専用Physics Proxyを持たない共用Geometryを切断する。LogicalConvexFragmentLocalId順のbinary64左畳み、並列Reduction／再関連付け禁止、各中間finite、親質量正、Weight 0許容、全Weight 0／非finite／overflowを検査する。片側の子がWeight 0 Convexだけを持つFixtureでは、空集合とみなさずGeometryを保持し、独立物理が成立しないため現有効な単一FragmentGroupまたはProvisional Actor集合を正式採用して`Stable Unsplit`へ終端する。質量0／任意最小質量Rigidbody、部分的な物理Commit、Siblingへの質量移送、実装固有の質量再配分を禁止する。`assignedMass = parentMass * (weight / weightSum)`、`densityScale = assignedMass / convexVolume`、`I_assigned = I_unitDensity * densityScale`の固定順をGolden値へ照合する。切断前後の質量和、子孫世代の累積誤差、重心、慣性主値、平行軸合成、列挙順不変性、生体積加算による重複質量なし、非交差Weight不変、交差Weightだけの体積比分配を確認する。片側体積がepsVolume以下でもGeometryを消去せず、正当な配分が成立しなければ現物理を正式採用する。体積0／非有限／極薄Convexでは正確積分、Convex OBB、Fragment OBB／AABB、現物理の正式採用の順とTraceを検査する。`MassProperties`のSingle-Thread時間、Job Throughput、一時メモリをT-076系列で測定する |
-| T-086 | 非Union Geometryと物理所属 | 複数の閉ComponentをUnionせず正負二集合へまとめ、7.6の空／非空規則で所属する | U字や離れた島を含む少数例で、同SideのGeometry／Convexが一つの所有者のまま正常Commit・再切断できることを確認する。Convex片側正常空は1物体、両側非空でGeometry片側空はRendererなしを含む2物体とする。cook・Weight失敗を空にせず、必要なら既存物理を正式採用する。正負が同じ所有者へ付いても面・Side・Capを保持し、専用Convexや所属探索を作らない。同じ描画条件のCapは非Unionの符号加算とし、Overlap Siblingの一般衝突抑止は維持する |
+| T-085 | Convex質量特性と質量保存 | 7.2のWeightによる親質量保存とFinal質量特性を確認する | 単一箱、重複／非交差Compound、連続切断でLocal ID順binary64左畳み、assignedMassと密度scale、平行軸合成、非交差Weight継承、分割Convexの体積比分配をGolden値へ照合する。Weight 0を含む有効集合を許容し、全Weight 0、非finite、epsVolume以下等で両子の正質量を成立させられなければ7.1のAbortとなる。規定Convex OBB／Fragment OBB・AABB近似とその不成立終端を確認し、部分公開・任意最小質量・Siblingへの質量移送で補わない。MassProperties費用はT-076系列で測定する |
+| T-086 | robust supportと正負二集合 | 7.6の一つのepsilonによる受付・未切断継承と2所有者を確認する | 接線・Near-plane・等号で片側supportなしはNo-op、両robust supportがあるConvexはd = 0で分割する。非交差Compound全体が両supportを持てば受付け、全頂点Near-planeの別Convexは正側へ未切断継承する。U字・離れた島も同Sideの一所有者にまとめ、両Physics非空でGeometry片側／両側空ならRendererなしの子を残す。受付後の片側物理不成立はAbortであり、反対側所有者へのGeometry付属で救済しない。非UnionのStencil符号加算とSibling衝突抑止は維持する |
 
 4.5.6の表示出力は既存T-007／T-083／T-086／T-090／T-091の該当確認へ次を統合し、小さいFixtureと意図的な完了遅延で確認する。別Test ID、専用大規模Suite、Benchmark Schema、Trace Eventを追加しない。
 
@@ -1947,10 +1917,10 @@ T-027～T-030は、Phase 0.2で明示済みまたは後続Phaseで採用した�
 | --- | --- |
 | 正負直接出力（T-083／T-086） | 一つの予約へCapを含む正側、負側の順で連続配置し、n0・n1から範囲を決める。未使用tailを公開・転送せず、面集合・向き・Topology・再切断結果を維持する |
 | Index転送（T-007／T-083） | 新規出力の実使用範囲を一度のSetDataで転送する。入力Geometry全体と既存GPU範囲を変更せず再利用する場合だけ新規Index書込み・転送0回とし、片側出力や個別非交差Triangleだけでは省略しない |
-| 表示CPU結果が先着（T-083／T-090） | Final cook・物理所属の確定を待たず転送でき、現在有効なframe／参照で表示追従できれば先行Commitする。後着物理への参照切替で再配置・再転送しない |
-| 物理が先着（T-086／T-091） | 必要なCPU情報と適用条件が揃えば表示転送を待たず物理Commitし、仮表示は現在物理に追従する |
-| 既存物理の正式採用・失敗（T-086／T-091） | Stable Unsplitでも正負Index配置を維持して現在物理へ表示を所属させる。Frozen・失効は既存の安全・回収規則へ進み、来ないFinal成功を待たない |
-| 再切断と寿命（T-007／T-083／T-091） | Operation公開後はGPU未転送CPU入力から再切断できる。Published入力を上書きせず、必要な未転送継承Vertexを供給し、旧範囲は全CPU／GPU読者終了まで保持する。Geometry Commit後も必要な物理工程が終わるまで未完了件数を維持する |
+| 表示CPU結果が先着（T-083／T-090） | CPU生成・転送は内部処理であり、Final Physics／Logical Publication前にGeometry Commitしない |
+| 物理が先着（T-086／T-091） | Geometryを待たず正負Final Physics／Logical childを公開し、Temporary表示を子へ追従させる |
+| 物理成立不能（T-086／T-091） | 7.1のAbortでSourceを退役し、当該未公開Geometryを現在状態へCommitしない |
+| 再切断と寿命（T-007／T-083／T-091） | 受付は祖先Geometry未完了でも可能だがKernelは祖先Commit後とする。CPU Publishedは内部処理であり、CPU Index再利用をGPU完了待ちへ結び付けない（4.5.3）。Pending件数はGeometry Commitまたは不要化の終端で完了する |
 | 先行計算（T-007／T-083） | 有効な準備済みGPU範囲を再利用し、命中後の再配置・再転送を要求しない。前提不一致は既存の不採用・回収に従う |
 
 T-082では追加で、`MaxInFlightDraftCount`が受付済み全Pending Draftをqueue横断で厳密に制限し、Registry外Pendingが存在しないことを検査する。freeze時のimmutableな`ForcedDropFrameIdSet`に対して、terminal列の欠落、余分、重複、順序違反、Reason違反、TestRunId違反、Ring欠落／複数を個別に与え、すべてall-or-noneでRejectされcapture列が不変かつ`AwaitingFreezeTerminal`に留まることを確認する。Buffer構築失敗、検証失敗、reserve書込み失敗の各地点から同じ集合で再試行して初回成功時だけFrozenとなり、成功前はSnapshot／Summary／Manifest／Plan／Exportが不可能で、明示Abortではbundleが公開されないことを確認する。Run root所有権はstaging／finalの2 lock pathを決定順に取得するものとし、異なるstaging base＋同じfinal base、同じstaging base＋異なるfinal base、2本目取得失敗、逆順要求、process crashを試験する。途中失敗では先に得たhandleが解放され、両Run rootが未変更であり、再試行可能であることを確認する。
@@ -1966,30 +1936,28 @@ T-082ではTerminal Intent Queue容量を`checked(2 * MaxInFlightDraftCount)`の
 | ID | 対象 | 合格の考え方 | 方法 |
 | --- | --- | --- | --- |
 | T-088 | Player非接触Locomotion | 固定Occupancyへの候補次姿勢Overlapによる要求全体Reject、HMD非Clamp、固定集合の非追従が成立する | 少数の固定壁Fixtureで非Overlap候補の許可、Rootまたは予測HMD CapsuleがOverlapする要求の全体Rejectを確認する。元物体の移動・切断・Commit・退役後も固定集合が変わらず、切断開口へ通行境界を追従させないことを確認する。HMD Lean後も追跡poseをClampせず、候補が重なる人工移動は拒否されることを確認する。切断・描画・未来物理の既存試験は変更せず、本Fixtureとの組合せを要求しない |
-| T-089 | Hybrid Clip Plane予算 | D3D11／Quest LinkのColor、Depth、Shadow、Stencil Volumeで同一のstable Plane選択を使い、Raster 8面とPixel fallback最大4面でGPU時間とMSAA edge品質を保ちながら、容量超過面を5.2に従いPlane選択とclip制約から除外し、対応Stencil Volumeをsubmitしない | Phase 1.51の固定Clip確認を再利用し、Phase 2で製品状態・候補選択との統合を確認する。0、1、7、8、9、12、13、32候補面を持つ単一／複数RenderFragmentを用意し、先頭8面が`SV_ClipDistance`、9～12面がPS `clip()`、残りがIgnoredになることをShader captureとProfiler Counterで確認する。Operation公開前後で受付済みの未Commit面・Sideを引き継ぎ、固定による候補除外がないこと、RenderFragment対応変更時に同じ描画更新境界で候補を再構築することを確認する。Pending Cut列とCutBoundary公開列を通した受付の古い順、左右眼、Color／Depth／Shadow／Stencil各Pass、カメラ移動、画面外復帰で選択が一致し点滅しないこと、Operation公開時に同じ面と受付位置を保って重複しないことを検査する。同一枝へ13回以上連続切断し、選択列が未Commit祖先についてdependency-closedで、Ignoredな後発面により祖先外Geometry復活やSibling重複を生じないことを確認する。順序違反した復元Fixtureは違反以降をIgnoredとして背景完成へ委ねる。Ignored Pending Cut／境界でもPending CutまたはCutBoundaryRecord、世代、支持、背景共用Geometry／Convex Jobが残り、同期待機やJob cancel／再発行を生じずStable Commitで正しい形状へ収束することを確認する。Ignored VolumeのCap板をBatchへ残し、通常Colorで別ResidualがないsampleはStencil 128のためColor／Depthを書かないこと、通常Colorの非互換Residualは分離されること、最後の統合Colorでは板の可視化と誤Depthを5.2の例外として扱うことを確認する。Ignored専用フラグ、compaction、代替VFXを要求しない。MSAA 1x／2x／4x／8x、pixel-bound／vertex-bound Sceneで全PS clip、Hybrid、Raster 8のみを比較し、Pixel fallback数とStable専用Shader分離をO-043へ記録する |
-| T-090 | 最小優先度Dispatcher | 固定容量・非割当のV1が物理安全をBackgroundより先にScheduleし、低優先度投入でCritical予約枠を消費せず、Schedule前取消とSchedule済みGeneration Rejectを一意に処理する | 5 PriorityClass、同一Deadline、Deadlineなし、同一Class stable順、Queue上限一致／1件超過、Critical予約枠、Tick Schedule／費用予算、Background starvation、Batch化、取消競合、二重Completion、古いGenerationを合成Work Itemで再生する。通常のDispatcher APIはCapacityExceededで待機・eviction・同一Frame無限再試行・Managed allocationを生じないことを確認する。全対象合計の`MaxIncompleteCutOperationCount`直前／一致、同一Frameの複数対象、同一Slashの部分受付を試し、見送りが状態・世代・新規仕事を変えず再実行されないこと、受付時と正常完了／世代失効後回収時にだけ件数が一度増減し、CPU Readyの先着でも、現在有効なframeで先行Geometry Commitして物理処理を残す場合でも件数が減らないことを確認する。Geometry先行Commitは4.5.6の現在frame・参照・必要転送条件で確認する。受付済み切断の必須仕事だけは切断Coordinatorが既存Schedule／Completion／Result適用を同期進行して1回再投入でき、進捗不能または次のPhysics Stepが必要なら既存Pendingへ持ち越すこと、PlayerLoop／Commitへの再入、全切断待機、無限再試行を起こさないことを検査する。全`EnqueueOutcome`、無効Deadline、Sequence枯渇、受付失敗時のInvalid Tokenも境界試験へ含める。V2相当の高度機能を実装せず、受付結果はOutcome／Counter、受付成功後のSchedule／Completion／Cancel／Generation Rejectは既存Traceから復元し、存在しないEnqueue Eventを要求しない |
-| T-091 | Provisional Rigidbody／Collision Proxy | cook待ち中も各既知物理子が連続したpose／速度と外界Collisionを持ち、再cookなしの旧Convex再利用から物理Actor優先でFinal Colliderへ移行する | 単一Convex、非交差Compound、切断面を横断するCompound、Anchored／Detached、両側Anchored、1子／2子、同Sideに複数の離れた島がある出力、cook待ち中の連続切断、外部Dynamic物体、床接触、Ghost Contact、小物の切断隙間侵入を試す。非交差Shapeが片側だけ、交差／epsilon内Shapeが両側へ割り当てられ、同系譜SiblingだけCollision無効、外界Collisionは全有効であることを確認する。Provisional生成でcook 0、Geometry Resource共有、固定容量内のActor／Shape／Constraint原子的公開を検査する。点配分未完了は既存Work依存とし、固定側を含む対象の一時的な実行枠不足では`PendingAnchoredSplit`として既存物理を維持し、判定完了または枠の解放後に通常処理へ進むことを確認する。点Anchor配分が完了し全所有者がAnchorなしの対象の一時的な実行枠不足は`PendingPhysicsSplit`とする。要求Actor／Shape／Constraint数が固定上限ちょうどなら成功し、1件超過、Backend共有不可、または既存の安全規則上の資源確保・原子的構築不能では部分公開せず、現物理を正式採用した`Stable Unsplit`へ終端できることを確認する。Provisional生成不能だけで有効な後続Final物理処理を打ち切らない。OBBの正負体積比と補数によるSide Budget、全0／非finite時の等Weight、連続切断で各世代のProvisional質量和が親Canonical Mass Budgetと一致すること、正質量を作れない場合は部分公開しないことを確認する。初回Provisional生成ではRender Anchor pose／点速度／角速度が連続する一方、Final handoffではActor pose／COM線速度／角速度がbitwiseまたは規定epsilon内で不変で、Final Shape全頂点が由来Provisional Convex half-spaceの`FinalContainmentEpsilon`内に収まることを確認する。包含不能、張り出し、frame不一致ではFinal Shapeを公開せず利用可能な既存物理を正式採用して終端し、Colliderを動かして外界penetrationを作らないこと、表示だけの瞬間移動を許容すること、Final分離Impulseを二重適用しないことも検査する。7.1の固定D6構成値と、生成時の相対位置が内向き境界となるanchor配置を確認する。少数caseで内向き運動の抑止、区間内の正gapを上限都合で引き戻さないこと、上限側の停止・引戻しを確認し、上限到達そのものがFault／Fallback／専用Traceを生まないこと、存続中のJoint設定更新や独自分離補正がないこと、handoff／退役時の一度だけのJoint除去を確認する。Solverの厳密な変位、overshoot、Impulse、jitter、戻り時間の合格閾値は追加しない。Solver時間、最大接触Impulse、Broadphase pair、生成／破棄時間、Sleep率は固定方式で測定し、方式比較やPool導入判断を完了条件にしない。公開後の非finite／異常速度／実際のConstraint失敗は既存の安全封じ込めとなり、Timeoutでも同期cookやpose巻戻しを行わないことを検査する |
+| T-089 | Hybrid Clip Plane予算 | D3D11／Quest LinkのColor、Depth、Shadow、Stencil Volumeで同一のstable Plane選択を使い、Raster 8面とPixel fallback最大4面でGPU時間とMSAA edge品質を保ちながら、容量超過面を5.2に従いPlane選択とclip制約から除外し、対応Stencil Volumeをsubmitしない | Phase 1.51の固定Clip確認を再利用し、Phase 2で製品状態・候補選択との統合を確認する。0、1、7、8、9、12、13、32候補面を持つ単一／複数RenderFragmentを用意し、先頭8面が`SV_ClipDistance`、9～12面がPS `clip()`、残りがIgnoredになることをShader captureとProfiler Counterで確認する。Operation公開前後で受付済みの未Commit面・Sideを引き継ぎ、固定による候補除外がないこと、RenderFragment対応変更時に同じ描画更新境界で候補を再構築することを確認する。Pending Cut列とLogicalCutOperation公開列を通した受付の古い順、左右眼、Color／Depth／Shadow／Stencil各Pass、カメラ移動、画面外復帰で選択が一致し点滅しないこと、Operation公開時に同じ面と受付位置を保って重複しないことを検査する。同一枝へ13回以上連続切断し、選択列が未Commit祖先についてdependency-closedで、Ignoredな後発面により祖先外Geometry復活やSibling重複を生じないことを確認する。順序違反した復元Fixtureは違反以降をIgnoredとして背景完成へ委ねる。Ignored Pending Cut／境界でもPending CutまたはCutBoundaryRecord、世代、支持、背景共用Geometry／Convex Jobが残り、同期待機やJob cancel／再発行を生じずStable Commitで正しい形状へ収束することを確認する。Ignored VolumeのCap板をBatchへ残し、通常Colorで別ResidualがないsampleはStencil 128のためColor／Depthを書かないこと、通常Colorの非互換Residualは分離されること、最後の統合Colorでは板の可視化と誤Depthを5.2の例外として扱うことを確認する。Ignored専用フラグ、compaction、代替VFXを要求しない。MSAA 1x／2x／4x／8x、pixel-bound／vertex-bound Sceneで全PS clip、Hybrid、Raster 8のみを比較し、Pixel fallback数とStable専用Shader分離をO-043へ記録する |
+| T-090 | 最小優先度Dispatcher | 固定容量・非割当のV1が物理安全をBackgroundより先にScheduleし、低優先度投入でCritical予約枠を消費せず、Schedule前取消とSchedule済みGeneration Rejectを一意に処理する | 5 PriorityClass、同一Deadline、Deadlineなし、同一Class stable順、Queue上限一致／1件超過、Critical予約枠、Tick Schedule／費用予算、Background starvation、Batch化、取消競合、二重Completion、古いGenerationを合成Work Itemで再生する。通常のDispatcher APIはCapacityExceededで待機・eviction・同一Frame無限再試行・Managed allocationを生じないことを確認する。全対象合計の`MaxIncompleteCutOperationCount`直前／一致、同一Frameの複数対象、同一Slashの部分受付を試し、見送りが状態・世代・新規仕事を変えず再実行されないこと、件数が受付時に増え、7.7のGeometry Commitまたは終端時に一度だけ減ることを確認する。Final／Logical公開や内部CPU完了だけでは減らない。受付済み切断の必須仕事だけは切断Coordinatorが既存Schedule／Completion／Result適用を同期進行して1回再投入でき、進捗不能または次のPhysics Stepが必要なら既存Pendingへ持ち越すこと、PlayerLoop／Commitへの再入、全切断待機、無限再試行を起こさないことを検査する。全`EnqueueOutcome`、無効Deadline、Sequence枯渇、受付失敗時のInvalid Tokenも境界試験へ含める。V2相当の高度機能を実装せず、受付結果はOutcome／Counter、受付成功後のSchedule／Completion／Cancel／Generation Rejectは既存Traceから復元し、存在しないEnqueue Eventを要求しない |
+| T-091 | PhysicsSplitTransactionとProvisional | 7.1／7.2のall-or-none構築、一体Publication、Abort、退役、Lease寿命を確認する | 少数の単一／Compound・Anchorあり／なし入力で、Provisional再cook 0、旧Geometry共有、Siblingのみ衝突抑止、外界Collision、OBB Budget保存、初回速度継承、Actor優先Final handoffと包含・frame条件を確認する。Final先着では直接Final、Provisional構築不能・片側Final不成立では部分公開せずSource退役となる。Geometry未完成で正負2子を公開し、PendingのPhysics責務が終了することを確認する。7.1のD6設定と内向き境界、代表的な内向き抑止・外向き上限挙動を確認し、正常Limit到達は異常にしない。既存境界からの継続不能通知はActive中ならAbort、成功後なら該当LogicalFragmentだけの退役へ送る。Timeoutのみでは退役しない。Solverの数値SLA、異常監視の網羅、方式比較・Pool必須化は要求しない |
 | T-092 | Mob固定ステップ軌道Cache | Phase 4.70で同じSnapshot、Intent、Path、Seed、PlanGeneration、Animation Clip Catalogから同じRoot軌道と`ExplicitAnimationStateV1`列を生成し、Nearのライブ更新とMid／FarのQueue再生が同じ移動Kernel／Animation Plannerを共有し、計画単体で成立する | 固定MobId順、Current／Next二相更新、FixedStep倍率、Waypoint／Lane、Queue wrap、Horizon補充、Render補間、移動距離由来PhaseとPlaybackRateCyclesPerSecondを再生し、V1ではMirror入力もBackend固有Mirrorも生成しない。Render補間では`HorizonSampleCount = 1`、`2`、開始直前、開始ちょうど、終端ちょうど、終端超過、最後のSample直前1 FixedStepでoff-by-oneやHold条件の逆転がなく、`stepId < StartFixedStepId`では先頭Sample全体でHoldし、`stepId < CommittedThroughFixedStepId`のときだけ同一Clip Stateを補間することを確認する。Group公開は全Mob descriptor検証後の単一Group epoch atomic storeだけが読取可能点で、Commit途中の一部Mobだけ新HorizonまたはClip／Phase／Rateになる観測がないこと、旧Job完了、入力末尾Sample slotのpin／Snapshot、wrap時の未再生上書き禁止、Reader完了境界後の旧slot回収、epochのwrap／ABA対策を検査する。`HorizonSampleCount * CrowdStepScale`、`StartFixedStepId`加算、`stepId`減算のchecked overflowではPlan／補充を公開せず既存区間維持のHoldとなり、`FixedStepId`のwrap／再利用で古いSampleが未来区間として再利用されないことを確認する。NavMeshAgent／Root MotionがRoot位置を二重更新しないこと、全Plan／Group無効化でGenerationが進み旧軌道・未来姿勢と、Jobベイク導入時のVP入力準備結果が採用されないことを確認する。人形の切断成果物の実Commit拒否はJobベイク採用時のPhase 4.72で統合確認する。固定容量の最大Mob／Sample数、Background Queue満杯、Mid／Farのunderflow、Near Live Fallback予算超過では再確保・Main Thread待機・無制限再試行を起こさず、規定のState全体Holdと固定Profiler Counterへ低下し、既存MobPlan lifecycle Traceが矛盾しないことを確認する。ORCA、依存Graph、Flow Fieldを無効のままでもPlayableで、多少のMob重なりを許容してCPU、Nativeメモリ、Queue枯渇率、計画再利用率を測定し、Jobベイク採用時だけPhase 4.71で候補からの未来Pose／VP準備要求・結果取得・失効を確認する。先行切断完了率・Commit率はその後のPhase 4.72で測定し、不採用時は両確認を要求しない |
-| T-093 | 剛体切断Local Planeリベース | 実姿勢を維持し、面採否と切断受付判定をGeometry Job完成から独立させ、受付済みの全表示・物理処理が同じ操作面へ収束する | 任意Phase 4.55。未実装・延期・不採用を基本ゲームの不合格にしない。19.5.1の対象、接線／法線並進、回転、重心と原点不一致、左右眼差、閾値直前／一致／超過、Near Plane／非finite／Profile欠落、Scope外を小さい固定Fixtureで確認する。同じDescriptor／実SnapshotでMesh完成済み・遅延中・Job失敗を切り替えても採用面と7.6の片側空判定が同一で、Ready前にNo-opならCutOperationId／Pending Cut／操作／世代／表示／物理／仕事を作らず、受付済みならCutOperationIdとPending CutがLogicalCutOperationより先に公開され、Operation未公開のTemporary表示と後のOperation／Provisionalが同じ採用面を使うことを確認する。Operation公開時はPending Cut由来の描画位置と面を維持して重複Recordを作らず、同面Job継続／後追い、後着不採用Job回収、世代更新前Snapshotと受付後世代の対応、再切断Rejectを検査する。FinalまでActorが動いても巻戻しなし、面変更なし、由来Convex包含、実速度継承、Impulse一回をT-091の代表caseで確認する。SourceSlashPlane／有限Sweep不変、別対象の面差とCap Group分離、LogicalCutOperation作成Traceに先行できる3 Event束によるPending Cut面の復元と欠落／重複／混在拒否、後着Operation Traceとの相関を検査する。少数の動画像で近似誤差とVFX差を目視し、既存Captureを使用する。全距離・視野角・閾値の直積、全Contour最大誤差証明、新しい長時間性能SLAを要求しない |
-| T-094 | Building World D6 lifecycle | 7.2.2のMetadata、物理公開時のDepth、対象子へのWorld D6生成とActor寿命を確認する | T-059／T-061／T-072／T-091の既存公開・handoffを使う少数Syntheticで、建物true／非建物false・初期Depth 0、建物由来の通常1→2と連続分裂でのDepth更新、非建物分裂後のfalse／0維持、片側／両側Anchorあり、式どおりの有限・非負なLimit設定、生成時相対並進・回転0、World垂直Free／水平・全回転Limitedを確認する。整数上限やunderflowの境界試験はPhase完了条件に含めない。1物体結果・No-op・Stable Unsplitで変更せず、Provisional 2 Actor公開後のFinal片側空・既存Provisional正式採用でもDepthを巻き戻さず、Final handoff／UpgradeでD6を再生成・基準リセットしないことを確認する。D6構築不能は既存Pending／構築不能規則を使い、部分公開しない。Actorと同じ既存寿命後に所有D6を一度だけ回収し、既知Constraintを予測入口から除外できる識別境界を確認する。一般外部Jointの探索・付け替え・保護・複製経路は要求しない。実際の倒壊防止・変位／回転上限・jitter・penetration・Solver収束の合格閾値は設けず、Joint数とPhysics Step費用を記録できる。製品Recipe、任意分割・GC、未来予測本体は各後続Phaseで確認する |
+| T-093 | 剛体切断Local Planeリベース | 実姿勢を維持し、面採否と切断受付判定をGeometry Job完成から独立させ、受付済みの全表示・物理処理が同じ操作面へ収束する | 任意Phase 4.55。未実装・延期・不採用を基本ゲームの不合格にしない。19.5.1の対象、接線／法線並進、回転、重心と原点不一致、左右眼差、閾値直前／一致／超過、Near Plane／非finite／Profile欠落、Scope外を小さい固定Fixtureで確認する。同じDescriptor／実SnapshotでMesh完成済み・遅延中・Job失敗を切り替えても採用面と7.6の片側空判定が同一で、Ready前にNo-opならCutOperationId／Pending Cut／操作／世代／表示／物理／仕事を作らず、受付済みならCutOperationIdとPending CutがLogicalCutOperationより先に公開され、Operation未公開のTemporary表示と後のOperation／Provisionalが同じ採用面を使うことを確認する。Operation公開時はPending Cut由来の描画位置と面を維持して重複Recordを作らず、同面Job継続／後追い、後着不採用Job回収、世代更新前Snapshotと受付後世代の対応を検査する。処理中は同一Sourceへの再切断を拒否し、Final／Logical公開成功後は子への切断を受付可能とし、Final不成立時は7.1に従ってSourceを退役する。FinalまでActorが動いても巻戻しなし、面変更なし、由来Convex包含、実速度継承、Impulse一回をT-091の代表caseで確認する。SourceSlashPlane／有限Sweep不変、別対象の面差とCap Group分離、LogicalCutOperation作成Traceに先行できる3 Event束によるPending Cut面の復元と欠落／重複／混在拒否、後着Operation Traceとの相関を検査する。少数の動画像で近似誤差とVFX差を目視し、既存Captureを使用する。全距離・視野角・閾値の直積、全Contour最大誤差証明、新しい長時間性能SLAを要求しない |
+| T-094 | Building World D6 lifecycle | 7.2.2の予定Depthと正式公開、D6構成・寿命を確認する | 少数Syntheticで建物true／非建物false・初期Depth 0、建物だけの予定Depth更新、Provisionalと正式子への同値継承、直接Final、Abort時非公開、Anchorあり／なし、有限・非負なLimit、生成時相対位置・回転0とFree／Limited設定を確認する。Final handoff／Upgradeで再加算・D6再生成・基準リセットせず、所有Actorと同じ寿命で一度だけ回収する。整数上限・underflow境界、Solverの変位・jitter等を合格閾値にしない。7.9の任意処理は各後続Phaseで確認する |
 
 未来用Jobベイクの確認は少数のSkinned Fixtureと既存の共用Geometry検証を使う。Phase 4.65は固定Rig Poseの限定実装で、4.5.2の条件を揃えたBakeMeshとの必要属性・頂点／Topology対応、非同期回収、21.2の負荷比較を行い、導入の採否を決定する。対応入力の少数比較にRendererとRoot Boneのframeが異なる例および非単位scaleを含め、入力をWorldへ写した形状も比較してscaleの二重適用・適用漏れがないことを確認する。効果がなければ不採用で完了し、本体DAG／VPプール接続、MobPlan、実命中、Ragdoll、人形切断の完成を要求しない。Phase 4.52の基本切断はT-008で確認し、T-018のPose／前提検証とT-092の計画単体確認を後段統合待ちにしない。
 
 Jobベイクを採用した場合のPhase 4.72では、T-008／T-018／T-092の人形先行切断への接続として、準備済み結果の採用、未完成・Pose不一致時の現在Pose同期経路、世代失効後の後着結果回収を少数ケースで確認する。既存Geometry／Physics Commitへ接続し、4.5.6の直接Index出力・独立転送・現在frameでの公開条件と、実Actor／Animator内部Stateを予測へ巻き戻さない規則を維持する。21.2の同時候補負荷と先行完成・採用状況を測定する。新しい試験ID、専用Framework、全Asset・全変形機能の網羅試験は要求しない。
 
-T-093の「再切断Reject」は、Operation公開後に新世代の切断を受付けた結果として旧成果物をRejectする既存の世代競合を指す。Operation公開前の後続切断の見送りと非再生はT-007で検査する。
+T-093の再切断・世代照合は8章に従う。子孫切断の受付だけで祖先GeometryをRejectせず、外部authority喪失と区別する。Operation公開前の受付見送りと非再生はT-007で確認する。
 
 T-005の削減成功例を再切断とT-091のcook／handoffへ接続し、採用した削減済みB-repが次回入力となり、既存のFinal包含・frame・親質量保存を満たすことを確認する。縮小由来の接触消失・運動変化は7.2の品質許容とし、Actorの巻戻しや不正形状の公開を成功扱いしない。削減専用の試験ID・Fixture体系・cook結果抽出基盤は追加しない。
 
-T-091では、4.5.6の直接配置・必要転送・現在の表示追従条件を満たして共用Geometryを先行Commitし、Temporary描画対象を回収した後も、対応するPending Cutの受付情報が残り、世代、採用面、対象、所有権および`CutOperationId`が一致する有効な後着Physics成果物を通常どおりCommitできることを確認する。
+T-007／T-083でA Geometry未完了のままBを受付・公開し、A Commitで現在B子孫へGA＋Temporary Bを適用してTemporary Aだけを回収する。B Kernel・CommitはA Commit後とし、同じ更新内でもよい。片枝の退役は生存SiblingのCommitを妨げず、全読者退役なら履歴完成だけの計算を続けず既存IncompleteOperationTraceとする。描画経路固有DescriptorはRendererが構築し、同じ描画Snapshotの全PassでCommitted GeometryとTemporary集合が一致する。
 
 T-074の点Anchor確認をT-091のProvisionalへ接続する。同じ旧Cooked Geometryを共有しても分類側だけがAnchorを継承し、再切断で祖先Bufferから復活せず、Final Shape交換と同形状再cookで位置・所属が変わらないことを確認する。少数の既存Fixtureを使い、新しい試験体系は追加しない。
 
 T-090では入力`EvaluationWorkItem`にSequence fieldが存在しないこと、Descriptor不正／CapacityExceeded／NotAcceptingが次の成功受付のSequenceを進めないこと、受付成功だけが連続Sequenceを内部Recordへ割り当てることを検査する。不透明`WorkToken`からSequenceのbit layoutを推測せず、`TryGetState`の診断SnapshotとTask lifecycle Trace `Value1`が同じ内部値を返すこと、古いToken世代が再利用SlotのSequenceへアクセスできないことも確認する。
 
-T-091では`ProvisionalPhysicsCommitted`、`ProvisionalPhysicsFallbackActivated`、`ProvisionalPhysicsFinalized`、`ProvisionalPhysicsSafetyFrozen`の成功enqueueが各ゲーム結果につき1件、Trace enqueue失敗時は0件＋Run Incompleteで、状態rollback、Trace再試行、重複Eventがないことを検査する。全`FragmentGroupPhysicsState`固定値、公開前Fallback Reason 1～10、公開後Primary Fault Reason 1～4とTraceReasonの一対一対応、Containment Disposition 1～3、CutOperationId、ObjectGenerationをEventから復元し、Unknown state／Reason／Disposition、Generation不一致、同一結果二重消費を原子的にRejectする。公開前Fallback EventはFromStateとToStateが同じ実状態で、`Value1`だけが要求したProvisional状態になることを全開始状態で確認し、存在しないProvisional遷移をTimelineへ作らない。Resource Leaseは7.1に従い各旧Cooked Convex GeometryをProvisional Shape Instanceへ結び付ける前に取得し、部分構築失敗の少数caseで旧物理への副作用と部分公開がないことを確認する。構築失敗、Final交換、連続切断、Generation Rejectに伴う破棄・置換では、返却するLeaseが保護する参照の解消と必要な物理Step完了後の一度だけの返却、最後のLease返却前のGeometry破棄禁止を確認する。Timeoutだけでは退役・返却せず、他のLeaseの参照が残る場合も同じ規則を使う。内部破棄順は検査せず、use-after-free、二重返却、Lease leakがないことを結果として確認する。
-
-T-091の公開後Fault試験では、2個以上のProvisional Actorへ非finite pose／速度、線速度上限一致と1 ULP超過、角速度上限一致と1 ULP超過、Constraint破断を個別および同時に注入する。Primary Faultが`NonFinite > Constraint > LinearVelocity > AngularVelocity`、同順位は最小LogicalFragmentLocalIdで一意に決まり、原因ReasonをContainment結果で上書きしないことを確認する。正常Fixed Stepごとに非公開Slotへ全Actorを収集し、同一FixedStepId、同一世代、ActorCount、LogicalFragmentLocalId順、finite性を全検証した後だけ公開Slotが切り替わることを確認する。Actor 1件目更新後、途中Actor更新中、検証後atomic切替直前にFault／世代変更／Actor集合変更を注入し、Stagingが破棄されて旧完全Group Snapshotだけが復元に使われ、現Step値や異なるFixed StepのSibling poseが混在しないことを検査する。Fault時はGroup全体だけが`ProvisionalFaultFrozen`へ一度遷移し、旧完全Snapshot復元はDisposition 1、Snapshot不在のScene除外は2、封じ込め事前検証失敗のScene除外は3となる。全Constraint解除、全Actor Kinematic、速度／角速度0、Force／Torque消去を検査し、Snapshot欠落、世代不一致、封じ込め事前検証失敗では部分FreezeせずGroup全Actor／ShapeをSceneから除外する。Fault後にFinal cook完了、後続切断、Trace enqueue失敗を発生させてもDynamic復帰、Final物理Commit、旧Group rollback、二重SafetyFrozen Event、Lease早期返却がなく、共用Geometry背景Commitだけが継続できることを検査する。Snapshot値を表示補間や表示―物理誤差収束へ使用する実装は不合格とする。
+T-091のLease確認は、各旧Cooked GeometryをProvisional Shapeへ結び付ける前の取得、部分構築時の非公開、保護参照の解消と必要なPhysics Step後の一度だけの返却、最後の参照・Lease前のGeometry破棄禁止に絞る。少数の失敗・交換・Staleでuse-after-free、二重返却、leakがないことを確認し、内部破棄順は固定しない。cleanupの遅延でTransactionを延命せず、TimeoutだけではLeaseを返さない。
 
 T-081では、10.2.2の新規canonical schemaを生成前にGolden固定し、旧v1選抜入力をv2として暗黙受理しない。ProcessStatusは予定Entryだけ、GeometryのSelectionClassは成功物だけに持たせる。NoOp／Aliasへの新規Geometry、未解決親、TriangleMeshのPhysicsCookInput、129頂点HullのPhysicsCookInput、Blind由来のSelected化を拒否する。Synthetic Validatorの数値／byte契約は変更しない。
 
@@ -2021,18 +1989,18 @@ Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視
 | Phase 0.9 | 読み込みとUnity Mesh表示 | 少数の代表AssetをUnity Meshで表示し、同形状InstanceはMeshを共有する。並行光源1つ＋ambient、基本表示・影 | 別Transformの複数配置で共有Meshと影を確認する。切断登録のTopology試験を前倒ししない |
 | Phase 0.91 | Unity Mesh表示最適化Probe | 同じ代表SceneでForward、Forward+、Forward+＋GRDを比較し、Mesh／Material共有と実際のGRD適用状態を確認する | Main Threadの描画準備・関連待ち、Render Thread、GPU時間から採用構成と理由を記録する。速度Gate、多数ライト・GPU Occlusionの全組合せ比較は要求しない |
 | Phase 0.92 | VP Stage 1 | 明示操作でMesh→CPU AoS／Indexプール→GPU表現へ変換し、Direct・非indexed＋shader-side indexing／属性Pullingで描画する。AcquireReadOnlyMeshData等による取得、更新範囲の集約、両プール追記、Mesh／VP混在と影、複数Geometry参照の選択・表示構成・別Transform Instance | 少数Geometryで変換・混在表示・影・複数参照構成・選択と、内部Metadataで識別した少数Componentを一つの連続Index範囲として描けることを確認し、変換マイクロベンチを取得する。小さい初期GPU容量から1回拡張し、コピー・描画境界での参照切替後も既存表示を保ち、旧参照の更新・退役と投入済みGPU利用の終了後に旧Bufferが一度だけ解放されることを確認する。変換・転送費用と実際の表示開始フレームを既存計測で確認する。実切断・人形切断は要求しない |
-| Phase 0.93 | 消去と範囲アロケーション | 表示Instance／Geometry参照退役、4.5.3の予約・公開・寿命管理、退役Indexと未使用・失敗予約のbest-effort再利用。Published Vertex再利用・コンパクションなし | 少数の合成Jobで共通入力読取りと非重複出力への並行書込み、完了後公開、未使用予約回収、参照中Indexの再利用抑止、退役後再利用、予約不足後の再実行、完了回収後のReserved所有権引継ぎ、必要時のCPU読取り公開と別Reservedへの仕上げを確認する。切断器へ依存しない |
+| Phase 0.93 | 消去と範囲アロケーション | 表示Instance／Geometry参照退役、4.5.3の予約・公開・寿命管理、退役Indexと未使用・失敗予約のbest-effort再利用。Published Vertex再利用・コンパクションなし | 少数の合成Jobで共通入力読取りと非重複出力への並行書込み、完了後公開、未使用予約回収、参照中Indexの再利用抑止、退役後再利用、予約不足後の再実行、完了回収後のReserved所有権引継ぎ、CPU範囲Publishedを内部読取り許可として扱い、必要時の別Reservedへの仕上げを確認する。切断器へ依存しない |
 | Phase 0.94 | VP Stage 2 | Stage 1のGeometry表現・アロケータを維持してIndirect・非indexed＋shader-side indexing／属性Pullingを実装し、描画要求の集約・引数管理・個別発行を見直す。正負連続Index配置による粒度削減をIndirect APIの自動融合とみなさない | Stage 1と同じ小規模代表Sceneで機能を維持し、実際の発行経路とMain Threadへの効果を比較して採用を判断する。固定改善率・全Scene高速化は要求せず、効果が乏しければ人間判断でStage 1を採用して進める |
-| Phase 1 | 即時切断／Dispatch境界 | Phase 0.9～0.94のVP基盤、合成Geometryと点Anchor、正負論理子・切断履歴の公開、単一clip・仮分離・簡易断面、対象ごとの低頂点1 Hull Placeholder、片側空No-op・受付上限、V1 Dispatcher API・固定Queue・予約枠・取消・Completion | 少数の合成入力と選抜済みFixtureで即時表示とT-074の純粋データ公開・Anchor配分を確認する。実Convex切断・Rigidbody・cookと固定物理の結合はPhase 4へ置く。支持を理由に描画を省略しない。未公開親への受付制限、No-op／混雑時の非変更、公開前の子先取り禁止を確認する。製品Preprocessorを前倒しせず、合成Workで後続PhaseがQueue実装型へ依存しないDispatch境界を固定する |
+| Phase 1 | 即時切断／Dispatch境界 | Phase 0.9～0.94のVP基盤、合成Geometryと点Anchor、正負論理子・切断履歴の公開、単一clip・仮分離・簡易断面、Harness内の合成Final Physics入力（低頂点1 Hull）、片側空No-op・受付上限、V1 Dispatcher API・固定Queue・予約枠・取消・Completion | 少数の合成入力と選抜済みFixtureで即時表示を確認し、Harness内合成Final成功／失敗からT-074の公開・Abort・Anchor配分を確認する。実Convex切断・Rigidbody・cookと固定物理の結合はPhase 4へ置く。支持を理由に描画を省略しない。未公開親への受付制限、No-op／混雑時の非変更、公開前の子先取り禁止を確認する。製品Preprocessorを前倒しせず、合成Workで後続PhaseがQueue実装型へ依存しないDispatch境界を固定する |
 | Phase 1.50 | 選択済みVP経路のXR／Single Pass確認 | 0.94で採用したVP経路、既存Geometry参照・Instance Transform・Draw DescriptorのColor／Depth描画 | 0.5とPhase 1の完了後、Quest Linkで一つのGeometryを複数Transformで表示し、左右眼のGeometry／Transform／Instance選択、片眼欠落がないことを確認する。Clip・Stencil・Shadow品質・Stage再比較・製品90fps SLAは含めない |
 | Phase 1.51 | VP Hybrid Clip確認 | 固定0／1／8／9／12面、Side、OffsetとRaster／Pixel Clip Countを直接渡す既存形式のDescriptor、Raster 8＋Pixel 4 | Color／Depth／ShadowCasterで同じ固定入力を使い、先頭8面のSV_ClipDistanceと続く4面のPS clip、左右眼の一致を確認する。Pending Cut、候補選択、13面以上、Cap／Stencil、Shadow画質・性能評価は含めない |
 | Phase 1.52 | VP Stencil基本確認 | 正向きの固定合成閉Geometry、既知Cap Polygon、固定Clip Descriptor、固定割当ての1～2個のStencil Color | 全8bitを使い、Colorごとの128初期化、Wrap加減算、-1／0／+1／+2→127／128／129／130、Ref 128 / Comp LessでS>128だけがColor／Depthを書くこと、全Volume後に全Cap、Color間の再初期化、左右眼一致を確認する。Cap生成・Cull・Compatibility・Residual Support・Color割当て・Pending Stateを前倒ししない |
 | Phase 2 | 仮断面・影強化 | 表示／Stencil共用基底Geometry、6.2の入力Gate、`RenderCutTopologyMap`、T-084、ゼロKerf、LogicalCutOperation、TemporaryRenderCapRecordSet、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、128初期化の正符号8bit IncrementWrap／DecrementWrap Stencil、Residual Stencil Supportの保守的投影競合、符号保存のCapCompatibility Group、`MaxStencilColors`と最後の統合Color、Color単位Volume／Cap Batch、`TemporaryClipConstraintCandidateSet`、`SV_ClipDistance` 8面＋PS `clip()` 4面＋5.2のPlane overflow処理、共通トゥーンの粘土色グレー、Temporary／Committed断面デバッグ色、ShadowCaster用同一Hybrid Clip／Offset、XR両眼対応、Pending Cut／Stable履歴管理、T-067／T-089 | 1.50～1.52の成立後、そのShader／Passへ製品状態・Cap生成・Batchを接続する。2～4連続切断と複数対象で、表示とStencil Volumeが同じ合格済み基底／Stable Geometry、Topology、windingを参照し、用途別Geometryや描画時のGeometry再検証を持たない。通常Colorは左右眼の非互換Residual Supportを分離し、Color数を固定上限内に保ち、同じColorでは全Volume後に全Capを描く。Self-intersection、別Topologyの重複／Coincident、Internal／Nested、全体反転を向き保存で受理し、共通入力Gate不合格は切断対象へ登録しない。符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupは作らない。`S=(128+W) mod 256`と`S>128`を使い、範囲外は5.2の品質例外とする。最後のColorでは混入、欠落、余計なCap、誤Depthを許容し、GPU時間は測定対象に留める。8bitを排他利用できない構成は4章の共通Player終了に従い、部分Bitや代替経路を持たない。候補面は古い未Commit祖先制約を優先するdependency-closedなstable順で全Pass／両眼へ共有し、8面をRaster、続く4面をPixelで処理する。超過した後発面は即時Stencil VolumeをsubmitせずCap板と論理／背景処理を残す。Cap pair／Coverage探索、Cap単位Buffer compaction、Mesh部分更新、多段Fallbackを行わない。Color割当ては5.6の実装自由度に従い、全Graph構築を必須としない。Camera内部／Near Plane近傍では5.2の品質例外を許容する。Shadow MapではStencil Capなしの影近似を使用する |
-| Phase 3 | 共用表示／Stencilジオメトリ | Job＋Burstの一つの三角形切断系列、4.5のVPプール入力・出力と範囲所有権、`RenderCutTopologyMap`、Topology系譜の交点共有、共通signed-distance分類、有向境界と整合するCap、閉鎖・edge／vertex manifold・局所winding整合の出力継承、Runtime面積0 Triangle許容、正負各最大1のGeometry範囲、単一予約内の正負Index直接出力、CPU完成後の必要転送と現在frameでの表示Commit、GPU範囲更新とメインスレッドGeometry参照公開、両用途の原子的Geometry Commit、空出力の非生成、V1 Dispatcher Class 2接続、T-083 | 少数Fixtureで正負連続Indexと転送1回／再利用時0回を確認し、現在の追従先を使った表示をPhase 4の実cookなしで成立させる。仮表示から共用VP Geometryへ置換し、切断Kernelの重い頂点処理がMain Threadへ戻らない。通常更新で全Job／GPUを待たず、容量拡張時の停止・容量限界での終了だけ4.5.4に従う。箱、凹形、複数閉Component、全体反転、Self-intersection、別Topologyの重複／Coincident／Nested、vertex／edge／face通過、同一点複数port、面積0を含む契約内Fixtureで、生成Capを含む各非空出力が入力と同じ共通契約を継承して再切断できる。表示とStencilが同じ世代・Triangle集合を使用し、用途別の切断、Cap生成、適否、修復、簡易表示Proxyを持たない。Triangle数0の側にはdummy Mesh／Cap／Rendererを作らない。製品Runtime出力Validatorを持たず、表面化した予期しない内部エラーは4章に従う。世代不一致は通常の不採用・回収とし、出力予約不足では部分出力を公開しない。出力予約不足だけは4.5.3の再予約・再実行を許容する。全Mesh self-intersection／inside-outside／shell分類をRuntimeへ追加しない |
-| Phase 4 | 物理 | 全体0.5G仮設定、FragmentGroup、PendingPhysicsSplit／PendingAnchoredSplit／ProvisionalPhysicsSplit／ProvisionalAnchoredSplit／StableUnsplit、Phase 1の正負子・点Anchorモデルとの接続、仮描画と物理運動の分離、固定側Impulse禁止、自由側解析仮運動、旧Cooked Convex Resource Lease、Provisional Actor／Shape／7.1のanchor-offset D6、全外界Collision／Sibling抑止、OBB Provisional質量配分、CanonicalMassBudget、FragmentRenderAnchor初回分裂／物理優先Final handoff、正負各最大1所有者、Native Convex B-rep、Compound内Overlap許容、Count／Write／Validation Job、7.2のRuntime頂点上限・新規交点の内接削減（次数3＋ΔV順は初期実装方針）、7.6のSide集合による物理所属、物理のみの正常な空表示出力、Temporary Physics Proxy生成Kernel／Validation、Job化`Physics.BakeMesh`、Fast Cook初回分裂、選択的Fast Simulation再Bake、Sibling Collider一時衝突抑止、別Mesh差し替え、Upgrade Scheduler、`PhysicsConvexMassWeight`、Convex由来の体積／重心／慣性とOBB／AABB近似、質量保存、速度継承、Generation Reject、既存物理の正式採用、保守的な仮予算管理、Phase 0.2 Convex Fixture回帰、T-077／T-085／T-086／T-091との差分再確認 | T-005の内接削減成功・不成立と再切断を成立させ、T-061／T-091で削減後形状の再cook・handoffを確認する。7.2の縮小に伴う品質変化を許容し、14章の完了順確認を実際のAnchor配分・所属・物理採否へ接続し、物理先行／表示先行と既存物理正式採用を確認する。物理は表示転送を待たず、cook遅延中も仮表示を維持し、点Anchor配分が完了して所有者単位の固定／動的が定まり、容量内では再cookなしのProvisional Rigidbodyへ原子的に分裂して外界Collisionと連続運動を先行する。交差する独立ComponentをUnionせず、凹形状でも同Sideの島を一所有者へまとめる。専用Convexを持たない非空共用Geometryも7.6のSide規則へ従い、Containment／Coverage／最良適合や後追い精密化を要求しない。Geometryが空でPhysics Convexが非空の出力はRendererなしの通常物理Objectとし、専用型・復旧metadataを作らず通常のObject／Level lifetimeまで保持できる。重複Compoundでも生体積を質量として二重計上せず、Weight継承で切断前後の質量和を保存する。形状、質量またはFinal handoffを成立させられない場合は、利用可能な既存物理表現を正式採用した`Stable Unsplit`へ終端し、時間だけの再試行、小破片消去、質量移送を行わない。Temporary Physics Proxyの実装済み品質がT-077を通り、不正結果は物理へ公開しない。T-076前はSchedule数、Worker占有、Batch、同時Bake、Nativeメモリ、`MaxIncompleteCutOperationCount`へ保守的な試験値を設定する。分類後は固定側を動かさず自由側だけを安全に分離する。公開合成Fixtureと選抜済みLicensed Convex Fixtureの両方で、Convex分割／質量特性／BakeがMain Threadを停止させず、二段階Colliderを安全に昇格する。Unity経路が要件を満たす限り維持し、満たさない場合だけD-086のGateを評価する |
+| Phase 3 | 共用表示／Stencilジオメトリ | Job＋Burstの一つの三角形切断系列、4.5のVPプール入力・出力と範囲所有権、`RenderCutTopologyMap`、Topology系譜の交点共有、共通signed-distance分類、有向境界と整合するCap、閉鎖・edge／vertex manifold・局所winding整合の出力継承、Runtime面積0 Triangle許容、正負各最大1のGeometry範囲、単一予約内の正負Index直接出力、Final／Logical公開後の祖先順Geometry Commitと内部転送、GPU範囲更新とメインスレッドGeometry参照公開、両用途の原子的Geometry Commit、空出力の非生成、V1 Dispatcher Class 2接続、T-083 | 少数Fixtureで正負連続Indexと転送1回／再利用時0回を確認し、Harness内合成Final公開から現在追従先を使った表示と4.5.6のA→B Commit順序をPhase 4の実cookなしで成立させる。仮表示から共用VP Geometryへ置換し、切断Kernelの重い頂点処理がMain Threadへ戻らない。通常更新で全Job／GPUを待たず、容量拡張時の停止・容量限界での終了だけ4.5.4に従う。箱、凹形、複数閉Component、全体反転、Self-intersection、別Topologyの重複／Coincident／Nested、vertex／edge／face通過、同一点複数port、面積0を含む契約内Fixtureで、生成Capを含む各非空出力が入力と同じ共通契約を継承して再切断できる。表示とStencilが同じ世代・Triangle集合を使用し、用途別の切断、Cap生成、適否、修復、簡易表示Proxyを持たない。Triangle数0の側にはdummy Mesh／Cap／Rendererを作らない。製品Runtime出力Validatorを持たず、表面化した予期しない内部エラーは4章に従う。世代不一致は通常の不採用・回収とし、出力予約不足では部分出力を公開しない。出力予約不足だけは4.5.3の再予約・再実行を許容する。全Mesh self-intersection／inside-outside／shell分類をRuntimeへ追加しない |
+| Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、7.2のConvex B-rep・内接削減・Weight／質量特性、初回速度継承・Final handoff、Fast Cook／同形状Fast Simulation Upgrade、0.5G仮設定 | Phase 1～3のHarnessを実物理へ接続し、T-005／T-059／T-061／T-074／T-077／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9のGC Policyは前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
 | Phase 4.1 | Geometry／Cook性能Baseline | 固定合成Dataset、Phase 0.2 LicensedRepresentative補助Dataset、Single-Thread Kernel Harness、Job Batch Harness、共用Geometry／Convex／T-077検証済みTemporary Physics Proxy／Bake工程Timer、Repository外のManifest／Result／Suite Index Bundle、P95／P99容量式 | Phase 3／4の正しい製品実装をT-076に従い、公開合成Datasetをcanonical正本、選抜済みLicensed Fixtureを別の非公開補助Suiteとして測定する。各DatasetCaseIdの固定規模軸とSamplesをjoinしてKernel単発µs、Bake／Commit単発Latency、定常Throughput、Job End-to-End latencyを再現する。Suite内DatasetId→DatasetContentSha256一意性、Target×Stage×ExecutionMode、FailureRate／Rejected契約、bounded Manifest／Result／Index Loaderを検証し、Phase 4の保守的仮上限を校正する。O-035／O-039へ使う再利用可能なLatency／Throughput／P95／P99容量式を根拠付きで得る。Slash速度・寿命・Span・候補数と到達Deadlineへの適用はPhase 4.53へ分ける |
 | Phase 4.2 | Player非接触Locomotion | Player Layer非接触、Level初期化時の固定PlayerLocomotionOccupancy、候補次姿勢Overlap Reject、T-088 | 人工移動の要求全体Rejectと、物理所有者・切断・Commit・Fragment・GCへ追従しない固定集合をT-088で確認する。実空間HMDはClampせず、Camera被り・内部視点はD-131の許容に従う。退出処理や将来のOccupancy更新を要求しない |
-| Phase 4.3 | 建物由来子のWorld D6と一般外部Joint撤去 | 7.2.2のIsBuildingDerived／BuildingSplitDepth、通常1→2公開でのWorld D6生成、指数Limit、Actor寿命と既存失敗境界への接続、既知Constraint識別、T-094 | 手書きSyntheticで生成・建物由来だけのDepth更新・1物体結果・Final handoff／Upgrade時の維持・構築不能を確認する。一般外部Jointの継承・付け替え・保護・予測を要求せず、4.54／任意4.60が既知Constraintを識別できる。拘束効果を保証せず、製品Recipe・5.6分割・5.7 GC・未来予測本体を待たず完了する |
+| Phase 4.3 | 建物由来子のWorld D6と一般外部Joint撤去 | 7.2.2のIsBuildingDerived／BuildingSplitDepth、通常1→2公開でのWorld D6生成、指数Limit、Actor寿命と既存失敗境界への接続、既知Constraint識別、T-094 | 手書きSyntheticで生成・建物由来だけの予定Depthと正式公開・Abort・Final handoff／Upgrade時の維持・構築不能を確認する。一般外部Jointの継承・付け替え・保護・予測を要求せず、4.54／任意4.60が既知Constraintを識別できる。拘束効果を保証せず、製品Recipe・5.6分割・5.7 GC・未来予測本体を待たず完了する |
 | Phase 4.50 | 製品SlashWave Core | 製品のGesture入口、交換可能Latch／Frame／Span Candidate／Span Close Estimator、Latch済みFrame、0.53のCoreと0.55で採用した構成、Raw／Accepted Span accumulator、単一Segment、WaveLifetime、円弧VFX、複数生存Wave用の有限固定容量、追跡異常と再準備 | Plane／AxisとStroke Begin／Latch snapshotがSlash寿命中不変で、Raw候補が減少・InvalidでもAccepted Spanが縮まない。完了済み過去更新区間を再評価せず、現在更新区間内のSpan増加領域は後続Hit Phaseの共通Sweepへ渡せる。Span Close後は採用方式の候補評価を使い、WaveはWaveLifetimeで有限終了する。Latch／Frameの切替は未Latch評価へ、Span Candidate／Closeの切替は後続Slashへ反映し、生存WaveはLatch時方式・設定と必要な一時状態を維持する。19.1.6とT-035に従い、公開前の容量確認と満杯時の新Latch見送り・同じStrokeの非再試行を確認する。実対象Hit、Cut、候補範囲、Predictionを要求しない |
 | Phase 4.51 | Segment HitとProp現在状態切断 | 生成時の退化Segmentを含む共通閉Segment Sweep、現在採用Physics Convex集合とのNarrowphase、`LogicalFragmentRef`系譜単位消費、`SlashHitConfirmed`、既存7.6受付、現在状態からの通常Prop切断 | Predictionを全て無効にしても、Slash生成→飛翔→実Hit→即時表示→Geometry／Physics処理の基本Propループが成立する。消費済み系譜と祖先関係を持たない別Fragmentへ個別Hitでき、消費済みFragmentの子孫は同Slashで再切断しない |
 | Phase 4.52 | Humanoid現在Pose切断 | 命中時Bone Pose Snapshot、同期BakeMesh→VP、共用切断、骨Physics Proxy分類、物理移行、T-008 | Jobベイク、未来Pose、MobPlan、先行成果物なしで動作中NPCを現在Poseから切断できる。ここでProp＋NPCを含む基本垂直スライスを完成とみなせる |
@@ -2060,13 +2028,11 @@ Phase 3では4.5.6の正負直接Index出力・転送・現在frameでの公開�
 
 Phase 4.61はT-018の独立未来Rig Pose評価で閉じ、任意4.60の局所Physics、Jobベイク、MobPlan、人形切断を要求しない。4.65は限定実装・比較・人間採否までを行う。4.70はJobベイクの採否にかかわらず計画単体で閉じ、採用時だけ4.71で未来VP準備、4.72で先行切断を統合する。不採用なら両Phaseを省略する。4.52は同期経路で独立完了し、少数Fixtureのために5.5の製品Preprocessorを前倒ししない。
 
-Phase 1では同じ親にOperation未公開のPending Cutがある間、その親と仮表示領域への後続切断を受付けず、無関係な確定済み対象の受付は継続する。Phase 1で純粋データの確定子と`LogicalCutOperation`を公開した後は、Geometry Commit／cook／Physics未完了でも公開済みの子を再切断できる。予期しない論理構築の内部エラーは4章に従い、構築用Validatorや対象別復旧をPhase完了条件へ追加しない。
+Phase 1～3はHarness内の合成Final Physics成功／失敗入力により7.1のLogical Publication／Abortと4.5.6のGeometry順序を検証する。製品Runtime用の代替Physics Modeや公開schemaは作らない。SourceがActive中は受付を見送り、別LogicalFragmentは並行可能とする。Final／Logical公開後はGeometry未完了でも子を受付け、後続Kernelだけ祖先Commitを待つ。実Actor／cook／D6との一体公開はPhase 4で確認する。
 
 Phase 1は手書きのLogical Convex Cell参照、finiteな点Anchor、Fragment Physics Frame内local位置を使い、CellのAnchor集合への半空間継承、所有単位内にAnchorがあれば固定・なければ動的とする判定、正負の確定子とOperationの原子的な公開を純粋データで確認する。Phase 4は同じ規則を実Convex系譜、旧Cooked Geometryを共有するProvisional、Final Shape引継ぎへ接続する。Phase 5.5は固定支持を設定する対象AssetのRecipeで初期Cellと点Anchorを生成する。Phase 0.2のNoFixedSupport成果物は変更せず、その再生成や公開Schema変更を要求しない。
 
-Phase 4のcook待ち標準経路はD-132のProvisional Rigidbodyとし、点Anchor配分と所有者単位の固定／動的の導出後のActor／Shape／Constraint生成、旧Cooked Geometry共有、OBB質量近似、外界Collision、物理Actor pose／速度不変のFinal handoff、由来Convex half-space包含検証をT-091まで実装する。Anchor継承に必要なWorkの未完了・実行待ちまたは受付済み処理の一時的な実行枠不足は7.1／7.7の既存Pendingで継続し、要求構成・Backend共有・資源確保・原子的構築・Finalを既存の安全規則で成立させられない場合だけ7.6の既存物理の正式採用で終端できる。Provisionalを現時点で生成できないことだけで後続のFinal物理処理を打ち切らない。Provisional専用再cook、部分Actor公開、同期cook、Final Commit時の物理Actor pose／velocity補正はPhase 4完了条件に含めず、表示側の瞬間的な追従差は許容する。
-
-Phase 4では公開前Fallbackと公開後Faultを別経路として実装する。公開前失敗は実状態を変えず`ProvisionalPhysicsFallbackActivated`へ要求種別だけを記録し、公開後異常は固定容量の直前finite物理Snapshotを用いてGroup全体を`ProvisionalFaultFrozen`へ不可逆遷移させる。後者は物理安全Classで次のDispatch対象とし、部分Freeze、旧Group rollback、自動Dynamic復帰、Final物理Commitを行わない。
+Phase 4のcook待ちは7.1の一度だけのProvisional構築と直接Finalの順序に従う。通常Pendingと構築不能を区別し、成立不能はSource退役へ閉じる。Final handoffの包含は7.2に従い、Colliderのpose／速度を補正して救済しない。旧Cooked Geometry共有・D6・Leaseの確認はT-091へ集約する。
 
 Phase 4.3はPhase 4.2の後、4.50の前に置く独立Runtime Phaseであり、章番号4.3とは区別する。汎用物理のPhase 4、既存Baselineの4.1、Player非接触の4.2の完了条件へ建物D6を混在させない。Phase 4.54／任意4.60はその既知Constraint識別境界を使用する。
 
@@ -2096,18 +2062,17 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 5.3に従い、デバッグ有効時は仮断面が赤、公開済み実断面が緑となり、無効時は両者が通常グレーとなる。元Assetの負UVによる通常表示を含む誤表示は許容する。
 
-- 表示CPU出力と必要転送が揃い、現在有効なframe／参照へ追従できれば描画境界で共用VP Geometryを公開し、対応Temporary描画を回収する。Final cook・物理所属待ちで転送を止めず、後着物理への参照切替でIndexを再配置しない。物理も必要なCPU情報と適用条件が揃えば表示転送を待たずCommitし、仮表示は現在物理に追従する。既存の容量処理と明示的品質例外は維持する。
+- Geometryは4.5.6の祖先順にCommitし、実体化したTemporaryだけを回収する。Final Physics／Logical Publicationを先に成立させ、Geometry CommitはDraw List構築・GPU完了・実表示を待たない。一つの描画Snapshot内の全Passで同じGeometryとTemporary集合を使い、GPU更新が対応Drawに先行する順序はRenderer側で保つ。
 
 - 表示／Stencil共用VP Geometryの切断と、物理Convexの切断・検証・cookingはJob＋Burst主体で実行され、Main Threadには通常命中の同期入力準備とBackendに応じたPose評価、表示VPの範囲管理・GPU更新・参照公開、物理Mesh公開とCollider／Rigidbodyの境界Commitが残り、導入採用時の未来の頂点スキニング・VP形式変換は4.5.2のJob経路で処理する。通常更新では未完了Jobへの強制`Complete`によるフレーム停止がない。
 
-- 点Anchor配分と所有者単位の固定／動的が定まった切断はFinal cookを待たず、旧Cooked Convex Geometryを共有する子別Provisional Rigidbodyへ物理ステップ境界で原子的に移行する。外界Collisionを全て有効、同系譜Siblingだけ無効とし、交差Shape由来の早い接触とGhost Contactを許容する。OBB近似によるProvisional質量和を保存し、Final handoffではActor pose／COM線速度／角速度を変えず、由来Convex内へ収まるFinal Collider／COM／inertiaだけを同一Actorへ置換する。表示の瞬間移動を許容する一方、Colliderのpose補正による新規penetration、二重分離Impulse、同期cookを生じない。部分公開は行わない。Anchor継承に必要なWork未完了、一時的な実行枠不足、および成立不能の区別は7.1／7.6／7.7に従い、前二者は既存Pendingで必要な処理を継続する。既存の安全規則に従って成立不能として既存物理を正式採用する場合だけ`Stable Unsplit`へ終端する。
+- 7.1のTransactionがProvisionalまたは直接Finalから正負2 Final OwnerとLogicalFragmentを一体公開し、Geometry未完成でも子を受付けられる。Provisional・Final構築不能はSource退役とし、部分公開や旧物理の恒久採用で救済しない。質量・速度・包含・D6・Leaseは7.1／7.2の条件を満たす。
 
-- 公開済みProvisional Actorの非finite、速度／角速度超過、Constraint runtime破綻はGroup全体を`ProvisionalFaultFrozen`へ一度だけ遷移させ、直前finite物理姿勢で全ActorをKinematic化するか全Actor／ShapeをSceneから除外する。部分Freeze、Snapshotの表示補間利用、自動復帰、Fault後のFinal物理Commitを行わず、Trace失敗でも安全状態をrollbackしない。
+- 既存境界から判明した個別物理の継続不能は7.1のAbort／LogicalFragment単独退役へ送る。共通Player終了対象は4章に限り、通常退役と混同しない。
 
 - 共用Geometry、Convex、T-077検証済みTemporary Physics Proxy、cookの固定DatasetベンチマークがRelease／Burst環境で再現でき、Single-Thread µs/op、Job定常Throughput、End-to-End P95／P99からWorker予算、同時切断数、Batch Size、同時Bake数を説明できる。単一DatasetCaseIdの規模軸、工程別Stage、許可されたExecutionMode、Manifest／Result hash、Samples／Aggregate件数をSuite Indexから検証でき、同じManifestへのResult差し替えを拒否する。同一Suiteでは各DatasetIdが厳密に1つのDatasetContentSha256へ対応し、異なるhashの系列を容量式へ混在させない。Manifest／Result／Index Loaderはそれぞれ64 KiB、64 MiB／100万Sample、64 MiB／10万Entryのschema上限と呼び出し側のより小さい上限を配列確保前に強制する。対象処理の失敗をFailureRateへ残し、計測不能な試行だけをRejectedとする。既存TraceRunManifest／bundleのCodecとGolden Hashは変化しない。
 
-
-- Operation未公開の親と仮表示領域への後続切断は、無関係な確定済み対象を止めず、状態・世代・先行仕事を変えずに見送られ、保存・再実行されない。Operation公開後はGeometry Commit／cook／Physics待ちでも公開済み子を再切断でき、古いジョブ結果で形状が巻き戻らない。
+- Operation未公開の親と仮表示領域への後続切断は、無関係な確定済み対象を止めず、状態・世代・先行仕事を変えずに見送られ、保存・再実行されない。Operation公開後はGeometry未完了でも公開済み子を受付け、Kernelだけ祖先Geometry Commitを待ち、古いジョブ結果で形状が巻き戻らない。
 
 - Phase 4.52では先行準備なしの同期経路で移動中のNPCを切断し、姿勢固定から剛体破片への移行が成立する。Phase 4.65で未来用Jobベイクの限定実装・品質と負荷の比較・採否決定を完了し、導入採用時だけPhase 4.72で先行成果物採用・未完成／成果物不採用時の通常経路・失効回収を統合する。導入見送り時は人形の先行準備による命中時負荷削減を受入条件にせず、4.5.2の通常同期経路と表示開始の許容を使う。数値差・対応範囲は4.5.2、最小確認は14章／21.2に従う。
 
@@ -2119,17 +2084,17 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 共用Cut Geometryはfiniteかつ参照有効で、各Topology Edgeに逆向きの2面、各Topology Vertexに一つの閉fanを持つことを入力準備時に一度検証する。Self-intersection、別Topologyの閉Component間のIntersection／Overlap、Internal／Nested／Coincident、全体反転を許容し、表示とStencilが同じGeometry、winding、Topologyを使用する。不合格入力は切断対象へ登録しない。切断出力は6.4の構成契約を継承し、Runtime出力検査を持たず、表面化した予期しない内部エラーは4章に従う。用途別Geometry、Runtime修復、符号証明、正規化、Winding上界、Count容量分割を持たない。仮Capは専用Stencil Byteの全8bitを排他利用できる構成だけで`S=(128+W) mod 256`と`S>128`を使用し、成立しない構成は4章の共通Player終了に従う。各Physics Convexは別契約の閉凸形状として自己交差、面反転、退化のない検証に合格するが、Compound内の別Convex同士のIntersection／Overlapは許容する。全成果物は同一入力・Recipe・Blender版から再現可能に生成される。
 
-- 相互に食い込む部品や凹形状、同Sideの離れた島を含んでも、通常切断は正負それぞれ最大1論理子・最大1物理所有者とする。島ごとの独立剛体化を行わず、一体運動・接触力共有・固定時の空中浮遊を許容する。同じCut条件を共有するCapはGeometry Unionなしで符号を保存して同一Stencil互換Groupへ入り、`sum(W_i) > 0`として描画される。正逆相殺による欠落は5.2の品質例外とする。
+- 相互に食い込む部品や凹形状、同Sideの離れた島を含んでも、通常切断の正常成功は正負それぞれ1論理子・1 Final Physics Ownerとする。島ごとの独立剛体化を行わず、一体運動・接触力共有・固定時の空中浮遊を許容する。同じCut条件を共有するCapはGeometry Unionなしで符号を保存して同一Stencil互換Groupへ入り、`sum(W_i) > 0`として描画される。正逆相殺による欠落は5.2の品質例外とする。
 
 - 固定支持を設定する入力は、必要な点FixedSupportAnchorについて初期Logical Convex CellとFragment Physics Frame内のfiniteなlocal位置を明示する。現在所属をCellのAnchor集合で表し、切断ごとに正側／負側／OnPlane両側へ継承する。所有単位内に継承Anchorが一つでもあれば全体を固定し、なければ動的とする。他Cell、旧Cooked Geometry共有、頂点Buffer、内接削減や表示Geometryの反対側所属からAnchorを新設・移送・復活させない。必要なWorkは既存依存で待ち、不正入力・世代不一致は既存規則で不採用とする。
 
 - 切断対象として採用するGeometryが6章の共通入力契約に合格する。修正を行う場合は採用した前処理Recipeの範囲で確認し、修正しない不合格入力は切断対象外にできる。未採用の修復方式の実装を完了条件にしない。
 
-- Pending Cut受付前の現在採用Convex分類で片側候補が0件の命中は正常なNo-opとなり、対象状態、世代、表示、物理、履歴を変えず、CutOperationId、Pending Cut、LogicalCutOperation、子、境界、Pending仕事を作らない。全対象の未完了切断数が`MaxIncompleteCutOperationCount`へ達した場合も新規対象を同様に見送り、要求を保存・再実行しない。両者をProfiler Counterで区別できる。受付成功時はCutOperationIdとPending Cutだけを公開し、即時表示はその採用面を使う。確定した非空子と実在境界の構築後にだけFragment、CutBoundaryRecord、LogicalCutOperationを原子的に公開し、確定前に境界履歴を作らない。
+- 7.6のSource生存性・Active Transaction確認、Final Convexのrobust support、7.7の容量の順に受付ける。No-opと受付見送りは既存Counterで区別し、状態・世代・表示・物理・履歴・新規仕事を変更せず保存・再試行しない。正常成功時は7.1の正負2 Final Owner／Logical childとOperationを一体公開し、実在BoundaryだけをGeometry Commitで後着させる。
 
-- 受付後に確定した非空共用Geometryは7.6のSide別Convex集合の正常な空／非空だけで物理所有者へ所属する。両側非空なら各Side、片側正常空なら正負とも残る側へ所属し、面・Side・Capを変更しない。Containment、Coverage、最良適合、候補探索、専用Convex、極小Rigidbody、質量移送を要求しない。Geometryが空でPhysics Convexが非空の側はRendererなしの通常物理Objectとなり、cook・質量処理を省略せず通常のObject／Level lifetimeまで存在できる。失敗・未計算・Weight不正を空集合へ読み替えない。
+- 非空共用Geometryは同SideのFinal Physics Ownerへ所属し、Geometryが片側または両側空でも正負2物理子を残す。専用Convex、極小Rigidbody、反対側への所属探索・質量移送を要求しない。Rendererなしの子は通常のObject／Level寿命または任意7.9 GCへ従い、未計算・失敗を空にしない。
 
-- 重複するCompound Physics Convexを含む対象でも、Final物理では生のConvex体積を単純加算せず`PhysicsConvexMassWeight`をLocal ID順binary64左畳みで正規化して、切断前Rigidbodyと全子Fragmentの質量合計を一致させる。Provisional物理もOBB切断近似または等Weightで親Canonical Mass Budgetを保存するが、その近似COM／inertiaをFinal値へ流用しない。全Weight 0／非finiteはFinal Commitせず、各物理Commit対象Fragmentもfiniteかつ正のWeight和を持つ。Weight 0 Convexだけの子は空集合とみなさずGeometryを保持し、独立物理が成立しないため利用可能な既存物理を正式採用した`Stable Unsplit`へ終端する。質量0／任意最小質量Rigidbody、部分的なFinal Commit、Siblingへの質量移送、任意の質量再配分を生成しない。密度1慣性を`assignedMass / convexVolume`でscaleする。共用Cut Geometry／Strict Solid／Convex Boolean UnionをRuntime質量計算へ要求せず、重心・慣性はConvex由来のWeight付き近似または規定のOBB／AABB近似からfiniteかつ正の値を得る。
+- Final質量は7.2のWeightと固定順計算で親質量を保存する。Provisional近似はFinal正本にせず、全Weight 0、非finite等で正負両子の質量特性を成立させられなければAbortとする。部分公開、最小質量の捏造、Siblingへの移送をしない。
 
 - Synty／Poly Pro Universe入力と派生した共用Cut Geometry／Physics Proxyが公開Git履歴、公開CI Artifact、公開キャッシュへ含まれない。
 
@@ -2153,7 +2118,6 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Unity Editor更新時にプロジェクトを作り直さず、専用ブランチで固定テストとXRスモークテストを実行し、不合格なら旧固定版へ復帰できる。
 
-
 - PoCでは選択的な片眼映像または静止画をFrameIdからTraceへ対応付けられ、録画停止時と比較して90fps性能判断を歪めない。
 
 - OpenXR API Layerを有効にした検証では、D3D11固定Capture Profile上でProjection画像と`predictedDisplayTime`、Pose、TestRunId、Slash／Object／Task IDを一意に関連付け、API Layer自身のGPU／CPU負荷も別計測できる。Profile逸脱時はゲームを止めず録画だけをFail Fastし、Run Manifestへ理由と実構成を残す。
@@ -2173,6 +2137,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 - D-172の撤去対象は廃止行や旧schema全文を残さず削除し、詳細はGit履歴へ委ねる。確定済みPhase 0.2生成物の扱いは10.2.2に従う。
 
 - D-173で撤去する旧Runtime出力Validator・Operation公開前限定退役・Player終了前の完全診断保存保証と、これらに固有の試験は、廃止行・互換表現を残さず削除してGit履歴へ委ねる。共通Player終了境界の確認は14章に従う。
+
+- D-175で撤去する長寿命の物理Group、旧物理恒久採用、Snapshot／Fault Frozen、専用状態・Reason・Trace・試験、未Commit Geometry貸出しの旧契約は直接削除し、Git履歴へ委ねる。互換enum・旧Reader・空record・migration・二重実装を作らず、ID欠番を許容して別意味へ再利用しない。一般の完成済みTrace／Capture形式は対象外とする。
 
 - 未決事項は結論、根拠、決定日を追記して決定事項へ移す。
 
@@ -2196,41 +2162,34 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | NvencRunChunkSink | Phase 0.11でOutput Worker上から同期呼出しされ、owned Access Unitのaccepted FIFO append、checked ByteLength、streaming hash、Frame Relation、owned領域の厳密に1回の返却と同期結果だけを担当する内部責務。NVENC資源、Frame Completion、Worker／Queue／Drain／Join、Publication／Recoveryを所有しない |
 | VP Geometry | グローバルVertex／Indexプール上の表示／Stencil共用表現。VertexはAoS。CPU側が切断正本、GPU側が描画コピー。寿命・公開は4.5に従う |
 | Geometry参照 | 正負Sideの共用Geometry範囲への参照。幾何処理が必要とする局所Component識別を保持できるが、通常物理所有単位をComponent数で増やさない |
-| Stable Geometry | 4.5.6の必要転送と現在有効なframe／参照での表示Commitを満たす共用VP Geometry。Final cook・物理Commit完了を含意しない |
-| Pending Cut | 実命中で受付済みで、必要なGeometry／Physics工程が未完了の切断記録。受付時にCutOperationId、親LogicalFragment、更新前の基底世代、採用面を持ってObjectGeneration更新と原子的に公開する。確定子・実在境界の構築前はLogicalCutOperation、CutBoundaryRecordを持たず、即時表示はこの採用面と4.2の表示可否を使う。この間は置換予定の親と仮表示領域への後続切断を受付けない。Operation公開後も必要工程が正常完了または既存規則で終端するまで受付情報を維持するが、公開済み子の再切断を妨げず、Geometry Commit後はTemporary描画対象から外れても未完了の有効な物理工程のCommit照合に使う。予期しない内部エラーは4章に従う |
+| Stable Geometry | 4.5.6に従ってCommitした共用VP Geometry。対応するFinal Physics／Logical Publicationは先に完了しており、描画時刻はRenderer側の状態収集・発行順序に従う |
+| PhysicsSplitTransaction | 7.1の一回の物理所有変更を扱う短寿命record。Final Physics／Logical PublicationまたはAbort／Staleで終了し、Geometry DAG・子孫・履歴・遅延cleanupを所有しない |
+| Pending Cut | 4.2で受付けるCutOperationId・Source・基底世代・採用面を持つ記録。7.1のTransaction終了後はGeometry責務だけを保持し、4.5.6のCommitまたは不要化で完了する。公開子への受付を止めず、具体的Boundaryは後着できる |
 | TemporaryRenderCapRecordSet | 当該フレームにCap板Batchへ投入するRecord集合。Stencil Volumeの投入対象は5.2の選択・可視性・Color分類に従う。4.2の表示可能なPending CutとGeometry未Commit境界から構成し、固定状態で省略しない。Frustum／Facing CullでRecordを選別する。最大12面の選択は`SelectedTemporaryClipPlaneSet`に適用し、Plane overflowでCap Record集合を削らない。件数は固定側とBatchに残るIgnored板を含むBatch投入Cap Record数であり、Color／Depthを書いた板数ではない。Geometry Commit後は対応Recordを外す |
-| TemporaryClipConstraintCandidateSet | 1個のRenderFragmentへ関係するGeometry未Commit切断半空間制約の集合。Pending Cutと公開済み境界の採用面・祖先制約から構成し、固定状態で省略しない。Cap Record集合とは区別する |
-| SelectedTemporaryClipPlaneSet | CandidateをPending Cut列とCutBoundary Record公開列の受付順に辿ったdependency-closed prefixから、Raster 8面とPixel fallback最大4面へ割り当て、左右眼とColor／Depth／Shadow／Stencil Volumeで共有する固定長の即時描画Plane集合。Operation公開時は同じ受付位置と面を維持する |
-| IgnoredTemporaryClipBoundarySet | Candidateのうちdependency-closedな最大12面prefixへ入らない後発Pending Cut／境界。5.2に従いPlane選択とclip制約から除外し、対応Stencil Volumeをsubmitしない。Cap板Recordは既存Batchへ残り得る。Pending Cut、公開済みCutBoundaryRecord、論理／物理状態、世代、背景Geometry／Convex処理は維持する |
+| TemporaryClipConstraintCandidateSet | 1個のRenderFragmentへ関係するGeometry未Commit切断半空間制約の集合。Pending Cutと公開済みOperationの採用面・祖先制約から構成し、固定状態で省略しない。Cap Record集合とは区別する |
+| SelectedTemporaryClipPlaneSet | CandidateをPending Cut列とLogicalCutOperation公開列の受付順に辿ったdependency-closed prefixから、Raster 8面とPixel fallback最大4面へ割り当て、左右眼とColor／Depth／Shadow／Stencil Volumeで共有する固定長の即時描画Plane集合。Operation公開時は同じ受付位置と面を維持する |
+| IgnoredTemporaryClipBoundarySet | Candidateのうちdependency-closedな最大12面prefixへ入らない後発Pending Cut／境界。5.2に従いPlane選択とclip制約から除外し、対応Stencil Volumeをsubmitしない。Cap板Recordは既存Batchへ残り得る。Pending Cut、公開済みLogicalCutOperation、論理／物理状態、世代、背景Geometry／Convex処理は維持する |
 | 共用Cut Geometry | 表示、実Cap、Stencil Volume、次回切断が参照する唯一の切断Geometry。閉鎖・edge／vertex manifold・局所winding整合済みTopologyを持ち、各世代で同じTriangle集合と向きを全用途へ公開する。Self-intersection、別Topologyの閉Component間のIntersection／Overlap、Internal／Nested／Coincident、全体反転、Runtimeの面積0 Triangleを許容する |
 | ClosedCutComponentSet | 幾何処理またはAsset表現が必要とする、独立に閉鎖・切断・CapできるComponent範囲。Component間のIntersection／Overlapを許容する。通常切断のための全島列挙、物理連結成分Graph、Boolean Unionは要求しない |
 | ComponentFragment | 幾何処理が局所的に必要とするClosed Cut Componentの切断片。同Sideに複数存在できるが、全島列挙や個別の論理子・物理所有者を要求しない |
 | Physics Proxy | 物理接触と高速切断のための低複雑度Convex／Compound。各Convexは閉凸契約を満たすが、同一Compound内の別Convex同士はOverlapしてよく、Strict SolidやConvex Boolean Unionを入力に要求しない |
-| PhysicsConvexMassWeight | 同一FragmentGroup内の各Physics Convexへ親質量の配分比を与えるbinary64、finite、0以上のFinal用Metadata。Local ID順の左畳み和がfiniteかつ正であることを要求し、`assignedMass = parentMass * (weight / weightSum)`の固定順で配分する。Convexの生体積とは独立して重複Compoundの二重計上を避け、非交差時は継承し、交差時は当該Convexの子体積比だけで分割する。切断後はFinal物理Commit対象Fragmentごとにも和がfiniteかつ正でなければならない。Weight 0 Convexだけの子を空集合へ読み替えず、現物理を正式採用してGeometryをその構成へ追従させる |
-| FragmentGroup | 同じ切断系譜、Canonical Mass Budget、点Anchor集約、世代、Final物理Commitを共有するLogical Fragment集合。Provisional成功時は複数Actorを持て、分裂を成立させられない場合は利用可能な既存物理表現を正式採用した`Stable Unsplit`で終端できる |
-| PendingPhysicsSplit | 評価または必要資源待ちで、見た目と論理状態は切断済みだが、1つのRigidbody／旧Colliderを共有して物理分裂を待つ状態。成立不能が確定した後の終端状態には使わない |
-| ProvisionalRigidbody | Final Convex cook前にLogical Fragment別のpose／速度／外界Collisionを持たせる短命Actor。旧cook済みConvex Geometryを共有し、OBB切断体積比または等WeightでCanonical Mass Budgetを保存した近似mass／COM／inertiaを持つが、Final質量特性の正本にはしない |
+| PhysicsConvexMassWeight | 7.2のFinal Physics Convexの質量配分Metadata。finiteな非負WeightをLocal ID順に集計し、各Final Ownerにfiniteな正和を要求する。実体積から親質量を作らず、正常分裂で親質量を保存する |
+| ProvisionalRigidbody | 7.1のTransaction内で予定正負子のpose／速度／外界Collisionを先行させる短命Actor。旧Cooked Geometryを共有し、7.2のOBB／等Weight近似はFinal質量正本にしない |
 | ProvisionalSeparationConstraint | 同じ切断で生じたProvisional Siblingに使うUnity `ConfigurableJoint`。固定anchor-offset D6の構成、有限区間の品質許容と寿命は7.1に従う。Sibling Collision無効化およびBuildingWorldD6Constraintとは別の役割を持つ |
 | ProvisionalCollisionResourceLease | 1つの旧Cooked Convex Geometryを複数のProvisional Shape Instanceが安全に共有する所有権Token。各GeometryをProvisional Shape Instanceへ結び付ける前に取得し、7.1に従って当該Leaseが保護する参照と必要な物理Stepの寿命を満たして一度だけ返す。Geometry自体は最後のLease返却前に破棄しない |
-| ProvisionalLastFinitePhysicsSnapshot | 公開済みProvisional Groupごとに2個の固定Slotを持ち、HeaderのObjectId／ObjectGeneration／FixedStepId／ActorCountと、LogicalFragmentLocalId順の全Actor pose／速度を同一Fixed Stepからall-or-noneで公開する物理安全Snapshot。Staging完了後のatomic Slot切替だけを読取可能点とし、`ProvisionalFaultFrozen`への封じ込め専用で表示―物理誤差の測定、補間、すり合わせには使用しない |
 | CanonicalMassBudget | Provisional Actorの近似mass特性と分離して保持する、切断直前の正規親質量とPhysicsConvexMassWeight系譜。Provisional OBB配分とFinal mass／COM／inertia計算の親Budgetとして参照し、連続切断でもSolver用Actor massから作り直さない |
 | FragmentRenderAnchor | Parent ActorからProvisional Actorを初めて分裂させる際、表示Fragmentの初期World poseと点速度を連続させるstableな基準Transform。Final handoffでは物理Actorを優先するためActor pose補正やCOM速度変換には使用せず、表示Geometryが新しい物理frameへ追従して瞬間移動することを許容する |
-| FragmentGroupPhysicsState | 固定値`Invalid=0`、`StableUnsplit=1`、`PendingPhysicsSplit=2`、`PendingAnchoredSplit=4`、`ProvisionalPhysicsSplit=5`、`ProvisionalAnchoredSplit=6`、`StableFastCook=7`、`PhysicsUpgradePending=8`、`StableFastSimulation=9`、`ProvisionalFaultFrozen=10`。未知値を公開せず、TraceのFromState／ToStateへ同じ値を使用する |
-| ProvisionalPhysicsFallbackReason | Provisional公開前の構築失敗専用。固定値`None=0`、`ActorCapacityExceeded=1`、`ShapeCapacityExceeded=2`、`ConstraintCapacityExceeded=3`、`GeometryShareUnsupported=4`、`ShapeClassificationInvalid=5`、`MassApproximationInvalid=6`、`ActorCreationFailed=7`、`ConstraintCreationFailed=8`、`GenerationMismatch=9`、`AtomicCommitFailed=10`。Fallback EventではNoneを禁止し、公開後異常へ流用しない |
-| ProvisionalRuntimeFaultReason | 公開後FaultのPrimary原因専用。固定値`None=0`、`NonFiniteActorState=1`、`ConstraintRuntimeFailed=2`、`LinearVelocityLimitExceeded=3`、`AngularVelocityLimitExceeded=4`。複数原因はこの順を優先し、同順位は最小LogicalFragmentLocalIdを選ぶ。Safety Frozen EventではNoneを禁止する |
-| ProvisionalFaultContainmentDisposition | Primary Fault後の封じ込め結果。固定値`Invalid=0`、`RestoredAtomicGroupSnapshotAndFrozen=1`、`RemovedFromPhysicsSceneSnapshotUnavailable=2`、`RemovedFromPhysicsSceneContainmentValidationFailed=3`。Faultを検出した現Step値は使用しない。Safety Frozen EventではInvalidを禁止し、Primary Fault Reasonと独立に記録する |
 | FixedSupportAnchor | 固定支持を表すfiniteな点。初期Logical Convex CellとFragment Physics Frame内local位置を入力とし、各Cellの集合で保持する。OnPlaneでは同じ値を正負の各子集合へ1回ずつ継承する。所有単位内に一つでもあればStatic／Kinematicで固定とし、他Cellへ支持を伝播しない |
 | IsBuildingDerived | 製品Recipeが指定する建物由来の継承boolean。サイズや名前からRuntimeで推定しない。7.2.2を正本とする |
-| BuildingSplitDepth | 7.2.2の建物由来の分裂深さ。初期0、建物由来のProvisionalを含む1→2物理公開時だけ両子を一度更新し、非建物の系譜は0を維持する。Final採否で再加算・巻戻ししない |
+| BuildingSplitDepth | 7.2.2の建物由来の非負分裂深さ。初期0、予定子DepthをProvisional D6と正式子で共有する。非建物は0を維持し、Final handoffで再加算しない |
 | BuildingWorldD6Constraint | 7.2.2の建物由来・Anchorなしの動的分裂子が一つ持つWorld接続D6。Actor寿命で保持し、ProvisionalSeparationConstraintと分離する |
 | PlayerLocomotionOccupancy | 7.2.3のLevel初期化時に確定するworld-space不変の低複雑度Primitive集合。人工移動の候補Player Root／予測HMD CapsuleのOverlap Rejectに使用し、物理所有者・切断・Commit・Fragment・GCへ追従しない |
-| PendingAnchoredSplit | 点Anchor配分から所有者単位の固定／動的は定まったがCollider切断／Bakeは未完了で、旧Colliderを固定したまま自由側だけを衝突なしで仮表示する状態 |
-| LogicalFragment | 蓄積された切断面で区切られた論理単位。通常切断では正負各最大1個とし、同Sideの離れた島を含められる。Colliderや表示完成前に公開でき、後続切断の対象になる。7.9の再編成・退役で現在の所有者対応を更新しても、過去履歴を架空Operationで補わない |
-| CutBoundaryRecord | 切断面、Side、確定子参照、Geometry状態、作成時世代を保持する実在の幾何境界記録。物理連結性を表すEdgeではなく、正負Geometryが同じ物理所有者へ所属しても履歴を保持する |
+| LogicalFragment | 再切断・退役の論理単位。正常切断はFinal Physicsと同時に正負各1子を公開し、各子が一Final Physics Ownerを専有する。Geometry未完成でも受付でき、同Sideの離れた島を含められる。7.9の非命中再編成・退役でも架空Operationを作らない |
+| CutBoundaryRecord | Geometry Commit時に確定する実在面・Side・子Geometry／frame・作成時世代の記録。Logical Publicationから後着でき、物理連結Edgeや資源の強い所有者にはしない |
 | SourceSlashPlane／SelectedObjectLocalCutPlane | 前者はSlashFrameの不変World攻撃面、後者は命中時に対象操作ごとに一度確定する切断前物体相対の面。19.5.1の予測面採否はMesh Readyに依存せず、全表示／物理成果物が選択面を共有する |
 | CommittedCutPlane | SelectedObjectLocalCutPlaneを対応する実Actor／子frameへ写したWorld面。命中時のWorld位置を固定したり予測PoseをActorへ設定する指示ではない |
 | RigidCutRebaseProfileV1 | 初期自由飛行剛体のリベースGateを固定するversion付き設定。法線角度、Bounds内plane field差、固定8点の左右眼投影差の上限を持ち、未設定や投影不能では通常面へFallbackする |
-| LogicalCutOperation | 一つの親への受付済み切断の確定論理操作。CutOperationId、親ID／世代、正負各最大1個で合計1～2個の非空直接子ID、実在する0～256個のCutBoundaryIdを持つ。子はGeometryまたはConvexが非空のSideとし、存在しない子や境界を補わない。子・境界の構築後、既存の世代・参照の公開条件でFragment／Boundaryと原子的に一度だけ公開する。受付前の片側空No-opは作らない |
+| LogicalCutOperation | 一つの受付済み切断の親ID／世代、正負2子ID、採用面・Side対応。7.1のFinal Physicsと一体公開し、4.5.6のGeometry Commitで実在する0～256 CutBoundary参照が後着する。受付前No-opでは生成しない |
 | CutOperationId | 0を未設定用に予約し、ObjectIdの生存期間全体で一意かつ非再利用とする正の32bit int。受付成功時にPending Cutへ発行するため、対応LogicalCutOperationより先に存在できる。Operation系TraceではValue0へ格納する |
 | LogicalFragmentLocalId | 0を未設定用に予約し、ObjectIdの生存期間全体で一意かつ非再利用とする正の32bit int |
 | CutBoundaryLocalId | 0を未設定用に予約し、ObjectIdの生存期間全体で一意かつ非再利用とする正の32bit int |
@@ -2620,9 +2579,9 @@ Q_n = conv{A_(n-1), B_(n-1), A_n, B_n}
 - Gameplay判定厚み、端点Circle／Sphere、折れ線辺列、中間頂点、自己交差処理を追加しない。
 - 命中の正本はGameplay Segment Sweepであり、VFX円弧、Candidate Flight Bounds／先行準備範囲、刀Collider、Particle衝突ではない。
 
-候補`LogicalFragmentRef`に対するNarrowphase対象は、7.6の受付で同じSnapshotから使用する**現在採用中のPhysics Convex集合とその現在local pose**へ一本化する。Pending／Provisional中には計算中の切断後Final Convexより大きい旧／暫定Convexを含み得るため、本節の「保守Hull」はこの時間的な意味を指す。表示Geometryを常に外包するHullであることは要求しない。
+候補LogicalFragmentRefへのNarrowphaseはPhysics Scene上の現在採用Convex集合と現在local poseを使う。Active Transaction中の旧／Provisional Convexへの実Hitは観測できるが、切断受付は7.6の順序で見送る。受付・No-op分類・次のConvex切断入力はTransaction外のFinal Physics Ownerだけとする。
 
-上記の閉凸包Sweepを`Q`、現在採用Convexを`C_i`として、少なくとも一つについて`Q ∩ C_i`が非空なら実Hitとする。AABB／OBB、候補Flight Bounds、Convex集合Bounds等をBroadphaseへ使用できるが、それらのOverlapだけでHitを確定しない。Render Triangleとの二次判定、未完成Final Convexの同期生成、Unity Collider callbackを別authorityとして追加しない。現在採用Hull外にだけ存在する表示Geometryへ当たらないことは、7.6の既存許容と同じ扱いとする。
+上記の閉凸包Sweepを`Q`、現在採用Convexを`C_i`として、少なくとも一つについて`Q ∩ C_i`が非空なら実Hitとする。AABB／OBB、候補Flight Bounds、Convex集合Bounds等をBroadphaseへ使用できるが、それらのOverlapだけでHitを確定しない。Render Triangleとの二次判定、未完成Final Convexの同期生成、Unity Collider callbackを別authorityとして追加しない。現在採用Hull外にだけ存在する表示Geometryへ当たらないことは、7.2の品質許容に従う。
 
 #### 19.1.8 円弧VFX
 
@@ -2748,7 +2707,7 @@ Unity現在世界
 
 ### 19.3 未来姿勢の求め方
 
-表示切断の先行計算は4.5.2に従い、Skinned対象の先行計算はJobベイク導入採用時に不変Rig Poseから共通VP入力を生成して共用Geometry切断へ接続する。同じRig Poseから骨Physics Proxyを姿勢化し、表示頂点ベイクだけの待ちを物理へ追加しない。準備中は現在Sceneと表示を維持し、4.5.6の正負直接Index出力・転送まで準備して、19.5の既存採用条件を満たすVP・成果物を命中時に再利用する。Final物理所属の確定を転送条件にせず、非スキニングまたは有効な準備済み入力では不要な工程を省く。
+表示切断の先行計算も4.5.6のCommitted入力を使い、未Commit祖先成果物を入力にしない。入力準備は4.5.2に従い、Skinned対象の先行計算はJobベイク導入採用時に不変Rig Poseから共通VP入力を生成して共用Geometry切断へ接続する。同じRig Poseから骨Physics Proxyを姿勢化し、表示頂点ベイクだけの待ちを物理へ追加しない。準備中は現在Sceneと表示を維持し、4.5.6の正負直接Index出力・転送まで準備して、19.5の既存採用条件を満たすVP・成果物を命中時に再利用する。Final物理所属の確定を転送条件にせず、非スキニングまたは有効な準備済み入力では不要な工程を省く。
 
 | 対象状態 | 予測方法 |
 | --- | --- |
@@ -2794,7 +2753,6 @@ AnimatorコンポーネントはHumanoid Retargeting、Avatar Binding、Playable
 
 投機ジョブは`SlashId`、`SlashGeneration`、対象`LogicalFragmentRef`、確定した`SlashFrame`、`ObjectId`、`BaseObjectGeneration`、共用Geometry・物理・Animation・MobPlanの各Generation、予測到達時刻を保持する。Commitには対応するSlashWave Segment Sweepの`SlashHitConfirmed`を必須とし、識別子、SourceSlashPlane、世代、予測前提のいずれかが一致しない結果は適用せず回収する。19.5.1の対象剛体だけはWorld姿勢一致をLocal Plane採用Gateへ置き換え、その操作に確定した面・基底frameと一致するGeometryだけを使用する。これにより、Candidate Flight Boundsへ入っただけの空振り候補や、古い非同期結果が新しい切断状態を上書きすることを防ぐ。
 
-
 上記は通常の命中切断成果物のCommit条件である。7.9の確定後の任意分割・退役は非命中公開条件に従い、公開後は旧所有構成向けの予測成果物を拒否する。任意候補の準備・見送りだけでは通常予測を失効させない。
 
 #### 19.5.1 剛体切断成果物の実姿勢リベース
@@ -2821,11 +2779,11 @@ AnimatorコンポーネントはHumanoid Retargeting、Avatar Binding、Playable
 1. SourceSlashPlaneに属する実SlashWave Segment SweepのSlashHitConfirmedを必須とし、候補列挙だけでは面や切断を公開しない。
 2. ObjectGeneration更新前の実Physics poseと世代を同じStepのSnapshotとして取得する。Mesh表示の補間Transformを物理Snapshotの代わりにしない。
 3. Gate合格ならPredictedObjectLocalCutPlane、不在／不合格なら実命中から求めたLocal PlaneをSelectedObjectLocalCutPlaneとする。実姿勢からも有効面を構築不能な場合は通常の切断失敗・回収経路を使い、不正Planeを公開しない。
-4. Pending Cut登録・世代更新・表示変更より前に、同じ実SnapshotとSelectedObjectLocalCutPlaneで7.6の現在採用Convex集合を分類する。片側空No-opまたは`MaxIncompleteCutOperationCount`到達時は面Descriptorをゲーム状態へ公開せず、CutOperationId、LogicalCutOperation、子、境界、Pending仕事を作らない。この判定にもMesh／Collider JobのReadyを使用しない。
+4. Pending Cut登録・世代更新・表示変更より前に、7.6のSource生存性とActive Transactionなしを確認してから、同じ実SnapshotとSelectedObjectLocalCutPlaneでFinal Physics Convex集合をrobust support分類する。片側空No-opまたは`MaxIncompleteCutOperationCount`到達時は面Descriptorをゲーム状態へ公開せず、CutOperationId、LogicalCutOperation、子、境界、Pending仕事を作らない。この判定にもMesh／Collider JobのReadyを使用しない。
 5. 受付を通過した場合だけ、正のCutOperationIdを持つ同じ切断のPending Cut登録・基底から次世代への遷移・Local Plane確定を原子的に行う。この時点ではLogicalCutOperation、論理子、CutBoundaryRecordを公開しない。Operation公開前のTemporary clip／Capと局所VFX、点Anchor配分と所有者単位の固定／動的の導出、Provisional配分・OBB質量近似・分離Constraintは同じ面を読む。最初にSource面で表示して後から予測面へ切り替える二段階公開を禁止する。
 6. 選択Descriptorを根拠に、既存の対応Jobを継続／優先化する。未発行なら同じ基底Geometryと選択面で後追いJobを投入し、面採用のためにJob.Complete、同期切断、同期cookを行わない。不採用面のSchedule済みJobは完了後に回収する。
 
-基底世代は命中したPending Cut自身による既知の次世代への更新と結び付けて保持し、単に現在世代と旧BaseObjectGenerationが異なることだけで対応成果物を破棄しない。一方、別切断や外部変更で系譜が進んだ成果物は既存Generation GateでRejectする。Snapshot取得からPending Cut公開までに前提が変化した場合は古い選択を公開せず通常の再評価へ送る。Pending Cut公開後はPlane採否を再実行せず、後にLogicalCutOperationを公開する場合も同じ面を継承する。後着Job失敗、予算超過、Collider包含不合格、View変化でも元Source面へ切り替えず、確定面での再計算または利用可能な既存物理表現の正式採用を使う。
+基底世代は命中したPending Cut自身による既知の次世代への更新と結び付けて保持し、単に現在世代と旧BaseObjectGenerationが異なることだけで対応成果物を破棄しない。受付後の通常Transaction／Geometryは8章の局所authorityで照合し、別LogicalFragmentの更新や子孫切断だけで祖先GeometryをRejectしない。外部authority喪失はStale回収する。Snapshot取得からPending Cut公開までに前提が変化した場合は古い選択を公開せず通常の再評価へ送る。Pending Cut公開後はPlane採否を再実行せず、後にLogicalCutOperationを公開する場合も同じ面を継承する。後着Job失敗、予算超過、Collider包含不合格、View変化でも元Source面へ切り替えず、Geometryは確定面のまま既存経路で進め、物理を成立させられなければ7.1のAbortへ進む。
 
 **boundedな初期視覚Gate。** `RigidCutRebaseProfileV1`はversion／content identity、有限・非負の`MaxPlaneNormalAngleRadians`（π未満）、`MaxPlaneFieldErrorMeters`、`MaxProxyPointPixelError`を持つ。測定条件は判定時の左右眼View Projectionと各viewport pixel寸法へ固定する。未設定／不正Profile、片眼情報欠落ではリベースを採用しない。値の校正はO-047で行い、Probeの1 mm／0.5度／5 mmや画面幅1%を自動採用しない。
 
@@ -2833,7 +2791,7 @@ Mesh Jobとは独立した基底Geometryの保守的local Boundsの8 cornerを�
 
 これは8点の近似であり、真の切断線／シルエット最大pixel誤差、注視追跡、VFX全頂点比較、接線付近のTopology一致を保証しない。多少の未検出差を許容し、全Contour生成や全Triangle走査を採用Gateへ追加しない。World上限も併用し、遠距離で見えにくいことだけを理由に無制限の面差を許さない。有限Sweepの命中対象を増やさず、SlashHitConfirmedを取消・偽装せず、同一Slashの別対象にもリベース面を伝播しない。
 
-**後続物理と表示。** 採用するのはGeometryと操作Local Planeであり、予測速度、予測World COM、支持・外界接触・安全判定の結果ではない。実Actorの最新pose／速度と既存の質量Budget・分離Impulse一回規則を使う。選択時のActualObjectPoseへ後日Actorを巻き戻さず、各子のPhysics Frameに保持したGeometryをその時点のActorへ取り付ける。Finalは由来Provisional Convex内の包含検証を引き続き必須とする。攻撃Impulseの意味方向はSource Slash、分離Constraint／幾何Offsetの法線は採用面として区別し、両者が同じ法線であると仮定しない。必要な点配分や物理公開条件が未確定の間は既存Work依存で物理適用を待ち、成立不能と確定した場合は利用可能な既存物理表現を正式採用した`Stable Unsplit`へ終端する。リベースを理由に新しい外界penetrationや固定側Impulseを許可しない。Render補間は既存Actor従属の範囲だけで行い、表示―物理誤差蓄積／すり合わせ状態を復活させない。
+**後続物理と表示。** 採用するのはGeometryと操作Local Planeであり、予測速度、予測World COM、支持・外界接触・安全判定の結果ではない。実Actorの最新pose／速度と既存の質量Budget・分離Impulse一回規則を使う。選択時のActualObjectPoseへ後日Actorを巻き戻さず、各子のPhysics Frameに保持したGeometryをその時点のActorへ取り付ける。Finalは由来Provisional Convex内の包含検証を引き続き必須とする。攻撃Impulseの意味方向はSource Slash、分離Constraint／幾何Offsetの法線は採用面として区別し、両者が同じ法線であると仮定しない。必要な点配分や物理公開条件が未確定の間は既存Work依存で物理適用を待ち、成立不能と確定した場合は7.1のAbortへ進む。リベースを理由に新しい外界penetrationや固定側Impulseを許可しない。Render補間は既存Actor従属の範囲だけで行い、表示―物理誤差蓄積／すり合わせ状態を復活させない。
 
 ## 20. モブ未来計画とAI LOD
 
@@ -2968,7 +2926,7 @@ Zantetsu.Convex.Slice
 Zantetsu.Physics.ProvisionalBuild
 Zantetsu.Physics.ProvisionalConstraint
 Zantetsu.Physics.ProvisionalHandoff
-Zantetsu.Physics.ProvisionalFaultFreeze
+
 Zantetsu.Support.Classify
 Zantetsu.Support.CommitValidate
 Zantetsu.Commit.Validate
@@ -2997,7 +2955,7 @@ EventType / TaskType / FromState / ToState / Reason
 Value0 / Value1
 ```
 
-最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。予約機能実装時には`ReservationCreated`をappend-onlyで追加する。切断Operation公開の実装時には`LogicalCutOperationCreated`、`LogicalCutOperationChildLinked`、`LogicalCutOperationBoundaryLinked`、`LogicalCutOperationBoundaryEndpointLinked`、`LogicalCutOperationTraceCompleted`を追加する。点Anchorによる固定と物理分裂は既存物理状態・Commitイベントで記録する。Trace完全性実装時には`TraceIntegritySummary`をappend-onlyで追加する。Provisional物理実装時には`ProvisionalPhysicsCommitted`、`ProvisionalPhysicsFallbackActivated`、`ProvisionalPhysicsFinalized`、`ProvisionalPhysicsSafetyFrozen`をappend-onlyで追加する。Player非接触移動実装時には`PlayerLocomotionRejected`をappend-onlyで追加する。剛体リベース実装時には`RigidCutPlaneNormalXY`、`RigidCutPlaneNormalZDistance`、`RigidCutPlaneSelected`をappend-onlyで追加する。片側空No-opと受付上限見送りには専用Trace Eventを追加しない。既存Event名の`Task`は論理Work Itemを指し、`TaskId`をFragment識別子へ流用しない。`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用し、Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
+最低限記録するイベントは、`BladeTrackingLost`、`BladeTrackingRestored`、`BladeSamplesReset`、`EdgeGateEntered`、`EdgeGateRejected`、`SlashPrimed`、`SlashLatched`、`SlashFrontCreated`、`FrontVertexAdded`、`FrontEdgeActivated`、`FrontSampleIgnored`、`FrontTopologyRejected`、`SlashFinalizedByReversal`、`SlashFinalized`、`SlashFrontExpired`、`SlashRecoveryStarted`、`SlashRearmed`、`FrontHitConfirmed`、`CandidateDetected`、`TaskScheduled`、`TaskStarted`、`TaskCompleted`、`PredictionValidated`、`PredictionRejected`、`GenerationChanged`、`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`、`CaptureFrameQueued`、`CaptureFrameEncoded`、`CaptureFrameDropped`、`CaptureRingFrozen`、`ProjectionCaptureCopied`、`CommitStarted`、`CommitSucceeded`、`CommitRejected`、`FallbackActivated`、`TaskCancelled`、`ResultDisposed`とする。予約機能実装時には`ReservationCreated`をappend-onlyで追加する。切断Operation公開の実装時には`LogicalCutOperationCreated`、`LogicalCutOperationChildLinked`、`LogicalCutOperationBoundaryLinked`、`LogicalCutOperationBoundaryEndpointLinked`、`LogicalCutOperationTraceCompleted`を追加する。点Anchorによる固定と物理分裂は既存物理状態・Commitイベントで記録する。Trace完全性実装時には`TraceIntegritySummary`をappend-onlyで追加する。Player非接触移動実装時には`PlayerLocomotionRejected`をappend-onlyで追加する。剛体リベース実装時には`RigidCutPlaneNormalXY`、`RigidCutPlaneNormalZDistance`、`RigidCutPlaneSelected`をappend-onlyで追加する。片側空No-opと受付上限見送りには専用Trace Eventを追加しない。既存Event名の`Task`は論理Work Itemを指し、`TaskId`をFragment識別子へ流用しない。`TaskCancelled`は原則としてSchedule前の取消または取消可能なI/O処理にだけ使用し、Schedule済みJobの不採用は`PredictionRejected`／`CommitRejected`と`ResultDisposed`で表す。
 
 `LogicalConvexFragmentLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId + ObjectGeneration`をスコープとして一意かつ同一世代内で再利用しない。`CutOperationId`、`LogicalFragmentLocalId`、`CutBoundaryLocalId`は0を未設定用に予約した正の32bit `int`とし、`ObjectId`の生存期間全体で種別ごとに一意かつ非再利用とする。`LogicalCutOperationCreated`の共通`ObjectGeneration`は`ParentObjectGeneration`を格納し、宣言型`uint`の全域を許可する。その他のOperation系Eventの共通`ObjectGeneration`はEvent発生時の現世代を記録する。Traceの`ObjectId`と各Cut系LocalIdを組み合わせて対象を復元する。doubleへ格納するID、序数、件数は非負int範囲、Generationは`uint`全域とし、いずれもIEEE 754 binary64で整数精度を失わない。イベント別の固定フィールド割当は次を正本とし、汎用的なFrom／To State遷移と混同しない。
 
@@ -3015,10 +2973,6 @@ Value0 / Value1
 | `LogicalCutOperationBoundaryEndpointLinked` | CutBoundaryLocalId | DirectChildLogicalFragmentLocalId | `None` | CutOperationId | EndpointSlot。正側=0、負側=1 |
 | `LogicalCutOperationTraceCompleted` | DirectChildCount | CutBoundaryCount | `None` | CutOperationId | 当該Operation作成Trace束の期待Event数 |
 | `TraceIntegritySummary` | 現Runの`TraceIntegrityState` | TraceCaptureOverflowCount（0～`int.MaxValue`） | 現Run完全なら`None`、enqueue失敗なら`TraceWriteFailureObserved`、それがなくcapture容量超過なら`TraceCaptureOverflowObserved` | SealedTraceEnqueueFailureCount | PriorBundlePublishFailureCount。監査専用で現Run完全性には不使用 |
-| `ProvisionalPhysicsCommitted` | Commit前`FragmentGroupPhysicsState` | `ProvisionalPhysicsSplit`または`ProvisionalAnchoredSplit` | `None` | CutOperationId | 公開Provisional Actor数 |
-| `ProvisionalPhysicsFallbackActivated` | 構築試行時の実`FragmentGroupPhysicsState` | FromStateと同じ実状態。Provisional未公開なので状態遷移を表さない | 専用Fallback Reason。`None`禁止 | CutOperationId | 要求した`ProvisionalPhysicsSplit(5)`または`ProvisionalAnchoredSplit(6)`。その他は禁止 |
-| `ProvisionalPhysicsFinalized` | `ProvisionalPhysicsSplit`または`ProvisionalAnchoredSplit` | `StableFastCook` | `None` | CutOperationId | Final Actor数 |
-| `ProvisionalPhysicsSafetyFrozen` | `ProvisionalPhysicsSplit`または`ProvisionalAnchoredSplit` | `ProvisionalFaultFrozen` | Primary `ProvisionalRuntimeFaultReason`。`None`禁止 | CutOperationId | `ProvisionalFaultContainmentDisposition`。`Invalid`禁止 |
 | `PlayerLocomotionRejected` | 0 | 0 | `None` | 0 | 0 |
 
 `PlayerLocomotionRejected`は固定Occupancyとの候補次姿勢Overlapによる要求全体Rejectだけを表す。共通Trace Contextは維持し、表の状態・値fieldは未使用の0とする。Policy、侵入深度、Primitive ID、専用Reject Reasonは記録しない。
@@ -3027,18 +2981,15 @@ Capture Draft Registry実装時には`CaptureFrameAdmissionRejected`を`TraceEve
 
 剛体リベースのReasonには`RigidRebaseOutOfScope`、`RigidRebaseCandidateUnavailable`、`RigidRebaseIdentityMismatch`、`RigidRebaseInputInvalid`、`RigidRebaseWorldErrorExceeded`、`RigidRebaseProjectionUnavailable`、`RigidRebasePixelErrorExceeded`を追加し、19.5.1と本節の固定順・Trace束へ対応させる。
 
-点AnchorのReasonには`AnchorGenerationMismatch`を追加し、Trace完全性には`TraceWriteFailureObserved`と`TraceCaptureOverflowObserved`を追加する。Provisional公開前Fallbackには`ProvisionalActorCapacityExceeded`、`ProvisionalShapeCapacityExceeded`、`ProvisionalConstraintCapacityExceeded`、`ProvisionalGeometryShareUnsupported`、`ProvisionalShapeClassificationInvalid`、`ProvisionalMassApproximationInvalid`、`ProvisionalActorCreationFailed`、`ProvisionalConstraintCreationFailed`、`ProvisionalGenerationMismatch`、`ProvisionalAtomicCommitFailed`を追加し、`ProvisionalPhysicsFallbackReason` 1～10へ同順で一対一対応させる。Provisional公開後Faultには`ProvisionalNonFiniteActorState`、`ProvisionalConstraintRuntimeFailed`、`ProvisionalLinearVelocityLimitExceeded`、`ProvisionalAngularVelocityLimitExceeded`を追加し、`ProvisionalRuntimeFaultReason` 1～4へ同順で一対一対応させる。Snapshot不在と封じ込め検証失敗はTraceReasonにせず、`ProvisionalPhysicsSafetyFrozen.Value1`の`ProvisionalFaultContainmentDisposition` 2／3へ格納する。いずれも既存`TraceReason`の次の未使用値へappend-onlyで明示値を割り当て、既存値を変更・再利用しない。Reject／Fallbackイベントは専用Reasonを必須とし、Reason enumを`Value0`／`Value1`へ重複保存しない。
+点AnchorのReasonには`AnchorGenerationMismatch`を、Trace完全性には`TraceWriteFailureObserved`と`TraceCaptureOverflowObserved`を追加する。個別物理退役のための新しいReason／Event体系は設けない。
 
-Provisional物理のCommitted／Finalized／ProvisionalFaultFrozen状態遷移と、状態を変えない公開前Fallback Outcomeは、それぞれゲーム側でexactly onceに確定する。対応する4種のTrace Eventの構築／enqueueは結果を消費する単一Coordinatorが最大1回だけ試行し、enqueue成功時は当該結果につき厳密に1件、失敗時は0件としてゲーム状態をrollback／再TraceせずRunをIncompleteにする。同じ結果から2件以上の同種Eventを生成しない。4 Eventの共通`ObjectGeneration`は対象結果のGeneration、`Value0`のCutOperationIdはObject生存期間中の正の非再利用IDとする。公開前FallbackはFromStateとToStateを同じ実状態に固定し、要求Provisional種別を`Value1`から復元する。ProvisionalFaultFrozenは状態公開をTrace成功へ依存させない。Fallback／Faultでは内部ReasonとTraceReasonの固定対応を検証し、不正値なら部分物理を公開せず、公開前は既存Group維持、公開後はGroup全体のScene除外へfail closedする。
+Logical Publication後にCreatedと正負2件のChild Linkを記録し、Geometry Commit後にBoundary Link、実在するSideのEndpoint Link、TraceCompletedを記録する。順序は各段階内でChild序数／Boundary序数に従う。期待Event数は`2 + DirectChildCount + CutBoundaryCount + 存在するSide子参照の総数`、DirectChildCountは2、EndpointSlotは正側0・負側1とする。Boundary 0ではBoundary系Eventなしで完了できる。ObjectId＋CutOperationIdで結合し、ID・序数・件数・Side参照と各段階の記録世代を照合する。Createdの親基底世代と後着時の現世代の一致は要求せず、別枝更新だけで不正束にしない。
 
-Operation作成成功時のTrace束は`Created`、全Child Linkを序数順、各Boundary Linkと実在するSideの子参照をBoundary序数順、最後に`TraceCompleted`の順とする。期待Event数は`2 + DirectChildCount + CutBoundaryCount + 実在するSide子参照の総数`であり、EndpointSlotは正側0・負側1とする。存在しないSide子参照や同じSlotの重複を発行しない。境界0件ではBoundary系Eventを生成しない。`TraceCompleted`があり、期待Event数、ID、序数、境界のSide・子参照、Generationが一致する束だけを完全Operation Traceとして扱う。異なる二物理所有者を結ぶEdgeの証明には使わない。
+現行の固定サイズTrace Eventと`Value0`／`Value1`を維持し、Operationイベント追加だけを理由にバイナリレコード構造を変更しない。Operation系5イベントでは`Value0`をCutOperationId専用としてTimelineが整数表示・検索する。`FromState`／`ToState`は通常の汎用状態遷移ではなく上表のイベント固有割当として解釈する。`TraceEventType`と`TraceReason`の数値はappend-onlyとし、既存値の変更や再利用を禁止する。
 
-現行の固定サイズTrace Eventと`Value0`／`Value1`を維持し、Operationイベント追加だけを理由にバイナリレコード構造を変更しない。Operation系6イベントでは`Value0`をCutOperationId専用としてTimelineが整数表示・検索する。`FromState`／`ToState`は通常の汎用状態遷移ではなく上表のイベント固有割当として解釈する。`TraceEventType`と`TraceReason`の数値はappend-onlyとし、既存値の変更や再利用を禁止する。
-
-Operation状態の公開とTrace enqueueは意図的に非トランザクションとする。受付時にはOperation作成Traceを発行せず、通常処理で子・境界を構築した後、Fragment／Boundary／Operationをゲーム状態へ原子的に公開してから、メインスレッドで固定長の作成Trace束をbest effort enqueueする。TraceLoggerの破棄、容量／Nativeエラー等で途中失敗しても公開済みOperationを巻き戻さず、Trace書込経路とは独立したsaturating `uint`の`TraceEnqueueFailureCount`を増やす。末尾`LogicalCutOperationTraceCompleted`がない束、件数やTopologyが一致しない束はTimelineで`IncompleteOperationTrace`として表示し、状態再現・Golden比較・T-074合格根拠には使用しない。Trace失敗をゲーム状態のCommit失敗として偽装しない。
+ゲーム状態の公開とTrace enqueueは非トランザクションとする。各Publication／Commit後に対応EventをMainでbest effort enqueueし、途中の書込失敗でもゲーム状態を巻き戻さず、既存TraceEnqueueFailureCountを増やす。TraceCompletedがない束や件数・参照が不整合な束は既存IncompleteOperationTraceとして表示し、状態再現・Golden比較・T-074の完全Trace合格根拠にしない。全生存子孫・読者がGeometry完成前に退役した場合は履歴完成だけの計算を続けず、Operation／Childだけの不完全束を正常なGameplay結果として許容する。架空Boundaryや完了Eventを補わず、この正常退役自体はTrace書込失敗に数えない。正常退役でも、後述の保存Trace完全性判定ではRun全体がIncompleteとなり得る。
 
 Jobからは`NativeQueue<TraceEvent>.ParallelWriter`等のBurst互換経路へ書き込み、メインスレッドがフレーム末尾に回収する。毎フレーム全状態をスナップショットせず、状態遷移と重要な判断だけを記録する。
-
 
 剛体切断の`RigidCutPlaneChoice`は`None=0／PredictedLocal=1／ActualHitLocal=2`とし、0は未選択で公開禁止とする。19.5.1の判定順に最初の失敗を`RigidRebaseOutOfScope／RigidRebaseCandidateUnavailable／RigidRebaseIdentityMismatch／RigidRebaseInputInvalid／RigidRebaseWorldErrorExceeded／RigidRebaseProjectionUnavailable／RigidRebasePixelErrorExceeded`のappend-only TraceReasonで記録する。採用理由へMesh未完成／Bake遅延Reasonを使用しない。PhysicsやGeometry Jobの失敗は既存の各Eventで別に記録する。
 
@@ -3377,7 +3328,7 @@ Phase 0.11 Fresh成功処理のchunk hash回数は、Consumer append中のincrem
 
 `Incomplete`のabort cleanupは、Run開始から同じ`CaptureRunInitializationSessionOwnershipLease`を保持する`NvencCaptureRunCoordinator`だけが行う。局所Registry slotが`Registered`なら同じContextとの相関を確認して`Empty`へ戻し予約を解決し、未登録予約だけが残る場合もexactly once解放する。Publication Serviceへ要求済みなら、要求のterminal resultとWorker静止を先に確認し、未帰還ならfile cleanupとLease解放を開始しない。その後にContextの`.partial`、Plan未登録の確定staging file、`publication.plan.nvenc-precommit.tmp`、未消費buffer／handleをbest-effortで回収し、Context／writer／BackendをDisposeした後、`finally`相当でSession Ownership Leaseを厳密に1回Disposeして2本のOS lockを既存の逆順契約で解放する。通常のSession参照から解放を試みるAPIを設けない。cleanup失敗でもlock解放を抑止せず、失敗理由はRun外診断へ記録し、Plan、Capture IndexまたはCaptureCompleteを生成しない。削除できなかった`.partial`、NVENC専用tmp、orphan、`run.init`／`run.ready`またはRun rootは残存を許容し、次回RecoveryではPlanのないrootを自動公開せず既存のorphan／incomplete相当として隔離または全体破棄する。Trace sealが再試行可能な間はDisposition=`Running`または`Finalized`でSession Leaseとlockを保持し、成功または明示Abortまで解放しない。期限超過はCapture失敗を確定するが、Service terminal result未回収ならLease解放を許可しない。`Committed`、`CommitOutcomeUnknown`またはcommit後の`PublicationRecoveryRequired`では局所Registry slotを`Empty`へ戻さず、Plan／tmp／chunkをabort cleanupで削除しない。
 
-Draft、Registry、Trace の状態遷移は main thread の共通 Coordinator だけが反映する。Backend はこれらを変更しない。Draft の外部状態は `Pending / Staged / Dropped` を維持し、backend 内部状態を追加しない。Phase 0.11の`Staged`は当該Frameのencode／chunk append成功だけを表し、Run Artifactの公開可能性またはCaptureCompleteを単独では証明しない。形式非依存 Drop Reason は既存 enum へ append-only で追加し、既存 0～9 を再番号しない。Phase 0／0.1のFreeze順と意味は維持するが、Sessionの生成・解放はOwnership Lease APIへ移行する。Phase 0.11ではRun開始時からSubmit WorkerとOutput Workerを同時に稼働させ、Main Thread Coordinatorも完成済みFrame Completionを更新ごとの固定budgetで継続的にbounded pollする。正常／制御可能な失敗の停止順は、StopAccepting、Backend `BeginDrain`とAccepted件数Snapshot固定、両Workerの並行drain、Submit Workerによる全Accepted Workの`Submitted`／`FailedBeforeSubmit` record各1件生成、Submit Worker停止確認、Output Workerによる残存record、`NvencOwnedEncodedAccessUnit`、同期`NvencRunChunkSink`処理、Frame Completionおよび所有資源のdrain、全Frame CompletionのMain Thread反映、停止前Output WorkerへのFinalize／Abandon要求、Context terminal resultのbounded poll、`Finalized`の局所Registry登録または`Abandoned`予約解放、Output Workerによるowned Access Unit領域解放、準備順の逆順で行うnative teardown（Completion Event登録解除とclose、Output Bitstream Buffer破棄、Input Resource登録解除、native NV12 texture Release、Session破棄、device参照とdriver moduleの解放）、Output Worker停止確認、全所有資源／予約ゼロ確認、Backend全体の`TryJoin`成功、main-thread terminal intent反映、残存Pendingのtimeout Drop、Trace seal、Disposition=`Finalized`、専用tmp書込み、非上書きPlan rename、既知成功時の`Committed`確定と通常Publication、既知pre-commit失敗時の`Incomplete`とabort cleanup、rename結果不明時の`CommitOutcomeUnknown`とRecovery移行、とする。Submit Worker停止前もOutput Workerは生成済みrecordを消費し、Submit Worker停止後は残存recordだけをdrainする。Accepted件数、record数、Output処理数、Frame Completion生成数およびMain Thread反映数が一致する前にFinalizeせず、各Workerの停止成功後に同Workerへ処理を要求せず、両Worker静止とnative teardown完了前にTrace seal／Plan構築へ進まず、Plan rename成功前に`Committed`へ確定しない。Join前にbackend-owned Surface／buffer／owned Access Unit／未確定chunk payloadを外部からDisposeしない。安全な結果／所有権／Service静止を確認できない場合はこの通常停止順へ入れずD-143のprocess-wide Poisonへ進む。
+Draft、Registry、Trace の状態遷移は main thread の共通 Coordinator だけが反映する。Backend はこれらを変更しない。Draft の外部状態は `Pending / Staged / Dropped` を維持し、backend 内部状態を追加しない。Phase 0.11の`Staged`は当該Frameのencode／chunk append成功だけを表し、Run Artifactの公開可能性またはCaptureCompleteを単独では証明しない。形式非依存 Drop Reason は既存 enum へ append-only で追加し、既存 0～9 を再番号しない。Phase 0／0.1のFreeze順と意味は維持するが、Sessionの生成・解放はOwnership Lease APIへ移行する。Phase 0.11ではRun開始時からSubmit WorkerとOutput Workerを同時に稼働させ、Main Thread Coordinatorも完成済みFrame Completionを更新ごとの固定budgetで継続的にbounded pollする。正常／制御可能な失敗の停止順は、StopAccepting、Backend `BeginDrain`とAccepted件数Snapshot固定、両Workerの並行drain、Submit Workerによる全Accepted Workの`Submitted`／`FailedBeforeSubmit` record各1件生成、Submit Worker停止確認、Output Workerによる残存record、`NvencOwnedEncodedAccessUnit`、同期`NvencRunChunkSink`処理、Frame Completionおよび所有資源のdrain、全Frame CompletionのMain Thread反映、停止前Output WorkerへのFinalize／Abandon要求、Context terminal resultのbounded poll、`Finalized`の局所Registry登録または`Abandoned`予約解放、Output Workerによるowned Access Unit領域解放、本節の6資源グループを準備順の逆順で解放するnative teardown、Output Worker停止確認、全所有資源／予約ゼロ確認、Backend全体の`TryJoin`成功、main-thread terminal intent反映、残存Pendingのtimeout Drop、Trace seal、Disposition=`Finalized`、専用tmp書込み、非上書きPlan rename、既知成功時の`Committed`確定と通常Publication、既知pre-commit失敗時の`Incomplete`とabort cleanup、rename結果不明時の`CommitOutcomeUnknown`とRecovery移行、とする。Submit Worker停止前もOutput Workerは生成済みrecordを消費し、Submit Worker停止後は残存recordだけをdrainする。Accepted件数、record数、Output処理数、Frame Completion生成数およびMain Thread反映数が一致する前にFinalizeせず、各Workerの停止成功後に同Workerへ処理を要求せず、両Worker静止とnative teardown完了前にTrace seal／Plan構築へ進まず、Plan rename成功前に`Committed`へ確定しない。Join前にbackend-owned Surface／buffer／owned Access Unit／未確定chunk payloadを外部からDisposeしない。安全な結果／所有権／Service静止を確認できない場合はこの通常停止順へ入れずD-143のprocess-wide Poisonへ進む。
 
 Phase 0の境界確定では将来backendを差し替えられる責務分離だけを確定する。ハードウェアencoder、特定動画codec、profile／bitrate／rate control、packet／GOP／keyframe、PTS／DTS／reorder、container／segment、GPU native handle／zero-copy、独自binary schema、MessagePack／CBOR／Protobuf、worker thread／Job／Burst、queue実測調整はPhase 0の設計・実装・比較・Spikeに含めない。Phase 0.1は既存境界を維持する。Phase 0.11はPhase 0完了後の破壊的変更として、trusted internalな`NvencRunChunkContext`、Registryの単一Run chunk直接登録経路、`FrameSequence` Kindを追加できるが、Phase 0／0.1のPNG Backend、Envelope、Frame／submission Artifact Completion、Publication Planの意味を変更しない。汎用Run Artifact Plugin APIは追加せず、特定codecの生成／verificationとStore実装はBackend内部へ隔離する。
 
@@ -3436,7 +3387,7 @@ Poison後は新規`TrySubmit`、chunk追加append、streaming hash／ByteLength�
 
 blocking native／OS境界がPoison後に帰還した場合、Worker／Serviceは副作用前に同じprocess stateを確認し、Completion、append、Relation、Context終端、Plan、通常Pool返却、OS lock解放またはCapture再開を行わない。安全に閉じられるprocess-local wrapperのbest-effort closeは実装裁量とするが、正常Drainへの復帰、Join成功、exactly-once再収束または資源ゼロをProduction契約にしない。process終了後はOSによるhandle／lock解放に委ね、新processがPoison状態を復元せず、既存の完成Planとfile集合だけをauthorityとしてRecoveryする。
 
-`FinalizationDeadlineMs=30000`はPhase試験とCaptureを期限超過として失敗判定し、process-wide Poisonへ進める診断期限であり、永久停止を証明したりFrame Completion、資源解放、成功JoinまたはOS lock解放を捏造・強制する期限ではない。制御喪失後はTrace Freeze、Plan commit、`Incomplete`を含むRun終端または成功Joinへ進めない。Production公開APIを増やさず、内部テスト構成だけがNVENC呼出し直前または完了回収境界へfake native completion gateを注入できるようにする。Capture subsystemはMain／Render Threadを待たせずゲーム停止を要求しないが、共有D3D11 Device／GPU Driver自体のdevice loss後もUnity描画が継続することは保証しない。
+`FinalizationDeadlineMs=30000`はPhase試験とCaptureを期限超過として失敗判定し、process-wide Poisonへ進める診断期限であり、永久停止を証明したりFrame Completion、資源解放、成功JoinまたはOS lock解放を捏造・強制する期限ではない。このprocess-localな期限判定は提出停止後、Coordinatorが進行できるWorker／Service処理を対象とし、初期化呼出しの永久停止は既存Tier Dの診断対象として期限保証に含めない。診断期限の判定と単一process stateへのPoison要求はMain Threadの既存`NvencCaptureRunCoordinator`が行い、待機中のWorker自身の判定やnative呼出しの帰還を待たない。制御喪失後はTrace Freeze、Plan commit、`Incomplete`を含むRun終端または成功Joinへ進めない。Production公開APIを増やさず、内部テスト構成だけがNVENC呼出し直前または完了回収境界へfake native completion gateを注入できるようにする。Capture subsystemはMain／Render Threadを待たせずゲーム停止を要求しないが、共有D3D11 Device／GPU Driver自体のdevice loss後もUnity描画が継続することは保証しない。
 
 Main ThreadとRender ThreadではNVENC Completion、GPU Fence、Texture空き、bitstream lock／取得、hash、file write、close／renameを待たない。Render Thread／Native Plugin callbackはcrop／flip／色変換を行うGPU workと固定Submission recordに必要なbounded command／handle登録だけを行って戻り、`NvEncEncodePicture`自体はAccepted FIFOを所有するSubmit Workerだけが呼ぶ。callback内でblocking encode、poll loop、sleep、device-context待機またはI/Oを行わない。GPU完了証拠のpollとNVENC submitはSubmit Worker、Completion Event待機、bitstream取得、content hash、chunk staging append／finalizationはOutput Workerが行う。1件のAcceptedに必要なWork Slot、Encode Sample Slot、Source Surface／GPU変換同期資源、各Queue recordおよびFrame Completion creditのいずれかを1件分でも一括予約できない場合だけ、Surface所有権を移転せずMain／Render Threadを待たせず`Backpressured`を返す。各資源に空きがある限り1～8件目を受理でき、全capacityが予約済みで必要資源を確保できない9件目を拒否する。8組は短時間jitterを吸収し得る固定余裕に限り、`8 / 30 second`または追加4組分の`4 / 30 second`を停止吸収保証として扱わない。nominalでBackpressureが1件でも発生すればQualification失敗とし、容量の自動拡張、4組への縮退、追加Workerまたは同Phase内の再調整を行わない。専用fault scenarioではBackpressureを期待Dispositionとして検査する。
 
@@ -3448,9 +3399,9 @@ Tier Aの固定容量回帰は、8件の異なるfake caller-owned Source Surfac
 
 Tier AのOwned Access Unit／Chunk Sink回帰は既存Output回収fixtureへ成功1件とappend失敗1件だけを統合する。copy／unlock／unmap完了後にEncode Sample SlotがSink結果前でも返却済みであること、Sink移譲後にCollectorからLeaseを読取り・返却できないこと、成功と制御可能なappend失敗の双方でowned領域が厳密に1回返ること、同じLeaseの二重append／二重返却を副作用前に拒否することを確認する。SinkはFrame Completion Queueへ書かず、Output Workerだけが同期Sink結果後にCompletionを生成する。append失敗では後続submit済みWorkを既存`CancelledAfterRunAbandoned`へdrainし、部分chunkを修復しない。通常Drainでは未返却／所有者不明Access Unitが0件、PoisonではSink所有領域を返却せず成功Joinへ進まないことを検査する。第三Worker、Access Unit Queue、実I/O stall、OS scheduler、長時間SSDまたはfault直積を追加しない。
 
-Tier Bの短いinterop確認は、Run開始時に8組のnative所有NV12 Texture／Output Buffer／EventとInput／async-event登録が準備順どおり各Slotにつき厳密に1回成功し、短い複数Frame列で同じ8組を循環再利用し、正常終了時に各native登録解除、Output Buffer／Event／Session破棄が厳密に1回行われることをnative call counterで検査する。Unity側instrumentationでは、Unity objectとして生成されるのがsource RGBA8 sRGB textureだけであり、NV12 textureの生成・破棄がUnity側に現れないことを確認する。Frame処理中のTexture／Buffer／Event生成・破棄、native pointer再取得、register／unregister、Session再初期化が0回であること、Main／Render ThreadにGPU Fence／Completion Event／`NvEncLockBitstream`待機がないこと、短いFrame列がBackpressureなしで完了することを確認する。Render callback時間とGPU conversion pass時間をProfiler診断値として記録するが、閾値、P50／P95／P99、長時間録画、複数GPU／Driver比較または新しい性能SLAを追加しない。
+Tier Bの短いinterop確認は、本節の6資源グループを準備・使用・逆順解放し、短い複数Frame列で同じ8組のSlot資源を循環再利用することを確認する。Input／async-eventのNVENC登録・登録解除が各Slotにつき厳密に1回行われることは既存native call counterで検査する。Unity側instrumentationでは、Unity objectとして生成されるのがsource RGBA8 sRGB textureだけであり、NV12 textureの生成・破棄がUnity側に現れないことを確認する。Frame処理中のTexture／Buffer／Event生成・破棄、native pointer再取得、register／unregister、Session再初期化が0回であること、Main／Render ThreadにGPU Fence／Completion Event／`NvEncLockBitstream`待機がないこと、短いFrame列がBackpressureなしで完了することを確認する。Render callback時間とGPU conversion pass時間をProfiler診断値として記録するが、閾値、P50／P95／P99、長時間録画、複数GPU／Driver比較または新しい性能SLAを追加しない。
 
-Tier Aのinterop終了順回帰はthread-affinityを記録するfake resourceとnative call counterを使い、Output WorkerがCompletion Event登録解除とclose、Output Bitstream Buffer破棄、Input Resource登録解除、NV12 texture Release、Session破棄を準備順の逆順で各1回完了して停止すること、mapされたままのSlotが1件でもあればteardownを開始しないこと、その完了前はBackend全体`TryJoin()`と資源ゼロが成立しないことを検査する。Main Threadからのnative unregister／Session破棄と二重破棄を副作用前に拒否する。Poison fixtureでは破棄counterが0のまま全資源を保持し、成功Joinへ進まないことを確認する。この1 fixtureを既存の停止順回帰へ統合し、新しいthread競合matrixを作らない。
+Tier Aのinterop終了順回帰はthread-affinityを記録するfake resourceとnative call counterを使い、Output Workerが本節の6資源グループを準備順の逆順で各1回解放して停止すること、mapされたままのSlotが1件でもあればteardownを開始しないこと、その完了前はBackend全体`TryJoin()`と資源ゼロが成立しないことを検査する。Main Threadからのnative unregister／Session破棄と二重破棄を副作用前に拒否する。Poison fixtureでは破棄counterが0のまま全資源を保持し、成功Joinへ進まないことを確認する。この1 fixtureを既存の停止順回帰へ統合し、新しいthread競合matrixを作らない。
 
 Tier AのWorker並行動作／停止順回帰は12件のfake Workと仮想stepだけを使う。先行Workからrecordを生成した時点でSubmit Workerを停止せず、Output Workerが生成済みrecordを並行消費し、Main ThreadがCompletionを反映して対応する固定資源を戻した後に9～12件目もAcceptedできることを検査する。Queue容量を12または120へ増やさず、8件ごとの停止／再開Barrierを設けない。StopAccepting後も両Workerを並行stepし、Submit Worker停止時点では全Accepted recordが各1件生成済みかつOutput Workerは未停止であること、同Workerが残存recordをdrainすること、全Frame CompletionのMain Thread反映前またはSubmit-to-Output Queue drain前にはFinalize／Abandon要求を受理しないこと、Context terminal result回収前にはOutput Workerを停止しないこと、両Worker静止前にはTrace seal／Plan commitへ進まないことを確認する。Output Worker停止後の追加Finalize要求も副作用前に拒否する。共通`TryJoin()`はこの最終状態だけでtrueとなり、Submit Worker単独の停止確認には使わない。実時間待機、実NVENC、OS scheduler依存またはtiming競合matrixを追加しない。
 
@@ -3458,11 +3409,11 @@ Tier AのPoison試験はFixture専用process stateとfake native completion gate
 
 Tier AのPlan境界回帰は小さい固定file-tree fixtureを使い、Phase 0.11のpre-commit失敗後に`publication.plan.nvenc-precommit.tmp`削除も失敗した状態を入力して、canonical bytes、正しいRun相関および対応chunkが存在しても`publication.plan`へ昇格せず隔離／破棄されることを確認する。同じsuiteでPhase 0／0.1のcanonical `publication.plan.tmp`だけが残るfixtureは従来どおり昇格できることを確認する。fake Publication Serviceのrename例外／結果不明は`CommitOutcomeUnknown`へ固定し、final／tmpの再読込、Registry slot破棄、staging削除または再renameを行わない。Service request実行中、rename call未帰還またはterminal result未回収ではSession Leaseを解放できず、terminal result後はService-owned handle、request slot、bufferおよびI/O commandがすべてゼロであることを検査する。完成Planのみ／専用tmpのみ／Planなし／final＋tmp／finalとchunk不一致をそれぞれ`PublicationRecoveryRequired`／Incomplete-orphan cleanup／Incomplete-orphan cleanup／`PublicationRecoveryCollision`／Recovery collisionへ分類する。完成Plan＋専用tmp fixtureはsentinelの存在、長さ、content hashが検査前後で不変で、Plan／Artifact公開とCaptureCompleteが発生しないことを確認する。実process再起動とOS lock解放の代表経路はTier C 1系統、timeout／取消中の実Worker、実rename結果不明または外部改変はTier Dへ分離する。
 
-Run開始時はWDDM modeとNVENC capability queryでH.264 High Profile、NV12入力、固定寸法、必要なD3D11／非同期Encode機能を問い合わせ、`enableEncodeAsync=1`、`enableOutputInVidmem=0`と要求設定による単一Encoder Session初期化の成功を必須とする。Capture開始前の非クリティカルな準備区間で、`Encoder initialize -> native NV12 texture 8枚 -> Output Bitstream Buffer 8個 -> Completion Event 8個`の順に固定資源を生成する。NV12 Input Textureはnative sessionが`DXGI_FORMAT_NV12`、1280×720、`D3D11_USAGE_DEFAULT`、CPU accessなしで生成するD3D11 textureとし、bind flagsはGPU変換passが要求する最小集合を実装単位で確定する。各Textureを`NvEncRegisterResource`、各Eventを`NvEncRegisterAsyncEvent`で1回だけ登録し、返却handleを対応Slotへ保存する。この生成と直列化された登録はrender threadを要求しない。Unity objectとして存在するのはsource RGBA8 sRGB textureだけで、その`GetNativeTexturePtr()`はこの初期化区間でのみ取得し、NV12 textureのpointerをmanagedへ公開せず`CreateExternalTexture`で別formatを名乗らせない。Unity管理資源の生成・破棄がMain／Render Threadを要求する場合もゲーム中のFrame処理へ混入させず、開始／終了境界の限定操作とする。全8組とSessionの初期化が成功した後だけSubmission受付を開始する。途中失敗では使用開始前の取得済みEvent登録、Input登録、Output Buffer、Event、Texture、Sessionを安全な逆順で各1回rollbackし、4組への縮退、実行時再生成または別方式Fallbackを行わずCaptureだけをUnsupportedとする。TCC、同期mode、Completion Event登録不能または固定2 Workerのordered async経路を構築できない場合もUnsupportedとする。アプリ内でAnnex AのMaxFS／MaxMBPS／MaxBR／MaxCPBを再計算せず、対応可否はcapability queryと初期化結果を正本とする。RGBA8 sRGBからBT.709 limited-range NV12への変換は、render callbackで登録するversion付き固定GPU Passで行う。native所有NV12 textureのY plane（`R8_UNORM` view）とUV plane（`R8G8_UNORM` view）へ書くplane shaderを採用候補とし、D3D11 Video Processorは本Phaseの対象環境と明示制御要件に対して採用しない。係数、量子化丸め、chroma sample location、H.264 VUIの個別bit値はPhase 0.11のProduction受入契約にせず、後述のDecoder結合テストで妥当性を確定する。変換Profile IDとVersionだけをRun Manifestへ記録し、色とorientationの妥当性は後述のDecoder結合テストで確認する。
+Run開始時はWDDM modeとNVENC capability queryでH.264 High Profile、NV12入力、固定寸法、必要なD3D11／非同期Encode機能を問い合わせ、`enableEncodeAsync=1`、`enableOutputInVidmem=0`と要求設定による単一Encoder Session初期化の成功を必須とする。Capture開始前の非クリティカルな準備区間で、`Encoder initialize -> Source RGBA binding -> NV12 Input／Conversion Pipeline -> Conversion Commands -> Output Bitstream Buffers -> Completion Events`の6資源グループ順に準備する。Slot資源は既存の8組とし、解放順はこの逆順とする。NV12 Input Textureはnative sessionが`DXGI_FORMAT_NV12`、1280×720、`D3D11_USAGE_DEFAULT`、CPU accessなしで生成するD3D11 textureとし、bind flagsはGPU変換passが要求する最小集合を実装単位で確定する。各Textureを`NvEncRegisterResource`、各Eventを`NvEncRegisterAsyncEvent`で1回だけ登録し、返却handleを対応Slotへ保存する。この生成と直列化された登録はrender threadを要求しない。Unity objectとして存在するのはsource RGBA8 sRGB textureだけで、その`GetNativeTexturePtr()`はこの初期化区間でのみ取得し、NV12 textureのpointerをmanagedへ公開せず`CreateExternalTexture`で別formatを名乗らせない。Unity管理資源の生成・破棄がMain／Render Threadを要求する場合もゲーム中のFrame処理へ混入させず、開始／終了境界の限定操作とする。全8組とSessionの初期化が成功した後だけSubmission受付を開始する。途中失敗では使用開始前の取得済み資源を上記準備順の逆順で各1回解放し、4組への縮退、実行時再生成または別方式Fallbackを行わずCaptureだけをUnsupportedとする。TCC、同期mode、Completion Event登録不能または固定2 Workerのordered async経路を構築できない場合もUnsupportedとする。アプリ内でAnnex AのMaxFS／MaxMBPS／MaxBR／MaxCPBを再計算せず、対応可否はcapability queryと初期化結果を正本とする。RGBA8 sRGBからBT.709 limited-range NV12への変換は、render callbackで登録するversion付き固定GPU Passで行う。native所有NV12 textureのY plane（`R8_UNORM` view）とUV plane（`R8G8_UNORM` view）へ書くplane shaderを採用候補とし、D3D11 Video Processorは本Phaseの対象環境と明示制御要件に対して採用しない。係数、量子化丸め、chroma sample location、H.264 VUIの個別bit値はPhase 0.11のProduction受入契約にせず、後述のDecoder結合テストで妥当性を確定する。変換Profile IDとVersionだけをRun Manifestへ記録し、色とorientationの妥当性は後述のDecoder結合テストで確認する。
 
 Encoderへの要求設定はH.264 High Profile、progressive Annex B、各入力をIDRとしてencode、SPS／PPS反復、P／B Frameなし、Frame間参照なし、Constant QP 28、`enableEncodeAsync=1`、`enableOutputInVidmem=0`とし、Output Workerの`NV_ENC_LOCK_BITSTREAM::doNotWait=0`を固定する。SDK／Driver識別子と全要求値をRun Manifestへ記録する。`NvEncLockBitstream`は対応Completion Eventの待機後にOutput Workerだけが呼び、Main Thread、Render Thread、Submit Workerから呼ばない。AUDの有無はPhase 0.11の受入条件にしない。NVENC APIが要求設定またはSession初期化を拒否した場合はCaptureだけをFail Fastする。ProductionはNVENC出力を再解析して設定適合を証明せず、NVENCが返したraw Annex B bytesを正本とする。
 
-各Frameの通常経路は、既存Source Textureから予約済みのnative所有NV12 Input Textureへの固定GPU変換、`NvEncMapInputResource`、`NvEncEncodePicture`、Output WorkerでのCompletion Event待機、`NvEncLockBitstream(doNotWait=0)`、Run開始時確保済みowned領域へのbounded copy、`NvEncUnlockBitstream`、`NvEncUnmapInputResource`、Encode Sample Slot一括返却、同Worker上の同期Run Chunk Sinkへの一方向移譲、append／hash／ByteLength／Frame Relation、owned領域返却、Sink結果後のFrame Completion生成だけに限定する。Run中はCapture Backendによるnative NV12 texture／補助RenderTexture、Output Bitstream Buffer、Completion EventまたはEncoder Sessionの生成・破棄、`NvEncRegisterResource`／`NvEncUnregisterResource`、`NvEncRegisterAsyncEvent`／`NvEncUnregisterAsyncEvent`、source Textureのnative pointer再取得、Pool resizeまたはSession再初期化を禁止する。Texture、pointer、registered handleはRun中不変とし、Texture再生成、Graphics Device reset、device loss、handle不整合または既存登録を安全に利用できない状態では、その場で再登録せず制御可能ならCapture Fail Fast、所有権証拠が不明ならprocess-wide Poisonへ進む。`doNotWait=0`がEvent待機後も帰還しない場合もCompletionを捏造せずPoisonとし、同processでは録画を復旧しない。Chunk SinkはOutput Worker上の同期内部呼出しであり、独自Worker、Queue、lifecycle、Drain、JoinまたはCompletionを持たない。
+各Frameの通常経路は、既存Source Textureから予約済みのnative所有NV12 Input Textureへの固定GPU変換、`NvEncMapInputResource`、`NvEncEncodePicture`、Output WorkerでのCompletion Event待機、`NvEncLockBitstream(doNotWait=0)`、Run開始時確保済みowned領域へのbounded copy、`NvEncUnlockBitstream`、`NvEncUnmapInputResource`、Encode Sample Slot一括返却、同Worker上の同期Run Chunk Sinkへの一方向移譲、append／hash／ByteLength／Frame Relation、owned領域返却、Sink結果後のFrame Completion生成だけに限定する。Run中はCapture Backendによるnative NV12 texture／補助RenderTexture、Output Bitstream Buffer、Completion EventまたはEncoder Sessionの生成・破棄、`NvEncRegisterResource`／`NvEncUnregisterResource`、`NvEncRegisterAsyncEvent`／`NvEncUnregisterAsyncEvent`、source Textureのnative pointer再取得、Pool resizeまたはSession再初期化を禁止する。Texture、pointer、registered handleはRun中不変とし、Texture再生成、Graphics Device reset、device loss、handle不整合または既存登録を安全に利用できない状態では、その場で再登録せず制御可能ならCapture Fail Fast、所有権証拠が不明ならprocess-wide Poisonへ進む。Completion Event待機または`doNotWait=0`呼出しが帰還しない場合も、前述の診断期限・Poison境界に従い、同processでは録画を復旧しない。Chunk SinkはOutput Worker上の同期内部呼出しであり、独自Worker、Queue、lifecycle、Drain、JoinまたはCompletionを持たない。
 
 Phase 0.11の永続映像Artifactはappend-onlyの`ArtifactKind=FrameSequence(6)`、`FormatId=NvencH264IdrChunk`、`FormatVersion=1`とする。`FrameSequence`はcodec非依存の複数Frame共有Artifactを表し、既存Kind 0～5を再番号しない。nominal Runはchunk sequence 0だけを使い、staging rootとfinal rootのrelative pathを`chunks/chunk-0.nvenc-idr-chunk-v1.h264`、未確定pathを`chunks/chunk-0.nvenc-idr-chunk-v1.h264.partial`へ固定する。`.partial`はDescriptor、Artifact Completion、Plan、Capture Indexへ登録しない。確定chunkの`CaptureArtifactFrameRelation`は、そのchunkへappendを完了した正のCaptureFrameIdをaccepted順に重複なく保持する。Work TokenはFrame encodeのprovenance、Context ownershipはchunk生成の内部provenance、Frame Relationは意味上の関連であり相互に代用しない。Phase 0.11は各Frameのbyte offset、random access、seek indexをProduction契約にしない。
 
@@ -3470,7 +3421,7 @@ Phase 0.11の永続映像Artifactはappend-onlyの`ArtifactKind=FrameSequence(6)
 
 正常Freezeの開始はTrace FreezeではなくStopAccepting／`BeginDrain`である。Coordinatorはその線形化点でAccepted件数Snapshotを固定し、Submission Queueへの追加だけを止める。Submit WorkerとOutput Workerは並行動作を続け、Submit WorkerはSnapshot内の全Accepted Workについて`Submitted`／`FailedBeforeSubmit` recordを各1件生成してrecord producerとして先に停止する。この停止は、以後record追加とNVENC新規submitがないことだけを証明し、Output drain、NVENC Completion回収、Sink処理、Frame Completion生成・反映、chunk FinalizeまたはBackend全体joinを証明しない。Output WorkerはSubmit Worker停止前から生成済みrecordを処理し、停止後は残存record、owned Access Unit、同期Sink処理と所有資源をdrainする。Main Threadは全Frame Completionをbounded pollして正式状態へ反映する。この時点ではOutput Workerを停止せず、Run chunkを`Finalized`にできる最小条件として、(1) AcceptedかつSucceededのFrameが1件以上、(2) Access Unit append件数が1件以上、(3) Accepted件数Snapshot、record生成、Output回収、Sink結果、Succeeded Frame、append済みAccess Unit、Frame Relation、Frame Completion生成・Main Thread反映の件数と順序が一致すること、(4) 通常経路の未返却owned領域／所有者不明Access Unitが0件、(5) 全Accepted FrameがSucceededで`FailedBeforeSubmit`が0件であること、を検査する。0 Accepted Frame、0 Access Unit、件数／順序不一致、未返却owned領域、`FailedBeforeSubmit` 1件以上またはいずれかのFrame失敗では空chunkを確定せず停止前のOutput Worker上で`Abandoned`へ進む。所有者不明なら`Abandoned`へ推測収束せずPoisonする。
 
-最小条件を満たした場合だけ、Coordinatorは停止前のOutput WorkerへContextのFinalizeを要求する。Output Workerは同じappend直列化境界でappendを停止し、appendごとに更新済みのchecked累積ByteLengthと単一streaming content hashを確定してhandleをcloseし、確定staging pathへ非上書きrenameした後だけ、Context内部状態からDescriptor／Relation／pathを持つ`NvencChunkFinalizationResult`を構築して`Finalized`を公開する。hashのためにfileを再読込せず、`Flush(true)`を呼ばず、close後にhandleを再openしない。Main Threadの`NvencCaptureRunCoordinator`はterminal resultをbounded pollし、自身が所有するContextとResultを局所Registry slotへexactly once登録する。`Abandoned`では全Accepted record／Completion／owned Access Unit／Sink処理／資源drainと予約解放を完了する。Context terminal回収と登録または予約解放が終わり、全native call帰還、全Slotが既にunmappedであること、全Bitstream Bufferのunlock、通常経路のowned領域返却、GPU／NVENC非使用を確認した正常／制御可能経路だけで、Output Workerは16 MiB owned領域を解放し、最後のnative teardownとして8組の`NvEncUnregisterAsyncEvent`とEvent HANDLE close、Output Bitstream Buffer破棄、`NvEncUnregisterResource`、native NV12 texture Release、Encoder Session破棄、D3D11 device参照とdriver moduleの解放を準備順の逆順で各1回行って停止する。全Slotのunmapはteardownのadmissionであり、通常teardownで改めてunmapを試みない。解放途中の失敗で安全な所有権が不明になった場合は残りを推測解放せずPoisonする。Output Worker停止証拠とnative teardown完了証拠を取得した後だけBackend全体の資源ゼロを成立させ、停止済みWorkerへFinalize、Abandon、unregister、破棄またはI/Oを要求しない。全Frame CompletionのMain Thread反映前のFinalize要求またはResult登録を禁止する。共通`ICaptureEvidenceSession.TryJoin()`はSubmit WorkerとOutput Workerの静止、owned領域解放、準備順の逆順で完了したnative teardownおよび全Backend資源ゼロを確認した最終状態だけでtrueを返す。Poisonではowned領域返却／解放、native unregister／破棄、native NV12 texture Releaseを行わず、資源ゼロまたは成功Joinを要求せず、登録済み8組、Sessionとowned領域をprocess終了まで一括保持する。両Worker静止、資源ゼロ確認およびTrace sealまで成功した候補はDisposition=`Finalized`へ進み、Session Ownership Leaseを保持したまま非所有Publication ServiceへPlan書込み／renameを要求する。rename既知成功時に局所slotとDispositionを`Committed`へ進め、通常Publicationへ進む。別CoordinatorへのContext、Lease、Freeze ReceiptまたはRegistry authorityの移譲を行わない。
+最小条件を満たした場合だけ、Coordinatorは停止前のOutput WorkerへContextのFinalizeを要求する。Output Workerは同じappend直列化境界でappendを停止し、appendごとに更新済みのchecked累積ByteLengthと単一streaming content hashを確定してhandleをcloseし、確定staging pathへ非上書きrenameした後だけ、Context内部状態からDescriptor／Relation／pathを持つ`NvencChunkFinalizationResult`を構築して`Finalized`を公開する。hashのためにfileを再読込せず、`Flush(true)`を呼ばず、close後にhandleを再openしない。Main Threadの`NvencCaptureRunCoordinator`はterminal resultをbounded pollし、自身が所有するContextとResultを局所Registry slotへexactly once登録する。`Abandoned`では全Accepted record／Completion／owned Access Unit／Sink処理／資源drainと予約解放を完了する。Context terminal回収と登録または予約解放が終わり、全native call帰還、全Slotが既にunmappedであること、全Bitstream Bufferのunlock、通常経路のowned領域返却、GPU／NVENC非使用を確認した正常／制御可能経路だけで、Output Workerは16 MiB owned領域を解放し、最後のnative teardownとして本節の6資源グループを準備順の逆順で各1回解放して停止する。全Slotのunmapはteardownのadmissionであり、通常teardownで改めてunmapを試みない。解放途中の失敗で安全な所有権が不明になった場合は残りを推測解放せずPoisonする。Output Worker停止証拠とnative teardown完了証拠を取得した後だけBackend全体の資源ゼロを成立させ、停止済みWorkerへFinalize、Abandon、unregister、破棄またはI/Oを要求しない。全Frame CompletionのMain Thread反映前のFinalize要求またはResult登録を禁止する。共通`ICaptureEvidenceSession.TryJoin()`はSubmit WorkerとOutput Workerの静止、owned領域解放、準備順の逆順で完了したnative teardownおよび全Backend資源ゼロを確認した最終状態だけでtrueを返す。Poisonではowned領域返却／解放、native unregister／破棄、native NV12 texture Releaseを行わず、資源ゼロまたは成功Joinを要求せず、登録済み8組、Sessionとowned領域をprocess終了まで一括保持する。両Worker静止、資源ゼロ確認およびTrace sealまで成功した候補はDisposition=`Finalized`へ進み、Session Ownership Leaseを保持したまま非所有Publication ServiceへPlan書込み／renameを要求する。rename既知成功時に局所slotとDispositionを`Committed`へ進め、通常Publicationへ進む。別CoordinatorへのContext、Lease、Freeze ReceiptまたはRegistry authorityの移譲を行わない。
 
 encode、append、hash、close、Result生成、局所Registry登録、Join、資源ゼロ確認、Trace sealまたはrename呼出し前のPlan書込みの失敗・取消では明示Abortとし、局所slotが`Registered`なら同じCoordinatorが`Empty`へ戻して予約を解決した後に`Incomplete`へ確定する。Contextが`Abandoned`でもJoinと資源解放を完了してTrace sealできる場合はTraceをFrozen化した後に`Incomplete`へ確定する。成功候補のTrace sealが失敗した場合は再試行するか、明示Abortして同じIncomplete経路へ進む。rename既知成功後の失敗では局所slot=`Committed`とDisposition=`Committed`を維持し、Plan／chunkを取消・削除せず次回Recoveryへ送る。rename成否不明では`CommitOutcomeUnknown`へ進み、その場でfile集合を検査または変更しない。Finalize前の失敗ではContextを`Abandoned`へexactly onceで固定し、Finalize後の失敗ではContextを`Finalized`のまま維持する。pre-commit失敗経路ではPlan、Capture IndexまたはCaptureCompleteを生成せず、ゲーム、既に確定した別Artifact、既に公開したFrame Completionをrollbackしない。したがってFrame Completion成功は当該Frameのencode／append成功、Disposition=`Committed`だけが同processでchunkの通常Publicationへ進めることを表す。Trace enqueue／sealまたはpre-commit失敗はRun Incompleteになり得るがFrame CompletionまたはContext outcomeを再発行せず、Frozen Traceへ事後理由を追記しない。
 
@@ -3599,7 +3550,6 @@ Unity Packageの正確な採用版は`Packages/manifest.json`と`Packages/packag
 - [Blender 4.5 Mesh to Volume](https://docs.blender.org/manual/en/4.5/modeling/geometry_nodes/mesh/operations/mesh_to_volume.html)
 
 - [Blender 4.5 Volume to Mesh](https://docs.blender.org/manual/en/4.5/modeling/modifiers/generate/volume_to_mesh.html)
-
 
 - [Unity 6.3 C# Job System](https://docs.unity3d.com/6000.3/Documentation/Manual/job-system.html)
 
