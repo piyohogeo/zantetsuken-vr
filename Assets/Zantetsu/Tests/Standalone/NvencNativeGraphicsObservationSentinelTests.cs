@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Stopwatch = System.Diagnostics.Stopwatch;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -1067,6 +1068,296 @@ namespace Zantetsu.Observability.StandaloneTests
             }
         }
 
+        /// <summary>
+        /// Nine frames through one session, one set of eight slots and one
+        /// pair of workers: the capacity is filled once, refuses the ninth
+        /// frame while it is full, and then reuses a slot for it under a new
+        /// generation once a single completion has been collected.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The repeated single-frame sentinel rebuilds its session every time,
+        /// so it never shows what happens inside one Run: that the eight fixed
+        /// slots circulate, that a full pipeline answers an admission with
+        /// ordinary backpressure rather than a failure, and that a returned
+        /// slot is handed out again with a generation that tells it apart from
+        /// the frame that had it before. Nine is the smallest number that
+        /// shows all three.
+        /// </para>
+        /// <para>
+        /// The Main Thread advances only the two non-waiting entries this path
+        /// has. The Output Worker is never notified from here - not while the
+        /// frames run and not during the terminal - so everything it does is
+        /// driven by the enqueue wake and the gate-release wake alone.
+        /// </para>
+        /// </remarks>
+        [UnityTest]
+        public IEnumerator Player_RunsNineFramesThroughOneSession()
+        {
+            const int Filled = NvencBringUpProfileV1.WorkSlotCount;
+            const int Total = Filled + 1;
+
+            SentinelRun run = new SentinelRun();
+            bool teardownDone = false;
+            bool stalled = false;
+            string stalledAt = null;
+
+            CaptureSurfaceLease[] surfaces = new CaptureSurfaceLease[Total];
+            CaptureFrameWorkToken[] tokens = new CaptureFrameWorkToken[Total];
+
+            try
+            {
+                run.Build();
+                SentinelMarker("nine-frame run built");
+
+                // Fill the fixed capacity. Nothing is collected while this
+                // happens, so every Work Slot and Frame Completion credit the
+                // admission reserves is still held at the end of it.
+                for (int i = 0; i < Filled; i++)
+                {
+                    Assert.That(
+                        run.Pool.TryRent(out CaptureFrameRenderTargetLease rented), Is.True,
+                        "the fixed source pool must supply one surface per frame");
+                    surfaces[i] = new CaptureSurfaceLease(run.Pool, rented);
+                    run.Track(surfaces[i]);
+
+                    Assert.That(
+                        run.Admission.TryAccept(
+                            MakeSentinelFrame(i + 1), surfaces[i], out tokens[i]),
+                        Is.EqualTo(CaptureSubmitStatus.Accepted),
+                        "frame " + (i + 1) + " must be accepted before anything is collected");
+                    Assert.That(tokens[i].IsValid, Is.True);
+                    Assert.That(surfaces[i].IsBackendOwned, Is.True);
+                }
+
+                Assert.That(run.Context.AcceptedFrameCount, Is.EqualTo(Filled));
+
+                // Let the workers carry all eight through to a published
+                // completion. Nothing is collected, so the capacity stays full.
+                bool filled = false;
+                yield return AdvanceUntil(
+                    () => run.Writer.AppendCount == Filled &&
+                        run.OutputQueue.Count == 0 &&
+                        !run.OutputProcessor.HasPendingWork,
+                    run.AdvanceMainThread,
+                    value => filled = value);
+
+                if (!filled)
+                {
+                    stalled = true;
+                    stalledAt = run.DescribeState("the first " + Filled + " frames did not finish");
+                    run.ProcessState.TryPoison();
+                }
+
+                if (!stalled)
+                {
+                    Assert.That(run.WorkSlots.OccupiedCount, Is.EqualTo(Filled));
+                    Assert.That(run.CompletionCredits.OccupiedCount, Is.EqualTo(Filled));
+
+                    // One of the eight source surfaces has come back through
+                    // the ordinary Main Thread release, and the ninth frame is
+                    // built on it.
+                    CaptureFrameRenderTargetLease reused = default;
+                    bool returned = false;
+                    yield return AdvanceUntil(
+                        () => run.Pool.TryRent(out reused),
+                        run.AdvanceMainThread,
+                        value => returned = value);
+
+                    if (!returned)
+                    {
+                        stalled = true;
+                        stalledAt = run.DescribeState("no source surface came back for the ninth frame");
+                        run.ProcessState.TryPoison();
+                    }
+                    else
+                    {
+                        surfaces[Filled] = new CaptureSurfaceLease(run.Pool, reused);
+                        run.Track(surfaces[Filled]);
+                    }
+                }
+
+                if (!stalled)
+                {
+                    // A full pipeline refuses the ninth frame, and refuses it
+                    // the ordinary way: nothing is reserved, nothing is
+                    // issued, nothing is enqueued, the Run does not record it,
+                    // the caller keeps its surface, and nothing is poisoned.
+                    Assert.That(
+                        run.Admission.TryAccept(
+                            MakeSentinelFrame(Total), surfaces[Filled],
+                            out CaptureFrameWorkToken refused),
+                        Is.EqualTo(CaptureSubmitStatus.Backpressured));
+                    Assert.That(refused.IsValid, Is.False);
+                    Assert.That(surfaces[Filled].IsCallerOwned, Is.True);
+                    Assert.That(surfaces[Filled].IsBackendOwned, Is.False);
+                    Assert.That(run.SubmissionQueue.Count, Is.EqualTo(0));
+                    Assert.That(run.Context.AcceptedFrameCount, Is.EqualTo(Filled));
+                    Assert.That(run.WorkSlots.OccupiedCount, Is.EqualTo(Filled));
+                    Assert.That(run.SyncSlots.OccupiedCount, Is.EqualTo(0));
+                    Assert.That(run.ProcessState.IsPoisoned, Is.False);
+                    Assert.That(run.Writer.AppendCount, Is.EqualTo(Filled));
+
+                    // Collect exactly one, which returns exactly one Work Slot
+                    // and one Frame Completion credit.
+                    Assert.That(
+                        run.CompletionBoundary.TryCollect(
+                            out NvencFrameCompletionRecord firstCompletion),
+                        Is.True);
+                    Assert.That(
+                        firstCompletion.Status,
+                        Is.EqualTo(CaptureFrameCompletionStatus.Succeeded));
+                    Assert.That(firstCompletion.WorkToken.CaptureFrameId, Is.EqualTo(1L));
+                    Assert.That(run.WorkSlots.OccupiedCount, Is.EqualTo(Filled - 1));
+                    Assert.That(run.CompletionCredits.OccupiedCount, Is.EqualTo(Filled - 1));
+
+                    // The same frame, on the same caller-owned surface, is now
+                    // admitted - and it gets the slot that was just returned,
+                    // under a generation that tells it apart from the frame
+                    // that had it before.
+                    Assert.That(
+                        run.Admission.TryAccept(
+                            MakeSentinelFrame(Total), surfaces[Filled], out tokens[Filled]),
+                        Is.EqualTo(CaptureSubmitStatus.Accepted));
+                    Assert.That(tokens[Filled].IsValid, Is.True);
+                    Assert.That(surfaces[Filled].IsBackendOwned, Is.True);
+                    Assert.That(
+                        tokens[Filled].SlotIndex,
+                        Is.EqualTo(firstCompletion.WorkToken.SlotIndex),
+                        "the ninth frame must reuse the slot the first frame gave back");
+                    Assert.That(
+                        tokens[Filled].Generation,
+                        Is.GreaterThan(firstCompletion.WorkToken.Generation),
+                        "a reused slot must carry a later generation than the frame before it");
+                    Assert.That(run.Context.AcceptedFrameCount, Is.EqualTo(Total));
+                }
+
+                if (!stalled)
+                {
+                    // The rest, in the order they were accepted.
+                    for (int i = 1; i < Total; i++)
+                    {
+                        long expected = i + 1;
+                        NvencFrameCompletionRecord collected = default;
+                        bool gotOne = false;
+                        yield return AdvanceUntil(
+                            () => run.CompletionBoundary.TryCollect(out collected),
+                            run.AdvanceMainThread,
+                            value => gotOne = value);
+
+                        if (!gotOne)
+                        {
+                            stalled = true;
+                            stalledAt = run.DescribeState("frame " + expected + " never completed");
+                            run.ProcessState.TryPoison();
+                            break;
+                        }
+
+                        Assert.That(
+                            collected.Status,
+                            Is.EqualTo(CaptureFrameCompletionStatus.Succeeded));
+                        Assert.That(collected.Reason, Is.EqualTo(NvencFrameCompletionReason.None));
+                        Assert.That(
+                            collected.WorkToken.CaptureFrameId, Is.EqualTo(expected),
+                            "completions must arrive in the order the frames were accepted");
+                    }
+                }
+
+                if (!stalled)
+                {
+                    // Nine access units, every one of them plausible, and one
+                    // chunk that was never split or finalized per frame.
+                    Assert.That(run.Writer.AppendCount, Is.EqualTo(Total));
+                    Assert.That(run.Writer.ShortestValidLength, Is.GreaterThanOrEqualTo(1));
+                    Assert.That(
+                        run.Writer.LongestValidLength,
+                        Is.LessThanOrEqualTo((int)NvencBringUpProfileV1.MaxAccessUnitByteLength));
+                    Assert.That(
+                        run.Writer.EveryAppendStartedWithAnnexB, Is.True,
+                        "every access unit must start with Annex-B");
+                    Assert.That(run.Writer.FinalizeCount, Is.EqualTo(0));
+
+                    // Both workers did their own half on their own threads.
+                    Assert.That(
+                        run.Writer.AppendThreadName,
+                        Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+                    Assert.That(
+                        run.OutputSource.ExecutingThreadName,
+                        Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+                    Assert.That(
+                        run.Submitter.ExecutingThreadName,
+                        Is.EqualTo(NvencOrderedSubmitWorkerService.WorkerThreadName));
+
+                    // Everything the nine frames borrowed is back.
+                    bool drainedResources = false;
+                    yield return AdvanceUntil(
+                        () => run.SyncSlots.OccupiedCount == 0 &&
+                            run.WorkSlots.OccupiedCount == 0 &&
+                            run.SampleSlots.OccupiedCount == 0 &&
+                            run.SubmitCredits.OccupiedCount == 0 &&
+                            run.CompletionCredits.OccupiedCount == 0 &&
+                            run.OutputQueue.Count == 0 &&
+                            run.SubmissionQueue.Count == 0,
+                        run.AdvanceMainThread,
+                        value => drainedResources = value);
+
+                    if (!drainedResources)
+                    {
+                        stalled = true;
+                        stalledAt = run.DescribeState("the Run did not give every resource back");
+                        run.ProcessState.TryPoison();
+                    }
+                }
+
+                if (!stalled)
+                {
+                    Assert.That(run.ProcessState.IsPoisoned, Is.False);
+                    Assert.That(run.SubmitWorker.TryGetFailure(out Exception _), Is.False);
+                    Assert.That(run.OutputWorker.TryGetFailure(out Exception _), Is.False);
+
+                    // Keep rendering: an append alone does not prove the main
+                    // loop and Present can still progress.
+                    for (int postFrame = 0; postFrame < 8; postFrame++)
+                    {
+                        yield return null;
+                    }
+
+                    yield return run.Terminate(
+                        Total,
+                        value =>
+                        {
+                            stalled = value != null;
+                            stalledAt = value;
+                        });
+                }
+
+                if (!stalled)
+                {
+                    // One finalization for the whole Run, not one per frame.
+                    Assert.That(run.Writer.FinalizeCount, Is.EqualTo(1));
+
+                    for (int i = 0; i < Total; i++)
+                    {
+                        ReturnSentinelSurface(surfaces[i], run.BackendOwner, tokens[i]);
+                        surfaces[i] = null;
+                    }
+
+                    run.ReleaseAfterProvenStop();
+                    teardownDone = true;
+                    SentinelMarker("nine-frame teardown complete");
+                }
+            }
+            finally
+            {
+                run.Retire(teardownDone, stalledAt);
+            }
+
+            Assert.That(
+                stalled, Is.False,
+                "nine frames did not get through one session: " + stalledAt);
+            Assert.That(run.Owner.IsOpen, Is.False);
+        }
+
         private static IEnumerator RunOneFrameThroughBothWorkers()
         {
             NvencNativeEncoderSessionOwner owner = null;
@@ -1835,6 +2126,363 @@ namespace Zantetsu.Observability.StandaloneTests
         /// finalization receipt. No file is opened, nothing is hashed over real
         /// content, and no call waits or retries.
         /// </summary>
+        /// <summary>
+        /// One Run's worth of objects for the real-device sentinels: one
+        /// native session, one set of fixed-capacity pools, one Submit Worker
+        /// and one Output Worker, wired by hand in the one order they can be
+        /// wired in. It is this fixture's own scaffolding, not a composition
+        /// root: nothing outside these tests can reach it, and it decides
+        /// nothing the product does not already decide.
+        /// </summary>
+        private sealed class SentinelRun
+        {
+            internal NvencNativeEncoderSessionOwner Owner;
+            internal CaptureFrameRenderTargetPool Pool;
+            internal NvencCaptureProcessState ProcessState;
+            internal NvencCaptureWorkSlotPool WorkSlots;
+            internal NvencEncodeSampleSlotPool SampleSlots;
+            internal NvencGpuConversionSyncPool SyncSlots;
+            internal NvencSubmitToOutputCreditPool SubmitCredits;
+            internal NvencFrameCompletionCreditPool CompletionCredits;
+            internal NvencFixedSpscQueue<NvencSubmissionRecord> SubmissionQueue;
+            internal NvencFixedSpscQueue<NvencSubmitToOutputRecord> OutputQueue;
+            internal Guid BackendOwner;
+
+            internal SentinelChunkWriter Writer;
+            internal SentinelOutputWorkerTeardown Teardown;
+            internal SentinelEncodePictureSubmitter Submitter;
+            internal SentinelOutputBitstreamSource OutputSource;
+
+            internal NvencSourceResourceReleaseCoordinator ReleaseCoordinator;
+            internal NvencRunChunkContext Context;
+            internal NvencFrameCompletionBoundary CompletionBoundary;
+            internal NvencOrderedOutputProcessor OutputProcessor;
+            internal NvencOrderedSubmitWorkerService SubmitWorker;
+            internal NvencOrderedOutputWorkerService OutputWorker;
+            internal NvencSubmissionAdmissionCoordinator Admission;
+
+            /// <summary>
+            /// The Main Thread's whole contribution: hand back a release when
+            /// one is waiting, and tell the Submit Worker that something may
+            /// have changed. The Output Worker is never told anything from
+            /// here - its wakes come from the enqueue and from the shared gate
+            /// being released.
+            /// </summary>
+            internal Action AdvanceMainThread;
+
+            private readonly List<CaptureSurfaceLease> _surfaces = new List<CaptureSurfaceLease>();
+            private GCHandle _lifetimeRoot;
+
+            /// <summary>
+            /// Roots the whole graph before anything native exists, so a
+            /// coroutine abandoned after a failure cannot have its session,
+            /// textures or workers finalized out from under a native call.
+            /// </summary>
+            internal SentinelRun()
+            {
+                _lifetimeRoot = GCHandle.Alloc(this);
+            }
+
+            internal void Build()
+            {
+                ProcessState = new NvencCaptureProcessState();
+                WorkSlots = new NvencCaptureWorkSlotPool(ProcessState);
+                SampleSlots = new NvencEncodeSampleSlotPool(ProcessState);
+                SyncSlots = new NvencGpuConversionSyncPool(ProcessState);
+                SubmitCredits = new NvencSubmitToOutputCreditPool(ProcessState);
+                CompletionCredits = new NvencFrameCompletionCreditPool(ProcessState);
+                SubmissionQueue = new NvencFixedSpscQueue<NvencSubmissionRecord>();
+                OutputQueue = new NvencFixedSpscQueue<NvencSubmitToOutputRecord>();
+                BackendOwner = Guid.NewGuid();
+                Writer = new SentinelChunkWriter();
+                Teardown = new SentinelOutputWorkerTeardown();
+
+                Assert.That(
+                    NvencNativeEncoderSessionOwner.TryOpen(out Owner), Is.True,
+                    "this Player's device must be able to open an encoder session.");
+
+                Pool = new CaptureFrameRenderTargetPool(
+                    NvencNativeEncoderSessionOwner.SourceSurfaceCount,
+                    new CaptureFrameProfile(
+                        7,
+                        45.0,
+                        CaptureSource.UnityRenderTexture,
+                        CaptureEye.Left,
+                        new CaptureImageRect(
+                            0, 0, NvencBringUpProfileV1.Width, NvencBringUpProfileV1.Height),
+                        0,
+                        CapturePixelFormat.Rgba32));
+
+                // The native session, once, in the established order.
+                NvencBringUpProfileV1 profile = new NvencBringUpProfileV1(7);
+                new NvencBringUpCapabilityProbeExecutionCoordinator(
+                    new NvencBringUpCapabilityProbe(Owner)).Execute();
+                Owner.InitializeEncoder(profile);
+
+                IntPtr[] sources =
+                    new IntPtr[NvencNativeEncoderSessionOwner.SourceSurfaceCount];
+                Pool.CopyNativeTexturePointers(sources);
+                Owner.BindSourceSurfaces(sources);
+                Owner.PrepareInputSurfaces();
+                Owner.PrepareConversionCommands();
+                Owner.PrepareOutputBuffers();
+                Owner.PrepareCompletionEvents();
+
+                ReleaseCoordinator = new NvencSourceResourceReleaseCoordinator(
+                    ProcessState, WorkSlots, SampleSlots, SyncSlots,
+                    SubmitCredits, CompletionCredits,
+                    new NvencNativeSourceReadCompletedSource(Owner),
+                    new NvencSourceSurfaceReturnBoundary(), BackendOwner);
+
+                // One buffer, one sink, one collector, one completion
+                // boundary: the Output Processor and the Run chunk context
+                // must be talking about the same ones.
+                NvencOwnedAccessUnitBuffer accessUnitBuffer =
+                    new NvencOwnedAccessUnitBuffer(ProcessState);
+                NvencRunChunkSink sink =
+                    new NvencRunChunkSink(ProcessState, accessUnitBuffer, Writer);
+                Context = new NvencRunChunkContext(
+                    MakeRunIssue(), sink,
+                    new NvencRunChunkFinalizationCoordinator(Writer), "chunk/0");
+                OutputSource = new SentinelOutputBitstreamSource(Owner);
+                NvencSubmittedOutputCollector collector = new NvencSubmittedOutputCollector(
+                    ProcessState, WorkSlots, SampleSlots, SubmitCredits, CompletionCredits,
+                    accessUnitBuffer, OutputSource);
+                CompletionBoundary = new NvencFrameCompletionBoundary(
+                    ProcessState, WorkSlots, SampleSlots, SubmitCredits, CompletionCredits,
+                    accessUnitBuffer);
+
+                // ---- the one composition order, fixed in one place ----
+                // 1. Submit Processor
+                Submitter = new SentinelEncodePictureSubmitter(Owner);
+                NvencOrderedSubmitProcessor submitProcessor = new NvencOrderedSubmitProcessor(
+                    ProcessState, SubmissionQueue, OutputQueue, WorkSlots, SampleSlots,
+                    ReleaseCoordinator, Submitter);
+
+                // 2. Submit Worker
+                SubmitWorker = new NvencOrderedSubmitWorkerService(ProcessState, submitProcessor);
+
+                // 3. Output Processor
+                OutputProcessor = new NvencOrderedOutputProcessor(
+                    ProcessState,
+                    OutputQueue,
+                    collector,
+                    sink,
+                    new NvencFailedBeforeSubmitReleaseCoordinator(
+                        ProcessState, WorkSlots, SampleSlots, SubmitCredits, CompletionCredits),
+                    new NvencSubmittedOutputAbandonRecoveryCoordinator(
+                        ProcessState, collector, SampleSlots, accessUnitBuffer),
+                    CompletionBoundary);
+
+                // 4. Output Worker, which needs the Submit Worker to exist -
+                //    the reason the wake cannot be a constructor argument
+                OutputWorker = new NvencOrderedOutputWorkerService(
+                    ProcessState, OutputProcessor, Context, SubmitWorker, Teardown);
+
+                // 5. the two notifications this Run needs, each bound once:
+                //    the enqueue wake, and the wake that retries a collector
+                //    which could not take the shared gate.
+                submitProcessor.BindOutputWorkerNotification(OutputWorker);
+                ProcessState.BindResourceResolutionReleaseNotification(OutputWorker);
+
+                // 6. Only now may the Submit Worker run.
+                SubmitWorker.Start();
+                // ---- end of the composition ----
+
+                Admission = new NvencSubmissionAdmissionCoordinator(
+                    ProcessState, WorkSlots, SampleSlots, SyncSlots, SubmitCredits,
+                    CompletionCredits, SubmissionQueue,
+                    new NvencNativeGpuConversionCommandIssuer(Owner),
+                    Context, BackendOwner);
+
+                AdvanceMainThread = () =>
+                {
+                    ReleaseCoordinator.TryApplyPendingRelease();
+                    SubmitWorker.Notify();
+                };
+            }
+
+            /// <summary>Keeps a rented surface rooted for the Player's life.</summary>
+            internal void Track(CaptureSurfaceLease surface)
+            {
+                _surfaces.Add(surface);
+            }
+
+            /// <summary>
+            /// What the pipeline looks like right now, read from references
+            /// this run already holds. Nothing here is a product observation
+            /// surface, and nothing is changed by reading it.
+            /// </summary>
+            internal string DescribeState(string what)
+            {
+                Exception submitFailure = null;
+                Exception outputFailure = null;
+                SubmitWorker?.TryGetFailure(out submitFailure);
+                OutputWorker?.TryGetFailure(out outputFailure);
+
+                return what +
+                    " subQ=" + SubmissionQueue.Count +
+                    " outQ=" + OutputQueue.Count +
+                    " outputPending=" + (OutputProcessor != null && OutputProcessor.HasPendingWork) +
+                    " outputStopped=" + (OutputWorker != null && OutputWorker.IsStopped) +
+                    " submitStopped=" + (SubmitWorker != null && SubmitWorker.IsStopped) +
+                    " work=" + WorkSlots.OccupiedCount +
+                    " sample=" + SampleSlots.OccupiedCount +
+                    " sync=" + SyncSlots.OccupiedCount +
+                    " submitCredits=" + SubmitCredits.OccupiedCount +
+                    " completionCredits=" + CompletionCredits.OccupiedCount +
+                    " appends=" + Writer.AppendCount +
+                    " poisoned=" + ProcessState.IsPoisoned +
+                    " submitFatal=" + (submitFailure == null ? "none" : submitFailure.GetType().Name) +
+                    " outputFatal=" + (outputFailure == null ? "none" : outputFailure.GetType().Name);
+            }
+
+            /// <summary>
+            /// The ordinary end of a Run: freeze the ledger, drain, finalize
+            /// once, collect the terminal, tear the Output Worker down, and
+            /// confirm both threads physically stopped. Reports the first step
+            /// that did not finish and changes nothing else.
+            /// </summary>
+            internal IEnumerator Terminate(int expectedAcceptedFrames, Action<string> failure)
+            {
+                Assert.That(ProcessState.TryBeginDrain(), Is.True);
+                Assert.That(SubmitWorker.BeginDrain(), Is.True);
+
+                bool drained = false;
+                yield return AdvanceUntil(
+                    () => SubmitWorker.DrainCompleted, AdvanceMainThread, value => drained = value);
+                if (!drained)
+                {
+                    failure(DescribeState("the Submit Worker did not complete its drain"));
+                    yield break;
+                }
+
+                // Freeze the admitted ledger once the Run has stopped
+                // accepting and before the Output Worker finalizes the
+                // context: the freeze is only offered while draining.
+                Assert.That(
+                    Context.TryFreezeAcceptedFrames(
+                        out NvencRunAcceptedFrameSnapshot acceptedFrames), Is.True);
+                Assert.That(acceptedFrames.Count, Is.EqualTo(expectedAcceptedFrames));
+
+                bool requested = false;
+                yield return AdvanceUntil(
+                    () => OutputWorker.TryRequestFinalize(), AdvanceMainThread,
+                    value => requested = value);
+                if (!requested)
+                {
+                    failure(DescribeState("the Output terminal request was never accepted"));
+                    yield break;
+                }
+
+                NvencRunChunkTerminalOutcome outcome = default;
+                bool collected = false;
+                yield return AdvanceUntil(
+                    () => OutputWorker.TryCollectTerminal(out outcome), AdvanceMainThread,
+                    value => collected = value);
+                if (!collected)
+                {
+                    failure(DescribeState("the Output terminal result was never collected"));
+                    yield break;
+                }
+
+                Assert.That(outcome.IsFinalized, Is.True);
+                Assert.That(outcome.Result, Is.Not.Null);
+
+                bool teardownRequested = false;
+                yield return AdvanceUntil(
+                    () => OutputWorker.TryRequestTeardown(), AdvanceMainThread,
+                    value => teardownRequested = value);
+
+                bool teardownCompleted = false;
+                if (teardownRequested)
+                {
+                    yield return AdvanceUntil(
+                        () => OutputWorker.TeardownCompleted, AdvanceMainThread,
+                        value => teardownCompleted = value);
+                }
+
+                if (!teardownCompleted)
+                {
+                    failure(DescribeState("the Output Worker teardown did not complete"));
+                    yield break;
+                }
+
+                Assert.That(Teardown.CallCount, Is.EqualTo(1));
+                Assert.That(
+                    Teardown.ExecutingThreadName,
+                    Is.EqualTo(NvencOrderedOutputWorkerService.WorkerThreadName));
+
+                bool stopped = false;
+                yield return AdvanceUntil(
+                    () => SubmitWorker.IsStopped && OutputWorker.IsStopped, null,
+                    value => stopped = value);
+                if (!stopped)
+                {
+                    failure(DescribeState("a worker thread did not physically stop"));
+                    yield break;
+                }
+
+                failure(null);
+            }
+
+            /// <summary>
+            /// Releases the native resource groups in the exact reverse of the
+            /// order they were prepared in, and only once both workers have
+            /// physically stopped and every lease is back - the two things
+            /// that together exclude a worker still being inside the driver.
+            /// </summary>
+            internal void ReleaseAfterProvenStop()
+            {
+                Assert.That(SubmitWorker.IsStopped, Is.True);
+                Assert.That(OutputWorker.IsStopped, Is.True);
+                Assert.That(SyncSlots.OccupiedCount, Is.Zero);
+                Assert.That(SampleSlots.OccupiedCount, Is.Zero);
+                Assert.That(WorkSlots.OccupiedCount, Is.Zero);
+
+                // Physically stopped, so no held record is waiting on the gate
+                // wake any more and the binding can go. It is never released
+                // before the stop, and never on the poison path.
+                ProcessState.UnbindResourceResolutionReleaseNotification(OutputWorker);
+
+                Owner.ReleaseCompletionEvents();
+                Owner.ReleaseOutputBuffers();
+                Owner.ReleaseConversionCommands();
+                Owner.ReleaseInputSurfaces();
+                Owner.ReleaseSourceSurfaces();
+
+                // Only a stopped worker is disposed, and the session closes
+                // last.
+                SubmitWorker.Dispose();
+                OutputWorker.Dispose();
+                Owner.Dispose();
+                Pool.Dispose();
+            }
+
+            /// <summary>
+            /// Ends the run's hold on this process. A completed teardown
+            /// releases the root; anything else keeps the whole graph alive
+            /// for the Player's lifetime, because Poison and Notify can ask a
+            /// worker to stop but cannot cancel a native call or prove the GPU
+            /// is finished with these resources.
+            /// </summary>
+            internal void Retire(bool teardownDone, string stalledAt)
+            {
+                if (teardownDone)
+                {
+                    _lifetimeRoot.Free();
+                    return;
+                }
+
+                QuietStep(() => ProcessState?.TryPoison());
+                QuietStep(() => SubmitWorker?.Notify());
+                QuietStep(() => OutputWorker?.Notify());
+                SentinelMarker(
+                    "RETAINED owner graph; external process termination required; " +
+                    (stalledAt ?? DescribeState("no stage recorded")));
+            }
+        }
+
         private sealed class SentinelChunkWriter : INvencRunChunkAppender, INvencRunChunkFinalizer
         {
             private readonly byte[] _accessUnit =
@@ -1849,6 +2497,12 @@ namespace Zantetsu.Observability.StandaloneTests
 
             internal int ValidLength { get; private set; }
 
+            internal int ShortestValidLength { get; private set; } = int.MaxValue;
+
+            internal int LongestValidLength { get; private set; }
+
+            internal bool EveryAppendStartedWithAnnexB { get; private set; } = true;
+
             internal byte[] AccessUnit => _accessUnit;
 
             internal string AppendThreadName { get; private set; }
@@ -1858,9 +2512,30 @@ namespace Zantetsu.Observability.StandaloneTests
                 AppendThreadName = Thread.CurrentThread.Name;
                 ValidLength = validLength;
 
+                if (validLength < ShortestValidLength)
+                {
+                    ShortestValidLength = validLength;
+                }
+
+                if (validLength > LongestValidLength)
+                {
+                    LongestValidLength = validLength;
+                }
+
                 if (buffer != null && validLength > 0 && validLength <= _accessUnit.Length)
                 {
                     Array.Copy(buffer, offset, _accessUnit, 0, validLength);
+                }
+
+                // Checked here rather than kept, so every access unit is
+                // examined and not only the last one handed over.
+                bool annexB = validLength >= 4 &&
+                    _accessUnit[0] == 0x00 && _accessUnit[1] == 0x00 &&
+                    (_accessUnit[2] == 0x01 ||
+                        (_accessUnit[2] == 0x00 && _accessUnit[3] == 0x01));
+                if (!annexB)
+                {
+                    EveryAppendStartedWithAnnexB = false;
                 }
 
                 Interlocked.Increment(ref _appendCount);
