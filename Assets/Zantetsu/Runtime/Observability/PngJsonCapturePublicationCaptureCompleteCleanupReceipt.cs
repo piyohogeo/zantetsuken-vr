@@ -9,7 +9,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly three reference fields — the issuer, the
+    /// The type holds exactly three readonly reference fields — the issuer, the
     /// operation, and the token it was issued under — and has no public
     /// constructor. What was cleaned up is read from <see cref="Operation"/>:
     /// the receipt restates none of it and holds no path, hash, byte count,
