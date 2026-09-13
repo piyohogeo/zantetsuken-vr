@@ -379,7 +379,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationEvidenceStatus traceStatus = CaptureRunPublicationEvidenceStatus.MatchesExpected,
             long traceCount = 100)
         {
-            return CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            return new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), operation, traceStatus, traceCount, entries)));
         }
@@ -701,21 +701,21 @@ namespace Zantetsu.Core.Tests
         // ---- Build / rejection ----
 
         [Test]
-        public void Builder_NullPlan_Rejected()
+        public void Batch_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(null));
+                () => new CaptureRunPublicationArtifactRecoveryExecutionBatch(null));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Builder_InvalidPlan_Rejected()
+        public void Batch_InvalidPlan_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = (CaptureRunPublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunPublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan));
+                () => new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
@@ -735,7 +735,7 @@ namespace Zantetsu.Core.Tests
 
             foreach (CaptureRunPublicationArtifactRecoveryActionPlan plan in plans)
             {
-                CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+                CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
                 Assert.That(batch.IsValid, Is.True);
                 Assert.That(batch.Count, Is.EqualTo(plan.Count));
                 Assert.That(batch.Disposition, Is.EqualTo(plan.Disposition));
@@ -746,7 +746,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_GetStep_FixedOrderSameReference_AndIndexOutOfRange()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             for (int i = 0; i < batch.Count; i++)
             {
@@ -767,7 +767,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_PublishMissingArtifacts_PlanOrderPngThenSidecarThenReinspect()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(batch.Count, Is.EqualTo(3));
 
@@ -791,7 +791,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_CommitCaptureIndex_SingleStepCommitOperationOnly()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(batch.Count, Is.EqualTo(1));
             Assert.That(batch.GetStep(0).Action, Is.EqualTo(CommitCaptureIndex));
@@ -821,7 +821,7 @@ namespace Zantetsu.Core.Tests
 
             foreach (CaptureRunPublicationArtifactRecoveryActionPlan plan in plans)
             {
-                CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+                CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
                 Assert.That(batch.Count, Is.EqualTo(1));
                 Assert.That(batch.GetStep(0).PublishOperation, Is.Null);
                 Assert.That(batch.GetStep(0).CaptureIndexCommitOperation, Is.Null);
@@ -832,7 +832,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_ActionPlanStepOperation_ReferenceEquals()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(batch.ActionPlan, Is.SameAs(plan));
             Assert.That(batch.Decision, Is.SameAs(plan.Decision));
@@ -856,7 +856,7 @@ namespace Zantetsu.Core.Tests
             FakeCommitter committer = new FakeCommitter();
 
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(publisher.Calls, Is.EqualTo(0));
             Assert.That(committer.Calls, Is.EqualTo(0));
@@ -867,7 +867,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_Build_OwnerNotDisposed()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(batch.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
@@ -879,7 +879,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out CaptureRunInitializationSessionOwnershipLease owner);
             string idBefore = plan.RunInitializationId;
 
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(plan.IsValid, Is.True);
             Assert.That(plan.RunInitializationId, Is.EqualTo(idBefore));
@@ -905,7 +905,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_OwnerReleased_IsValidFalse()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(batch.IsValid, Is.True);
             Assert.That(owner.IsCreated, Is.True);
@@ -921,7 +921,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_ForgedFields_IsValidFalse_NoException()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out CaptureRunPublicationArtifactInspectionOperation operation);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
             Assert.That(batch.IsValid, Is.True);
 
             // Null array.
@@ -972,7 +972,7 @@ namespace Zantetsu.Core.Tests
 
             // Publish/commit operation mix-up: a commit operation in a publish step.
             CaptureRunPublicationArtifactRecoveryActionPlan commitPlan = BuildCommitPlan(out _, out _);
-            CaptureRunCaptureIndexCommitOperation commitOperation = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(commitPlan).GetStep(0).CaptureIndexCommitOperation;
+            CaptureRunCaptureIndexCommitOperation commitOperation = new CaptureRunPublicationArtifactRecoveryExecutionBatch(commitPlan).GetStep(0).CaptureIndexCommitOperation;
             CaptureRunPublicationArtifactRecoveryPreparedStep[] mixedArr = new CaptureRunPublicationArtifactRecoveryPreparedStep[3];
             mixedArr[0] = ForgePreparedStep(plan, 0, null, commitOperation);
             mixedArr[1] = batch.GetStep(1);
@@ -984,7 +984,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_CommitOperationBytesCorrupted_IsValidFalse()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
             Assert.That(batch.IsValid, Is.True);
 
             CaptureRunCaptureIndexCommitOperation commitOperation = batch.GetStep(0).CaptureIndexCommitOperation;
@@ -1000,8 +1000,8 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
 
-            CaptureRunPublicationArtifactRecoveryExecutionBatch first = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch second = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch first = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch second = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(ReferenceEquals(first, second), Is.False);
             Assert.That(ReferenceEquals(first.GetStep(0), second.GetStep(0)), Is.False);
@@ -1069,16 +1069,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_IsStaticWithNoState()
-        {
-            Type type = typeof(CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseExposure()
         {
             foreach (Type type in new[] { typeof(CaptureRunPublicationArtifactRecoveryPreparedStep), typeof(CaptureRunPublicationArtifactRecoveryExecutionBatch) })
@@ -1133,7 +1123,7 @@ namespace Zantetsu.Core.Tests
             }
 
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPlan(operation, entries);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
 
             Assert.That(batch.Count, Is.EqualTo(2 * count + 1));
             Assert.That(batch.GetStep(0).Action, Is.EqualTo(PublishArtifact));
@@ -1148,9 +1138,8 @@ namespace Zantetsu.Core.Tests
         {
             string preparedSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryPreparedStep.cs"));
             string batchSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionBatch.cs"));
-            string builderSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.cs"));
 
-            foreach (string source in new[] { preparedSource, batchSource, builderSource })
+            foreach (string source in new[] { preparedSource, batchSource })
             {
                 Assert.That(source, Does.Not.Contain("File."));
                 Assert.That(source, Does.Not.Contain("Directory."));

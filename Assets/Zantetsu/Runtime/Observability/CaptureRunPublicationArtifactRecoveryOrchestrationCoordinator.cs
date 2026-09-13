@@ -103,10 +103,10 @@ namespace Zantetsu.Observability
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(snapshot);
 
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan =
-                CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(decision);
+                new CaptureRunPublicationArtifactRecoveryActionPlan(decision);
 
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch =
-                CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(actionPlan);
+                new CaptureRunPublicationArtifactRecoveryExecutionBatch(actionPlan);
 
             CaptureRunPublicationArtifactRecoveryExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);

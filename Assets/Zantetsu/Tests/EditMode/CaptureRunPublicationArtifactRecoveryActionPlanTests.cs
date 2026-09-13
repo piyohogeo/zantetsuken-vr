@@ -401,7 +401,7 @@ namespace Zantetsu.Core.Tests
         {
             FakeArtifactInspector inspector = new FakeArtifactInspector();
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(null, indexAuthoritative, plan, maximumEntryCount);
-            return CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            return new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(inspector, operation, traceStatus, traceCount, null)));
         }
@@ -412,7 +412,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationEvidenceStatus traceStatus = CaptureRunPublicationEvidenceStatus.MatchesExpected,
             long traceCount = 100)
         {
-            return CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            return new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), operation, traceStatus, traceCount, entries)));
         }
@@ -824,21 +824,21 @@ namespace Zantetsu.Core.Tests
         // ---- Rejection ----
 
         [Test]
-        public void Builder_NullDecision_Rejected()
+        public void Plan_NullDecision_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(null));
+                () => new CaptureRunPublicationArtifactRecoveryActionPlan(null));
             Assert.That(ex.ParamName, Is.EqualTo("decision"));
         }
 
         [Test]
-        public void Builder_InvalidDecision_Rejected()
+        public void Plan_InvalidDecision_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryDecision decision = (CaptureRunPublicationArtifactRecoveryDecision)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunPublicationArtifactRecoveryDecision));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(decision));
+                () => new CaptureRunPublicationArtifactRecoveryActionPlan(decision));
             Assert.That(ex.ParamName, Is.EqualTo("decision"));
         }
 
@@ -933,34 +933,6 @@ namespace Zantetsu.Core.Tests
             foreach (FieldInfo field in fields)
             {
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-            }
-        }
-
-        [Test]
-        public void Builder_IsStaticWithNoState()
-        {
-            Type type = typeof(CaptureRunPublicationArtifactRecoveryActionPlanBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-
-            foreach (PropertyInfo prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
-            {
-                Assert.That(
-                    prop.PropertyType == typeof(CaptureRunLockLease)
-                    || prop.PropertyType == typeof(CaptureRunInitializationSessionOwnershipLease),
-                    Is.False,
-                    prop.Name + " must not expose a raw or ownership lease.");
-            }
-
-            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
-            {
-                Assert.That(
-                    method.ReturnType == typeof(CaptureRunLockLease)
-                    || method.ReturnType == typeof(CaptureRunInitializationSessionOwnershipLease),
-                    Is.False,
-                    method.Name + " must not return a raw or ownership lease.");
             }
         }
 
@@ -1083,7 +1055,7 @@ namespace Zantetsu.Core.Tests
         public void Plan_ForgedDecision_IsValidFalse()
         {
             CaptureRunPublicationArtifactRecoveryDecision orphanDecision = BuildPlan(traceStatus: EvAbsent, traceCount: 0).Decision;
-            CaptureRunPublicationArtifactRecoveryActionPlan valid = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(MakeCommitDecision());
+            CaptureRunPublicationArtifactRecoveryActionPlan valid = new CaptureRunPublicationArtifactRecoveryActionPlan(MakeCommitDecision());
 
             CaptureRunPublicationArtifactRecoveryActionPlan forged = ForgeActionPlan(orphanDecision, new[]
             {
@@ -1113,7 +1085,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, null);
             CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(snapshot);
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(decision);
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = new CaptureRunPublicationArtifactRecoveryActionPlan(decision);
 
             Assert.That(plan.IsValid, Is.True);
             Assert.That(owner.IsCreated, Is.True);
@@ -1134,7 +1106,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, null);
             CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(snapshot);
 
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(decision);
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = new CaptureRunPublicationArtifactRecoveryActionPlan(decision);
 
             Assert.That(plan.Decision, Is.SameAs(decision));
             Assert.That(plan.Decision.Snapshot, Is.SameAs(snapshot));
@@ -1152,7 +1124,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation(out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = MakeArtifactSnapshot(inspector, operation, EvAbsent, 0, null);
             CaptureRunPublicationArtifactRecoveryDecision decision = CaptureRunPublicationArtifactRecoveryClassifier.Classify(snapshot);
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(decision);
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = new CaptureRunPublicationArtifactRecoveryActionPlan(decision);
 
             Assert.That(
                 plan.Decision.Operation.LockIdentityEvidence,
@@ -1183,7 +1155,7 @@ namespace Zantetsu.Core.Tests
                     EvAbsent, 0, EvAbsent, 0);
             }
 
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            CaptureRunPublicationArtifactRecoveryActionPlan plan = new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(inspector, operation, EvMatchesExpected, 100, entries)));
 

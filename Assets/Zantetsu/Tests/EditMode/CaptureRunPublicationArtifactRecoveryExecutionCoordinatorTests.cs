@@ -383,7 +383,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationEvidenceStatus traceStatus = CaptureRunPublicationEvidenceStatus.MatchesExpected,
             long traceCount = 100)
         {
-            return CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            return new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), operation, traceStatus, traceCount, entries)));
         }
@@ -543,7 +543,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunPublicationArtifactRecoveryExecutionBatch BuildBatch(
             CaptureRunPublicationArtifactRecoveryActionPlan plan)
         {
-            return CaptureRunPublicationArtifactRecoveryExecutionBatchBuilder.Build(plan);
+            return new CaptureRunPublicationArtifactRecoveryExecutionBatch(plan);
         }
 
         private static string LocateSource(string relativePath)

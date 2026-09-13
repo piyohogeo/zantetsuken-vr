@@ -366,7 +366,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationEvidenceStatus traceStatus = CaptureRunPublicationEvidenceStatus.MatchesExpected,
             long traceCount = 100)
         {
-            return CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            return new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), operation, traceStatus, traceCount, entries)));
         }

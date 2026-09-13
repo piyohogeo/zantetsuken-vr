@@ -328,7 +328,7 @@ namespace Zantetsu.Core.Tests
                 stagingSidecarStatus: EvMatchesExpected, stagingSidecarCount: SidecarBytes,
                 finalPngStatus: EvAbsent, finalPngCount: 0,
                 finalSidecarStatus: EvMatchesExpected, finalSidecarCount: SidecarBytes);
-            plan = CaptureRunPublicationArtifactRecoveryActionPlanBuilder.Build(
+            plan = new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), inspectionOperation, EvMatchesExpected, 100, new[] { observation })));
             return CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
