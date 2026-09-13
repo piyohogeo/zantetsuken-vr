@@ -114,6 +114,30 @@ function Assert-Editor {
 }
 
 # ---------------------------------------------------------------------------
+# True only when a normalized command line names the normalized repository
+# root as a whole path, not merely as the start of a longer one: a sibling
+# checkout such as <root>-phase3_9, <root>-copy, or <root>2 is a different
+# project and never a conflict. The root may be followed by a separator, a
+# quote, whitespace, or nothing at all.
+# ---------------------------------------------------------------------------
+function Test-CommandLineOpensProject {
+    param([string]$CommandLineNormalized, [string]$RootNormalized)
+    $index = $CommandLineNormalized.IndexOf($RootNormalized, [System.StringComparison]::Ordinal)
+    while ($index -ge 0) {
+        $after = $index + $RootNormalized.Length
+        if ($after -ge $CommandLineNormalized.Length) {
+            return $true
+        }
+        $next = $CommandLineNormalized[$after]
+        if ($next -eq '/' -or $next -eq '"' -or $next -eq "'" -or $next -eq ' ' -or $next -eq "`t") {
+            return $true
+        }
+        $index = $CommandLineNormalized.IndexOf($RootNormalized, $index + 1, [System.StringComparison]::Ordinal)
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
 # Pre-detect Unity process conflicts for THIS project. Unity Hub and
 # Unity.Licensing.Client are never treated as conflicts. If process
 # information cannot be obtained, fail closed.
@@ -133,7 +157,7 @@ function Get-ProjectUnityConflicts {
         if (-not $cmdNorm) {
             # Cannot prove it is a different project -> fail safe.
             $conflicts += [pscustomobject]@{ ProcessId = $p.ProcessId; Name = $p.Name; Reason = 'command line unavailable' }
-        } elseif ($cmdNorm.Contains($rootNorm)) {
+        } elseif (Test-CommandLineOpensProject $cmdNorm $rootNorm) {
             $conflicts += [pscustomobject]@{ ProcessId = $p.ProcessId; Name = $p.Name; Reason = "opening this project ($RepoRoot)" }
         }
     }
