@@ -212,17 +212,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_Stateless()
-        {
-            Type type = typeof(NvencRunChunkFinalizationOperationFactory);
-
-            Assert.That(type.IsAbstract && type.IsSealed, Is.True, "factory must be a static class.");
-            FieldInfo[] fields = type.GetFields(
-                BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(fields, Is.Empty);
-        }
-
-        [Test]
         public void Operation_DoesNotHoldOrExposeForbiddenTypes()
         {
             Type type = typeof(NvencRunChunkFinalizationOperation);
@@ -268,24 +257,6 @@ namespace Zantetsu.Core.Tests
             foreach (string word in forbidden)
             {
                 Assert.That(source, Does.Not.Contain(word), "operation source must not contain: " + word);
-            }
-        }
-
-        [Test]
-        public void FactorySource_NoEvidenceReissueOrLedgerRescan()
-        {
-            string source = File.ReadAllText(
-                Path.Combine(RuntimeDirectory(), "NvencRunChunkFinalizationOperationFactory.cs"));
-
-            string[] forbidden =
-            {
-                "TryCaptureFinalizationEvidence", "_frameIds", "MatchesFrameRelation",
-                "MatchesFinalizationEvidence", "Array.Copy", "new long[", "CaptureArtifactDescriptor",
-            };
-
-            foreach (string word in forbidden)
-            {
-                Assert.That(source, Does.Not.Contain(word), "factory source must not contain: " + word);
             }
         }
 

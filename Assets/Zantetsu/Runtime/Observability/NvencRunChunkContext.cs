@@ -374,7 +374,7 @@ namespace Zantetsu.Observability
                     }
                 }
 
-                operation = NvencRunChunkFinalizationOperationFactory.Build(_sink, evidence, _artifactId);
+                operation = NvencRunChunkFinalizationOperation.Create(_sink, evidence, _artifactId);
 
                 _finalizeClaimed = true;
             }
