@@ -26,9 +26,7 @@ namespace Zantetsu.Core.Tests
             return type;
         }
 
-        private static Type GetQueueType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntentQueue");
 
-        private static Type GetSnapshotType() => GetTypeFromAssembly("TerminalIntentOwnershipSnapshot");
 
         private static Type GetSetType() => GetTypeFromAssembly("ForcedDropFrameIdSet");
 
@@ -44,11 +42,8 @@ namespace Zantetsu.Core.Tests
 
         private static Type GetDraftType() => GetTypeFromAssembly("CaptureFrameDraft");
 
-        private static Type GetEntryType() => GetTypeFromAssembly("CaptureFramePngStagingEntry");
 
-        private static Type GetStoreType() => GetTypeFromAssembly("CaptureFramePngStagingStore");
 
-        private static Type GetIntentType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntent");
 
         private static object GetProperty(object target, string name)
         {
@@ -100,28 +95,6 @@ namespace Zantetsu.Core.Tests
                 null);
             Assert.That(ctor, Is.Not.Null);
             return ctor.Invoke(new object[] { run, profile });
-        }
-
-        private static object CreateQueue(object registry, CaptureTraceProfile profile)
-        {
-            ConstructorInfo ctor = GetQueueType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRegistryType(), typeof(CaptureTraceProfile) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { registry, profile });
-        }
-
-        private static object CreateStore(object run, int maximumEntryCount, long maximumTotalByteCount)
-        {
-            ConstructorInfo ctor = GetStoreType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRunType(), typeof(int), typeof(long) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { run, maximumEntryCount, maximumTotalByteCount });
         }
 
         private static CaptureFrameRequest MakeRequest(long captureFrameId, long testRunId = 1)
@@ -178,115 +151,16 @@ namespace Zantetsu.Core.Tests
             return ctor.Invoke(new object[] { timestamp, frameId, fixedStepId, threadId, testRunId });
         }
 
-        private static object MakeEntry(long captureFrameId, long testRunId, int pngLength)
-        {
-            ConstructorInfo ctor = GetEntryType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { typeof(long), typeof(long), typeof(NativeArray<byte>), typeof(string) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-
-            byte[] data = new byte[pngLength];
-            for (int i = 0; i < pngLength; i++)
-            {
-                data[i] = (byte)i;
-            }
-
-            NativeArray<byte> png = new NativeArray<byte>(data, Allocator.Persistent);
-            try
-            {
-                return ctor.Invoke(new object[] { testRunId, captureFrameId, png, KnownPngSha256 });
-            }
-            catch
-            {
-                if (png.IsCreated)
-                {
-                    png.Dispose();
-                }
-
-                throw;
-            }
-        }
-
         // ---- Registry / queue / builder operation helpers ----
 
-        private static bool TryReserve(object registry, out object reservation, out object rejectKind)
-        {
-            MethodInfo method = GetRegistryType().GetMethod("TryReserve", BindingFlags.NonPublic | BindingFlags.Instance);
-            object[] args = new object[] { null, null };
-            bool ok = (bool)method.Invoke(registry, args);
-            reservation = args[0];
-            rejectKind = args[1];
-            return ok;
-        }
 
-        private static void Commit(object registry, object reservation, object draft)
-        {
-            MethodInfo method = GetRegistryType().GetMethod("Commit", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(registry, new object[] { reservation, draft });
-        }
 
-        private static void RegisterPendingDraft(object queue, object draft)
-        {
-            MethodInfo method = GetQueueType().GetMethod("RegisterPendingDraft", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, new object[] { draft });
-        }
 
-        private static void CommitAndRegister(object queue, object registry, object run, CaptureFrameRequest request)
-        {
-            object reservation, rejectKind;
-            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
-            object draft = MakeDraft(run, request);
-            Commit(registry, reservation, draft);
-            RegisterPendingDraft(queue, draft);
-        }
-
-        private static int EnqueueTerminalIntent(object queue, object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("EnqueueTerminalIntent", BindingFlags.NonPublic | BindingFlags.Instance);
-            return (int)method.Invoke(queue, new object[] { intent });
-        }
-
-        private static object CreateDropIntent(CaptureFrameRequest request, CaptureFrameDropReason reason)
-        {
-            MethodInfo method = GetIntentType().GetMethod("CreateDrop", BindingFlags.NonPublic | BindingFlags.Static);
-            return method.Invoke(null, new object[] { request, reason });
-        }
-
-        private static bool TryDequeue(object queue, out object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("TryDequeue", BindingFlags.NonPublic | BindingFlags.Instance);
-            object[] args = new object[] { null };
-            bool ok = (bool)method.Invoke(queue, args);
-            intent = args[0];
-            return ok;
-        }
-
-        private static void BeginProducerDrain(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("BeginProducerDrain", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static void CloseAfterProducerJoin(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CloseAfterProducerJoin", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static object CreateOwnershipSnapshot(object queue, int producerRetained)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CreateOwnershipSnapshot", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-            return method.Invoke(queue, new object[] { producerRetained });
-        }
-
-        private static object ForceDrop(object registry, object queue, object snapshot)
+        private static object ForceDrop(object registry)
         {
             MethodInfo method = GetRegistryType().GetMethod("ForceDropPendingForFreeze", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(method, Is.Not.Null);
-            return method.Invoke(registry, new object[] { queue, snapshot });
+            return method.Invoke(registry, new object[0]);
         }
 
         private static object CreateBuilder(object registry)
@@ -340,15 +214,6 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        private static object GetEntryField(object registry, int entryIndex, string fieldName)
-        {
-            FieldInfo entriesField = GetRegistryType().GetField("_entries", BindingFlags.NonPublic | BindingFlags.Instance);
-            Array entries = (Array)entriesField.GetValue(registry);
-            object entry = entries.GetValue(entryIndex);
-            FieldInfo field = entry.GetType().GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(field, Is.Not.Null, "Entry." + fieldName + " field not found.");
-            return field.GetValue(entry);
-        }
 
         private static void SetEntryField(object registry, int entryIndex, string fieldName, object value)
         {
@@ -455,8 +320,6 @@ namespace Zantetsu.Core.Tests
 
             public object Run;
             public object Registry;
-            public object Queue;
-            public object Store;
             public readonly List<object> AllEntries = new List<object>();
         }
 
@@ -472,25 +335,8 @@ namespace Zantetsu.Core.Tests
         {
             scope.Run = MakeRun(scope.TestRunId, captureProfileId: 5);
             scope.Registry = CreateRegistry(scope.Run, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Queue = CreateQueue(scope.Registry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Store = CreateStore(scope.Run, scope.MaxDraftPerRun, 4096);
         }
 
-        private static object MakeEntryTracked(Scope scope, long captureFrameId, long testRunId, int pngLength)
-        {
-            object entry = MakeEntry(captureFrameId, testRunId, pngLength);
-            try
-            {
-                scope.AllEntries.Add(entry);
-            }
-            catch
-            {
-                ((IDisposable)entry).Dispose();
-                throw;
-            }
-
-            return entry;
-        }
 
         private static Exception[] CleanupScope(Scope scope)
         {
@@ -498,10 +344,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Queue != null && (bool)GetProperty(scope.Queue, "IsCreated"))
-                {
-                    ((IDisposable)scope.Queue).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -510,10 +352,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Store != null && (bool)GetProperty(scope.Store, "IsCreated"))
-                {
-                    ((IDisposable)scope.Store).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -564,21 +402,10 @@ namespace Zantetsu.Core.Tests
         {
             for (int i = 0; i < pendingIds.Length; i++)
             {
-                CommitAndRegister(scope.Queue, scope.Registry, scope.Run, MakeRequest(pendingIds[i]));
-                Assert.That(EnqueueTerminalIntent(scope.Queue, CreateDropIntent(MakeRequest(pendingIds[i]), CaptureFrameDropReason.PngEncodeFailed)), Is.EqualTo(0));
+                CommitDraft(scope.Registry, scope.Run, pendingIds[i]);
             }
 
-            BeginProducerDrain(scope.Queue);
-            CloseAfterProducerJoin(scope.Queue);
-
-            for (int i = 0; i < pendingIds.Length; i++)
-            {
-                object dequeued;
-                Assert.That(TryDequeue(scope.Queue, out dequeued), Is.True);
-            }
-
-            object snapshot = CreateOwnershipSnapshot(scope.Queue, 0);
-            return ForceDrop(scope.Registry, scope.Queue, snapshot);
+            return ForceDrop(scope.Registry);
         }
 
         /// <summary>
@@ -588,16 +415,9 @@ namespace Zantetsu.Core.Tests
         private static object SetupDistinctFrozen(Scope scope, long captureFrameId)
         {
             CaptureFrameRequest request = MakeDistinctRequest(captureFrameId, scope.TestRunId);
-            CommitAndRegister(scope.Queue, scope.Registry, scope.Run, request);
-            Assert.That(EnqueueTerminalIntent(scope.Queue, CreateDropIntent(request, CaptureFrameDropReason.PngEncodeFailed)), Is.EqualTo(0));
+            CommitDraftForRequest(scope.Registry, scope.Run, request);
 
-            BeginProducerDrain(scope.Queue);
-            CloseAfterProducerJoin(scope.Queue);
-            object dequeued;
-            Assert.That(TryDequeue(scope.Queue, out dequeued), Is.True);
-
-            object snapshot = CreateOwnershipSnapshot(scope.Queue, 0);
-            return ForceDrop(scope.Registry, scope.Queue, snapshot);
+            return ForceDrop(scope.Registry);
         }
 
         private static void AssertForcedDropEvent(TraceEvent e, long captureFrameId)
@@ -655,6 +475,40 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Builder dependency / set / checkpoint validation ----
+
+        private static bool TryReserve(object registry, out object reservation, out object rejectKind)
+        {
+            MethodInfo method = GetRegistryType().GetMethod("TryReserve", BindingFlags.NonPublic | BindingFlags.Instance);
+            object[] args = new object[] { null, null };
+            bool ok = (bool)method.Invoke(registry, args);
+            reservation = args[0];
+            rejectKind = args[1];
+            return ok;
+        }
+
+        private static void Commit(object registry, object reservation, object draft)
+        {
+            MethodInfo method = GetRegistryType().GetMethod("Commit", BindingFlags.NonPublic | BindingFlags.Instance);
+            method.Invoke(registry, new object[] { reservation, draft });
+        }
+
+        private static object CommitDraftForRequest(object registry, object run, CaptureFrameRequest request)
+        {
+            object reservation, rejectKind;
+            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
+            object draft = MakeDraft(run, request);
+            Commit(registry, reservation, draft);
+            return draft;
+        }
+
+        private static object CommitDraft(object registry, object run, long captureFrameId)
+        {
+            object reservation, rejectKind;
+            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
+            object draft = MakeDraft(run, MakeRequest(captureFrameId));
+            Commit(registry, reservation, draft);
+            return draft;
+        }
 
         [Test]
         public void Builder_NullRegistry_Rejected()

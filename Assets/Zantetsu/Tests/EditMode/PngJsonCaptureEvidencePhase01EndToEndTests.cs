@@ -197,7 +197,6 @@ namespace Zantetsu.Core.Tests
             public PngJsonCaptureEvidenceBackend Backend;
             public CaptureEvidenceCoordinator Evidence;
             public CaptureEvidenceDraftCoordinator DraftCoordinator;
-            public CaptureFrameDraftTerminalIntentQueue Queue;
             public CaptureFrameDraftFactory Factory;
             public CaptureRunInitializationSession Session;
             public CaptureRunInitializationSessionOwnershipLease Owner;
@@ -224,10 +223,6 @@ namespace Zantetsu.Core.Tests
                     try { Pool.Dispose(); } catch (Exception) { }
                 }
 
-                if (Queue != null && Queue.IsCreated)
-                {
-                    try { Queue.Dispose(); } catch (Exception) { }
-                }
 
                 if (Owner != null)
                 {
@@ -290,7 +285,6 @@ namespace Zantetsu.Core.Tests
             scope.Evidence = new CaptureEvidenceCoordinator(scope.Backend);
             scope.DraftCoordinator = new CaptureEvidenceDraftCoordinator(
                 1, scope.Evidence, scope.Registry, scope.Artifacts, scope.Trace);
-            scope.Queue = new CaptureFrameDraftTerminalIntentQueue(scope.Registry, traceProfile);
 
             scope.Factory = new CaptureFrameDraftFactory(
                 scope.Run,
@@ -473,10 +467,7 @@ namespace Zantetsu.Core.Tests
 
         private static ForcedDropFrameIdSet IssueEmptyForcedDropSet(Scope scope)
         {
-            scope.Queue.BeginProducerDrain();
-            scope.Queue.CloseAfterProducerJoin();
-            TerminalIntentOwnershipSnapshot snapshot = scope.Queue.CreateOwnershipSnapshot(0);
-            return scope.Registry.ForceDropPendingForFreeze(scope.Queue, snapshot);
+            return scope.Registry.ForceDropPendingForFreeze();
         }
 
         private static TraceRunSealReceipt Seal(Scope scope)
