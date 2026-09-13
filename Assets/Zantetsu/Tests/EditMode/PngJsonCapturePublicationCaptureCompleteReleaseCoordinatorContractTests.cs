@@ -1117,11 +1117,11 @@ namespace Zantetsu.Core.Tests
                 out _, out _);
             PngJsonCapturePublicationCaptureCompleteReleaseOperation operation = MakeReleaseOperation(evidence);
 
-            // null receipt.
+            // null receipt: rejected by the result's own null argument check.
             RecordingReleaser nullReleaser = new RecordingReleaser();
             nullReleaser.Override = op => null;
             PngJsonCapturePublicationCaptureCompleteReleaseCoordinator nullCoordinator = MakeReleaseCoordinator(nullReleaser);
-            Assert.Throws<InvalidOperationException>(() => nullCoordinator.Execute(operation));
+            Assert.Throws<ArgumentNullException>(() => nullCoordinator.Execute(operation));
             Assert.That(nullReleaser.Calls, Is.EqualTo(1));
 
             // foreign issuer and different operation receipt.
@@ -1287,19 +1287,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetProperty("OwnershipLease", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Null);
             Assert.That(type.GetProperty("LockLease", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Null);
             Assert.That(type.GetProperty("Token", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Null);
-        }
-
-        [Test]
-        public void Source_CreateDoesNotRevalidateIsIssuedFor()
-        {
-            string source = ReadSource(
-                "Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteReleaseResult.cs");
-
-            // The only code call to receipt.IsIssuedFor lives in the full
-            // validation predicate; the atomic factory re-runs only O(1)
-            // binding.
-            Assert.That(CountOccurrences(source, "receipt.IsIssuedFor("), Is.EqualTo(1));
-            Assert.That(source, Does.Contain("private static bool IsFullyValid"));
         }
 
         [Test]

@@ -10,7 +10,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly four read-only reference fields — the issuing
+    /// The type holds exactly four readonly references — the issuing
     /// coordinator, the coordinator-bound issuance proof, the release
     /// operation, and the release receipt — and has no public constructor.
     /// It duplicates no ownership lease, lock identity evidence, lifecycle
@@ -19,20 +19,18 @@ namespace Zantetsu.Observability
     /// <see cref="IsValid"/>, never stored.
     /// </para>
     /// <para>
-    /// The atomic factory <see cref="Create"/> performs only the O(1)
-    /// exact-binding predicate after the coordinator already fully verified
-    /// the receipt: null-checks every input, requires the proof to be minted
-    /// by this exact coordinator for the exact releaser, operation, and
-    /// receipt, requires the receipt issuer and operation to be the exact
-    /// references, and requires the operation to be in the fully released
-    /// state. It never re-runs <c>receipt.IsIssuedFor</c> on the success path.
-    /// <see cref="IsValid"/> re-runs that same binding as its first stage and
-    /// then adds the single full post-release verification through
-    /// <c>receipt.IsIssuedFor</c>, together with the released and
-    /// non-retryable terminal state. Because the release makes the upstream
-    /// evidence invalid by design, <see cref="IsValid"/> intentionally never
-    /// requires <c>operation.IsValid</c>, the lifecycle evidence's validity,
-    /// or the lock identity evidence's validity.
+    /// The atomic factory <see cref="Create"/> and <see cref="IsValid"/> share
+    /// one correlation predicate of three steps: the coordinator, proof,
+    /// operation, and receipt are non-null; the proof was minted by this exact
+    /// coordinator for the exact releaser, operation, and receipt; and the
+    /// receipt is issued for the coordinator's releaser and that exact
+    /// operation. That last call is the authority — it settles the exact
+    /// releaser, the exact operation, the issuance binding, the completed
+    /// release, and the non-releasable terminal state together, so none of
+    /// those are re-derived here. Because the release makes the upstream
+    /// evidence invalid by design, the predicate intentionally never requires
+    /// <c>operation.IsValid</c>, the lifecycle evidence's validity, or the lock
+    /// identity evidence's validity.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -59,11 +57,10 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Atomic issuance gate used only by the coordinator after it already
-        /// fully verified the receipt: null-checks every input and then runs
-        /// the O(1) exact-binding predicate plus the fully-released terminal
-        /// check. It never re-runs <c>receipt.IsIssuedFor</c> on the success
-        /// path.
+        /// Atomic issuance gate used only by the coordinator, and the single
+        /// place the correlation is verified: it null-checks every input and
+        /// then runs the shared predicate, so an uncorrelated receipt yields no
+        /// result.
         /// </summary>
         internal static PngJsonCapturePublicationCaptureCompleteReleaseResult Create(
             PngJsonCapturePublicationCaptureCompleteReleaseCoordinator issuedBy,
@@ -91,7 +88,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(receipt));
             }
 
-            if (!IsBoundO1(issuedBy, proof, operation, receipt) || !operation.IsReleaseComplete)
+            if (!IsCorrelated(issuedBy, proof, operation, receipt))
             {
                 throw new InvalidOperationException(
                     "Release receipt must be correlated with the issuing coordinator and operation.");
@@ -138,91 +135,33 @@ namespace Zantetsu.Observability
         /// from the currently held graph, without throwing. Any corrupted or
         /// replaced value converges to <c>false</c>.
         /// </summary>
-        internal bool IsValid => IsFullyValid(_issuedBy, _proof, _operation, _receipt);
+        internal bool IsValid => IsCorrelated(_issuedBy, _proof, _operation, _receipt);
 
         /// <summary>
-        /// O(1), exception-safe exact-binding predicate used by the issuance
-        /// factory: non-null checks, proof binding, and the receipt issuer and
-        /// operation reference identity only. It never calls
-        /// <c>receipt.IsIssuedFor</c>, so the coordinator's immediate full
-        /// receipt verification is not repeated on the success path.
+        /// Exception-safe correlation predicate shared by the issuance factory
+        /// and <see cref="IsValid"/>. The receipt's own
+        /// <c>IsIssuedFor</c> is the authority for the exact releaser, the
+        /// exact operation, the issuance binding, the completed release, and
+        /// the non-releasable terminal state, so none of those are re-derived
+        /// here. Any forged or replaced binding converges to <c>false</c>.
         /// </summary>
-        private static bool IsBoundO1(
+        private static bool IsCorrelated(
             PngJsonCapturePublicationCaptureCompleteReleaseCoordinator issuedBy,
             PngJsonCapturePublicationCaptureCompleteReleaseCoordinator.IssuanceProof proof,
             PngJsonCapturePublicationCaptureCompleteReleaseOperation operation,
             PngJsonCapturePublicationCaptureCompleteReleaseReceipt receipt)
         {
-            try
-            {
-                if (issuedBy == null || proof == null || operation == null || receipt == null)
-                {
-                    return false;
-                }
-
-                if (!issuedBy.IsMintedByThis(proof, operation, receipt))
-                {
-                    return false;
-                }
-
-                IPngJsonCapturePublicationCaptureCompleteReleaser releaser = issuedBy.Releaser;
-                if (releaser == null)
-                {
-                    return false;
-                }
-
-                return ReferenceEquals(receipt.IssuedBy, releaser)
-                    && ReferenceEquals(receipt.Operation, operation);
-            }
-            catch (Exception)
+            if (issuedBy == null || proof == null || operation == null || receipt == null)
             {
                 return false;
             }
-        }
 
-        /// <summary>
-        /// Exception-safe full post-release validation predicate: runs the O(1)
-        /// exact-binding predicate, then calls <c>receipt.IsIssuedFor</c>
-        /// exactly once for the receipt's own post-release verification, and
-        /// finally requires the released and non-retryable terminal state. It
-        /// never re-validates the operation, lifecycle evidence, or lock
-        /// identity evidence.
-        /// </summary>
-        private static bool IsFullyValid(
-            PngJsonCapturePublicationCaptureCompleteReleaseCoordinator issuedBy,
-            PngJsonCapturePublicationCaptureCompleteReleaseCoordinator.IssuanceProof proof,
-            PngJsonCapturePublicationCaptureCompleteReleaseOperation operation,
-            PngJsonCapturePublicationCaptureCompleteReleaseReceipt receipt)
-        {
-            try
-            {
-                if (!IsBoundO1(issuedBy, proof, operation, receipt))
-                {
-                    return false;
-                }
-
-                IPngJsonCapturePublicationCaptureCompleteReleaser releaser = issuedBy.Releaser;
-                if (!receipt.IsIssuedFor(releaser, operation))
-                {
-                    return false;
-                }
-
-                if (!operation.IsReleaseComplete)
-                {
-                    return false;
-                }
-
-                if (operation.CanRelease)
-                {
-                    return false;
-                }
-
-                return true;
-            }
-            catch (Exception)
+            if (!issuedBy.IsMintedByThis(proof, operation, receipt))
             {
                 return false;
             }
+
+            return receipt.IsIssuedFor(issuedBy.Releaser, operation);
         }
     }
 }

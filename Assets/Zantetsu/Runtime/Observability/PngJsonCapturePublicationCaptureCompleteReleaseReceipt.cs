@@ -8,7 +8,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the issuing
+    /// The type holds exactly two readonly references — the issuing
     /// releaser and the release operation — and has no public constructor. It
     /// can be constructed only after the release succeeded: the constructor
     /// rejects a null issuer, a null operation, and any operation whose exact

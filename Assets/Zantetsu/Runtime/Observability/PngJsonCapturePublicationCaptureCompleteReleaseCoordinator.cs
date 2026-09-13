@@ -18,14 +18,16 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="Execute"/> runs the fixed sequence exactly once per call:
     /// reject a null operation, reject an operation that is not currently
-    /// releasable, hand the operation to the releaser exactly once, verify the
-    /// returned receipt is issued by this releaser for the exact operation,
-    /// mint the coordinator-bound issuance proof, and hand everything to the
-    /// result's atomic factory. A releaser exception propagates unchanged and
-    /// unwrapped; no proof or result is produced and the operation is never
-    /// modified, disposed, or destroyed. A partially released operation keeps
-    /// the same instance and can be handed to the same coordinator again
-    /// later.
+    /// releasable, hand the operation to the releaser exactly once, bind a
+    /// coordinator-minted issuance proof to that exact operation and returned
+    /// receipt, and hand everything to the result's atomic factory. The
+    /// coordinator itself checks no receipt: the result's issuance boundary is
+    /// the single place the correlation is verified, and a receipt that fails
+    /// there yields no result, so the proof minted for it is never observable.
+    /// A releaser exception propagates unchanged and unwrapped; no proof or
+    /// result is produced and the operation is never modified, disposed, or
+    /// destroyed. A partially released operation keeps the same instance and
+    /// can be handed to the same coordinator again later.
     /// </para>
     /// </remarks>
     internal sealed class PngJsonCapturePublicationCaptureCompleteReleaseCoordinator
@@ -48,8 +50,8 @@ namespace Zantetsu.Observability
         internal IPngJsonCapturePublicationCaptureCompleteReleaser Releaser => _releaser;
 
         /// <summary>
-        /// Opaque proof minted only inside <see cref="Execute"/> after the
-        /// returned receipt was fully verified. It binds to this exact
+        /// Opaque proof minted only inside <see cref="Execute"/>, for the
+        /// receipt the releaser just returned. It binds to this exact
         /// coordinator, to the coordinator's private issuance gate, and to the
         /// exact releaser, operation, and receipt of that single release, so
         /// the same coordinator's proof cannot be reused for a different
@@ -79,9 +81,9 @@ namespace Zantetsu.Observability
             }
 
             /// <summary>
-            /// Atomic mint used only by the coordinator after the receipt was
-            /// verified. The constructor is private, so a proof can only exist
-            /// for a release routed through this exact coordinator.
+            /// Atomic mint used only by the coordinator, on the release it
+            /// just routed. The constructor is private, so a proof can only
+            /// exist for a release routed through this exact coordinator.
             /// </summary>
             internal static IssuanceProof Mint(
                 PngJsonCapturePublicationCaptureCompleteReleaseCoordinator coordinator,
@@ -145,15 +147,6 @@ namespace Zantetsu.Observability
             }
 
             PngJsonCapturePublicationCaptureCompleteReleaseReceipt receipt = _releaser.Release(operation);
-
-            if (receipt == null
-                || !ReferenceEquals(receipt.IssuedBy, _releaser)
-                || !ReferenceEquals(receipt.Operation, operation)
-                || !receipt.IsIssuedFor(_releaser, operation))
-            {
-                throw new InvalidOperationException(
-                    "Release receipt must be issued for this releaser and operation.");
-            }
 
             IssuanceProof proof = IssuanceProof.Mint(this, _issuanceGate, _releaser, operation, receipt);
 
