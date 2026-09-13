@@ -533,7 +533,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void SessionFactory_ForeignOwnershipLease_Rejected()
+        public void SessionIssuance_ForeignOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
@@ -543,7 +543,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(ownerB, evidenceA, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(ownerB, evidenceA, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
         }

@@ -418,14 +418,14 @@ namespace Zantetsu.Core.Tests
         // ---- Session factory ----
 
         [Test]
-        public void Factory_Success_ReturnsIssue()
+        public void Mint_Success_ReturnsIssue()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
 
             Assert.That(issue, Is.Not.Null);
             Assert.That(issue.IsValid, Is.True);
@@ -437,7 +437,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_ForeignRootLayout_Rejected()
+        public void Mint_ForeignRootLayout_Rejected()
         {
             CaptureRunRootLayout layoutA = MakeLayout(1);
             CaptureRunRootLayout layoutB = MakeLayout(2);
@@ -446,7 +446,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layoutB));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(owner, identity, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("evidence"));
             Assert.That(owner.IsCreated, Is.True);
@@ -455,13 +455,13 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_NullEvidence_Rejected()
+        public void Mint_NullEvidence_Rejected()
         {
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), null);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunInitializationSessionFactory.Create(owner, identity, null));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, null));
 
             Assert.That(ex.ParamName, Is.EqualTo("evidence"));
 
@@ -469,19 +469,19 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_NullOwnershipLease_Rejected()
+        public void Mint_NullOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunInitializationSessionFactory.Create(null, null, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(null, null, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
         }
 
         [Test]
-        public void Factory_DisposedOwnershipLease_Rejected()
+        public void Mint_DisposedOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
@@ -490,13 +490,13 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(owner, identity, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("ownershipLease"));
         }
 
         [Test]
-        public void Factory_RecoveryMismatchedIdentity_Rejected()
+        public void Mint_RecoveryMismatchedIdentity_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerBinding binding = MakeBinding(layout);
@@ -509,7 +509,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease otherOwner = MakeOwnershipLease(layout, null);
             CaptureRunLockIdentityEvidence otherIdentity = MakeIdentityEvidence(otherOwner);
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(otherOwner, otherIdentity, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(otherOwner, otherIdentity, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
             Assert.That(otherOwner.IsCreated, Is.True);
@@ -532,7 +532,7 @@ namespace Zantetsu.Core.Tests
                 MakeCanonicalInit(Staging, binding.StagingInitialization), MakeAbsent(Final), identity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
 
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
             CaptureRunInitializationSession session = issue.Session;
 
             Assert.That(session.ReadyEvidence, Is.SameAs(evidence));
@@ -562,7 +562,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease otherOwner = MakeOwnershipLease(layout, null);
             CaptureRunLockIdentityEvidence otherIdentity = MakeIdentityEvidence(otherOwner);
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationSessionFactory.Create(otherOwner, otherIdentity, evidence));
+                () => CaptureRunInitializationSession.IssuanceProof.Mint(otherOwner, otherIdentity, evidence));
 
             Assert.That(ex.ParamName, Is.EqualTo("lockIdentityEvidence"));
 
@@ -578,7 +578,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
 
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(
                 owner, identity, CaptureRunInitializationReadyEvidence.FromFresh(receipt));
             CaptureRunInitializationSession session = issue.Session;
 
@@ -601,7 +601,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRecoveryOrchestrationResult result = MakeRecoveryResult(
                 MakeFullyCanonical(Staging, binding), MakeFullyCanonical(Final, binding), identity);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(result);
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
 
             second.ThrowOnDispose = true;
             Assert.Throws<AggregateException>(() => owner.Dispose());
@@ -636,19 +636,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty);
         }
 
-        [Test]
-        public void Factory_Shape_Stateless()
-        {
-            Type type = typeof(CaptureRunInitializationSessionFactory);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-            Assert.That(type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly), Is.Empty);
-        }
-
         // ---- Source inspection ----
 
         [Test]
@@ -656,8 +643,7 @@ namespace Zantetsu.Core.Tests
         {
             string[] relativePaths =
             {
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationReadyEvidence.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationSessionFactory.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationReadyEvidence.cs"
             };
 
             foreach (string relativePath in relativePaths)

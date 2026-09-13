@@ -164,7 +164,7 @@ namespace Zantetsu.Observability
 
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
 
-            return CaptureRunInitializationSessionFactory.Create(ownershipLease, lockIdentityEvidence, evidence);
+            return CaptureRunInitializationSession.IssuanceProof.Mint(ownershipLease, lockIdentityEvidence, evidence);
         }
     }
 }

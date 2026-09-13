@@ -272,7 +272,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease ownership =
                 CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
 
-            return CaptureRunInitializationSessionFactory.Create(
+            return CaptureRunInitializationSession.IssuanceProof.Mint(
                 ownership,
                 CaptureRunLockIdentityEvidence.Create(ownership, ownership.LockPathSet),
                 CaptureRunInitializationReadyEvidence.FromFresh(receipt));

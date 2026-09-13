@@ -514,7 +514,7 @@ namespace Zantetsu.Core.Tests
                 CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
             CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
-            return CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
         }
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)

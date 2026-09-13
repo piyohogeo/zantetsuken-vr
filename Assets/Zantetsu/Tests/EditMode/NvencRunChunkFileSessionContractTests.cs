@@ -160,7 +160,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            return CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
         }
 
         private static string RuntimeDirectory()
@@ -536,7 +536,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(issue))
             {
@@ -576,7 +576,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionFactory.Create(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
 
             owner.Dispose();
 

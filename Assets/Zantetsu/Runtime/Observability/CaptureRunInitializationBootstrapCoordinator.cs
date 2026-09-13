@@ -133,7 +133,7 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Execution receipt initialization ID does not match the issued ID.");
                 }
 
-                issue = CaptureRunInitializationSessionFactory.Create(
+                issue = CaptureRunInitializationSession.IssuanceProof.Mint(
                     ownershipLease,
                     lockIdentityEvidence,
                     CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt));

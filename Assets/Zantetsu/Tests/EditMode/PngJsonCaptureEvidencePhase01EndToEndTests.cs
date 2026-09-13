@@ -315,7 +315,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(batch);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt);
             CaptureRunInitializationSessionIssue issue =
-                CaptureRunInitializationSessionFactory.Create(scope.Owner, scope.Identity, evidence);
+                CaptureRunInitializationSession.IssuanceProof.Mint(scope.Owner, scope.Identity, evidence);
             scope.Session = issue.Session;
 
             return scope;

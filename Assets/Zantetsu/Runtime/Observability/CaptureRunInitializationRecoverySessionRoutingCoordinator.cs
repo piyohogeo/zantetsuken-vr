@@ -134,7 +134,7 @@ namespace Zantetsu.Observability
                     }
 
                     CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromRecovery(recoveryResult);
-                    issue = CaptureRunInitializationSessionFactory.Create(ownershipLease, lockIdentityEvidence, evidence);
+                    issue = CaptureRunInitializationSession.IssuanceProof.Mint(ownershipLease, lockIdentityEvidence, evidence);
                     return true;
 
                 case CaptureRunInitializationRecoveryExecutionStatus.PublicationRecoveryRequired:
