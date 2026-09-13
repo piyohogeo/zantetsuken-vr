@@ -1,16 +1,16 @@
 namespace Zantetsu.Trace
 {
     /// <summary>
-    /// Integrity state of a capture run recorded on a
-    /// <see cref="TraceEventType.TraceIntegritySummary"/> event. Append-only;
-    /// existing values must never be reordered or reused.
+    /// Integrity state of a capture run. The value is written into stored
+    /// formats, so it is append-only: existing values must never be reordered
+    /// or reused.
     /// </summary>
     public enum TraceIntegrityState : int
     {
-        /// <summary>The run completed with no observed sealed write failure or capture overflow.</summary>
+        /// <summary>The run kept everything it was given.</summary>
         Complete = 0,
 
-        /// <summary>A sealed write failure or a capture overflow was observed for the run.</summary>
+        /// <summary>Something the run was given was not kept.</summary>
         Incomplete = 1,
     }
 }
