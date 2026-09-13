@@ -16,11 +16,11 @@ namespace Zantetsu.Observability
     /// readonly references — the committer, the operation, and the token it was
     /// issued under. What was committed is read from <see cref="Operation"/>:
     /// the receipt restates none of it and keeps no path, byte count, mode, or
-    /// Run identity of its own. The canonical bytes are checked at issuance and
-    /// neither retained nor returned. <see cref="IsValid"/> and
-    /// <see cref="IsIssuedFor"/> recompute without throwing, so a receipt whose
-    /// operation, token, or owner has been corrupted or released becomes
-    /// invalid.
+    /// Run identity of its own. The canonical bytes are checked at issuance, but
+    /// the receipt neither stores nor exposes them separately; they remain part
+    /// of the operation. <see cref="IsValid"/> and <see cref="IsIssuedFor"/>
+    /// recompute without throwing, so a receipt whose operation, token, or
+    /// owner has been corrupted or released becomes invalid.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
