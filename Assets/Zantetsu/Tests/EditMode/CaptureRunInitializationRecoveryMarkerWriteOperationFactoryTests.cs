@@ -174,7 +174,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null)
         {
-            return CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            return new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(MakeSnapshot(staging, final, layout)));
         }
 
@@ -466,7 +466,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeCanonicalInit(Staging, binding.StagingInitialization);
             CaptureRunInitializationRootObservation final = MakeCanonicalInit(Final, binding.FinalInitialization);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             Assert.That(owner.IsCreated, Is.True);
@@ -604,7 +604,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeCanonicalInit(Staging, binding.StagingInitialization);
             CaptureRunInitializationRootObservation final = MakeCanonicalInit(Final, binding.FinalInitialization);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             CaptureRunMarkerWriteOperation op = CaptureRunInitializationRecoveryMarkerWriteOperationFactory.Create(plan, markerPaths, 0);

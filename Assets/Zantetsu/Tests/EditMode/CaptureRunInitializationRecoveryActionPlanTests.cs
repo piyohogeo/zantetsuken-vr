@@ -173,7 +173,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null)
         {
-            return CaptureRunInitializationRecoveryActionPlanBuilder.Build(Classify(staging, final, layout));
+            return new CaptureRunInitializationRecoveryActionPlan(Classify(staging, final, layout));
         }
 
         private static CaptureRunInitializationRecoveryStep S(
@@ -779,7 +779,7 @@ namespace Zantetsu.Core.Tests
         // ---- Non-mutation / non-dispose ----
 
         [Test]
-        public void Build_DoesNotDisposeLeaseOrMutateInputs()
+        public void Construction_DoesNotDisposeLeaseOrMutateInputs()
         {
             List<string> disposeLog = new List<string>();
             CaptureRunRootLayout layout = MakeLayout();
@@ -789,9 +789,9 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, disposeLog);
             CaptureRunInitializationRecoveryDecision decision = CaptureRunInitializationRecoveryClassifier.Classify(snapshot);
 
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(decision);
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(decision);
 
-            Assert.That(disposeLog, Is.Empty, "The plan builder must not dispose the lock lease.");
+            Assert.That(disposeLog, Is.Empty, "Building the plan must not dispose the lock lease.");
             Assert.That(plan.Decision, Is.SameAs(decision));
             Assert.That(snapshot.Staging, Is.SameAs(staging));
             Assert.That(snapshot.Final, Is.SameAs(final));
@@ -806,13 +806,10 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Source_NoRedundantAllocation()
         {
-            string builder = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryActionPlanBuilder.cs"));
             string plan = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryActionPlan.cs"));
 
-            Assert.That(builder, Does.Not.Contain("List<"));
-            Assert.That(builder, Does.Not.Contain("ToArray"));
-            Assert.That(builder, Does.Not.Contain("System.Collections.Generic"));
-
+            Assert.That(plan, Does.Not.Contain("List<"));
+            Assert.That(plan, Does.Not.Contain("System.Collections.Generic"));
             Assert.That(plan, Does.Not.Contain("Array.Copy"));
             Assert.That(plan, Does.Not.Contain("List<"));
             Assert.That(plan, Does.Not.Contain("ToArray"));
@@ -854,17 +851,6 @@ namespace Zantetsu.Core.Tests
         // ---- Shape / mutable static state ----
 
         [Test]
-        public void Builder_NoFields_NoMutableStaticState()
-        {
-            Type type = typeof(CaptureRunInitializationRecoveryActionPlanBuilder);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance), Is.Empty);
-        }
-
-        [Test]
         public void NoMutableStaticState_AcrossTypes()
         {
             foreach (Type type in new[]
@@ -889,8 +875,7 @@ namespace Zantetsu.Core.Tests
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryAction.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryStep.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryActionPlan.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryActionPlanBuilder.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryActionPlan.cs"
             };
 
             foreach (string relativePath in relativePaths)
@@ -951,10 +936,6 @@ namespace Zantetsu.Core.Tests
             SetField(decision, "_expectedBinding", null);
 
             Assert.That(decision.IsValid, Is.False);
-
-            ArgumentException buildEx = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationRecoveryActionPlanBuilder.Build(decision));
-            Assert.That(buildEx.ParamName, Is.EqualTo("decision"));
 
             ArgumentException ctorEx = Assert.Throws<ArgumentException>(
                 () => new CaptureRunInitializationRecoveryActionPlan(decision));

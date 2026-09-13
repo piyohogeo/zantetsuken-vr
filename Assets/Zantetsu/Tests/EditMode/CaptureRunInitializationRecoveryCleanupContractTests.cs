@@ -172,7 +172,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null)
         {
-            return CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            return new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(MakeSnapshot(staging, final, layout)));
         }
 
@@ -351,7 +351,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             CaptureRunInitializationRecoveryCleanupOperation op = MakeOp(plan, markerPaths, 0);
@@ -500,7 +500,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             Assert.That(owner.IsCreated, Is.True);
@@ -574,7 +574,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             CaptureRunInitializationRecoveryCleanupOperation op = MakeOp(plan, markerPaths, 0);
@@ -668,7 +668,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
             CaptureRunInitializationRecoveryCleanupOperation op = MakeOp(plan, markerPaths, 0);
 
@@ -808,7 +808,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Absent, null, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
             CaptureRunInitializationRecoveryCleanupOperation op = MakeOp(plan, markerPaths, 0);
             CaptureRunInitializationRecoveryCleanupReceipt receipt = new CaptureRunInitializationRecoveryCleanupReceipt(new FakeCleanupBackend(), op);

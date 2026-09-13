@@ -167,7 +167,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null)
         {
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(MakeSnapshot(staging, final, layout)));
             return new CaptureRunInitializationRecoveryExecutionBatch(plan);
         }
@@ -632,7 +632,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunInitializationRecoveryExecutionBatch batch = new CaptureRunInitializationRecoveryExecutionBatch(
-                CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+                new CaptureRunInitializationRecoveryActionPlan(
                     CaptureRunInitializationRecoveryClassifier.Classify(snapshot)));
 
             FakeWriter writer = new FakeWriter(log) { ExceptionToThrow = new IOException("write failed") };

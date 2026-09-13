@@ -167,7 +167,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation final,
             CaptureRunRootLayout layout = null)
         {
-            return CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            return new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(MakeSnapshot(staging, final, layout)));
         }
 
@@ -761,7 +761,7 @@ namespace Zantetsu.Core.Tests
                 layout,
                 disposeLog,
                 out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
+            CaptureRunInitializationRecoveryActionPlan plan = new CaptureRunInitializationRecoveryActionPlan(
                 CaptureRunInitializationRecoveryClassifier.Classify(snapshot));
 
             CaptureRunInitializationRecoveryExecutionBatch batch = BuildBatch(plan);
