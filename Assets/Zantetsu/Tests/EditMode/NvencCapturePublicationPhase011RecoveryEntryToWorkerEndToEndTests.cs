@@ -626,7 +626,7 @@ namespace Zantetsu.Core.Tests
 
             internal FakeInitializationRecoveryInspector(CaptureRunRootLayout layout)
             {
-                _binding = CaptureRunMarkerBindingFactory.Create(
+                _binding = new CaptureRunMarkerBinding(
                     layout.TestRunId,
                     InitId,
                     layout.StagingRunRootSha256,

@@ -269,7 +269,7 @@ namespace Zantetsu.Core.Tests
             out CountingHandle firstHandle,
             out CountingHandle secondHandle)
         {
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId, InitId, layout.StagingRunRootSha256, layout.FinalRunRootSha256);
 
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator =

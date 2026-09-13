@@ -24,8 +24,6 @@ namespace Zantetsu.Core.Tests
 
         private static Type GetGeneratorType() => GetTypeFromAssembly("CaptureRunInitializationIdGenerator");
 
-        private static Type GetFactoryType() => GetTypeFromAssembly("CaptureRunMarkerBindingFactory");
-
         private static Exception Unwrap(Exception ex)
         {
             if (ex is TargetInvocationException tie && tie.InnerException != null)
@@ -65,9 +63,7 @@ namespace Zantetsu.Core.Tests
 
         private static object CreateBinding(long testRunId, string initId, string stagingHash, string finalHash)
         {
-            MethodInfo method = GetFactoryType().GetMethod("Create", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(method, Is.Not.Null);
-            return method.Invoke(null, new object[] { testRunId, initId, stagingHash, finalHash });
+            return new CaptureRunMarkerBinding(testRunId, initId, stagingHash, finalHash);
         }
 
         // ---- Create ----
@@ -181,10 +177,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(entropy, Is.EqualTo(copy));
         }
 
-        // ---- Integration with the marker factory ----
+        // ---- Integration with the marker binding ----
 
         [Test]
-        public void GeneratedId_PassesBindingFactory()
+        public void GeneratedId_PassesBinding()
         {
             string id = Create();
             object binding = CreateBinding(1, id, StagingHash, FinalHash);

@@ -1427,7 +1427,7 @@ namespace Zantetsu.Core.Tests
                 File.WriteAllBytes(finalChunkPath, chunkBytes);
             }
 
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 layout.StagingRunRootSha256,
@@ -1539,7 +1539,7 @@ namespace Zantetsu.Core.Tests
                 IsWindows ? "C:\\staging" : "/staging",
                 IsWindows ? "D:\\final" : "/final",
                 1);
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 layout.StagingRunRootSha256,

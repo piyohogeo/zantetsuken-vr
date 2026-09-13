@@ -4,7 +4,6 @@ using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
-using Zantetsu.Trace;
 
 namespace Zantetsu.Core.Tests
 {
@@ -16,413 +15,187 @@ namespace Zantetsu.Core.Tests
 
         private const string FinalHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
-        private static Type GetTypeFromAssembly(string simpleName)
+        private static CaptureRunMarkerBinding Create(
+            long testRunId = 1,
+            string initId = InitId,
+            string stagingHash = StagingHash,
+            string finalHash = FinalHash)
         {
-            Type type = typeof(TraceRunContext).Assembly.GetType("Zantetsu.Observability." + simpleName);
-            Assert.That(type, Is.Not.Null, simpleName + " type not found.");
-            return type;
+            return new CaptureRunMarkerBinding(testRunId, initId, stagingHash, finalHash);
         }
 
-        private static Type GetInitMarkerType() => GetTypeFromAssembly("CaptureRunInitializationMarker");
-
-        private static Type GetReadyMarkerType() => GetTypeFromAssembly("CaptureRunReadyMarker");
-
-        private static Type GetBindingType() => GetTypeFromAssembly("CaptureRunMarkerBinding");
-
-        private static Type GetRoleType() => GetTypeFromAssembly("CaptureRunRootRole");
-
-        private static Type GetInitCodecType() => GetTypeFromAssembly("CaptureRunInitializationMarkerCodec");
-
-        private static object Role(string name) => Enum.Parse(GetRoleType(), name);
-
-        private static object GetProperty(object target, string name)
-        {
-            PropertyInfo prop = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(prop, Is.Not.Null, target.GetType().Name + "." + name + " property not found.");
-            return prop.GetValue(target);
-        }
-
-        private static Exception Unwrap(Exception ex)
-        {
-            if (ex is TargetInvocationException tie && tie.InnerException != null)
-            {
-                return tie.InnerException;
-            }
-
-            return ex;
-        }
-
-        private static object MakeInitMarker(long testRunId, string initId, object rootRole, string stagingHash, string finalHash)
-        {
-            ConstructorInfo ctor = GetInitMarkerType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { typeof(long), typeof(string), GetRoleType(), typeof(string), typeof(string) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { testRunId, initId, rootRole, stagingHash, finalHash });
-        }
-
-        private static object MakeReadyMarker(long testRunId, string initId, string stagingInitSha256, string finalInitSha256)
-        {
-            ConstructorInfo ctor = GetReadyMarkerType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { typeof(long), typeof(string), typeof(string), typeof(string) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { testRunId, initId, stagingInitSha256, finalInitSha256 });
-        }
-
-        private static string ComputeContentSha256(object initMarker)
-        {
-            MethodInfo method = GetInitCodecType().GetMethod("ComputeContentSha256", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(method, Is.Not.Null);
-            return (string)method.Invoke(null, new object[] { initMarker });
-        }
-
-        private static object MakeBinding(object stagingInit, object finalInit, object stagingReady, object finalReady)
-        {
-            ConstructorInfo ctor = GetBindingType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetInitMarkerType(), GetInitMarkerType(), GetReadyMarkerType(), GetReadyMarkerType() },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { stagingInit, finalInit, stagingReady, finalReady });
-        }
-
-        private static Exception MakeBindingException(object stagingInit, object finalInit, object stagingReady, object finalReady)
+        private static Exception CreateException(
+            long testRunId = 1,
+            string initId = InitId,
+            string stagingHash = StagingHash,
+            string finalHash = FinalHash)
         {
             try
             {
-                MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
+                Create(testRunId, initId, stagingHash, finalHash);
                 return null;
             }
             catch (Exception ex)
             {
-                return Unwrap(ex);
+                return ex;
             }
         }
 
-        private static void MakeValidFixture(out object stagingInit, out object finalInit, out object stagingReady, out object finalReady)
-        {
-            stagingInit = MakeInitMarker(1, InitId, Role("Staging"), StagingHash, FinalHash);
-            finalInit = MakeInitMarker(1, InitId, Role("Final"), StagingHash, FinalHash);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            string finalInitSha = ComputeContentSha256(finalInit);
-
-            stagingReady = MakeReadyMarker(1, InitId, stagingInitSha, finalInitSha);
-            finalReady = MakeReadyMarker(1, InitId, stagingInitSha, finalInitSha);
-        }
-
-        // ---- Construction ----
+        // ---- Generation ----
 
         [Test]
-        public void Constructor_AllNull_RejectedWithParamName()
+        public void Create_ValidInput_ReturnsBinding()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            Exception e1 = MakeBindingException(null, finalInit, stagingReady, finalReady);
-            Assert.That(e1, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)e1).ParamName, Is.EqualTo("stagingInitialization"));
-
-            Exception e2 = MakeBindingException(stagingInit, null, stagingReady, finalReady);
-            Assert.That(e2, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)e2).ParamName, Is.EqualTo("finalInitialization"));
-
-            Exception e3 = MakeBindingException(stagingInit, finalInit, null, finalReady);
-            Assert.That(e3, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)e3).ParamName, Is.EqualTo("stagingReady"));
-
-            Exception e4 = MakeBindingException(stagingInit, finalInit, stagingReady, null);
-            Assert.That(e4, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)e4).ParamName, Is.EqualTo("finalReady"));
+            Assert.That(Create(), Is.Not.Null);
         }
 
         [Test]
-        public void ValidFixture_Constructs()
+        public void Init_Roles_AreStagingAndFinal()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            CaptureRunMarkerBinding binding = Create();
 
-            object binding = MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
-            Assert.That(binding, Is.Not.Null);
+            Assert.That(binding.StagingInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Staging));
+            Assert.That(binding.FinalInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Final));
         }
 
         [Test]
-        public void HoldsMarkers_ByReference()
+        public void Values_ArePreservedExactly()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            CaptureRunMarkerBinding binding = Create(42, InitId, StagingHash, FinalHash);
 
-            object binding = MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
+            Assert.That(binding.TestRunId, Is.EqualTo(42));
+            Assert.That(binding.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(binding.StagingRunRootSha256, Is.EqualTo(StagingHash));
+            Assert.That(binding.FinalRunRootSha256, Is.EqualTo(FinalHash));
 
-            Assert.That(GetProperty(binding, "StagingInitialization"), Is.SameAs(stagingInit));
-            Assert.That(GetProperty(binding, "FinalInitialization"), Is.SameAs(finalInit));
-            Assert.That(GetProperty(binding, "StagingReady"), Is.SameAs(stagingReady));
-            Assert.That(GetProperty(binding, "FinalReady"), Is.SameAs(finalReady));
+            Assert.That(binding.StagingInitialization.TestRunId, Is.EqualTo(42));
+            Assert.That(binding.FinalInitialization.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(binding.StagingInitialization.StagingRunRootSha256, Is.EqualTo(StagingHash));
+            Assert.That(binding.FinalInitialization.FinalRunRootSha256, Is.EqualTo(FinalHash));
         }
 
         [Test]
-        public void ForwardsValuesFromStagingInitialization()
+        public void ReadyHashes_MatchExistingCodec()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            CaptureRunMarkerBinding binding = Create();
 
-            object binding = MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
+            string expectedStaging = CaptureRunInitializationMarkerCodec.ComputeContentSha256(binding.StagingInitialization);
+            string expectedFinal = CaptureRunInitializationMarkerCodec.ComputeContentSha256(binding.FinalInitialization);
 
-            Assert.That((long)GetProperty(binding, "TestRunId"), Is.EqualTo((long)GetProperty(stagingInit, "TestRunId")));
-            Assert.That((string)GetProperty(binding, "RunInitializationId"), Is.EqualTo((string)GetProperty(stagingInit, "RunInitializationId")));
-            Assert.That((string)GetProperty(binding, "StagingRunRootSha256"), Is.EqualTo((string)GetProperty(stagingInit, "StagingRunRootSha256")));
-            Assert.That((string)GetProperty(binding, "FinalRunRootSha256"), Is.EqualTo((string)GetProperty(stagingInit, "FinalRunRootSha256")));
-        }
-
-        // ---- Role validation ----
-
-        [Test]
-        public void StagingRoleFinal_Rejected()
-        {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            object badStaging = MakeInitMarker(1, InitId, Role("Final"), StagingHash, FinalHash);
-
-            Exception ex = MakeBindingException(badStaging, finalInit, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingInitialization"));
+            Assert.That(binding.StagingReady.StagingInitSha256, Is.EqualTo(expectedStaging));
+            Assert.That(binding.StagingReady.FinalInitSha256, Is.EqualTo(expectedFinal));
         }
 
         [Test]
-        public void FinalRoleStaging_Rejected()
+        public void Ready_CanonicalBytes_Identical()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            CaptureRunMarkerBinding binding = Create();
 
-            object badFinal = MakeInitMarker(1, InitId, Role("Staging"), StagingHash, FinalHash);
+            byte[] stagingBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
+            byte[] finalBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.FinalReady);
 
-            Exception ex = MakeBindingException(stagingInit, badFinal, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalInitialization"));
+            Assert.That(finalBytes, Is.EqualTo(stagingBytes));
         }
 
-        // ---- Init marker agreement ----
+        // ---- Validation delegation ----
 
         [Test]
-        public void TestRunIdMismatch_Rejected()
+        public void TestRunId_ZeroAndNegative_Rejected()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            Exception zero = CreateException(testRunId: 0);
+            Assert.That(zero, Is.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(((ArgumentOutOfRangeException)zero).ParamName, Is.EqualTo("testRunId"));
 
-            object badFinal = MakeInitMarker(2, InitId, Role("Final"), StagingHash, FinalHash);
-
-            Exception ex = MakeBindingException(stagingInit, badFinal, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalInitialization"));
+            Exception negative = CreateException(testRunId: -1);
+            Assert.That(negative, Is.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(((ArgumentOutOfRangeException)negative).ParamName, Is.EqualTo("testRunId"));
         }
 
         [Test]
-        public void InitializationIdMismatch_Rejected()
+        public void InitializationId_Invalid_Rejected()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            Exception nullId = CreateException(initId: null);
+            Assert.That(nullId, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullId).ParamName, Is.EqualTo("runInitializationId"));
 
-            object badFinal = MakeInitMarker(1, "11111111111111111111111111111111", Role("Final"), StagingHash, FinalHash);
-
-            Exception ex = MakeBindingException(stagingInit, badFinal, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalInitialization"));
+            AssertInvalidArgument(CreateException(initId: new string('0', 31)), "runInitializationId");
+            AssertInvalidArgument(CreateException(initId: new string('0', 33)), "runInitializationId");
+            AssertInvalidArgument(CreateException(initId: new string('A', 32)), "runInitializationId");
+            AssertInvalidArgument(CreateException(initId: new string('g', 32)), "runInitializationId");
         }
 
         [Test]
-        public void StagingRootHashMismatch_Rejected()
+        public void StagingRootHash_Invalid_Rejected()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            Exception nullHash = CreateException(stagingHash: null);
+            Assert.That(nullHash, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullHash).ParamName, Is.EqualTo("stagingRunRootSha256"));
 
-            object badFinal = MakeInitMarker(1, InitId, Role("Final"), new string('0', 64), FinalHash);
-
-            Exception ex = MakeBindingException(stagingInit, badFinal, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalInitialization"));
+            AssertInvalidArgument(CreateException(stagingHash: new string('0', 63)), "stagingRunRootSha256");
+            AssertInvalidArgument(CreateException(stagingHash: new string('0', 65)), "stagingRunRootSha256");
+            AssertInvalidArgument(CreateException(stagingHash: new string('A', 64)), "stagingRunRootSha256");
+            AssertInvalidArgument(CreateException(stagingHash: new string('g', 64)), "stagingRunRootSha256");
         }
 
         [Test]
-        public void FinalRootHashMismatch_Rejected()
+        public void FinalRootHash_Invalid_Rejected()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            Exception nullHash = CreateException(finalHash: null);
+            Assert.That(nullHash, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullHash).ParamName, Is.EqualTo("finalRunRootSha256"));
 
-            object badFinal = MakeInitMarker(1, InitId, Role("Final"), StagingHash, new string('0', 64));
-
-            Exception ex = MakeBindingException(stagingInit, badFinal, stagingReady, finalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalInitialization"));
-        }
-
-        // ---- Ready copy agreement ----
-
-        [Test]
-        public void ReadyCopyPropertyDifferences_Rejected()
-        {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            string finalInitSha = ComputeContentSha256(finalInit);
-
-            // TestRunId difference in staging ready.
-            Exception e1 = MakeBindingException(
-                stagingInit, finalInit,
-                MakeReadyMarker(2, InitId, stagingInitSha, finalInitSha),
-                finalReady);
-            Assert.That(e1, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)e1).ParamName, Is.EqualTo("finalReady"));
-
-            // RunInitializationId difference in staging ready.
-            Exception e2 = MakeBindingException(
-                stagingInit, finalInit,
-                MakeReadyMarker(1, "11111111111111111111111111111111", stagingInitSha, finalInitSha),
-                finalReady);
-            Assert.That(e2, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)e2).ParamName, Is.EqualTo("finalReady"));
-
-            // StagingInitSha256 difference in staging ready.
-            Exception e3 = MakeBindingException(
-                stagingInit, finalInit,
-                MakeReadyMarker(1, InitId, new string('0', 64), finalInitSha),
-                finalReady);
-            Assert.That(e3, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)e3).ParamName, Is.EqualTo("finalReady"));
-
-            // FinalInitSha256 difference in staging ready.
-            Exception e4 = MakeBindingException(
-                stagingInit, finalInit,
-                MakeReadyMarker(1, InitId, stagingInitSha, new string('1', 64)),
-                finalReady);
-            Assert.That(e4, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)e4).ParamName, Is.EqualTo("finalReady"));
-        }
-
-        // ---- Ready vs init agreement ----
-
-        [Test]
-        public void ReadyTestRunIdMismatchWithInit_Rejected()
-        {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            string finalInitSha = ComputeContentSha256(finalInit);
-
-            object badStagingReady = MakeReadyMarker(2, InitId, stagingInitSha, finalInitSha);
-            object badFinalReady = MakeReadyMarker(2, InitId, stagingInitSha, finalInitSha);
-
-            Exception ex = MakeBindingException(stagingInit, finalInit, badStagingReady, badFinalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingReady"));
+            AssertInvalidArgument(CreateException(finalHash: new string('0', 63)), "finalRunRootSha256");
+            AssertInvalidArgument(CreateException(finalHash: new string('0', 65)), "finalRunRootSha256");
+            AssertInvalidArgument(CreateException(finalHash: new string('A', 64)), "finalRunRootSha256");
+            AssertInvalidArgument(CreateException(finalHash: new string('g', 64)), "finalRunRootSha256");
         }
 
         [Test]
-        public void ReadyInitializationIdMismatchWithInit_Rejected()
+        public void Exceptions_AreNotTransformedOrWrapped()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            string finalInitSha = ComputeContentSha256(finalInit);
-
-            object badStagingReady = MakeReadyMarker(1, "11111111111111111111111111111111", stagingInitSha, finalInitSha);
-            object badFinalReady = MakeReadyMarker(1, "11111111111111111111111111111111", stagingInitSha, finalInitSha);
-
-            Exception ex = MakeBindingException(stagingInit, finalInit, badStagingReady, badFinalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingReady"));
+            Exception ex = CreateException(testRunId: 0);
+            Assert.That(ex, Is.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(ex, Is.Not.TypeOf<InvalidOperationException>());
+            Assert.That(ex, Is.Not.TypeOf<InvalidDataException>());
         }
+
+        // ---- Independence / purity ----
 
         [Test]
-        public void StagingInitHashMismatch_Rejected()
+        public void TwoCreates_AreIndependent()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            CaptureRunMarkerBinding first = Create();
+            CaptureRunMarkerBinding second = Create();
 
-            string finalInitSha = ComputeContentSha256(finalInit);
-            object badStagingReady = MakeReadyMarker(1, InitId, new string('0', 64), finalInitSha);
-            object badFinalReady = MakeReadyMarker(1, InitId, new string('0', 64), finalInitSha);
-
-            Exception ex = MakeBindingException(stagingInit, finalInit, badStagingReady, badFinalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingReady"));
+            Assert.That(second, Is.Not.SameAs(first));
+            Assert.That(second.StagingInitialization, Is.Not.SameAs(first.StagingInitialization));
+            Assert.That(second.FinalInitialization, Is.Not.SameAs(first.FinalInitialization));
+            Assert.That(second.StagingReady, Is.Not.SameAs(first.StagingReady));
         }
-
-        [Test]
-        public void FinalInitHashMismatch_Rejected()
-        {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            object badStagingReady = MakeReadyMarker(1, InitId, stagingInitSha, new string('1', 64));
-            object badFinalReady = MakeReadyMarker(1, InitId, stagingInitSha, new string('1', 64));
-
-            Exception ex = MakeBindingException(stagingInit, finalInit, badStagingReady, badFinalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalReady"));
-        }
-
-        [Test]
-        public void SwappedReadyHashes_Rejected()
-        {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            string stagingInitSha = ComputeContentSha256(stagingInit);
-            string finalInitSha = ComputeContentSha256(finalInit);
-
-            object swappedStagingReady = MakeReadyMarker(1, InitId, finalInitSha, stagingInitSha);
-            object swappedFinalReady = MakeReadyMarker(1, InitId, finalInitSha, stagingInitSha);
-
-            Exception ex = MakeBindingException(stagingInit, finalInit, swappedStagingReady, swappedFinalReady);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("stagingReady"));
-        }
-
-        [Test]
-        public void CorrectHashesFromCodec_Succeed()
-        {
-            // The fixture derives both init hashes from the existing codec, so
-            // a successful construction proves the hash check accepts
-            // codec-generated values.
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
-
-            object binding = MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
-            Assert.That(binding, Is.Not.Null);
-        }
-
-        // ---- Ownership / shape ----
 
         [Test]
         public void DoesNotModifyInputs()
         {
-            object stagingInit, finalInit, stagingReady, finalReady;
-            MakeValidFixture(out stagingInit, out finalInit, out stagingReady, out finalReady);
+            string initId = InitId;
+            string stagingHash = StagingHash;
+            string finalHash = FinalHash;
 
-            MakeBinding(stagingInit, finalInit, stagingReady, finalReady);
+            CaptureRunMarkerBinding binding = Create(1, initId, stagingHash, finalHash);
 
-            Assert.That((long)GetProperty(stagingInit, "TestRunId"), Is.EqualTo(1));
-            Assert.That((string)GetProperty(stagingInit, "RunInitializationId"), Is.EqualTo(InitId));
-            Assert.That((string)GetProperty(stagingInit, "StagingRunRootSha256"), Is.EqualTo(StagingHash));
-            Assert.That((string)GetProperty(stagingInit, "FinalRunRootSha256"), Is.EqualTo(FinalHash));
-            Assert.That((string)GetProperty(stagingReady, "RunInitializationId"), Is.EqualTo(InitId));
+            Assert.That(initId, Is.EqualTo(InitId));
+            Assert.That(stagingHash, Is.EqualTo(StagingHash));
+            Assert.That(finalHash, Is.EqualTo(FinalHash));
+            Assert.That(binding.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(binding.StagingRunRootSha256, Is.EqualTo(StagingHash));
+            Assert.That(binding.FinalRunRootSha256, Is.EqualTo(FinalHash));
         }
+
+        // ---- Shape / responsibilities ----
 
         [Test]
         public void NoPublicApi_Sealed_NotDisposable_NotUnityObject()
         {
-            Type type = GetBindingType();
+            Type type = typeof(CaptureRunMarkerBinding);
 
             Assert.That(type.IsPublic, Is.False);
             Assert.That(type.IsSealed, Is.True);
@@ -432,42 +205,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
-        }
-
-        [Test]
-        public void NoMutableStateBeyondMarkerReferences()
-        {
-            Type type = GetBindingType();
-
-            FieldInfo[] instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(instanceFields.Length, Is.EqualTo(4), "Binding must hold exactly four marker references.");
-
-            int initFields = 0;
-            int readyFields = 0;
-            foreach (FieldInfo field in instanceFields)
-            {
-                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                if (field.FieldType == GetInitMarkerType())
-                {
-                    initFields++;
-                }
-                else if (field.FieldType == GetReadyMarkerType())
-                {
-                    readyFields++;
-                }
-                else
-                {
-                    Assert.Fail(field.Name + " has unexpected type " + field.FieldType.Name + ".");
-                }
-            }
-
-            Assert.That(initFields, Is.EqualTo(2), "Binding must hold exactly two initialization markers.");
-            Assert.That(readyFields, Is.EqualTo(2), "Binding must hold exactly two ready markers.");
-
-            foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
-            {
-                Assert.That(field.IsInitOnly || field.IsLiteral, Is.True, field.Name + " must be readonly or const.");
-            }
         }
 
         [Test]
@@ -484,6 +221,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("Random"));
             Assert.That(source, Does.Not.Contain("DateTime"));
             Assert.That(source, Does.Not.Contain("Debug."));
+        }
+
+        private static void AssertInvalidArgument(Exception ex, string paramName)
+        {
+            Assert.That(ex, Is.TypeOf<ArgumentException>());
+            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo(paramName));
         }
 
         private static string LocateSource(string relativePath)

@@ -407,7 +407,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerBinding MakeMarkerBinding(CaptureRunRootLayout layout)
         {
-            return CaptureRunMarkerBindingFactory.Create(
+            return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 layout.StagingRunRootSha256,
@@ -1249,7 +1249,7 @@ namespace Zantetsu.Core.Tests
 
             // Break the peer binding: rewrite the staging init marker so its
             // content hash no longer matches the ready marker's StagingInitSha256.
-            CaptureRunMarkerBinding other = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding other = new CaptureRunMarkerBinding(
                 layout.TestRunId, "11111111111111111111111111111111", layout.StagingRunRootSha256, layout.FinalRunRootSha256);
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, "run.init"),

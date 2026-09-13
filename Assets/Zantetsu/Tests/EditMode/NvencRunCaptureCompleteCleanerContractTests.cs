@@ -492,7 +492,7 @@ namespace Zantetsu.Core.Tests
                 // that is not the one this Run's final initialization marker
                 // hashes to. The ready marker is the record that binds the two
                 // init hashes, so a half-correct binding must not be accepted.
-                CaptureRunMarkerBinding genuine = CaptureRunMarkerBindingFactory.Create(
+                CaptureRunMarkerBinding genuine = new CaptureRunMarkerBinding(
                     operation.TestRunId,
                     operation.RunInitializationId,
                     sandbox.Layout.StagingRunRootSha256,

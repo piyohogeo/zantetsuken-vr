@@ -135,20 +135,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ReadyMarkers_DistinctInstances_AllValuesEqual()
-        {
-            CaptureRunInitializationDocumentSet result = Create(MakeLayout());
-
-            CaptureRunMarkerBinding binding = result.Plan.MarkerBinding;
-
-            Assert.That(binding.FinalReady, Is.Not.SameAs(binding.StagingReady));
-            Assert.That(binding.StagingReady.TestRunId, Is.EqualTo(binding.FinalReady.TestRunId));
-            Assert.That(binding.StagingReady.RunInitializationId, Is.EqualTo(binding.FinalReady.RunInitializationId));
-            Assert.That(binding.StagingReady.StagingInitSha256, Is.EqualTo(binding.FinalReady.StagingInitSha256));
-            Assert.That(binding.StagingReady.FinalInitSha256, Is.EqualTo(binding.FinalReady.FinalInitSha256));
-        }
-
-        [Test]
         public void CanonicalBytes_MatchCodecs()
         {
             CaptureRunRootLayout layout = MakeLayout();

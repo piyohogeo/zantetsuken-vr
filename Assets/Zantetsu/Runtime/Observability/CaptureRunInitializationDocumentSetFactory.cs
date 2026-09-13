@@ -42,7 +42,7 @@ namespace Zantetsu.Observability
                 new CaptureRunMarkerPathSet(rootLayout);
 
             CaptureRunMarkerBinding markerBinding =
-                CaptureRunMarkerBindingFactory.Create(
+                new CaptureRunMarkerBinding(
                     rootLayout.TestRunId,
                     runInitializationId,
                     rootLayout.StagingRunRootSha256,

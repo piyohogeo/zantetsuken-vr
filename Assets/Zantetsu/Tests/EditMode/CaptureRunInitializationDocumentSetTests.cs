@@ -29,7 +29,7 @@ namespace Zantetsu.Core.Tests
                 new CaptureRunMarkerPathSet(layout);
 
             CaptureRunMarkerBinding binding =
-                CaptureRunMarkerBindingFactory.Create(
+                new CaptureRunMarkerBinding(
                     layout.TestRunId,
                     InitId,
                     layout.StagingRunRootSha256,
@@ -78,30 +78,6 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
 
             Assert.That(set.Plan, Is.SameAs(plan));
-        }
-
-        [Test]
-        public void ReadyBytesMismatch_FailsClosed()
-        {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunMarkerBinding goodBinding = plan.MarkerBinding;
-
-            CaptureRunMarkerBinding badBinding = (CaptureRunMarkerBinding)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunMarkerBinding));
-            SetField(badBinding, "_stagingInitialization", goodBinding.StagingInitialization);
-            SetField(badBinding, "_finalInitialization", goodBinding.FinalInitialization);
-            SetField(badBinding, "_stagingReady", goodBinding.StagingReady);
-            SetField(badBinding, "_finalReady", new CaptureRunReadyMarker(
-                goodBinding.FinalReady.TestRunId,
-                goodBinding.FinalReady.RunInitializationId,
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                goodBinding.FinalReady.FinalInitSha256));
-
-            CaptureRunInitializationPlan badPlan = (CaptureRunInitializationPlan)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationPlan));
-            SetField(badPlan, "_markerBinding", badBinding);
-
-            Assert.Throws<InvalidOperationException>(() => new CaptureRunInitializationDocumentSet(badPlan));
         }
 
         // ---- Canonical bytes ----
@@ -378,7 +354,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("SHA-256"));
             Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
             Assert.That(source, Does.Not.Contain("new CaptureRunInitializationMarker"));
             Assert.That(source, Does.Not.Contain("new CaptureRunReadyMarker"));
         }

@@ -354,7 +354,7 @@ namespace Zantetsu.Core.Tests
         /// </summary>
         private CaptureRunInitializationOpenOutcome MakeRecoveryOutcome(CaptureRunRootLayout layout)
         {
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId, InitId, layout.StagingRunRootSha256, layout.FinalRunRootSha256);
 
             CaptureRunInitializationRootObservation staging = MakeRootObservation(

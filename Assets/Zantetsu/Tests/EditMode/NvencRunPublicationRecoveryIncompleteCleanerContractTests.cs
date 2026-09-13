@@ -894,7 +894,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout,
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId, InitId, layout.StagingRunRootSha256, layout.FinalRunRootSha256);
 
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator =
@@ -1080,7 +1080,7 @@ namespace Zantetsu.Core.Tests
             /// </summary>
             private byte[] MakeForeignPeerReadyBytes()
             {
-                CaptureRunMarkerBinding other = CaptureRunMarkerBindingFactory.Create(
+                CaptureRunMarkerBinding other = new CaptureRunMarkerBinding(
                     Layout.TestRunId,
                     OtherInitId,
                     Layout.StagingRunRootSha256,

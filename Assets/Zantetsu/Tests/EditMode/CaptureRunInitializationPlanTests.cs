@@ -35,7 +35,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerBinding MakeBinding(CaptureRunRootLayout layout, string initId = InitId)
         {
-            return CaptureRunMarkerBindingFactory.Create(
+            return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 initId,
                 layout.StagingRunRootSha256,
@@ -129,7 +129,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout(1);
             CaptureRunMarkerPathSet markerPaths = MakeMarkerPaths(layout);
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 2,
                 InitId,
                 layout.StagingRunRootSha256,
@@ -146,7 +146,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet markerPaths = MakeMarkerPaths(layout);
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 WrongStagingHash,
@@ -163,7 +163,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet markerPaths = MakeMarkerPaths(layout);
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 layout.StagingRunRootSha256,
@@ -229,7 +229,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet markerPaths = MakeMarkerPaths(layout);
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 WrongStagingHash,
@@ -338,7 +338,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("SHA256"));
             Assert.That(source, Does.Not.Contain("SHA-256"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
         }
 
         [Test]

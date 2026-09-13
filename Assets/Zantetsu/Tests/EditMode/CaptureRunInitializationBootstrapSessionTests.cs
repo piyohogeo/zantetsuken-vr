@@ -1141,7 +1141,6 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(bootstrap, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(bootstrap, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
             Assert.That(bootstrap, Does.Not.Contain("RandomNumberGenerator"));
         }
 

@@ -71,7 +71,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerBinding MakeBinding(CaptureRunRootLayout layout)
         {
-            return CaptureRunMarkerBindingFactory.Create(
+            return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
                 layout.StagingRunRootSha256,

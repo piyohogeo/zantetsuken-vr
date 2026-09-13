@@ -303,7 +303,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout,
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
-            CaptureRunMarkerBinding binding = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 layout.TestRunId, InitId, layout.StagingRunRootSha256, layout.FinalRunRootSha256);
 
             CaptureRunInitializationRecoveryOrchestrationCoordinator orchestrator =

@@ -473,7 +473,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationDocumentSetFactory"));
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
             Assert.That(source, Does.Not.Contain("new CaptureRunInitializationMarker"));
             Assert.That(source, Does.Not.Contain("new CaptureRunReadyMarker"));
             Assert.That(source, Does.Not.Contain("File."));

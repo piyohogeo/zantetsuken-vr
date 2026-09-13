@@ -10,20 +10,19 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// Construction serializes, in order, the staging and final initialization
-    /// markers with <see cref="CaptureRunInitializationMarkerCodec"/>, then the
-    /// staging and final ready markers with
-    /// <see cref="CaptureRunReadyMarkerCodec"/>, verifies that both ready
-    /// markers produce byte-for-byte identical canonical bytes, and verifies
-    /// that every byte array is non-empty and within the codec's documented
-    /// maximum. The plan reference and the three owned byte arrays are held
-    /// only after every check succeeds.
+    /// markers with <see cref="CaptureRunInitializationMarkerCodec"/> and then
+    /// the binding's ready marker with
+    /// <see cref="CaptureRunReadyMarkerCodec"/>, and verifies that every byte
+    /// array is non-empty and within the codec's documented maximum. The plan
+    /// reference and the three owned byte arrays are held only after every
+    /// check succeeds.
     /// </para>
     /// <para>
-    /// Because the two ready markers of a binding always serialize to identical
-    /// bytes, only one ready byte array is held; the two ready getters each
-    /// return an independent defensive copy of that array. Every getter returns
-    /// a fresh copy so callers can never mutate the internal arrays. The caller
-    /// owns each returned copy, and mutating it never affects this set.
+    /// Both Run roots receive the same ready content, so only one ready byte
+    /// array is held; the two ready getters each return an independent
+    /// defensive copy of it. Every getter returns a fresh copy so callers can
+    /// never mutate the internal arrays. The caller owns each returned copy,
+    /// and mutating it never affects this set.
     /// </para>
     /// <para>
     /// This type owns the arrays returned by the codecs, but never re-computes
@@ -58,22 +57,16 @@ namespace Zantetsu.Observability
 
             byte[] stagingInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
             byte[] finalInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization);
-            byte[] stagingReadyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
-            byte[] finalReadyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.FinalReady);
-
-            if (!BytesEqual(stagingReadyBytes, finalReadyBytes))
-            {
-                throw new InvalidOperationException("Staging and final ready markers must serialize to identical canonical bytes.");
-            }
+            byte[] readyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
 
             RequireNonEmptyWithinLimit(stagingInitializationBytes, CaptureRunInitializationMarkerCodec.MaximumCanonicalByteCount, "Staging initialization");
             RequireNonEmptyWithinLimit(finalInitializationBytes, CaptureRunInitializationMarkerCodec.MaximumCanonicalByteCount, "Final initialization");
-            RequireNonEmptyWithinLimit(stagingReadyBytes, CaptureRunReadyMarkerCodec.MaximumCanonicalByteCount, "Ready");
+            RequireNonEmptyWithinLimit(readyBytes, CaptureRunReadyMarkerCodec.MaximumCanonicalByteCount, "Ready");
 
             _plan = plan;
             _stagingInitializationBytes = stagingInitializationBytes;
             _finalInitializationBytes = finalInitializationBytes;
-            _readyBytes = stagingReadyBytes;
+            _readyBytes = readyBytes;
         }
 
         internal CaptureRunInitializationPlan Plan => _plan;
@@ -97,24 +90,6 @@ namespace Zantetsu.Observability
             byte[] copy = new byte[source.Length];
             Array.Copy(source, copy, source.Length);
             return copy;
-        }
-
-        private static bool BytesEqual(byte[] left, byte[] right)
-        {
-            if (left.Length != right.Length)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < left.Length; i++)
-            {
-                if (left[i] != right[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private static void RequireNonEmptyWithinLimit(byte[] bytes, int maximumByteCount, string label)

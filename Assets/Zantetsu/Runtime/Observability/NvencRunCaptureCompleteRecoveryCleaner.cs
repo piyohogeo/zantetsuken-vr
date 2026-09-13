@@ -543,7 +543,7 @@ namespace Zantetsu.Observability
             // to a deletion.
             initFile.Dispose();
 
-            CaptureRunMarkerBinding expected = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding expected = new CaptureRunMarkerBinding(
                 operation.TestRunId,
                 operation.RunInitializationId,
                 _rootLayout.StagingRunRootSha256,

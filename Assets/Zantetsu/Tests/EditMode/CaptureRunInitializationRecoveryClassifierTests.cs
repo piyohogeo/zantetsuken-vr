@@ -57,7 +57,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunMarkerBinding MakeBinding(CaptureRunRootLayout layout, string initId = InitId)
         {
-            return CaptureRunMarkerBindingFactory.Create(
+            return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 initId,
                 layout.StagingRunRootSha256,
@@ -914,8 +914,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunMarkerBinding));
             SetField(forgedReady, "_stagingInitialization", observed.StagingInitialization);
             SetField(forgedReady, "_finalInitialization", observed.FinalInitialization);
-            SetField(forgedReady, "_stagingReady", ChangeReady(observed.StagingReady, stagingInitSha256: StagingHash));
-            SetField(forgedReady, "_finalReady", observed.FinalReady);
+            SetField(forgedReady, "_ready", ChangeReady(observed.StagingReady, stagingInitSha256: StagingHash));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunInitializationRecoveryDecision(
@@ -952,8 +951,7 @@ namespace Zantetsu.Core.Tests
 
             AssertBindingWithNullMarkerRejected(snapshot, observed, "_stagingInitialization");
             AssertBindingWithNullMarkerRejected(snapshot, observed, "_finalInitialization");
-            AssertBindingWithNullMarkerRejected(snapshot, observed, "_stagingReady");
-            AssertBindingWithNullMarkerRejected(snapshot, observed, "_finalReady");
+            AssertBindingWithNullMarkerRejected(snapshot, observed, "_ready");
         }
 
         [Test]
@@ -971,8 +969,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunMarkerBinding));
             SetField(forged, "_stagingInitialization", forgedInit);
             SetField(forged, "_finalInitialization", observed.FinalInitialization);
-            SetField(forged, "_stagingReady", observed.StagingReady);
-            SetField(forged, "_finalReady", observed.FinalReady);
+            SetField(forged, "_ready", observed.StagingReady);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunInitializationRecoveryDecision(
@@ -1171,8 +1168,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunMarkerBinding));
             SetField(forged, "_stagingInitialization", template.StagingInitialization);
             SetField(forged, "_finalInitialization", template.FinalInitialization);
-            SetField(forged, "_stagingReady", template.StagingReady);
-            SetField(forged, "_finalReady", template.FinalReady);
+            SetField(forged, "_ready", template.StagingReady);
             SetField(forged, fieldName, null);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(

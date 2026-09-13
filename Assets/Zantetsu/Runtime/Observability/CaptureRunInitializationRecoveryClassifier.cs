@@ -11,9 +11,9 @@ namespace Zantetsu.Observability
     /// <para>
     /// Classification order is fixed: priority collision signals are decided
     /// first, then canonical initialization markers are verified against the
-    /// root layout and against the expected binding built through the existing
-    /// <see cref="CaptureRunMarkerBindingFactory"/>, and only then is a
-    /// disposition selected. A collision disposition never mutates anything;
+    /// root layout and against the expected binding built from the Run's own
+    /// scalars through <see cref="CaptureRunMarkerBinding"/>, and only then is
+    /// a disposition selected. A collision disposition never mutates anything;
     /// the classifier never creates, deletes, renames, or repairs a root,
     /// temporary entry, marker, or payload, never acquires or releases a lock,
     /// and never re-issues an initialization ID.
@@ -82,7 +82,7 @@ namespace Zantetsu.Observability
                 return CaptureRunInitializationRecoveryDisposition.RunRootCollision;
             }
 
-            CaptureRunMarkerBinding expected = CaptureRunMarkerBindingFactory.Create(
+            CaptureRunMarkerBinding expected = new CaptureRunMarkerBinding(
                 rootLayout.TestRunId,
                 sourceInit.RunInitializationId,
                 rootLayout.StagingRunRootSha256,
