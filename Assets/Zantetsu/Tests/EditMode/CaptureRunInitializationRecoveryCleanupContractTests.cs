@@ -629,9 +629,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.IssuedBy, Is.SameAs(backend));
             Assert.That(receipt.Operation, Is.SameAs(op));
             Assert.That(receipt.IsValid, Is.True);
-            Assert.That(receipt.ActionPlan, Is.SameAs(plan));
-            Assert.That(receipt.TargetPath, Is.EqualTo(op.TargetPath));
-            Assert.That(receipt.TestRunId, Is.EqualTo(layout.TestRunId));
         }
 
         [Test]
@@ -816,7 +813,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(disposeLog, Is.Empty, "The operation and receipt must not dispose the owner.");
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(op.LockIdentityEvidence, Is.SameAs(snapshot.Operation.LockIdentityEvidence));
-            Assert.That(receipt.LockIdentityEvidence, Is.SameAs(snapshot.Operation.LockIdentityEvidence));
         }
 
         // ---- Shape ----

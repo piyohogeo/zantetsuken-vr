@@ -8,8 +8,16 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This type owns and disposes nothing and performs no filesystem work. It
-    /// is not an <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
+    /// The type holds exactly two readonly references — the issuing backend and
+    /// the cleanup operation. What was cleaned up is read from
+    /// <see cref="Operation"/>; the receipt restates none of its values and
+    /// duplicates no path, marker, plan, Run identity, or lock evidence as a
+    /// field of its own.
+    /// </para>
+    /// <para>
+    /// This type owns and disposes nothing — neither the issuing backend nor
+    /// the operation — and performs no filesystem work. It is not an
+    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
     /// <see cref="IsValid"/> recomputes the held checks from the values without
     /// throwing, including after the lease has been released.
     /// </para>
@@ -45,28 +53,6 @@ namespace Zantetsu.Observability
         internal ICaptureRunInitializationRecoveryCleanupBackend IssuedBy => _issuedBy;
 
         internal CaptureRunInitializationRecoveryCleanupOperation Operation => _operation;
-
-        internal CaptureRunInitializationRecoveryActionPlan ActionPlan => _operation.ActionPlan;
-
-        internal CaptureRunMarkerPathSet MarkerPaths => _operation.MarkerPaths;
-
-        internal int StepIndex => _operation.StepIndex;
-
-        internal CaptureRunInitializationRecoveryStep Step => _operation.Step;
-
-        internal CaptureRunInitializationRecoveryAction Action => _operation.Action;
-
-        internal CaptureRunRootRole RootRole => _operation.RootRole;
-
-        internal CaptureRunMarkerKind MarkerKind => _operation.MarkerKind;
-
-        internal string TargetPath => _operation.TargetPath;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
 
         internal bool IsValid =>
             _issuedBy != null
