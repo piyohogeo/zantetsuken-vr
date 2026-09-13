@@ -31,10 +31,11 @@ namespace Zantetsu.Observability
     /// batch; it must re-inspect under the held lock.
     /// </para>
     /// <para>
-    /// A contract-violating receipt — null, issued by a foreign backend, bound
-    /// to a different operation, or naming an operation that no longer passes
-    /// index-local validation — throws <see cref="InvalidOperationException"/>
-    /// and also skips the remaining steps.
+    /// A contract-violating receipt, publish or commit — null, issued by a
+    /// foreign backend, bound to a different operation, or naming an operation
+    /// that no longer passes index-local validation — throws
+    /// <see cref="InvalidOperationException"/> and also skips the remaining
+    /// steps.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunPublicationArtifactRecoveryExecutionCoordinator
@@ -118,20 +119,6 @@ namespace Zantetsu.Observability
                 || !operation.IsValidIndexLocal(token))
             {
                 throw new InvalidOperationException("Publish receipt must be issued by this publisher for this publish operation.");
-            }
-
-            if (receipt.EntryIndex != operation.EntryIndex
-                || receipt.ArtifactKind != operation.ArtifactKind
-                || receipt.CaptureFrameId != operation.CaptureFrameId
-                || !string.Equals(receipt.SourcePath, operation.SourcePath, StringComparison.Ordinal)
-                || !string.Equals(receipt.DestinationPath, operation.DestinationPath, StringComparison.Ordinal)
-                || receipt.ExpectedByteCount != operation.ExpectedByteCount
-                || !string.Equals(receipt.ExpectedContentSha256, operation.ExpectedContentSha256, StringComparison.Ordinal)
-                || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || receipt.TestRunId != operation.TestRunId
-                || !string.Equals(receipt.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException("Publish receipt must match the publish operation.");
             }
         }
 

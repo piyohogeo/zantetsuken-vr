@@ -10,7 +10,9 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The receipt is not an OS certificate or a filesystem snapshot; it only
-    /// records that one synchronous call succeeded. <see cref="IsValid"/> and
+    /// records that one synchronous call succeeded. What was published is read
+    /// from <see cref="Operation"/>: the receipt restates none of it and copies
+    /// no bytes, path, or hash. <see cref="IsValid"/> and
     /// <see cref="IsIssuedFor"/> recompute without throwing, so a receipt whose
     /// operation or lease has been corrupted or released becomes invalid.
     /// </para>
@@ -50,26 +52,6 @@ namespace Zantetsu.Observability
         internal ICaptureRunPublicationArtifactPublisher IssuedBy => _issuedBy;
 
         internal CaptureRunPublicationArtifactPublishOperation Operation => _operation;
-
-        internal int EntryIndex => _operation.EntryIndex;
-
-        internal CaptureRunPublicationArtifactKind ArtifactKind => _operation.ArtifactKind;
-
-        internal long CaptureFrameId => _operation.CaptureFrameId;
-
-        internal string SourcePath => _operation.SourcePath;
-
-        internal string DestinationPath => _operation.DestinationPath;
-
-        internal long ExpectedByteCount => _operation.ExpectedByteCount;
-
-        internal string ExpectedContentSha256 => _operation.ExpectedContentSha256;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {

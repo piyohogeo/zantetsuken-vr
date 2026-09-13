@@ -1055,22 +1055,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Execute_Publish_ForwardingMismatch_Rejected()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngSidecarPlan(out _);
-            CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
-
-            // Forge a receipt bound to the sidecar operation while the step
-            // expects the PNG operation: ArtifactKind and paths disagree.
-            FakePublisher publisher = new FakePublisher();
-            CaptureRunPublicationArtifactPublishOperation sidecarOperation = batch.GetStep(1).PublishOperation;
-            publisher.ReceiptOverride = op => new CaptureRunPublicationArtifactPublishReceipt(publisher, sidecarOperation);
-            CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(publisher, new FakeCommitter());
-
-            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
-        }
-
-        [Test]
         public void Execute_Commit_NullReceipt_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
@@ -1716,24 +1700,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(loopBody, Does.Not.Contain("AcquireValidationToken"));
 
             Assert.That(coordinatorSource, Does.Contain("IsValidIndexLocal"));
-        }
-
-        [Test]
-        public void Source_PublishForwardingComparisons()
-        {
-            string coordinatorSource = File.ReadAllText(
-                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionCoordinator.cs"));
-
-            Assert.That(coordinatorSource, Does.Contain("receipt.EntryIndex != operation.EntryIndex"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ArtifactKind != operation.ArtifactKind"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.CaptureFrameId != operation.CaptureFrameId"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.SourcePath"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.DestinationPath"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ExpectedByteCount"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ExpectedContentSha256"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.RootLayout"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.TestRunId"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.RunInitializationId"));
         }
 
         [Test]

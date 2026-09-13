@@ -550,26 +550,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.Operation, Is.SameAs(operation));
         }
 
-        [Test]
-        public void Receipt_ForwardsAllValues()
-        {
-            FakePublisher publisher = new FakePublisher();
-            CaptureRunPublicationArtifactPublishOperation operation = MakePublishOperation(out _, out _);
-
-            CaptureRunPublicationArtifactPublishReceipt receipt = new CaptureRunPublicationArtifactPublishReceipt(publisher, operation);
-
-            Assert.That(receipt.EntryIndex, Is.EqualTo(operation.EntryIndex));
-            Assert.That(receipt.ArtifactKind, Is.EqualTo(operation.ArtifactKind));
-            Assert.That(receipt.CaptureFrameId, Is.EqualTo(operation.CaptureFrameId));
-            Assert.That(receipt.SourcePath, Is.EqualTo(operation.SourcePath));
-            Assert.That(receipt.DestinationPath, Is.EqualTo(operation.DestinationPath));
-            Assert.That(receipt.ExpectedByteCount, Is.EqualTo(operation.ExpectedByteCount));
-            Assert.That(receipt.ExpectedContentSha256, Is.EqualTo(operation.ExpectedContentSha256));
-            Assert.That(receipt.RootLayout, Is.SameAs(operation.RootLayout));
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-        }
-
         // ---- Receipt IsValid / IsIssuedFor ----
 
         [Test]
