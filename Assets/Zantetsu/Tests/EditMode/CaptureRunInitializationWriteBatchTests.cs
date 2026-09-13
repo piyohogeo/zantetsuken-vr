@@ -271,40 +271,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(FieldBytes(second.FinalReady, "_canonicalBytes"), Is.Not.SameAs(FieldBytes(first.FinalReady, "_canonicalBytes")));
         }
 
-        [Test]
-        public void OwnershipTransferFailure_FailsClosed()
-        {
-            MethodInfo helper = typeof(CaptureRunInitializationWriteBatch).GetMethod(
-                "RequireOwnershipTransfer", BindingFlags.NonPublic | BindingFlags.Static);
-
-            Assert.That(helper, Is.Not.Null, "RequireOwnershipTransfer helper not found.");
-
-            byte[] buffer = new byte[8];
-
-            try
-            {
-                helper.Invoke(null, new object[] { buffer, "staging initialization" });
-                Assert.Fail("Expected the ownership postcondition to fail closed.");
-            }
-            catch (TargetInvocationException ex)
-            {
-                Assert.That(ex.InnerException, Is.InstanceOf<InvalidOperationException>());
-                Assert.That(ex.InnerException.Message, Does.Contain("did not take ownership"));
-            }
-        }
-
-        [Test]
-        public void OwnershipTransfer_NullBuffer_DoesNotThrow()
-        {
-            MethodInfo helper = typeof(CaptureRunInitializationWriteBatch).GetMethod(
-                "RequireOwnershipTransfer", BindingFlags.NonPublic | BindingFlags.Static);
-
-            Assert.That(helper, Is.Not.Null, "RequireOwnershipTransfer helper not found.");
-
-            byte[] nullBuffer = null;
-            Assert.DoesNotThrow(() => helper.Invoke(null, new object[] { nullBuffer, "staging initialization" }));
-        }
-
         // ---- Fail-closed (reflection for unreachable branches) ----
 
         [Test]

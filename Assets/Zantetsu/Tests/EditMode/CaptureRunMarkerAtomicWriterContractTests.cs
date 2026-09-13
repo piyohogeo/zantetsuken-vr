@@ -32,7 +32,7 @@ namespace Zantetsu.Core.Tests
                 CaptureRunMarkerKind.Initialization,
                 temporaryPath,
                 finalPath,
-                ref bytes);
+                bytes);
         }
 
         private sealed class FakeWriter : ICaptureRunMarkerAtomicWriter

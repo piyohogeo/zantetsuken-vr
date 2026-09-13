@@ -228,19 +228,12 @@ namespace Zantetsu.Observability
             SelectPaths(step, markerPaths, out string temporaryPath, out string finalPath);
             byte[] canonicalBytes = SerializeMarker(step, expectedBinding);
 
-            CaptureRunMarkerWriteOperation operation = new CaptureRunMarkerWriteOperation(
+            return new CaptureRunMarkerWriteOperation(
                 step.RootRole,
                 step.MarkerKind,
                 temporaryPath,
                 finalPath,
-                ref canonicalBytes);
-
-            if (canonicalBytes != null)
-            {
-                throw new InvalidOperationException("Write operation must take ownership of the canonical bytes.");
-            }
-
-            return operation;
+                canonicalBytes);
         }
 
         private static void SelectPaths(

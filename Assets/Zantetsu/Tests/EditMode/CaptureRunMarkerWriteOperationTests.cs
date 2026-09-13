@@ -37,13 +37,6 @@ namespace Zantetsu.Core.Tests
             return bytes;
         }
 
-        private static byte[] GetFieldBytes(object target, string fieldName)
-        {
-            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
-            return (byte[])field.GetValue(target);
-        }
-
         // ---- Enum contract ----
 
         [Test]
@@ -85,13 +78,12 @@ namespace Zantetsu.Core.Tests
                     string temporaryPath = finalPath + ".tmp";
                     byte[] bytes = NewBytes(8);
 
-                    CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(role, kind, temporaryPath, finalPath, ref bytes);
+                    CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(role, kind, temporaryPath, finalPath, bytes);
 
                     Assert.That(op.RootRole, Is.EqualTo(role));
                     Assert.That(op.MarkerKind, Is.EqualTo(kind));
                     Assert.That(op.TemporaryPath, Is.EqualTo(temporaryPath));
                     Assert.That(op.FinalPath, Is.EqualTo(finalPath));
-                    Assert.That(bytes, Is.Null, "Caller ref must be nulled on success.");
                 }
             }
         }
@@ -104,14 +96,14 @@ namespace Zantetsu.Core.Tests
             byte[] bytes = NewBytes(64);
 
             CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
+                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes);
 
             Assert.That(op.RootRole, Is.EqualTo(CaptureRunRootRole.Staging));
             Assert.That(op.MarkerKind, Is.EqualTo(CaptureRunMarkerKind.Initialization));
             Assert.That(op.TemporaryPath, Is.EqualTo(temporaryPath));
             Assert.That(op.FinalPath, Is.EqualTo(finalPath));
             Assert.That(op.ByteCount, Is.EqualTo(64));
-            Assert.That(op.GetCanonicalBytes().Length, Is.EqualTo(64));
+            Assert.That(op.GetCanonicalBytes(), Is.EqualTo(bytes));
         }
 
         [Test]
@@ -132,10 +124,9 @@ namespace Zantetsu.Core.Tests
                 byte[] before = (byte[])bytes.Clone();
 
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => new CaptureRunMarkerWriteOperation(role, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes));
+                    () => new CaptureRunMarkerWriteOperation(role, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes));
 
                 Assert.That(ex.ParamName, Is.EqualTo("rootRole"));
-                Assert.That(bytes, Is.Not.Null, "Caller ref must be unchanged on failure.");
                 Assert.That(bytes, Is.EqualTo(before), "Array content must be unchanged on failure.");
             }
         }
@@ -158,10 +149,9 @@ namespace Zantetsu.Core.Tests
                 byte[] before = (byte[])bytes.Clone();
 
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, kind, temporaryPath, finalPath, ref bytes));
+                    () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, kind, temporaryPath, finalPath, bytes));
 
                 Assert.That(ex.ParamName, Is.EqualTo("markerKind"));
-                Assert.That(bytes, Is.Not.Null, "Caller ref must be unchanged on failure.");
                 Assert.That(bytes, Is.EqualTo(before), "Array content must be unchanged on failure.");
             }
         }
@@ -174,15 +164,13 @@ namespace Zantetsu.Core.Tests
 
             byte[] bytes1 = NewBytes(8);
             ArgumentNullException ex1 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, null, finalPath, ref bytes1));
+                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, null, finalPath, bytes1));
             Assert.That(ex1.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes1, Is.Not.Null);
 
             byte[] bytes2 = NewBytes(8);
             ArgumentNullException ex2 = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, null, ref bytes2));
+                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, null, bytes2));
             Assert.That(ex2.ParamName, Is.EqualTo("finalPath"));
-            Assert.That(bytes2, Is.Not.Null);
         }
 
         [Test]
@@ -193,18 +181,18 @@ namespace Zantetsu.Core.Tests
 
             byte[] nullBytes = null;
             ArgumentNullException exNull = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref nullBytes));
+                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, nullBytes));
             Assert.That(exNull.ParamName, Is.EqualTo("canonicalBytes"));
 
             byte[] emptyBytes = new byte[0];
             ArgumentException exEmpty = Assert.Throws<ArgumentException>(
-                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref emptyBytes));
+                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, emptyBytes));
             Assert.That(exEmpty.ParamName, Is.EqualTo("canonicalBytes"));
             Assert.That(emptyBytes.Length, Is.EqualTo(0));
 
             byte[] tooBig = NewBytes(MaxByteCount + 1);
             ArgumentException exBig = Assert.Throws<ArgumentException>(
-                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref tooBig));
+                () => new CaptureRunMarkerWriteOperation(CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, tooBig));
             Assert.That(exBig.ParamName, Is.EqualTo("canonicalBytes"));
             Assert.That(tooBig.Length, Is.EqualTo(MaxByteCount + 1));
         }
@@ -217,10 +205,9 @@ namespace Zantetsu.Core.Tests
             byte[] bytes = NewBytes(MaxByteCount);
 
             CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
+                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes);
 
             Assert.That(op.ByteCount, Is.EqualTo(MaxByteCount));
-            Assert.That(bytes, Is.Null);
         }
 
         [Test]
@@ -229,16 +216,14 @@ namespace Zantetsu.Core.Tests
             byte[] bytes = NewBytes(8);
             ArgumentException ex1 = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, "relative.tmp", InitializationFinalPath(), ref bytes));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, "relative.tmp", InitializationFinalPath(), bytes));
             Assert.That(ex1.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes, Is.Not.Null);
 
             byte[] bytes2 = NewBytes(8);
             ArgumentException ex2 = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, InitializationTemporaryPath(), "relative", ref bytes2));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, InitializationTemporaryPath(), "relative", bytes2));
             Assert.That(ex2.ParamName, Is.EqualTo("finalPath"));
-            Assert.That(bytes2, Is.Not.Null);
         }
 
         [Test]
@@ -251,10 +236,9 @@ namespace Zantetsu.Core.Tests
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes));
 
             Assert.That(ex.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes, Is.Not.Null);
         }
 
         [Test]
@@ -265,10 +249,9 @@ namespace Zantetsu.Core.Tests
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, finalPath, finalPath, ref bytes));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, finalPath, finalPath, bytes));
 
             Assert.That(ex.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes, Is.Not.Null);
         }
 
         [Test]
@@ -280,10 +263,9 @@ namespace Zantetsu.Core.Tests
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes));
 
             Assert.That(ex.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes, Is.Not.Null);
         }
 
         [Test]
@@ -295,42 +277,9 @@ namespace Zantetsu.Core.Tests
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes));
+                    CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes));
 
             Assert.That(ex.ParamName, Is.EqualTo("temporaryPath"));
-            Assert.That(bytes, Is.Not.Null);
-        }
-
-        // ---- Buffer ownership ----
-
-        [Test]
-        public void Success_OnlyNullsRef()
-        {
-            string finalPath = InitializationFinalPath();
-            string temporaryPath = finalPath + ".tmp";
-            byte[] bytes = NewBytes(8);
-            byte[] original = (byte[])bytes.Clone();
-
-            CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
-
-            Assert.That(bytes, Is.Null);
-            Assert.That(op.GetCanonicalBytes(), Is.EqualTo(original));
-        }
-
-        [Test]
-        public void InternalArray_IsSameReferenceAsInputOnSuccess()
-        {
-            string finalPath = InitializationFinalPath();
-            string temporaryPath = finalPath + ".tmp";
-            byte[] bytes = NewBytes(8);
-            byte[] originalReference = bytes;
-
-            CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
-
-            Assert.That(bytes, Is.Null);
-            Assert.That(GetFieldBytes(op, "_canonicalBytes"), Is.SameAs(originalReference));
         }
 
         [Test]
@@ -341,7 +290,7 @@ namespace Zantetsu.Core.Tests
             byte[] bytes = NewBytes(8);
 
             CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
+                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes);
 
             Assert.That(op.GetCanonicalBytes(), Is.Not.SameAs(op.GetCanonicalBytes()));
         }
@@ -355,7 +304,7 @@ namespace Zantetsu.Core.Tests
             byte[] original = (byte[])bytes.Clone();
 
             CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
+                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes);
 
             byte[] copy = op.GetCanonicalBytes();
             for (int i = 0; i < copy.Length; i++)
@@ -374,7 +323,7 @@ namespace Zantetsu.Core.Tests
             byte[] bytes = NewBytes(8);
 
             CaptureRunMarkerWriteOperation op = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, ref bytes);
+                CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, temporaryPath, finalPath, bytes);
 
             Assert.That(finalPath, Is.EqualTo(InitializationFinalPath()));
             Assert.That(temporaryPath, Is.EqualTo(InitializationTemporaryPath()));

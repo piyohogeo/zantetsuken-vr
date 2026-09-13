@@ -62,8 +62,7 @@ namespace Zantetsu.Observability
                 CaptureRunMarkerKind.Initialization,
                 markerPaths.StagingInitializationTemporaryPath,
                 markerPaths.StagingInitializationPath,
-                ref stagingInitializationBytes);
-            RequireOwnershipTransfer(stagingInitializationBytes, "staging initialization");
+                stagingInitializationBytes);
 
             byte[] finalInitializationBytes = documents.GetFinalInitializationBytes();
             CaptureRunMarkerWriteOperation finalInitialization = new CaptureRunMarkerWriteOperation(
@@ -71,8 +70,7 @@ namespace Zantetsu.Observability
                 CaptureRunMarkerKind.Initialization,
                 markerPaths.FinalInitializationTemporaryPath,
                 markerPaths.FinalInitializationPath,
-                ref finalInitializationBytes);
-            RequireOwnershipTransfer(finalInitializationBytes, "final initialization");
+                finalInitializationBytes);
 
             byte[] stagingReadyBytes = documents.GetStagingReadyBytes();
             CaptureRunMarkerWriteOperation stagingReady = new CaptureRunMarkerWriteOperation(
@@ -80,8 +78,7 @@ namespace Zantetsu.Observability
                 CaptureRunMarkerKind.Ready,
                 markerPaths.StagingReadyTemporaryPath,
                 markerPaths.StagingReadyPath,
-                ref stagingReadyBytes);
-            RequireOwnershipTransfer(stagingReadyBytes, "staging ready");
+                stagingReadyBytes);
 
             byte[] finalReadyBytes = documents.GetFinalReadyBytes();
             CaptureRunMarkerWriteOperation finalReady = new CaptureRunMarkerWriteOperation(
@@ -89,8 +86,7 @@ namespace Zantetsu.Observability
                 CaptureRunMarkerKind.Ready,
                 markerPaths.FinalReadyTemporaryPath,
                 markerPaths.FinalReadyPath,
-                ref finalReadyBytes);
-            RequireOwnershipTransfer(finalReadyBytes, "final ready");
+                finalReadyBytes);
 
             _documents = documents;
             _stagingInitialization = stagingInitialization;
@@ -128,13 +124,5 @@ namespace Zantetsu.Observability
             }
         }
 
-        private static void RequireOwnershipTransfer(byte[] canonicalBytes, string operationName)
-        {
-            if (canonicalBytes != null)
-            {
-                throw new InvalidOperationException(
-                    "The write operation did not take ownership of the canonical bytes: " + operationName + ".");
-            }
-        }
     }
 }

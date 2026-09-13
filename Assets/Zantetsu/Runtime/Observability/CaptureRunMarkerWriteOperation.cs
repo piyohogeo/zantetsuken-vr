@@ -18,12 +18,10 @@ namespace Zantetsu.Observability
     /// re-rooted, case-folded, Unicode-normalized, or separator-converted.
     /// </para>
     /// <para>
-    /// On successful construction the caller's byte array is taken by reference
-    /// without copying and the caller's variable is nulled; on any validation
-    /// failure the caller's variable and array contents are left untouched and
-    /// the caller keeps ownership. <see cref="GetCanonicalBytes"/> returns a
-    /// fresh defensive copy, so callers can never mutate the held array. No
-    /// dispose contract is introduced for the managed array.
+    /// The byte array is held as given, without copying, and validation never
+    /// changes its contents. <see cref="GetCanonicalBytes"/> returns a fresh
+    /// defensive copy, so what a caller reads back can never reach the held
+    /// array. Callers pass an array they have just built and do not keep using.
     /// </para>
     /// <para>
     /// This type holds no document set, plan, binding, or marker, calls no
@@ -48,7 +46,7 @@ namespace Zantetsu.Observability
             CaptureRunMarkerKind markerKind,
             string temporaryPath,
             string finalPath,
-            ref byte[] canonicalBytes)
+            byte[] canonicalBytes)
         {
             if (rootRole != CaptureRunRootRole.Staging && rootRole != CaptureRunRootRole.Final)
             {
@@ -126,8 +124,6 @@ namespace Zantetsu.Observability
             _temporaryPath = temporaryPath;
             _finalPath = finalPath;
             _canonicalBytes = canonicalBytes;
-
-            canonicalBytes = null;
         }
 
         internal CaptureRunRootRole RootRole => _rootRole;
