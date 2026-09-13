@@ -852,24 +852,16 @@ namespace Zantetsu.Core.Tests
             return operation;
         }
 
-        // ---- Builder / factory rejection ----
+        // ---- Factory rejection ----
 
         [Test]
-        public void Builder_NullPlan_Rejected()
-        {
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder.Build(null));
-            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
-        }
-
-        [Test]
-        public void Builder_InvalidPlan_Rejected()
+        public void Batch_InvalidPlan_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = (PngJsonCapturePublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder.Build(plan));
+                () => PngJsonCapturePublicationArtifactRecoveryExecutionBatch.Create(plan));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
@@ -1415,19 +1407,9 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_IsStaticWithNoState()
-        {
-            Type type = typeof(PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseTokenOrBytesExposure()
         {
-            foreach (Type type in new[] { typeof(PngJsonCapturePublicationArtifactRecoveryPreparedStep), typeof(PngJsonCapturePublicationArtifactRecoveryExecutionBatch), typeof(PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder) })
+            foreach (Type type in new[] { typeof(PngJsonCapturePublicationArtifactRecoveryPreparedStep), typeof(PngJsonCapturePublicationArtifactRecoveryExecutionBatch) })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
                 {
@@ -1510,9 +1492,8 @@ namespace Zantetsu.Core.Tests
         {
             string preparedSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryPreparedStep.cs");
             string batchSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionBatch.cs");
-            string builderSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder.cs");
 
-            foreach (string source in new[] { preparedSource, batchSource, builderSource })
+            foreach (string source in new[] { preparedSource, batchSource })
             {
                 Assert.That(source, Does.Not.Contain("File."));
                 Assert.That(source, Does.Not.Contain("Directory."));
@@ -1577,16 +1558,5 @@ namespace Zantetsu.Core.Tests
             Assert.That(commitCaseBody, Does.Not.Contain("captureIndexCommitOperation.IsValid;"));
         }
 
-        [Test]
-        public void Source_BuilderDelegates_NoDuplication()
-        {
-            string builderSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder.cs");
-
-            Assert.That(builderSource, Does.Contain("PngJsonCapturePublicationArtifactRecoveryExecutionBatch.Create"));
-            Assert.That(builderSource, Does.Not.Contain("TryAcquireValidationToken"));
-            Assert.That(builderSource, Does.Not.Contain("CreateIndexLocal"));
-            Assert.That(builderSource, Does.Not.Contain("for ("));
-            Assert.That(builderSource, Does.Not.Contain("SerializeCanonical"));
-        }
     }
 }

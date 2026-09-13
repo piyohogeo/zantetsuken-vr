@@ -1106,29 +1106,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(token.IsIssuedFor(plan), Is.False);
         }
 
-        // ---- Builder ----
-
-        [Test]
-        public void Builder_DelegatesAndDoesNotRevalidateOrMutate()
-        {
-            PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
-                MakeRecoveryAuthority(), EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
-            PngJsonCapturePublicationArtifactRecoveryDecision decision = ClassifyDecision(snapshot);
-
-            PngJsonCapturePublicationArtifactRecoveryActionPlan plan =
-                PngJsonCapturePublicationArtifactRecoveryActionPlanBuilder.Build(decision);
-
-            Assert.That(plan, Is.Not.Null);
-            Assert.That(plan.IsValid, Is.True);
-            Assert.That(ReferenceEquals(plan.Decision, decision), Is.True);
-            Assert.That(decision.IsValid, Is.True);
-
-            string builderSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactRecoveryActionPlanBuilder.cs");
-            Assert.That(builderSource, Does.Contain("PngJsonCapturePublicationArtifactRecoveryActionPlan.Create"));
-            Assert.That(builderSource, Does.Not.Contain("TryValidate"));
-            Assert.That(builderSource, Does.Not.Contain(".IsValid"));
-        }
-
         // ---- Scale ----
 
         [Test]
@@ -1180,10 +1157,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(planType.IsSealed, Is.True);
             Assert.That(typeof(IDisposable).IsAssignableFrom(planType), Is.False);
             Assert.That(planType.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
-
-            Type builderType = typeof(PngJsonCapturePublicationArtifactRecoveryActionPlanBuilder);
-            Assert.That(builderType.IsAbstract, Is.True);
-            Assert.That(builderType.IsSealed, Is.True);
         }
 
         [Test]

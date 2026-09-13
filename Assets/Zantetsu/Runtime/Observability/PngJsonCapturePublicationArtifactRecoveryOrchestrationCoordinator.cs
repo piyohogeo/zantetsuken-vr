@@ -118,10 +118,10 @@ namespace Zantetsu.Observability
                 PngJsonCapturePublicationArtifactRecoveryClassifier.Classify(snapshot);
 
             PngJsonCapturePublicationArtifactRecoveryActionPlan actionPlan =
-                PngJsonCapturePublicationArtifactRecoveryActionPlanBuilder.Build(decision);
+                PngJsonCapturePublicationArtifactRecoveryActionPlan.Create(decision);
 
             PngJsonCapturePublicationArtifactRecoveryExecutionBatch batch =
-                PngJsonCapturePublicationArtifactRecoveryExecutionBatchBuilder.Build(actionPlan);
+                PngJsonCapturePublicationArtifactRecoveryExecutionBatch.Create(actionPlan);
 
             PngJsonCapturePublicationArtifactRecoveryExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);
