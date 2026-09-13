@@ -61,7 +61,7 @@ Phase 0.55でSlash操作を先に調整し、4.50～4.52でProp＋動作中NPC�
 
 - 切断対象は閉じた静的メッシュと、切断時に姿勢を固定できるHumanoidに限定。
 
-- 非空の切断結果は寸法だけで消去せず通常Fragmentとして扱い、専用Convexを持たない共用Geometryも同SideのFinal Physics Ownerへ所属させる。
+- 通常切断では非空の切断結果を寸法だけで生成省略・消去せず通常Fragmentとして扱い、専用Convexを持たない共用Geometryも同SideのFinal Physics Ownerへ所属させる。生成後のLogicalFragment全体の任意寿命終了は7.10に従う。
 
 - PCVRを対象とし、実アプリの両眼描画90fpsを性能目標とする。XRコンポジタの再投影は瞬間的な取りこぼしへの安全網であり、常用前提にしない。
 
@@ -139,7 +139,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 | Temporary Slice Renderer | clip、論理破片の分離オフセット、仮断面、切断縁演出 |
 | Visual Slice Worker | 4.5.2で導入を採用した未来Rig PoseのJobベイク・VP入力準備、VP入力の三角形切断、断面生成、属性補間、VPプールへの正負Index直接出力 |
 | Physics Slice Worker | 7.2のOwner単位Cut/Cook処理とFinal候補生成 |
-| Commit Controller | 8章のauthority照合、Final Physics／Logical Publicationの一体切替、4.5.6のGeometry Commit、7.1の単独退役を担当する。建物D6と7.9の任意処理も同じ公開・退役境界へ接続する |
+| Commit Controller | 8章のauthority照合、Final Physics／Logical Publicationの一体切替、4.5.6のGeometry Commit、7.1の単独退役を担当する。建物D6、7.9の任意処理と7.10の退役も同じ公開・退役境界へ接続する |
 | Blade Gesture／Plane Detector | Grip／Tracking、Gate、accepted samples、Stroke BeginとPlane候補を作る。対象Hitを決定しない |
 | Slash Latch／Frame Estimator | LatchReadyとValid／固定軸を独立に返す交換可能境界。内部方式は19.1へ集約 |
 | Slash Span Candidate／Close Estimator | Raw候補の有効性と現在刀入力の受付終了を別々に判断する。必要な一時状態をWave寿命中に保持できる |
@@ -189,7 +189,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 極小Jobを対象ごとに無制限発行せず、同種処理を`IJobFor`／`IJobParallelFor`等でBatch化する。JobはSchedule後に中断できないため、投機前提が崩れた場合もメインスレッドから`Complete`を強制せず、完了後にGeneration不一致として破棄する。`TaskId`はC# `Task`型を意味せず、Job、I/O、GPU処理を含む論理Work Itemの相関IDとして維持する。
 
-7.9の任意分割もこのJob／Main Thread境界を使い、全体1件の試行を探索から必要cook・採否・回収まで保持する。物理GCの登録終了は既存の安全なMain Thread／物理Step境界へ接続し、専用WorkerやC# Task大量発行を追加しない。
+7.9の任意分割もこのJob／Main Thread境界を使い、全体1件の試行を探索から必要cook・採否・回収まで保持する。7.9の物理GCと7.10の登録終了は既存の安全なMain Thread／物理Step境界へ接続し、専用WorkerやC# Task大量発行を追加しない。
 
 ### 4.4 Ready WorkのDispatchと完了回収
 
@@ -259,9 +259,15 @@ VPプールへのJobアクセスは内部Published入力と自分のReserved出�
 
 数値Kernelの入出力は6.1に従う。新規Vertexは一つの連続予約の先頭から実使用部分を詰めて出力し、継承Vertexは既存番号を参照する。新規Indexは4.5.6の一つの連続予約へ正側、負側の順で出力する。属性seamやCapのために必要な新規Render Vertexはこの新規Vertex出力へ含める。表示切断に厳密Count→確保→Writeを必須にせず、出力予約不足では範囲外へ書く前に容量不足で終了し、部分成果物を公開せず再予約・再実行できる。7.9の新Index領域も同じ予約規則を使う。形状不正・世代不一致の救済や切断受付の再試行へ広げず、範囲外書込み後の例外回復を設けない。
 
-Published Vertexは上書き・再利用せず、子から継承参照する。移動はInstance Transform／frame写像で扱い、継承のためだけに全頂点を複製・書換えしない。CPU Index rangeは旧GeometryのCPU正本参照とCPU／Job／転送元読者がなくなれば再利用できる。CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理する。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
+Published Vertexは保持中に上書き・移動せず、子から既存番号で継承参照する。移動はInstance Transform／frame写像で扱い、継承のためだけに全頂点を複製・書換えしない。Published済みVBの回収・再利用と、そのために追加する所有・利用管理は任意Phase 7.1で導入する。それ以前は追記・保持のままでよく、前段Phaseの実装・完了条件にしない。
 
-0.93の再利用対象は主に退役Indexと、Vertex／Indexの未使用・失敗予約であり、未公開予約の回収はVertex追記方針に反しない。単純な空き領域のbest-effort再利用でよく、最適配置、断片化解消、コンパクションを要求しない。表示Instance／Geometry参照の退役は物理GCとは別であり、0.93へ7.9の生存物体終了を前倒ししない。
+導入時のVBは、ObjectIdが所有する確保範囲を当該ObjectIdの生存LogicalFragmentがなくなるまで保守的に保持し、その後に既存の資源寿命と予算に従って回収する方式でよい。全Fragment終了は親子置換等の一体公開後の状態で判断する。一部Fragmentの生存によって不要Vertexを含む範囲が残ることを許容し、Fragment別・頂点別の早期回収や全範囲の同一Frame解放を要求しない。
+
+VB／IBは各回収単位の正本参照と必要な利用が終了してから一度だけFreeし、再利用する。未実行Jobを含む入力保持・出力予約、CPU／Job／転送元読者、他の生存利用者を保護する。IBは既存の範囲別回収を維持し、ObjectId全体の終了待ちにしない。所有範囲・利用状況の管理、回収待ちの保持・確認・分割方法、およびVB／IB間の実装共用は実装詳細とする。
+
+CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理し、再利用したoffsetの新内容を旧内容の転送済み判定で省略しない。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
+
+0.93の再利用対象は主に退役Indexと、Vertex／Indexの未使用・失敗予約であり、これらの回収をPhase 7.1やObjectId全体の終了待ちへ延期しない。未公開予約の回収は初期のVertex追記方針に反しない。単純な空き領域のbest-effort再利用でよく、最適配置、断片化解消、コンパクション、Buffer縮小やCPUページのOS返却を要求しない。表示Instance／Geometry参照の退役は生存物体の寿命Policyとは別であり、0.93へ7.9／7.10のPolicyを前倒ししない。
 
 #### 4.5.4 CPU仮想予約・GPU容量と転送
 
@@ -301,7 +307,7 @@ GPUカリングの責務は独自描画側に置くが、0.9xで高度な遮蔽�
 
 正負のGeometryは同SideのFinal Physics Ownerへ対応付ける。Material・frame等に必要な描画分割はRenderer側で扱い、連続配置や1回の転送を全Passでの厳密1 drawと同一視しない。
 
-継承Vertexは既存番号を使い、新規交点・Cap頂点等だけを追記する。Triangle切断、正負への振り分け、必要な非交差IndexコピーとTopology参照更新は通常の出力生成に含める。面集合、Triangle内頂点順、属性、windingを保存し、表示・Stencil・再切断は同じIndex正本を使用する。
+継承Vertexは既存番号を使い、新規交点・Cap頂点等だけを予約範囲へ追加生成する。Triangle切断、正負への振り分け、必要な非交差IndexコピーとTopology参照更新は通常の出力生成に含める。面集合、Triangle内頂点順、属性、windingを保存し、表示・Stencil・再切断は同じIndex正本を使用する。
 
 新規Index列は実使用範囲`[base, base+n0+n1)`だけを一度のSetDataでGPUへ送る。正負別の2回転送、未使用予約の転送、中間配置の先行転送と後の再転送を行わない。対象全体のGeometryが無変更で既存GPU Index範囲をそのまま再利用できる場合は、新規Index書込み・当該切断のIndex SetDataは0回とする。受付前No-opもこれに含む。Geometryが変わる場合や、Triangle非交差でも正負配分に新Indexが必要な場合は省略しない。
 
@@ -574,7 +580,7 @@ Geometry Work、具体的Vertex／Index、実Cap、CutBoundaryRecord、GPU転送
 
 Provisional一式の構築不能、またはLogical Publication前にFinal Physicsを成立させられないと確定した場合はTransaction AbortとしてSourceを退役する。待機、PhysicsSplitTimeoutだけではAbortしない。同じTransactionのProvisionalについて既存Unity／物理所有／Constraint管理境界から継続不能異常が判明した場合もAbortし、成功後のFinal Ownerに同様の異常が判明した場合は対応LogicalFragmentを退役する。既存境界から明示されたnonfinite stateや実際のConstraint破綻を扱うが、包括的毎Step監視、速度Profile、Snapshot、復元・Kinematic Freezeを設けない。正常なD6 Limit到達は異常にしない。4章の共用Geometry／論理構築、絶対backing容量、必須Stencilの致命条件は共通Player終了を維持し、個別物理退役との相互Fallbackを作らない。
 
-退役はPhase 4の共通低レベル処理とし、対象LogicalFragmentの生存性・Hit・Query・新規受付、通常／Temporary表示を終了し、Active Transactionがあれば終端する。当該対象へ未公開成果物をCommitせず、旧Final／Provisional／未公開Finalの当該所有Actor・Shape・システム所有D6をSceneから除去する。Geometry参照とRenderer登録を退役し、Schedule済みJob、CPU範囲、Leaseは読者と必要Stepの終了後に回収する。Siblingへ質量・Anchor・Geometryを移送せず、親へ再合流しない。Source消失による質量消失・接触変化を許容し、旧物理の恒久採用や復旧を行わない。IDとCut履歴を再利用・書換えせず、履歴が資源を強く所有しない。
+退役はPhase 4の共通低レベル処理とし、対象LogicalFragmentの生存性・Hit・Query・新規受付、通常／Temporary表示を終了し、Active Transactionがあれば終端する。当該対象へ未公開成果物をCommitせず、旧Final／Provisional／未公開Finalの当該所有Actor・Shape・システム所有D6をSceneから除去する。Geometry参照とRenderer登録を退役し、Schedule済みJob、CPU範囲、Leaseは読者と必要Stepの終了後に回収する。Published済みVBの回収だけは4.5.3の導入時期・条件に従う。Siblingへ質量・Anchor・Geometryを移送せず、親へ再合流しない。Source消失による質量消失・接触変化を許容し、旧物理の恒久採用や復旧を行わない。IDとCut履歴を再利用・書換えせず、履歴が資源を強く所有しない。
 
 成功／Abort後の遅延回収は必要な小さいcleanup情報へ移管し、Transactionを延命しない。外部authority喪失は8章のStale回収であり、古いTransactionが現在のSourceや他の所有資源を退役させてはならない。
 
@@ -738,11 +744,11 @@ Phase 4.1は、代表Fixtureで製品経路の費用を確認する軽量な測�
 
 このmarginはcook成功を保証しない。受付後に判明した7.2の形状・質量特性・cook不成立、Anchor・必須D6・frame不成立は7.1のAbortへ送る。正常成功は常に正負2 Final Ownerと2 LogicalFragmentで、Geometryは同Sideへ所属する。Geometry片側または両側が空でもPhysics子は残し、反対側へのGeometry付属、一子両Side、Merge／Alias、所有者共有を設けない。
 
-Geometry空は実Cap・面積0 Triangleを含む面集合0件で判断し、未計算・失敗・体積0・Stencil非描画を空にしない。Geometry参照0件の子はRendererなしの通常物理対象であり、ダミーGeometry・Cap・消滅VFXを作らない。任意の7.9物理GCが未実装・対象外でも通常Object／Level寿命で維持する。Phase 1～3では15章のHarness合成Physics入力だけを使い、製品に代替Hull／Physics Modeを残さない。
+Geometry空は実Cap・面積0 Triangleを含む面集合0件で判断し、未計算・失敗・体積0・Stencil非描画を空にしない。Geometry参照0件の子はRendererなしの通常物理対象であり、ダミーGeometry・Cap・消滅VFXを作らない。任意の7.9物理GCまたは7.10の寿命終了を適用しない場合は、通常Object／Level寿命で維持する。Phase 1～3では15章のHarness合成Physics入力だけを使い、製品に代替Hull／Physics Modeを残さない。
 
 ### 7.7 切断受付上限
 
-既存容量設定のMaxIncompleteCutOperationCountは受付済みPending Cutを全対象合計で1件ずつ数える。Physics実行、Geometry依存待ち、Commit待ちを含め、Transaction、子、Job数を多重計数しない。Active Sourceへの見送り、No-op、未命中投機、7.9任意処理は数えない。
+既存容量設定のMaxIncompleteCutOperationCountは受付済みPending Cutを全対象合計で1件ずつ数える。Physics実行、Geometry依存待ち、Commit待ちを含め、Transaction、子、Job数を多重計数しない。Active Sourceへの見送り、No-op、未命中投機、7.9／7.10の任意処理は数えない。
 
 Mainの受付処理は4.2のSource／Active確認と7.6のsupport判定の後、上限未満の場合だけPending登録と件数加算を一体で行う。満杯なら新規仕事や状態変更を行わず要求を保存・再実行しない。同じSlashの一部対象だけ切れることを許容する。
 
@@ -814,7 +820,7 @@ Anchor配分と通常の物理条件を成立させて公開する。建物由�
 
 #### 7.9.4 非命中公開・退役と既存世代への接続
 
-本節の所有構成変更・退役だけは、命中を伴わない公開を許可する。候補は既存TaskId等の相関情報と成果物所有者、対象のObject・Geometry・Physics・Anchorの必要な世代・構成参照で識別する。準備・見送り・不採用だけではObjectGenerationを進めず、同じ基底の通常予測を失効させない。
+本節の所有構成変更・退役と7.10の退役は、命中を伴わない公開を許可する。候補は既存TaskId等の相関情報と成果物所有者、対象のObject・Geometry・Physics・Anchorの必要な世代・構成参照で識別する。準備・見送り・不採用だけではObjectGenerationを進めず、同じ基底の通常予測を失効させない。
 
 追加分割の公開では対象の既存ObjectGenerationと実際に変更するPhysics等の既存世代を同じ境界で進める。GCは退役を既存の生存性／世代付き参照へ反映する。いずれも旧所有構成への予測・後着成果物を適用しない。履歴ID・作成時世代を書き換えず、世代wrap・ID再利用・別対象への古い適用を許さない。通常Transaction／Geometryの照合は8章に従い、別LogicalFragmentのObjectGeneration更新だけでは失効させない。
 
@@ -862,7 +868,7 @@ Main Threadの構築・公開・回収も通常予算内とし、収まらなけ
 
 不正Geometryの成功扱い、面積0 Triangleの削除、非finite／不正物理の適用、未計算を空とする判断、世代不一致公開、使用中資源解放、支持・安全Constraintの無断除去は許容しない。分割成立のために表示を消さない。
 
-小さい通常物体の消滅・基本フェード、三角形霧散・Fallback Geometry消滅、消滅予定部分の生成省略は今回対象外とし、先行Metadata、予約Buffer、専用状態を用意しない。旧小破片分類、被覆対応Graph、Shared解決専用機構、Shard／Atlas／専用Arenaを復活させない。
+小さい通常物体の消滅は本節の対象外とし、LogicalFragment全体の任意寿命終了は7.10に従う。基本フェード、三角形霧散・Fallback Geometry消滅、消滅予定部分の生成省略は要求せず、先行Metadata、予約Buffer、専用状態を用意しない。旧小破片分類、被覆対応Graph、Shared解決専用機構、Shard／Atlas／専用Arenaを復活させない。
 
 #### 7.9.7 完了条件と最小確認
 
@@ -883,11 +889,32 @@ Main Threadの構築・公開・回収も通常予算内とし、収まらなけ
 
 専用Test ID、旧Shared／Debris試験の復活、大規模Benchmark、P50／P95／P99製品保証を追加しない。探索方式、保存layout、巡回頻度、製品予算、効果の実測は実装・測定時に決め、未決を通常切断の不成立やPhase 6着手の障害にしない。
 
+### 7.10 任意のLogicalFragment GC
+
+LogicalFragment GCは、生存LogicalFragmentを表示・物理を含めて退役させる、Phase 7.1の独立した任意最適化とする。Managed GCや7.9.3の確定空物理GCとは別の寿命Policyであり、7.9の追加分割・物理GCに依存しない。通常切断をGC予定に基づく生成省略経路へ変更せず、導入・省略条件は15章に従う。
+
+候補走査・ヒント計算・退役開始は通常処理を優先し、Main Threadの残予算に余裕がある場合だけ進める。生存Fragment数、VB／IBやフレーム予算の逼迫を契機に、軽量な視野外判定・ユーザーからの距離等を選択のヒントにできる。方式・組合せ・閾値・巡回頻度・処理件数は実装詳細とし、列挙した方式の全実装を要求しない。逼迫を予算不足時の強制実行条件にせず、無効時は候補走査と専用の新規仕事を行わない。通常切断をGCの進行待ちにしない。
+
+対象のActive PhysicsSplitTransaction中は除外し、退役直前に生存性、Transactionなし、対象参照と退役authorityの有効性を確認する。他FragmentのTransaction終了や対象Geometryの完成を必須条件にしない。非命中でも7.1.3の共通退役を使い、無関係Siblingを退役させない。GCのためのTransaction、Pending Cut、LogicalCutOperationを作らず、後着成果物の不採用・生存SiblingのGeometry進行・不要Workの終端は4.5.6／8章に従う。
+
+VB／IB回収は4.5.3に従い、導入した回収をAbort等も含む共通退役出口へ接続する。GCの有効化・対象除外・開始予算を既存Abortの条件へ追加しない。開始済みの遅延回収は4.4の通常完了回収へ接続し、GCの新規実行条件や無効化で止めない。候補選択・退役・回収・管理の費用は既存予算とProfilerで扱い、既存機能への速度ペナルティをbest effortで避ける。追加費用ゼロや固定改善率は要求しない。
+
+2026-09-13の人間承認により、小破片・動的物体に限らず、非空の可視物体や固定Anchor付き建物片もPolicy次第で対象とし、突然の消滅、質量・接触・支持の消失と周辺運動の不自然さを許容する。フェード・消滅VFX・運動補償を要求しない。固定PlayerLocomotionOccupancyは7.2.3のまま維持するため、消滅後も通行を妨げ得る。回収量・実行／回収期限・容量上限内への収束を保証せず、同期GCによる容量救済、Job／GPU同期待ち、予算超過での強制進行を追加しない。4.5.4の容量処理と利用中範囲の安全条件を維持する。
+
+**導入時の最小確認。** Phase 7.1の実装時だけ、少数の既存または合成Fixtureで以下を確認する。既存の退役・世代・資源寿命試験を再利用し、新Test ID・専用基盤・全組合せmatrix・長時間の容量収束試験を追加しない。
+
+| 確認群 | 期待結果 |
+| --- | --- |
+| 選択と既存経路の独立 | 無効・予算不足・対象Transaction中は新GCを開始しない。別FragmentのTransactionをObjectId全体の禁止条件にせず、GC無効時もAbortと開始済み回収は進む |
+| 個別退役 | 非空Geometryを持つ対象を退役でき、Geometry未完成の代表例でも後着結果で復活せず、生存Siblingを維持する |
+| ObjectId寿命と利用保護 | 親子の一体置換を全滅と誤認せず、生存Fragmentや利用者のあるVBを保持する。最後のFragmentがGCまたはAbortで退役した例で、未実行・実行中Jobを含む必要な利用終了後に回収できる |
+| 再利用と費用 | 回収したVBを実際に再割当し、CPU内容と必要なGPU更新を確認する。IB・未使用／失敗予約の既存回収を維持し、二重解放・利用中上書きなし。既存Profilerで通常経路の追加費用と回収効果を確認する |
+
 ## 8. 世代管理と非同期制御
 
 Wave、実Hit、そこから派生した仕事・成果物は既存SlashIdで同じSlashへ対応付け、別Slashや再利用された格納先の古い結果と混同しない。整数幅、採番方法と内部参照保護は実装詳細とする。次の発射で以前の生存Waveを失効させず、Wave Expireだけで受付済み切断を失効させない。受付済み処理の採否は以下の対象・Pending・Transaction／Branch authorityに従う。
 
-ObjectGenerationはObject全体のPrediction・Cache・Reset／退役・Trace・Maintenanceの粗い識別へ残すが、別LogicalFragmentだけの更新を通常切断の単独Reject理由にしない。通常受付は4.2、非命中所有変更は7.9に従う。
+ObjectGenerationはObject全体のPrediction・Cache・Reset／退役・Trace・Maintenanceの粗い識別へ残すが、別LogicalFragmentだけの更新を通常切断の単独Reject理由にしない。通常受付は4.2、非命中所有変更は7.9、任意の単独退役は7.10に従う。
 
 Physics CommitはSource生存性、SourceのActive CutOperationId、当該Transactionが持つ物理系譜・所有変更authority、既存Object生存性と4章の共通Player終了境界で照合する。自らのSource Final OwnerからProvisional構成への置換と通常のpose／速度／Sleep変化は失効理由にしない。別Transaction・Maintenance・GC・外部SystemのOwner／Shape／Constraint構成変更でauthorityを失った仕事はStale回収し、現在Sourceを退役させない。個別物理成立不能のAbortとは区別する。
 
@@ -1174,7 +1201,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-149 | 剛体Local Plane実姿勢リベース | 19.5.1の自由飛行剛体だけ、予測Pose差の一致判定を世代・前提と実姿勢での面誤差Gateへ置き換える。攻撃SourceSlashPlaneは不変、命中前の仮Local Planeを命中時に一度だけ採用／Fallback確定し、7.6の受付判定と、受付済みのTemporary／Provisional／Stable／Finalへ共通使用する。面採否と受付判定はMesh／Collider Readyから独立し、未完成だけを理由に切断位置を変更しない。対象ごとの面差と固定点近似の未検出差を許容するが、Actor pose／速度を予測または命中Snapshotへ戻さず、自前B-repの包含・支持安全・世代検証を維持する | 確定。4.2／19.1／19.5の姿勢一致規則に対する限定例外。D-046のMob／Skinned契約は変更しない。O(1)直接予測式の標準採用とは独立 |
 | D-159 | 可変長Trace導入 | Phase 0.12～0.14で21.16のWriter、Paged History、保存／読込みを段階導入する | 確定。旧形式の読込み維持は要求せず、実行時の所有権・非待機・容量境界は維持する |
 | D-160 | コミット後の任意分割・物理GC | 7.9を正本として、確定後の単一平面による通常物体2個への追加分割と、共用面集合0の物理所有単位の寿命終了を独立した任意機能とする。既存の低優先Dispatchと非命中公開・退役を使い、追加分割は全体1未回収試行と入力別不成立抑止で管理する。通常切断・過去Commitを救済対象にせず、実行不能なら元物体を残す | 人間承認済み、2026-09-08。Phase 5.6／5.7は省略可能。許容事項は7.9.6、最小確認は7.9.7。実装・実測済みを意味しない |
-| D-161 | 実行時表示表現と描画ロードマップ | 4.5の読み込み時Mesh、切断時VP、CPU AoS／Index正本とGPUコピー、範囲所有権、Published Vertex追記、退役Index再利用を採用する。通常切断は単一Index予約へ正負を直接配置し、物理採否に依存する再集約を行わない。必要転送と現在の参照・frameで表示公開し、CPU範囲Publishedは内部処理とし、Final Physics／Logical Publication後のGeometry Commitと祖先順Kernelは4.5.6に従う。Phase 0.9～0.94でStage 2まで比較する | 人間承認済み。準備・変換の表示開始負荷とGPU拡張STWを許容し、容量限界は4章の共通Player終了に従う。Stage 2高速化は必達でなく、効果が乏しければStage 1を採用できる。Phase 5.6のIndexコピー・新旧共存費用を許容する。実装・実測済みを意味しない |
+| D-161 | 実行時表示表現と描画ロードマップ | 4.5の読み込み時Mesh、切断時VP、CPU AoS／Index正本とGPUコピー、範囲所有権、保持中のVertex不変・初期の追記保持と任意Phase 7.1での回収・再利用（4.5.3）、退役Index再利用を採用する。通常切断は単一Index予約へ正負を直接配置し、物理採否に依存する再集約を行わない。必要転送と現在の参照・frameで表示公開し、CPU範囲Publishedは内部処理とし、Final Physics／Logical Publication後のGeometry Commitと祖先順Kernelは4.5.6に従う。Phase 0.9～0.94でStage 2まで比較する | 人間承認済み。準備・変換の表示開始負荷とGPU拡張STWを許容し、容量限界は4章の共通Player終了に従う。Stage 2高速化は必達でなく、効果が乏しければStage 1を採用できる。Phase 5.6のIndexコピー・新旧共存費用を許容する。実装・実測済みを意味しない |
 | D-162 | 未来予測用SkinnedMesh Jobベイクの採否判断 | 4.5.2を正本として、Phase 4.65で不変Rig Poseから共通VP入力を生成する限定実装を同期経路と比較し、人間が導入の採否を決める。採用時だけ既存DAG／VPプールへの本体接続、4.71の未来VP準備、4.72の人形先行切断統合を行う。通常命中の同期SkinnedMeshRenderer.BakeMeshと通常SkinnedMeshRenderer描画は維持する | 人間承認済み、2026-09-09。効果がなければ導入見送りも4.65の正常完了とし、人形の先行準備による命中時負荷削減を必達にしない。対応範囲の限定と非bit一致は4.5.2に従う。総時間短縮・翌フレーム完成は保証せず、4.52は採否待ちにしない。実装・本体実測済みを意味しない |
 | D-163 | 物理Convexの内接削減 | 7.2に従い、L超過出力を通常clip結果の内側に収まるL以下の有効なConvexへ削減する。方式・対象・頂点由来・決定性の範囲は実装詳細。成立しなければ当該Physics処理を失敗とする | 人間承認済み。接触・質量特性の近似許容は7.2、失敗終端は7.1／7.9に従う |
 | D-164 | 正負二集合と直接Index出力 | 7.2.1／7.6の正負集合と点Anchorによる固定判定、4.5.6の単一予約への正負Index連続出力・新規転送1回／再利用時0回を使う。島の独立化は任意Phase 5.6へ置く | 人間承認済み、2026-09-10。一体運動・空中浮遊・接着情報喪失・遅延分離・分割不能・Bounds拡大・倒壊と任意分割のIndexコピー／新旧共存を許容する。完全分離・倒壊防止・性能改善を必達にしない |
@@ -1189,6 +1216,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-173 | 共用Geometry切断／Player終了 | 共用Geometryの出力は6.4の構成契約で保証し、製品Runtimeの出力検査を撤去する。継続不能な4条件は4章の共通Player終了へ集約し、対象別の限定退役・復旧と終了前の完全診断保存保証を撤去する | 人間承認済み、2026-09-11。入力Gate・メモリ安全・通常の世代照合・予約不足再実行・物理Fault・通常Captureの診断保存能力は維持する |
 | D-174 | Provisional Sibling D6 | `ProvisionalSeparationConstraint`は7.1の固定anchor-offset D6を採用し、方式比較・動的Limit決定・Actor／Joint Pool導入判断を初期要件から外す | 人間承認済み、2026-09-11。D-132の方式とO-044の法線Limitを確定。有限区間による引止め・運動差を許容し、7.1の既存境界から判明した異常の扱いと資源寿命に従う |
 | D-175 | 短寿命PhysicsSplitTransactionとCommit直列Geometry | 4.2、4.5.6、7.1～7.7、8、21章に従い、Final Physics／Logical Publication、祖先順Geometry Commit、個別退役へ整理する | 人間承認済み、2026-09-12。物理成立不能によるSource退役と正常退役に起因するIncompleteOperationTraceを許容する。新しい公開ID、状態・Reason、監視・復旧、GPU部分範囲freeを設けない |
+| D-176 | 任意LogicalFragment GCとVB回収 | 7.10の寿命Policyと4.5.3のPublished済みVB回収を任意Phase 7.1で導入する。前段への非前倒し・省略条件は15章に従う | 人間承認済み、2026-09-13。消滅・物理変化・固定Occupancy残存の許容と最小確認は7.10に従う |
 
 ## 13. 未決事項
 
@@ -1198,7 +1226,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-002 | 目標FPS | 解決済み：両眼描画90fpsを基準（D-012） | 再投影は安全網として扱う | 2026-08-21 |
 | O-004 | 断面表現 | 解決済み：初期仕様ではカテゴリ別の断面色・模様・追加記号・内部部品表現を設けず、全対象を同じ固定グレーとする（D-171） | 専用アート、Material、Vertex属性を追加しない | 2026-09-11 |
 | O-005 | 切断可能範囲 | 解決済み：人間判断により建物は切断対象、道路は非対象（D-165） | 建物対応をロードマップに含め、道路切断は実装範囲に含めない | 2026-09-10 |
-| O-006 | 破片寿命 | 最大動的破片数、消去時間、スリープ規則。7.9の確定空物理GCとその接触・質量消失の許容は確定し、巡回頻度・製品予算・効果の実測は実装時に決める | 物理CPUと視覚密度。GCへのSleep必須化や期限保証はしない | T-010後／任意Phase 5.7 |
+| O-006 | 破片寿命 | 7.9／7.10の各任意Phaseで、Policyの選択・閾値・頻度・予算を実装・実測から調整する | 物理CPU・視覚密度・回収効果。全方式の実装や容量収束・期限を保証しない | 各任意Phaseの実装時。未決を前段Gateにしない |
 | O-007 | Collider仮状態 | 旧Collider維持時間と周辺破片の例外判定。Player Body／Handと刀は物理接触せず、刀は論理Sweepのみ | 違和感と実装複雑度 | T-005後 |
 | O-008 | NPC構成 | Synty人物をそのまま使う範囲と顔・体型改造量 | 独自性と制作工数 | アート検証時 |
 | O-009 | データ保存 | 切断状態をセーブ対象とするか | 再現性・容量・ロード時間 | ゲームループ決定時 |
@@ -1234,7 +1262,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 
 検証形式・試験手順の扱いは17章に従う。下表は確認する能力を定め、過去のCapture／Trace／Fixture形式や専用試験の維持を要求しない。
 
-Phase 5.6／5.7の任意機能固有の確認は7.9.7へ集約し、下表の既存試験は担当契約の範囲で再利用する。既存Phaseの完了条件へ追加機能を前倒しせず、専用Test IDや大規模性能matrixを追加しない。
+Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10へ集約し、導入時だけ適用する。下表の既存試験は担当契約の範囲で再利用する。既存Phaseの完了条件へ追加機能を前倒しせず、専用Test IDや大規模性能matrixを追加しない。
 
 T-027～T-030は後続Phaseで採用した前処理に適用する。未採用の修復方式を試験のために実装せず、凍結したPhase 0.2の再開を要求しない。
 
@@ -1249,7 +1277,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-007 | 受付制限と対象authority | 4.2／8章のSource単位の受付・失効と4.5.6の祖先順Geometryを確認する | AがActive中の同じSourceへの要求を見送り、保存・再実行しない。他のLogicalFragmentは同じObject内でも並行でき、他枝のObjectGeneration更新でAをRejectしない。AのFinal Physics／Logical公開後はGeometry未完了でも子のBを受付・公開できるが、B KernelはA Geometry Commitを待つ。同じTransactionのProvisional置換・pose／速度／Sleep変化は自己失効せず、外部authority変更はStale回収して現在Sourceを退役させない |
 | T-008 | Skinned切断 | Tableで動作するNPCの実Pose Snapshotから同期ベイク・静的破片への移行が成立する | Phase 4.52で限定再生中の各部位を切断する。移動計画・未来評価全体・Jobベイクの完成を要求しない |
 | T-009 | 入力モデル耐性 | 契約内モデルは自動前処理で切断可能になる | 変換検査とエラーレポートを確認 |
-| T-010 | 破片予算 | 連続プレイでCPU／メモリが上限内へ収束 | 10分間の連続切断ストレス試験 |
+| T-010 | 破片予算 | 代表的な連続プレイでCPU／メモリ予算を満たす。任意GCによる常時の容量収束や無制限の切断寿命は保証しない | 10分間の代表的な連続切断ストレス試験。新GCの未実装・無効・省略自体を不合格にせず、採用構成の費用・使用量を確認する。Phase 7.1固有の完了確認を本試験の新規実施へ依存させない |
 | T-011 | XR描画 | Single Pass環境で両眼のclip／Stencilが一致 | Phase 1.50～1.52の基本VP／即時Clip／Stencilの低レベル確認を再利用し、Phase 2で製品状態を含むclip／Stencilの左右眼スクリーンショットと実機確認 |
 | T-012 | Collider cooking | バックグラウンド化後にメインスレッドスパイクが残らない | Profilerで切断前後フレームを追跡 |
 | T-013 | 非VR性能基準 | 同一負荷を自動再生し、変更前後を比較可能 | 固定カメラ、固定乱数、切断スクリプトで計測 |
@@ -1396,7 +1424,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 2.9 | 表示／Stencil共用メッシュ切断Kernel先行実装 | 6章のTriangle切断・属性補間・Contour／Cap生成・Topology対応更新を行い、caller提供のグローバルVB／IB範囲へ出力するBurst数値Kernelと検証コード | 現行Unity環境でbuild・実際のBurst実行を確認し、6章の共通契約、seam、Cap、再切断、既存Vertex再利用、新規Vertex・正負Indexの直接配置と容量安全を代表入力で確認する。製品アロケータ・Job wrapper・GPU・Renderer・Geometry Commitへ未接続でも完了する。性能確認は14章、検証詳細は17章に従う |
 | Phase 3 | 共用表示／Stencilジオメトリ統合 | Phase 2.9の数値Kernelと、既存VPプール・範囲所有権・共有Dispatch・GPU転送・Renderer・4.5.6の祖先順Geometry Commitとの接続 | T-006／T-083の統合部分を確認し、数値確認は2.9を再利用する。合成Final Physics／Logical公開後の正負Geometry・Boundaryの後着、A→BのKernel／Commit順序、Temporary置換と全Passの共用を成立させる。新規Indexの転送1回／再利用時0回、空Geometryへのdummy非生成、Stale回収・予約不足の非公開を維持する。重い頂点処理をMainへ戻さず、通常の全Job／GPU待ちを追加しない。容量・内部エラーは4章／4.5、出力契約は6章に従い、実cookはPhase 4へ残す |
 | Phase 3.9（完了済み） | Physics Convex数値Kernel先行実装 | 7.2のB-rep clip、非交差継承、内接削減、質量特性、worst-case容量照会を行うBurst数値Kernelと最小Harness | 現行Unity環境でbuild・Burst実行でき、7.2／7.6の数値契約、削減成功、局所退化を含む採用B-repの再切断、予約範囲内の実行を代表入力で確認する。中心近傍の共通局所frameを使用し、Actor・Anchor・Cook Frameとの接続はPhase 4に残す。MeshData、製品アロケータ・Job wrapper、Mesh／Bake／Actor／Commitへ未接続でも完了し、Phase 4／4.1の完了とは扱わない。検証詳細は17章に従う |
-| Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、Phase 3.9の数値Kernelを使う7.2のOwner単位Cut/Cook統合・事前容量予約・P1 recenterの物理接続、単一Cooking Profile、初回速度継承・Final handoff、0.5G仮設定 | Phase 1～3のHarnessとPhase 3.9の数値Kernelを実物理へ接続し、T-005／T-059／T-069／T-074／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9のGC Policyは前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
+| Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、Phase 3.9の数値Kernelを使う7.2のOwner単位Cut/Cook統合・事前容量予約・P1 recenterの物理接続、単一Cooking Profile、初回速度継承・Final handoff、0.5G仮設定 | Phase 1～3のHarnessとPhase 3.9の数値Kernelを実物理へ接続し、T-005／T-059／T-069／T-074／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9／7.10のGC Policyと4.5.3のPublished済みVB回収は前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
 | Phase 4.1 | Cut/Cook Profiling | Phase 4の製品経路と代表Fixture、既存Profiler／Harness | T-076で7.5の費用を確認し、O-035／O-039の暫定実行枠・メモリ予算を調整する。保存形式、分位、反復数は実装詳細。Slashの到達Deadlineへの適用はPhase 4.53へ分ける |
 | Phase 4.2 | Player非接触Locomotion | Player Layer非接触、Level初期化時の固定PlayerLocomotionOccupancy、候補次姿勢Overlap Reject、T-088 | 人工移動の要求全体Rejectと、物理所有者・切断・Commit・Fragment・GCへ追従しない固定集合をT-088で確認する。実空間HMDはClampせず、Camera被り・内部視点はD-131の許容に従う。退出処理や将来のOccupancy更新を要求しない |
 | Phase 4.3 | 建物由来子のWorld D6と一般外部Joint撤去 | 7.2.2のIsBuildingDerived／BuildingSplitDepth、通常1→2公開でのWorld D6生成、指数Limit、Actor寿命と既存失敗境界への接続、既知Constraint識別、T-094 | 手書きSyntheticで生成・建物由来だけの予定Depthと正式公開・Abort・Final handoff時の維持・構築不能を確認する。一般外部Jointの継承・付け替え・保護・予測を要求せず、4.54が既知Constraintを識別できる。拘束効果を保証せず、製品Recipe・5.6分割・5.7 GC・未来予測本体を待たず完了する |
@@ -1417,6 +1445,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 5.7 | 表示なし物理物体の遅延回収（任意） | 7.9の確定空判定、物理所有単位の登録終了、既存Actor／Shape／システム所有Constraint／Job資源退役への接続 | 7.9.7のGC選択・接触中退役・共有資源寿命・所有D6の一度だけの退役・後着成果物拒否を確認し、無関係Siblingを維持する。追加分割の実装・有効化・成功へ依存せず、Phase自体を省略可能 |
 | Phase 6 | コンテンツ | Synty City街区、10プロップ、単一並行光源＋ambientでのシェーダ統一、既製モーション | 垂直スライスとして一連の遊びが成立 |
 | Phase 7 | 実測後最適化 | 端末別品質、破片LOD、既存Profiler／TraceとT-076による負荷確認、遠距離確定、ストレス試験 | ターゲット実機で性能予算を満たす。Schedulerを含め具体的な不足が確認された箇所だけ、別設計変更として必要な最適化を行う。初期Cooking Profileより再cookに実測上の価値がある場合、別設計変更として任意導入を検討する |
+| Phase 7.1（任意） | LogicalFragment GCとVB回収 | 7.10の寿命Policy、4.5.3のPublished済みVB回収・再利用、必要な所有・利用管理と7.1.3の共通退役への接続 | 7.10の最小確認を行い、通常切断・Abort・生存Siblingを維持して個別退役と不要VBの実再利用を確認する。方式と内部構造は固定せず、改善量・回収期限・容量収束を保証しない。Phase自体を省略可能 |
 
 Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も同じPhase 1を指し、既存Phaseは一括改番しない。各0.9xは先行成果を使いつつ独立に完了でき、即切断、実切断、Cap、物理切断、未来予測の完成をGateにしない。Stageは描画方式の段階でありPhase番号とは別である。0.94の実装・比較は必須とし、採用結果に応じてPhase 1へ進む。実行時自動Fallbackを追加しない。
 
@@ -1437,6 +1466,8 @@ Phase 4.3はPhase 4.2の後、4.50の前に置く独立Runtime Phaseであり、
 Phase 5.5の建物Recipeでは、10.2の一般契約に従う共用Cut Geometry・幾何Topology Metadata・Compound Physics Proxy・必要なFixedSupportAnchorと、IsBuildingDerived=true・BuildingSplitDepth=0を生成する。その他の初期所有者はfalse／0とする。壁板抽出、Box数・厚み、開口の扱い、点Anchor配置はAsset Recipeの実装詳細とし、一般のGeometry／Convex／Anchor契約の範囲で物理近似と配置の違いを許容する。Phase 0.2の入力利用は10.2.2に従い、製品metadataを前倒ししない。
 
 Phase 5.6／5.7はPhase 5.5より後に置く独立した任意Phaseであり、双方または片方を省略してPhase 6へ進んでも未完了負債にしない。専用前処理・Runtime・試験をPhase 1～5.5へ前倒しせず、7.9.7を実装する機能だけに適用する。
+
+Phase 7.1は通常切断・共通退役・VPプールへ後付けする後期の独立した任意最適化とする。Published済みVBのFreeと必要な管理情報を含め、前段Phaseへ準備実装・hook・未使用APIを要求しない。導入時の既存コード変更は本Phaseで行い、旧内部APIの維持や二重実装を要求しない。Phase 5.6／5.7やPhase 7全体の完了を前提にせず、他Phaseも本Phaseの実装・有効化を待たない。未実装・延期・無効・省略を基本Playable・垂直スライス・他Phaseの未完了負債にしない。独立Phaseという区切りのために別の状態体系・Coordinator・Assembly・Sceneを設けない。
 
 ## 16. 垂直スライス受け入れ基準
 
@@ -1490,7 +1521,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 7.6のSource生存性・Active Transaction確認、Final Convexのrobust support、7.7の容量の順に受付ける。No-opと受付見送りは既存Counterで区別し、状態・世代・表示・物理・履歴・新規仕事を変更せず保存・再試行しない。正常成功時は7.1の正負2 Final Owner／Logical childとOperationを一体公開し、実在BoundaryだけをGeometry Commitで後着させる。
 
-- 非空共用Geometryは同SideのFinal Physics Ownerへ所属し、Geometryが片側または両側空でも正負2物理子を残す。専用Convex、極小Rigidbody、反対側への所属探索・質量移送を要求しない。Rendererなしの子は通常のObject／Level寿命または任意7.9 GCへ従い、未計算・失敗を空にしない。
+- 非空共用Geometryは同SideのFinal Physics Ownerへ所属し、Geometryが片側または両側空でも正負2物理子を残す。専用Convex、極小Rigidbody、反対側への所属探索・質量移送を要求しない。Rendererなしの子は通常のObject／Level寿命または7.9／7.10の任意GCへ従い、未計算・失敗を空にしない。
 
 - Final質量は7.2に従って受付時の親Rigidbody質量を保存し、採用Convex集合から質量特性を近似する。Provisional一時massを流用せず、正負両子の質量特性を成立させられなければAbortとする。
 
@@ -1524,7 +1555,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Player Body／Handはプロップ／破片へ物理Impulseを与えず、人工移動はLevel初期化時の固定PlayerLocomotionOccupancyに候補次姿勢がOverlapすれば要求全体をRejectする。物理所有者・切断・Commit・Fragment・GCへ追従せず、7.2.3の通行境界不一致と移動制限を許容する。HMDの実空間移動ではCamera位置を強制変更せず、Camera被り・内部視点・Near Planeおよび仮Capの表示品質はD-131と5.2に従う。刀とSlashWave Segmentによる切断Interactionは非接触化後も成立する。
 
-7.9の任意分割・物理GCを実装する場合の追加受入条件は7.9.7とする。無効時の通常切断維持を確認し、有効時は成功分割後の通常再切断とGC退役の非復活を確認する。未実装・無効を垂直スライス不合格にしない。
+7.9の任意分割・物理GCを実装する場合の追加受入条件は7.9.7とする。無効時の通常切断維持を確認し、有効時は成功分割後の通常再切断とGC退役の非復活を確認する。未実装・無効を垂直スライス不合格にしない。任意Phase 7.1の導入時の追加受入条件と消滅・容量非保証の許容は7.10に従い、未導入を不合格にしない。
 
 ## 17. Codexでの継続更新ルール
 
@@ -1560,11 +1591,13 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 今回撤去するオンラインPose Backendと方式比較、移動計画の具体手法・内部構造・将来方式の先行契約、および専用Decision・Open Item・用語・試験・Phase記述は直接削除・置換し、経緯をGitへ委ねる。同じ責務のIDは継続し、不要なIDは欠番とする。旧詳細・互換層を残さず、無関係な公開・資源寿命・切断・観測契約や研究原資料を変更しない。
 
+- 7.10の導入で置換するPublished Vertexの永久非再利用、退役Policyの適用範囲、容量収束の旧記述は直接置換・短縮し、経緯はGitへ委ねる。同じ責務のIDを維持し、廃止全文・互換層を追加しない。
+
 - 未決事項は結論、根拠、決定日を追記して決定事項へ移す。
 
 - 技術検証は測定環境、再現手順、数値結果、スクリーンショット／Profiler参照を残す。
 
-- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と2.9／3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
+- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と2.9／3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。任意Phase 7.1の未実装・延期・無効・省略も15章に従い未完了負債にしない。
 
 - 新しい機能提案は『即時応答』『幾何精度』『物理整合』『性能予算』のどれへ影響するかを明記する。
 
@@ -1594,7 +1627,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | BuildingSplitDepth | 7.2.2の建物由来の非負分裂深さ。初期0、予定子DepthをProvisional D6と正式子で共有する。非建物は0を維持し、Final handoffで再加算しない |
 | BuildingWorldD6Constraint | 7.2.2の建物由来・Anchorなしの動的分裂子が一つ持つWorld接続D6。Actor寿命で保持し、ProvisionalSeparationConstraintと分離する |
 | PlayerLocomotionOccupancy | 7.2.3のLevel初期化時に確定するworld-space不変の低複雑度Primitive集合。人工移動の候補Player Root／予測HMD CapsuleのOverlap Rejectに使用し、物理所有者・切断・Commit・Fragment・GCへ追従しない |
-| LogicalFragment | 再切断・退役の論理単位。正常切断はFinal Physicsと同時に正負各1子を公開し、各子が一Final Physics Ownerを専有する。Geometry未完成でも受付でき、同Sideの離れた島を含められる。7.9の非命中再編成・退役でも架空Operationを作らない |
+| LogicalFragment | 再切断・退役の論理単位。正常切断はFinal Physicsと同時に正負各1子を公開し、各子が一Final Physics Ownerを専有する。Geometry未完成でも受付でき、同Sideの離れた島を含められる。7.9の非命中再編成・退役と7.10の退役でも架空Operationを作らない |
 | CutBoundaryRecord | Geometry Commit時に確定する実在面・Side・子Geometry／frame・作成時世代の記録。Logical Publicationから後着でき、物理連結Edgeや資源の強い所有者にはしない |
 | SourceSlashPlane／SelectedObjectLocalCutPlane | 前者はSlashFrameの不変World攻撃面、後者は命中時に対象操作ごとに一度確定する切断前物体相対の面。19.5.1の予測面採否はMesh Readyに依存せず、全表示／物理成果物が選択面を共有する |
 | CommittedCutPlane | SelectedObjectLocalCutPlaneを対応する実Actor／子frameへ写したWorld面。命中時のWorld位置を固定したり予測PoseをActorへ設定する指示ではない |
@@ -1608,7 +1641,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | RenderFragment | 正負Sideの共用Geometryを表示する単位。同Sideの離れた島を含められ、全島の個別列挙を要求しない。7.6に従い現在の物理所有者へ追従する |
 | コミット後の追加空間分割 | 確定した1物理所有単位の共用面集合を横切らない一枚の平面で配分し、必要なConvex clip・cook後に通常物体2個へ再編成する7.9の任意処理。非命中で公開し、新しいGameplay切断面・実境界・Cut Operationを作らない |
 | 物理GC | 共用Geometry全体の面集合が確定0の通常物理所有単位を、7.9の条件で丸ごと終了する任意のゲーム上の寿命Policy。Managed GC・個別Convex間引きではなく、追加分割から独立する |
-| MaxIncompleteCutOperationCount | 全対象で同時に保持できる受付済み未完了切断数。対象LogicalFragmentへの一回の受付を1件とする既存容量設定の0より大きい固定値であり、片側空No-op、受付見送り、投機候補、7.9の任意分割・物理GCは数えない |
+| LogicalFragment GC | 生存LogicalFragment全体を表示・物理ごと退役させる7.10の任意寿命Policy。Published済みVBの回収条件は4.5.3に従い、Managed GCや確定空物理GCとは区別する |
+| MaxIncompleteCutOperationCount | 全対象で同時に保持できる受付済み未完了切断数。対象LogicalFragmentへの一回の受付を1件とする既存容量設定の0より大きい固定値であり、片側空No-op、受付見送り、投機候補、7.9の任意分割・物理GCと7.10の退役は数えない |
 | WorldPhysicsProfile | 世界重力を正本として保持し、Unity Physics、予測、解析運動、VFXへ同じ値を供給するバージョン付き設定 |
 | Pending Two-Sided Shadow | 即時切断中だけ、開いた外殻の裏面をShadow Mapへ書いて断面キャップの遮蔽を近似する両面ShadowCaster経路 |
 | Cap Bounds Polygon | 対象のローカルOBBと切断平面の交差から生成し、他のTemporary Render Boundary半空間でclipする3～6頂点の有限な仮キャップ板 |
@@ -1626,7 +1660,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | Current Adopted Physics Convex Set | 7.6と実Hitで共用する現在採用Convex集合。旧／暫定Convexを含められるが表示Geometryの外包を保証しない |
 | SlashWave VFX | 19.1.8に従う、Slash面内の表示専用平面表現 |
 | Candidate Flight Bounds／先行準備範囲 | 前者は有限Span包絡から導出可能な場合の保守範囲、後者は全Hit包含を保証しない有限な投機範囲。実Hit検索を制限しない |
-| ObjectGeneration | Object全体のPrediction等に用いる単調増加の粗い変更識別。更新と採否は4.2、7.9、8章に従う |
+| ObjectGeneration | Object全体のPrediction等に用いる単調増加の粗い変更識別。更新と採否は4.2、7.9、7.10、8章に従う |
 | BaseObjectGeneration | 投機ジョブが入力としてスナップショットしたObjectGeneration |
 | Commit | 有効な成果物を既存境界で整合した状態として公開する操作。採否は8章、物理・論理公開は7.1、Geometry公開は4.5.6に従う |
 | BladeFrame | 刀Prefab内でBladeAxis、EdgeDirection、SideNormalと判定Sample Pointを定義するローカル座標系 |
@@ -2032,7 +2066,7 @@ Table欠落・不正や入力不成立時は不正Poseを公開せず、既存�
 
 投機ジョブは`SlashId`、対象`LogicalFragmentRef`、確定した`SlashFrame`、`ObjectId`、`BaseObjectGeneration`、共用Geometry・物理・MobPlanの必要なGeneration、Animation入力Identity、予測到達時刻へ既存入力Snapshotで相関する。各成果物への重複field保持は要求しない。Commitには対応するSlashWave Segment Sweepの`SlashHitConfirmed`を必須とし、識別子、SourceSlashPlane、世代、予測前提のいずれかが一致しない結果は適用せず回収する。19.5.1の対象剛体だけはWorld姿勢一致をLocal Plane採用Gateへ置き換え、その操作に確定した面・基底frameと一致するGeometryだけを使用する。これにより、Candidate Flight Boundsへ入っただけの空振り候補や、古い非同期結果が新しい切断状態を上書きすることを防ぐ。
 
-上記は通常の命中切断成果物のCommit条件である。7.9の確定後の任意分割・退役は非命中公開条件に従い、公開後は旧所有構成向けの予測成果物を拒否する。任意候補の準備・見送りだけでは通常予測を失効させない。
+上記は通常の命中切断成果物のCommit条件である。7.9の確定後の任意分割・退役と7.10の退役は各節の非命中公開条件に従い、公開後は旧所有構成向けの予測成果物を拒否する。任意候補の準備・見送りだけでは通常予測を失効させない。
 
 #### 19.5.1 剛体切断成果物の実姿勢リベース
 
