@@ -77,10 +77,10 @@ namespace Zantetsu.Observability
             }
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(recoveryResult);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(recoveryResult);
 
             PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch =
-                PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(actionPlan);
+                PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch.Create(actionPlan);
 
             PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);

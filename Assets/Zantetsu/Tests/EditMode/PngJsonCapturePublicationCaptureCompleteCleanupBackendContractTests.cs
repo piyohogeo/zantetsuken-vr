@@ -805,7 +805,7 @@ namespace Zantetsu.Core.Tests
 
         private PngJsonCapturePublicationCaptureCompleteCleanupActionPlan BuildPlan(bool commitRoute)
         {
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
         }
 
@@ -1029,7 +1029,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(inspection);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
             Assert.That(plan.TryValidate(out token), Is.True);
@@ -1118,7 +1118,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch =
                 PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch.Create(plan);

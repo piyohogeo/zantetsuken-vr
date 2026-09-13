@@ -844,7 +844,7 @@ namespace Zantetsu.Core.Tests
 
         private PngJsonCapturePublicationCaptureCompleteCleanupActionPlan BuildPlan(bool commitRoute)
         {
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
         }
 
@@ -869,7 +869,7 @@ namespace Zantetsu.Core.Tests
             SetField(result.Authority.RecoveryDecision.Snapshot, "_publicationPlan",
                 MakeDoc(PublicationPlan, DocCanonical, 100, planValue));
 
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
         }
 
         private PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch BuildBatch(
@@ -1274,7 +1274,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result0 =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(inspection);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result0);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result0);
 
             PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
             RecordingBackend backend = new RecordingBackend();
@@ -1557,7 +1557,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result0 =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result0);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result0);
 
             PngJsonCapturePublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
             Assert.That(batch.Count, Is.EqualTo(2006));

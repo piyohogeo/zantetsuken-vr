@@ -828,7 +828,7 @@ namespace Zantetsu.Core.Tests
 
         private PngJsonCapturePublicationCaptureCompleteCleanupActionPlan BuildPlan(bool commitRoute)
         {
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
         }
 
@@ -849,18 +849,6 @@ namespace Zantetsu.Core.Tests
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(fields.Length, Is.EqualTo(3));
             Assert.That(fields.All(f => f.IsInitOnly), Is.True);
-        }
-
-        [Test]
-        public void Builder_Shape_StaticNoFields()
-        {
-            Type type = typeof(PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract && type.IsSealed, Is.True);
-
-            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
-            Assert.That(fields, Is.Empty, "The builder must hold no fields.");
         }
 
         [Test]
@@ -910,15 +898,15 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_NullResult_Rejected()
+        public void Create_NullResult_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(null));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(null));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
         [Test]
-        public void Builder_InvalidResult_Rejected()
+        public void Create_InvalidResult_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult();
 
@@ -930,12 +918,12 @@ namespace Zantetsu.Core.Tests
             SetField(forged, "_token", GetField(result, "_token"));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(forged));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(forged));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
         [Test]
-        public void Builder_Rejects_NonCleanupStatuses()
+        public void Create_Rejects_NonCleanupStatuses()
         {
             // ReinspectionRequired.
             PngJsonCapturePublicationArtifactInspectionAuthority publishAuthority = MakeRecoveryAuthority();
@@ -953,12 +941,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(publish.Status, Is.EqualTo(CaptureRunPublicationArtifactRecoveryExecutionStatus.ReinspectionRequired));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(publish));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(publish));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
         [Test]
-        public void Builder_Rejects_StopStatuses()
+        public void Create_Rejects_StopStatuses()
         {
             // OrphanedPreTrace.
             AssertStopStatusRejected(EvAbsent, EvAbsent, EvAbsent, EvAbsent, EvAbsent, CaptureRunPublicationArtifactRecoveryExecutionStatus.OrphanedPreTrace);
@@ -990,7 +978,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.Status, Is.EqualTo(expectedStatus));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
@@ -1030,7 +1018,7 @@ namespace Zantetsu.Core.Tests
             SetField(result.ExecutionResult.GetCompletedStep(0), "_commitReceipt", null);
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
@@ -1040,7 +1028,7 @@ namespace Zantetsu.Core.Tests
             SetField(result.ExecutionResult.GetCompletedStep(0).CommitReceipt, "_issuedBy", new FakeCommitter());
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
@@ -1054,7 +1042,7 @@ namespace Zantetsu.Core.Tests
             SetField(result.ExecutionResult.GetCompletedStep(0).CommitReceipt, "_operation", otherOperation);
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
@@ -1064,7 +1052,7 @@ namespace Zantetsu.Core.Tests
             SetField(result.ExecutionResult.GetCompletedStep(0).CommitReceipt, "_operation", null);
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
@@ -1127,7 +1115,7 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             Assert.That(plan.GetStep(0).Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary));
         }
@@ -1174,7 +1162,7 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
@@ -1194,14 +1182,14 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result));
         }
 
         [Test]
         public void StagingArtifact_AbsentGeneratesNoStep()
         {
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                     BuildCommitResult(1, EvAbsent));
 
             for (int i = 0; i < plan.Count; i++)
@@ -1214,7 +1202,7 @@ namespace Zantetsu.Core.Tests
         public void StagingArtifact_EntryAscendingPngBeforeSidecar()
         {
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                     BuildCommitResult(3, EvMatchesExpected));
 
             int position = 0;
@@ -1231,7 +1219,7 @@ namespace Zantetsu.Core.Tests
         {
             // 0 entries: no staging steps; document/root steps remain.
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan zero =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCommitResult(0, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCommitResult(0, EvMatchesExpected));
             Assert.That(zero.Count, Is.EqualTo(6));
 
             // 1 entry: 2 staging steps.
@@ -1260,7 +1248,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult many =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan manyPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(many);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(many);
 
             // Fresh: frames root + publication plan + 4 tail steps = 6.
             Assert.That(manyPlan.Count, Is.EqualTo(6));
@@ -1339,7 +1327,7 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken planToken;
             Assert.That(plan.TryValidate(out planToken), Is.True);
             Assert.That(plan.IsValid, Is.True);
@@ -1391,7 +1379,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.AuthorityKind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             // Fresh never fabricates temporary-document steps, but it must
             // remove the frames root (any plan entry proves it was created)
@@ -1433,7 +1421,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.AuthorityKind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             // 2 entries x (Png + Sidecar) = 4 staging steps, then frames root,
             // publication plan, and the 4 tail steps = 10.
@@ -1466,7 +1454,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.Status, Is.EqualTo(CaptureRunPublicationArtifactRecoveryExecutionStatus.CaptureCompleteCleanupRequired));
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             // 0 entries: no frames root, but the publication plan is still removed.
             Assert.That(plan.Count, Is.EqualTo(5));

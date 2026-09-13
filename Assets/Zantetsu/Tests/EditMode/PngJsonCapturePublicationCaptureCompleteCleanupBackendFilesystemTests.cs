@@ -701,7 +701,7 @@ namespace Zantetsu.Core.Tests
                 commitRoute
                     ? BuildCommitResult(layout, 1, EvMatchesExpected, out _)
                     : BuildCaptureCompleteResult(layout, 1, EvMatchesExpected, out _);
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
         }
 
         private PngJsonCapturePublicationCaptureCompleteCleanupOperation BuildOperation(
@@ -785,7 +785,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, MakeDoc(PublicationPlanTemporary, DocCanonical, 100, plan), out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvAbsent));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvAbsent));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             int stepIndex = FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary);
             Assert.That(stepIndex, Is.GreaterThanOrEqualTo(0));
@@ -812,7 +812,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, true, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan), null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvAbsent));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvAbsent));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             int stepIndex = FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary);
             Assert.That(stepIndex, Is.GreaterThanOrEqualTo(0));
@@ -849,7 +849,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             int stepIndex = FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png);
             Assert.That(stepIndex, Is.GreaterThanOrEqualTo(0));
@@ -1089,7 +1089,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
                 BuildCommitResult(layout, 1, EvMatchesExpected, out CaptureRunInitializationSessionOwnershipLease owner);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation = BuildOperation(actionPlan, 0);
 
@@ -1119,7 +1119,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));
@@ -1145,7 +1145,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));
@@ -1170,7 +1170,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, MakeDoc(PublicationPlanTemporary, DocCanonical, 100, plan), out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvAbsent));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvAbsent));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary));
@@ -1194,7 +1194,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, true, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan), null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvAbsent));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvAbsent));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary));
@@ -1295,7 +1295,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));
@@ -1347,7 +1347,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));
@@ -1375,7 +1375,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));
@@ -1430,7 +1430,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionAuthority authority =
                 MakeRecoveryAuthority(plan, false, null, null, out _, layout);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan actionPlan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCleanupResult(authority, 1, EvMatchesExpected));
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(BuildCleanupResult(authority, 1, EvMatchesExpected));
             Assert.That(actionPlan.TryValidate(out PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token), Is.True);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation operation =
                 BuildOperation(actionPlan, FindStepIndex(actionPlan, CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact, Png));

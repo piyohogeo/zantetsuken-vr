@@ -795,7 +795,7 @@ namespace Zantetsu.Core.Tests
 
         private PngJsonCapturePublicationCaptureCompleteCleanupActionPlan BuildPlan(bool commitRoute)
         {
-            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
         }
 
@@ -984,7 +984,7 @@ namespace Zantetsu.Core.Tests
                 MakeDoc(CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue));
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
 
@@ -1042,7 +1042,7 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
 
@@ -1092,7 +1092,7 @@ namespace Zantetsu.Core.Tests
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
 
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
             PngJsonCapturePublicationCaptureCompleteCleanupOperation op =
@@ -1127,7 +1127,7 @@ namespace Zantetsu.Core.Tests
         {
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 2);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
 
@@ -1155,7 +1155,7 @@ namespace Zantetsu.Core.Tests
         {
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 2);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
 
@@ -1259,7 +1259,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryOrchestrationResult result =
                 MakeOrchestrator(inspector, MakeExecutionCoordinator()).Execute(operation);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan =
-                PngJsonCapturePublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.Create(result);
 
             CaptureRunPublicationPathSet publicationPaths = result.InspectionSnapshot.Operation.PublicationPaths;
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
