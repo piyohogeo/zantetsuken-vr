@@ -13,9 +13,9 @@ namespace Zantetsu.Observability
     /// This type holds only the exact committer and the exact operation,
     /// performs no filesystem, hash, or serialization work, and is not an
     /// <see cref="IDisposable"/>. The publication receipt, plan, root layout,
-    /// and run identity are forwarded from the operation and never duplicated
-    /// as fields, and no new proof, token, nonce, canonical byte copy, resolved
-    /// path, or filesystem handle is introduced. A receipt is process-local
+    /// and run identity are read from <see cref="Operation"/>; the receipt does
+    /// not restate them, and no new proof, token, nonce, canonical byte copy,
+    /// resolved path, or filesystem handle is introduced. A receipt is process-local
     /// evidence that one synchronous commit call succeeded; it is not a
     /// persistent filesystem snapshot and not CaptureComplete evidence.
     /// </remarks>
@@ -58,20 +58,6 @@ namespace Zantetsu.Observability
         internal INvencRunCaptureIndexCommitter Committer => _committer;
 
         internal NvencRunCaptureIndexCommitOperation Operation => _operation;
-
-        internal NvencRunArtifactPublicationReceipt ArtifactPublicationReceipt =>
-            _operation.ArtifactPublicationReceipt;
-
-        internal NvencRunArtifactPublicationOperation ArtifactPublicationOperation =>
-            _operation.ArtifactPublicationOperation;
-
-        internal CapturePublicationPlan Plan => _operation.Plan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid =>
             _committer != null

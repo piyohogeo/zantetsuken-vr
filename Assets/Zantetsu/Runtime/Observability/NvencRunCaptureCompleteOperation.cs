@@ -57,18 +57,18 @@ namespace Zantetsu.Observability
             _captureIndexCommitReceipt.Operation;
 
         internal NvencRunArtifactPublicationReceipt ArtifactPublicationReceipt =>
-            _captureIndexCommitReceipt.ArtifactPublicationReceipt;
+            _captureIndexCommitReceipt.Operation.ArtifactPublicationReceipt;
 
         internal NvencRunArtifactPublicationOperation ArtifactPublicationOperation =>
-            _captureIndexCommitReceipt.ArtifactPublicationOperation;
+            _captureIndexCommitReceipt.Operation.ArtifactPublicationOperation;
 
-        internal CapturePublicationPlan Plan => _captureIndexCommitReceipt.Plan;
+        internal CapturePublicationPlan Plan => _captureIndexCommitReceipt.Operation.Plan;
 
-        internal CaptureRunRootLayout RootLayout => _captureIndexCommitReceipt.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _captureIndexCommitReceipt.Operation.RootLayout;
 
-        internal long TestRunId => _captureIndexCommitReceipt.TestRunId;
+        internal long TestRunId => _captureIndexCommitReceipt.Operation.TestRunId;
 
-        internal string RunInitializationId => _captureIndexCommitReceipt.RunInitializationId;
+        internal string RunInitializationId => _captureIndexCommitReceipt.Operation.RunInitializationId;
 
         internal bool IsValid =>
             _coordinator != null

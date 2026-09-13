@@ -47,45 +47,13 @@ namespace Zantetsu.Observability
 
             NvencRunCaptureIndexCommitAttemptResult attempt = _committer.Commit(operation);
 
-            if (!IsValidAttempt(attempt, operation))
+            if (!attempt.IsIssuedFor(_committer, operation))
             {
                 throw new InvalidOperationException(
                     "Committer returned a null, foreign, default, or corrupt attempt result.");
             }
 
             return attempt;
-        }
-
-        private bool IsValidAttempt(
-            NvencRunCaptureIndexCommitAttemptResult attempt,
-            NvencRunCaptureIndexCommitOperation operation)
-        {
-            if (attempt.IsNone || !attempt.IsValid)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(attempt.Committer, _committer)
-                || !ReferenceEquals(attempt.Operation, operation))
-            {
-                return false;
-            }
-
-            switch (attempt.Status)
-            {
-                case NvencRunCaptureIndexCommitStatus.Committed:
-                {
-                    NvencRunCaptureIndexCommitReceipt receipt = attempt.Receipt;
-                    return receipt != null
-                        && receipt.IsIssuedFor(_committer, operation);
-                }
-
-                case NvencRunCaptureIndexCommitStatus.Failed:
-                    return attempt.Receipt == null;
-
-                default:
-                    return false;
-            }
         }
     }
 }

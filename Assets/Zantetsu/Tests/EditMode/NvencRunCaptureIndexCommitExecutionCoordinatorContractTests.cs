@@ -293,7 +293,7 @@ namespace Zantetsu.Core.Tests
         // ---- Forwarding and immutability ----
 
         [Test]
-        public void ResultAndReceipt_ForwardTheOperationGraphWithoutDuplicateFields()
+        public void Result_ForwardsOperationGraph_ReceiptHoldsCommitterAndOperation()
         {
             using (Harness h = Harness.Create())
             {
@@ -304,8 +304,10 @@ namespace Zantetsu.Core.Tests
                     new NvencRunCaptureIndexCommitExecutionCoordinator(committer).Execute(operation);
                 NvencRunCaptureIndexCommitReceipt receipt = result.Receipt;
 
-                // Every forwarded value is the operation's exact reference, so
-                // nothing is copied into a field of its own.
+                // The receipt holds only the exact committer and the exact
+                // operation. The attempt result also holds the status and the
+                // receipt, but every value it forwards is the operation's exact
+                // reference, so nothing is copied into a field of its own.
                 Assert.That(ReferenceEquals(
                     result.ArtifactPublicationReceipt, operation.ArtifactPublicationReceipt), Is.True);
                 Assert.That(ReferenceEquals(
@@ -316,15 +318,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(
                     result.RunInitializationId, operation.RunInitializationId), Is.True);
 
-                Assert.That(ReferenceEquals(
-                    receipt.ArtifactPublicationReceipt, operation.ArtifactPublicationReceipt), Is.True);
-                Assert.That(ReferenceEquals(
-                    receipt.ArtifactPublicationOperation, operation.ArtifactPublicationOperation), Is.True);
-                Assert.That(ReferenceEquals(receipt.Plan, operation.Plan), Is.True);
-                Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-                Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId), Is.True);
+                Assert.That(receipt.Committer, Is.SameAs(committer));
+                Assert.That(receipt.IsIssuedFor(committer, operation), Is.True);
             }
         }
 
