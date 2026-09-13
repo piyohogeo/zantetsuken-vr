@@ -432,7 +432,7 @@ namespace Zantetsu.Core.Tests
         {
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, frameIds);
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, out owner);
-            return PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+            return PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
         }
 
         private PngJsonCaptureFrozenRunArtifactInspectionSeed MakeSeed(
@@ -440,7 +440,7 @@ namespace Zantetsu.Core.Tests
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeSeedBinding(frameIds, out owner);
-            return PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
+            return PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding);
         }
 
         // ---- Recovery decision graph forging ----

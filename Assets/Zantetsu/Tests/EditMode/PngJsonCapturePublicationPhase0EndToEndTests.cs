@@ -499,8 +499,8 @@ namespace Zantetsu.Core.Tests
         {
             CapturePublicationPlan genericPlan = MakeGenericPlan(layout.TestRunId, new[] { 10L }, manifestHash, png, sidecar);
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(layout, genericPlan, out owner);
-            PngJsonCaptureFrozenRunPublicationPlanBinding binding = PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
-            return PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
+            PngJsonCaptureFrozenRunPublicationPlanBinding binding = PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
+            return PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding);
         }
 
         // ---- Recovery decision graph ----

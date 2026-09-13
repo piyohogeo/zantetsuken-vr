@@ -414,7 +414,7 @@ namespace Zantetsu.Core.Tests
         {
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, frameIds);
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, out owner);
-            return PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+            return PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
         }
 
         private PngJsonCaptureFrozenRunArtifactInspectionSeed MakeSeed(params long[] frameIds)
@@ -427,7 +427,7 @@ namespace Zantetsu.Core.Tests
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(frameIds, out owner);
-            return PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
+            return PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding);
         }
 
         // ---- Normal ----
@@ -685,19 +685,19 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_DoesNotDisposeOwner()
+        public void Create_DoesNotDisposeOwner()
         {
             List<string> disposeLog = new List<string>();
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, new long[] { 1, 2 });
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
             PngJsonCaptureFrozenRunPublicationPlanBinding binding =
-                PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+                PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
             PngJsonCaptureFrozenRunArtifactInspectionSeed seed =
-                PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder.Build(binding);
+                PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding);
 
             Assert.That(seed.IsValid, Is.True);
             Assert.That(owner.IsCreated, Is.True);
-            Assert.That(disposeLog, Is.Empty, "The seed builder must not dispose the owner.");
+            Assert.That(disposeLog, Is.Empty, "Creating the seed must not dispose the owner.");
         }
 
         // ---- Type / source shape ----
@@ -758,18 +758,6 @@ namespace Zantetsu.Core.Tests
                     Is.False,
                     method.Name + " must not return a raw or ownership lease.");
             }
-        }
-
-        [Test]
-        public void Builder_HasNoFields()
-        {
-            Type type = typeof(PngJsonCaptureFrozenRunArtifactInspectionSeedBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(
-                type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static),
-                Is.Empty);
         }
 
         [Test]

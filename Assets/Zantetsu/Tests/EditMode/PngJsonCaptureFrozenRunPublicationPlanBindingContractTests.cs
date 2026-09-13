@@ -414,13 +414,13 @@ namespace Zantetsu.Core.Tests
         {
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, frameIds);
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, out owner);
-            return PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+            return PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
         }
 
         // ---- Builder: normal ----
 
         [Test]
-        public void Builder_ZeroFrames_BuildsEmptyBinding()
+        public void Create_ZeroFrames_BuildsEmptyBinding()
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding();
 
@@ -431,7 +431,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_MultipleFrames_BuildsCorrectBinding()
+        public void Create_MultipleFrames_BuildsCorrectBinding()
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(1, 2, 3);
 
@@ -518,26 +518,26 @@ namespace Zantetsu.Core.Tests
         // ---- Builder: rejection ----
 
         [Test]
-        public void Builder_NullFrozenResult_Rejected()
+        public void Create_NullFrozenResult_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(null));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(null));
             Assert.That(ex.ParamName, Is.EqualTo("frozenPublicationResult"));
         }
 
         [Test]
-        public void Builder_InvalidFrozenResult_Rejected()
+        public void Create_InvalidFrozenResult_Rejected()
         {
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(MakeGenericPlan(3, new long[] { 1 }), out CaptureRunInitializationSessionOwnershipLease owner);
             Assert.That(owner.IsCreated, Is.True);
             owner.Dispose();
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen));
         }
 
         [Test]
-        public void Builder_ArtifactCountMismatch_Rejected()
+        public void Create_ArtifactCountMismatch_Rejected()
         {
             CaptureArtifactDescriptor image1 = MakeImageDescriptor(1);
             CaptureArtifactDescriptor metadata1 = MakeMetadataDescriptor(1);
@@ -553,11 +553,11 @@ namespace Zantetsu.Core.Tests
 
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(plan);
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen));
         }
 
         [Test]
-        public void Builder_FrameZeroArtifacts_Rejected()
+        public void Create_FrameZeroArtifacts_Rejected()
         {
             CapturePublicationPlan plan = new CapturePublicationPlan(
                 3, InitId, HashA,
@@ -565,11 +565,11 @@ namespace Zantetsu.Core.Tests
                 new[] { new CaptureFrameEvidenceEntry(1, Array.Empty<string>()) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_FrameOneArtifact_Rejected()
+        public void Create_FrameOneArtifact_Rejected()
         {
             CaptureArtifactDescriptor descriptor = MakeImageDescriptor(1);
             CapturePublicationPlan plan = new CapturePublicationPlan(
@@ -578,11 +578,11 @@ namespace Zantetsu.Core.Tests
                 new[] { new CaptureFrameEvidenceEntry(1, new[] { "frame/1/image" }) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_FrameThreeArtifacts_Rejected()
+        public void Create_FrameThreeArtifacts_Rejected()
         {
             CaptureArtifactDescriptor image = MakeImageDescriptor(1);
             CaptureArtifactDescriptor metadata = MakeMetadataDescriptor(1);
@@ -595,11 +595,11 @@ namespace Zantetsu.Core.Tests
                 new[] { new CaptureFrameEvidenceEntry(1, new[] { "frame/1/extra", "frame/1/image", "frame/1/metadata" }) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_ArtifactIdMissing_Rejected()
+        public void Create_ArtifactIdMissing_Rejected()
         {
             CaptureArtifactDescriptor image = MakeImageDescriptor(1);
             CaptureArtifactDescriptor wrong = new CaptureArtifactDescriptor(
@@ -612,11 +612,11 @@ namespace Zantetsu.Core.Tests
                 new[] { new CaptureFrameEvidenceEntry(1, new[] { "frame/1/image", "frame/1/wrong" }) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_CrossFrameArtifactReference_Rejected()
+        public void Create_CrossFrameArtifactReference_Rejected()
         {
             CaptureArtifactDescriptor image1 = MakeImageDescriptor(1);
             CaptureArtifactDescriptor metadata1 = MakeMetadataDescriptor(1);
@@ -632,11 +632,11 @@ namespace Zantetsu.Core.Tests
                 });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_RunScopedOrSharedArtifact_Rejected()
+        public void Create_RunScopedOrSharedArtifact_Rejected()
         {
             CaptureArtifactDescriptor image = MakeImageDescriptor(1);
             CaptureArtifactDescriptor metadata = MakeMetadataDescriptor(1);
@@ -649,11 +649,11 @@ namespace Zantetsu.Core.Tests
                 new[] { new CaptureFrameEvidenceEntry(1, new[] { "frame/1/image", "frame/1/metadata" }) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_KindMismatch_Rejected()
+        public void Create_KindMismatch_Rejected()
         {
             CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
                 "frame/1/image", CaptureArtifactKind.FrameMetadata, "image/png", 1,
@@ -665,11 +665,11 @@ namespace Zantetsu.Core.Tests
                 new[] { MakeFrameEvidence(1) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_FormatIdMismatch_Rejected()
+        public void Create_FormatIdMismatch_Rejected()
         {
             CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
                 "frame/1/image", CaptureArtifactKind.FrameImage, "image/jpeg", 1,
@@ -681,11 +681,11 @@ namespace Zantetsu.Core.Tests
                 new[] { MakeFrameEvidence(1) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_FormatVersionMismatch_Rejected()
+        public void Create_FormatVersionMismatch_Rejected()
         {
             CaptureArtifactDescriptor metadata = new CaptureArtifactDescriptor(
                 "frame/1/metadata", CaptureArtifactKind.FrameMetadata,
@@ -698,11 +698,11 @@ namespace Zantetsu.Core.Tests
                 new[] { MakeFrameEvidence(1) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_StagingPathMismatch_Rejected()
+        public void Create_StagingPathMismatch_Rejected()
         {
             CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
                 "frame/1/image", CaptureArtifactKind.FrameImage, "image/png", 1,
@@ -714,11 +714,11 @@ namespace Zantetsu.Core.Tests
                 new[] { MakeFrameEvidence(1) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         [Test]
-        public void Builder_FinalPathMismatch_Rejected()
+        public void Create_FinalPathMismatch_Rejected()
         {
             CaptureArtifactDescriptor metadata = new CaptureArtifactDescriptor(
                 "frame/1/metadata", CaptureArtifactKind.FrameMetadata,
@@ -731,7 +731,7 @@ namespace Zantetsu.Core.Tests
                 new[] { MakeFrameEvidence(1) });
 
             Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(MakeFrozenResult(plan)));
+                () => PngJsonCaptureFrozenRunPublicationPlanBinding.Create(MakeFrozenResult(plan)));
         }
 
         // ---- Binding: corruption ----
@@ -827,17 +827,17 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_DoesNotDisposeOwner()
+        public void Create_DoesNotDisposeOwner()
         {
             List<string> disposeLog = new List<string>();
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, new long[] { 1, 2 });
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
             PngJsonCaptureFrozenRunPublicationPlanBinding binding =
-                PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+                PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
 
             Assert.That(binding.IsValid, Is.True);
             Assert.That(owner.IsCreated, Is.True);
-            Assert.That(disposeLog, Is.Empty, "The binding builder must not dispose the owner.");
+            Assert.That(disposeLog, Is.Empty, "Creating the binding must not dispose the owner.");
         }
 
         // ---- Type / source shape ----
@@ -900,33 +900,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_HasNoFields()
-        {
-            Type type = typeof(PngJsonCaptureFrozenRunPublicationPlanBindingBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(
-                type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static),
-                Is.Empty);
-        }
-
-        [Test]
-        public void BindingAndBuilder_Source_NoForbiddenDependencies()
+        public void Binding_Source_NoForbiddenDependencies()
         {
             string binding = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureFrozenRunPublicationPlanBinding.cs"));
-            string builder = File.ReadAllText(
-                LocateSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.cs"));
 
             AssertNoForbiddenDependencies(binding);
-            AssertNoForbiddenDependencies(builder);
         }
 
         // ---- Structure ----
 
         [Test]
-        public void Builder_ThousandFrames_Correct()
+        public void Create_ThousandFrames_Correct()
         {
             const int frameCount = 1000;
             long[] frameIds = new long[frameCount];
@@ -938,7 +923,7 @@ namespace Zantetsu.Core.Tests
             CapturePublicationPlan genericPlan = MakeGenericPlan(3, frameIds);
             CaptureEvidenceFrozenRunPublicationResult frozen = MakeFrozenResult(genericPlan);
             PngJsonCaptureFrozenRunPublicationPlanBinding binding =
-                PngJsonCaptureFrozenRunPublicationPlanBindingBuilder.Build(frozen);
+                PngJsonCaptureFrozenRunPublicationPlanBinding.Create(frozen);
 
             Assert.That(binding.IsValid, Is.True);
             Assert.That(binding.LegacyPlan.EntryCount, Is.EqualTo(frameCount));
