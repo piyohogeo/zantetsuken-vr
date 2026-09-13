@@ -10,7 +10,9 @@
         "Unity.Collections",
         "Unity.Burst",
         "Zantetsu.ConvexCut",
-        "Unity.Mathematics"
+        "Unity.Mathematics",
+        "Zantetsu.MeshCut",
+        "Zantetsu.MeshCut.Verification"
     ],
     "includePlatforms": [
         "Editor"
