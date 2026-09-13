@@ -868,8 +868,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Receipt_HoldsIssuerOperationAndTokenBinding()
         {
-            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(
-                out PngJsonCapturePublicationArtifactInspectionOperation operation, out PngJsonCapturePublicationArtifactInspectionAuthority authority);
+            PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
                 PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
