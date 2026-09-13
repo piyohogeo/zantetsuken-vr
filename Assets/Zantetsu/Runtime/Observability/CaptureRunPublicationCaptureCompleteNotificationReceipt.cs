@@ -8,7 +8,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the issuing
+    /// The type holds exactly two read-only reference fields — the issuing
     /// notifier and the notification operation — and has no public
     /// constructor. The constructor rejects a null issuer with
     /// <see cref="ArgumentNullException"/> whose <c>ParamName</c> is
@@ -21,10 +21,9 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
-    /// checks without throwing. Every other accessor forwards a value from the
-    /// held operation: the cleanup orchestration result, the cleanup execution
-    /// result, root layout, lock lease, test run id, run initialization id, run
-    /// manifest content SHA-256, capture index path, disposition, and status.
+    /// checks without throwing. What was notified is read from
+    /// <see cref="Operation"/>; the receipt restates none of it and holds
+    /// nothing beyond the notifier and that operation.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an

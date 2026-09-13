@@ -9,7 +9,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly four read-only reference fields — the issuing
+    /// The type holds exactly four readonly reference fields — the issuing
     /// coordinator, the coordinator-bound issuance proof, the notification
     /// operation, and the notification receipt — and has no public
     /// constructor. Every accessor forwards a value from the held operation
