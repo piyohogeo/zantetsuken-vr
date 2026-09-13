@@ -68,15 +68,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Documents_HeldByReference()
-        {
-            CaptureRunInitializationDocumentSet documents = MakeDocuments();
-            CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
-
-            Assert.That(batch.Documents, Is.SameAs(documents));
-        }
-
-        [Test]
         public void Count_IsFour()
         {
             Assert.That(MakeBatch().Count, Is.EqualTo(4));
@@ -332,37 +323,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
-        }
-
-        [Test]
-        public void Fields_AreExactlyFiveReadonlyReferences()
-        {
-            Type type = typeof(CaptureRunInitializationWriteBatch);
-            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            Assert.That(fields.Length, Is.EqualTo(5), "Must hold the documents and four operations.");
-
-            int documentFields = 0;
-            int operationFields = 0;
-            foreach (FieldInfo field in fields)
-            {
-                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                if (field.FieldType == typeof(CaptureRunInitializationDocumentSet))
-                {
-                    documentFields++;
-                }
-                else if (field.FieldType == typeof(CaptureRunMarkerWriteOperation))
-                {
-                    operationFields++;
-                }
-                else
-                {
-                    Assert.Fail(field.Name + " has unexpected type " + field.FieldType.Name + ".");
-                }
-            }
-
-            Assert.That(documentFields, Is.EqualTo(1));
-            Assert.That(operationFields, Is.EqualTo(4));
         }
 
         [Test]

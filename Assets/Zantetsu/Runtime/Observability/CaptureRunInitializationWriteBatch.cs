@@ -5,8 +5,8 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Immutable, filesystem-free Capture Run initialization write batch: the
     /// four marker write operations of a Run's document set, built in a fixed
-    /// order for the atomic writer. It owns the operations it built and keeps
-    /// the document set it was built from.
+    /// order for the atomic writer, with the marker paths and initialization id
+    /// they were built from.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -14,13 +14,15 @@ namespace Zantetsu.Observability
     /// passes each, together with the corresponding marker path set entries, to
     /// a single write operation constructor. The fixed order is staging
     /// initialization, final initialization, staging ready, final ready. The
-    /// document set and the four operations are held only after every
-    /// operation is built.
+    /// marker paths, the initialization id, and the four operations are held
+    /// only after every operation is built; the document set itself goes out of
+    /// scope with the constructor.
     /// </para>
     /// <para>
     /// The document set keeps its internal arrays, which are never mutated.
     /// Each getter returns a fresh array, which is handed to one write
-    /// operation and never read again here. The two ready operations receive
+    /// operation and never read again here; the batch reaches neither the
+    /// document set nor those arrays afterwards. The two ready operations receive
     /// separate copies and never share an array. No dispose contract is
     /// introduced for the managed arrays.
     /// </para>
@@ -36,7 +38,8 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class CaptureRunInitializationWriteBatch
     {
-        private readonly CaptureRunInitializationDocumentSet _documents;
+        private readonly CaptureRunMarkerPathSet _markerPaths;
+        private readonly string _runInitializationId;
         private readonly CaptureRunMarkerWriteOperation _stagingInitialization;
         private readonly CaptureRunMarkerWriteOperation _finalInitialization;
         private readonly CaptureRunMarkerWriteOperation _stagingReady;
@@ -54,6 +57,8 @@ namespace Zantetsu.Observability
             {
                 throw new ArgumentException("Documents must hold a marker path set.", nameof(documents));
             }
+
+            string runInitializationId = documents.RunInitializationId;
 
             byte[] stagingInitializationBytes = documents.GetStagingInitializationBytes();
             CaptureRunMarkerWriteOperation stagingInitialization = new CaptureRunMarkerWriteOperation(
@@ -87,14 +92,17 @@ namespace Zantetsu.Observability
                 markerPaths.FinalReadyPath,
                 finalReadyBytes);
 
-            _documents = documents;
+            _markerPaths = markerPaths;
+            _runInitializationId = runInitializationId;
             _stagingInitialization = stagingInitialization;
             _finalInitialization = finalInitialization;
             _stagingReady = stagingReady;
             _finalReady = finalReady;
         }
 
-        internal CaptureRunInitializationDocumentSet Documents => _documents;
+        internal CaptureRunMarkerPathSet MarkerPaths => _markerPaths;
+
+        internal string RunInitializationId => _runInitializationId;
 
         internal int Count => 4;
 

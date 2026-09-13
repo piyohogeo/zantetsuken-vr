@@ -107,11 +107,11 @@ namespace Zantetsu.Observability
 
         internal CaptureRunMarkerWriteReceipt FinalReadyWrite => _finalReadyWrite;
 
-        internal CaptureRunRootLayout RootLayout => _batch.Documents.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _batch.MarkerPaths.RootLayout;
 
-        internal long TestRunId => _batch.Documents.TestRunId;
+        internal long TestRunId => _batch.MarkerPaths.RootLayout.TestRunId;
 
-        internal string RunInitializationId => _batch.Documents.RunInitializationId;
+        internal string RunInitializationId => _batch.RunInitializationId;
 
         internal bool IsValid => CorrelationsHold(_batch, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
 
@@ -145,11 +145,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunInitializationDocumentSet documents = batch.Documents;
-            CaptureRunMarkerPathSet markerPaths = documents != null ? documents.MarkerPaths : null;
+            CaptureRunMarkerPathSet markerPaths = batch.MarkerPaths;
             CaptureRunRootLayout rootLayout = markerPaths != null ? markerPaths.RootLayout : null;
 
-            if (documents == null || markerPaths == null || rootLayout == null)
+            if (markerPaths == null || rootLayout == null)
             {
                 return false;
             }

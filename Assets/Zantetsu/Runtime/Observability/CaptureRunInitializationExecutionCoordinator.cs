@@ -56,16 +56,10 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(batch));
             }
 
-            CaptureRunInitializationDocumentSet documents = batch.Documents;
-            if (documents == null)
-            {
-                throw new ArgumentException("Batch must hold a document set.", nameof(batch));
-            }
-
-            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
+            CaptureRunMarkerPathSet markerPaths = batch.MarkerPaths;
             if (markerPaths == null)
             {
-                throw new ArgumentException("Document set must hold a marker path set.", nameof(batch));
+                throw new ArgumentException("Batch must hold a marker path set.", nameof(batch));
             }
 
             CaptureRunRootLayout rootLayout = markerPaths.RootLayout;
