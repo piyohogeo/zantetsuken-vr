@@ -49,9 +49,10 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The page region sits behind the counts in the same block, and neither a
-    /// pointer into it nor any array behind it is handed out: what is in the
-    /// pages is read back through a view built after the writing has stopped,
-    /// which is not part of this type.
+    /// pointer into it nor any array behind it is handed out as a property.
+    /// What is in the pages is read back through <see cref="CreateView"/>,
+    /// which walks the committed part of each page once the writing has
+    /// stopped and hands it over only for as long as the visitor is running.
     /// </para>
     /// </remarks>
     internal sealed unsafe class TracePagedHistory : ITraceRecordDestination, IDisposable
@@ -271,6 +272,57 @@ namespace Zantetsu.Observability
             }
 
             *_dropCount = current + 1L;
+        }
+
+        /// <summary>
+        /// A way of reading back what the pages hold, for after the writing
+        /// has stopped.
+        /// </summary>
+        /// <remarks>
+        /// The writer having stopped, and this history staying alive while the
+        /// view is used, are the caller's to keep - nothing here proves either.
+        /// Making one copies nothing and takes nothing.
+        /// </remarks>
+        internal TracePagedHistoryView CreateView()
+        {
+            RequireLive();
+            return new TracePagedHistoryView(this);
+        }
+
+        /// <summary>
+        /// Hands the committed run of each page that has one to the visitor,
+        /// in page order, and returns how many pages that was.
+        /// </summary>
+        /// <remarks>
+        /// Only the bytes between the start of a page and its committed byte
+        /// count go over - never the tail a record could not use, the room
+        /// nothing has been written to, or the counts in front of the pages.
+        /// The pointer is good for the length of the call and no longer, and a
+        /// visitor that throws stops the walk with the history untouched.
+        /// </remarks>
+        internal int VisitCommittedPages(ITraceCommittedPageVisitor visitor)
+        {
+            RequireLive();
+
+            if (visitor == null)
+            {
+                throw new ArgumentNullException(nameof(visitor));
+            }
+
+            int visited = 0;
+            for (int page = 0; page < _pageCount; page++)
+            {
+                long committed = _committedByteCounts[page];
+                if (committed <= 0L)
+                {
+                    continue;
+                }
+
+                visitor.Visit(page, _pages + ((long)page * _pageSize), (int)committed);
+                visited++;
+            }
+
+            return visited;
         }
 
         /// <summary>
