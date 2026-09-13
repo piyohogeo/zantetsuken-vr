@@ -649,7 +649,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_RecoveryAuthorityCannotMintProof_Rejected()
+        public void Result_ForeignGateCannotMintProof_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
             CaptureArtifactFileStore store = ForgeStore(layout);
@@ -977,8 +977,8 @@ namespace Zantetsu.Core.Tests
             string source = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureEvidenceFrozenRunPublicationResult.cs"));
 
-            // The factory performs only O(1) exact binding; the full predicate
-            // is invoked once by IsValid (declaration + IsValid call), and the
+            // Create performs only O(1) exact binding; the full predicate is
+            // invoked once by IsValid (declaration + IsValid call), and the
             // freeze receipt is fully validated only inside that predicate.
             Assert.That(CountOccurrences(source, "IsCorrelated("), Is.EqualTo(2));
             Assert.That(CountOccurrences(source, "freezeReceipt.IsValid"), Is.EqualTo(1));
