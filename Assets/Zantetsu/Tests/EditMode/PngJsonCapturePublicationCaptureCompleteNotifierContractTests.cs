@@ -934,29 +934,18 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_Forwarding_AllValues()
+        public void Receipt_HoldsNotifierAndOperation()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                BuildNotification(commitRoute: true, out _);
             FakeNotifier notifier = new FakeNotifier();
 
             PngJsonCapturePublicationCaptureCompleteNotificationReceipt receipt = notifier.Notify(operation);
 
             Assert.That(ReferenceEquals(receipt.IssuedBy, notifier), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(ReferenceEquals(receipt.CleanupResult, operation.CleanupResult), Is.True);
-            Assert.That(ReferenceEquals(receipt.ExecutionResult, operation.ExecutionResult), Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(receipt.LockIdentityEvidence, operation.LockIdentityEvidence), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-            Assert.That(receipt.RunManifestContentSha256, Is.EqualTo(operation.RunManifestContentSha256));
-            Assert.That(receipt.CaptureIndexPath, Is.EqualTo(operation.CaptureIndexPath));
-            Assert.That(receipt.Disposition, Is.EqualTo(operation.Disposition));
-            Assert.That(receipt.Status, Is.EqualTo(operation.Status));
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(receipt.IsIssuedFor(notifier, operation), Is.True);
-            Assert.That(ReferenceEquals(cleanupResult, operation.CleanupResult), Is.True);
         }
 
         [Test]

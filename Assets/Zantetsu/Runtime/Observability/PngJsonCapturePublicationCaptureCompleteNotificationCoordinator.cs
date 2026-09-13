@@ -147,8 +147,6 @@ namespace Zantetsu.Observability
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation)
         {
             if (receipt == null
-                || !ReferenceEquals(receipt.IssuedBy, _notifier)
-                || !ReferenceEquals(receipt.Operation, operation)
                 || !receipt.IsIssuedFor(_notifier, operation))
             {
                 throw new InvalidOperationException(

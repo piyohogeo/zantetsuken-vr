@@ -8,7 +8,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the issuing
+    /// The type holds exactly two read-only reference fields — the issuing
     /// notifier and the notification operation — and has no public
     /// constructor. The atomic factory rejects a null issuer with
     /// <see cref="ArgumentNullException"/> whose <c>ParamName</c> is
@@ -22,15 +22,16 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
-    /// checks without throwing. Every other accessor forwards a value from the
-    /// held operation: the cleanup orchestration result, the cleanup execution
-    /// result, root layout, lock identity evidence, test run id, run
-    /// initialization id, run manifest content SHA-256, capture index path,
-    /// disposition, and status.
+    /// checks without throwing. What was notified is read from
+    /// <see cref="Operation"/> — the cleanup orchestration and execution
+    /// results, root layout, lock identity evidence, run identity, run manifest
+    /// content SHA-256, capture index path, disposition, and status — and the
+    /// receipt restates none of it.
     /// </para>
     /// <para>
     /// The type owns, mutates, and disposes nothing — no token, lease, array,
-    /// stream, or byte sequence, and no duplicate notification identity field —
+    /// stream, or byte sequence, and no duplicate path, hash, run identity,
+    /// status, or disposition field —
     /// and is not an <see cref="IDisposable"/>, MonoBehaviour, or
     /// ScriptableObject.
     /// </para>
@@ -80,26 +81,6 @@ namespace Zantetsu.Observability
         internal IPngJsonCapturePublicationCaptureCompleteNotifier IssuedBy => _issuedBy;
 
         internal PngJsonCapturePublicationCaptureCompleteNotificationOperation Operation => _operation;
-
-        internal PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult CleanupResult => _operation.CleanupResult;
-
-        internal PngJsonCapturePublicationCaptureCompleteCleanupExecutionResult ExecutionResult => _operation.ExecutionResult;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
-        internal string RunManifestContentSha256 => _operation.RunManifestContentSha256;
-
-        internal string CaptureIndexPath => _operation.CaptureIndexPath;
-
-        internal CaptureRunPublicationArtifactRecoveryDisposition Disposition => _operation.Disposition;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupExecutionStatus Status => _operation.Status;
 
         /// <summary>
         /// Exception-safe validity: the two held references must be present and
