@@ -14,8 +14,8 @@ namespace Zantetsu.Observability
     /// This type holds only the exact publisher and the exact operation,
     /// performs no filesystem or hash work, and is not an
     /// <see cref="IDisposable"/>. Descriptor, path, hash, and run identity are
-    /// forwarded from the operation and never duplicated as fields, and no new
-    /// proof, token, or nonce is introduced. A receipt means one synchronous
+    /// read from <see cref="Operation"/>; the receipt does not restate them,
+    /// and no new proof, token, or nonce is introduced. A receipt means one synchronous
     /// publish call completed its post-placement length-and-hash verification;
     /// it is not a crash-durability or persistent filesystem snapshot.
     /// </remarks>
@@ -58,30 +58,6 @@ namespace Zantetsu.Observability
         internal INvencRunArtifactPublisher Publisher => _publisher;
 
         internal NvencRunArtifactPublicationOperation Operation => _operation;
-
-        internal NvencRunPublicationPlanCommitExecutionResult PlanCommitResult => _operation.PlanCommitResult;
-
-        internal CapturePublicationPlan Plan => _operation.Plan;
-
-        internal NvencChunkFinalizationResult FinalizationResult => _operation.FinalizationResult;
-
-        internal CaptureArtifactDescriptor Descriptor => _operation.Descriptor;
-
-        internal CaptureArtifactFrameRelation FrameRelation => _operation.FrameRelation;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
-        internal string StagingRelativePath => _operation.StagingRelativePath;
-
-        internal string FinalRelativePath => _operation.FinalRelativePath;
-
-        internal long ExpectedByteLength => _operation.ExpectedByteLength;
-
-        internal string ExpectedContentHash => _operation.ExpectedContentHash;
 
         internal bool IsValid =>
             _publisher != null

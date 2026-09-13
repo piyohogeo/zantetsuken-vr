@@ -46,45 +46,13 @@ namespace Zantetsu.Observability
 
             NvencRunArtifactPublicationAttemptResult attempt = _publisher.Publish(operation);
 
-            if (!IsValidAttempt(attempt, operation))
+            if (!attempt.IsIssuedFor(_publisher, operation))
             {
                 throw new InvalidOperationException(
                     "Publisher returned a null, foreign, default, or corrupt attempt result.");
             }
 
             return attempt;
-        }
-
-        private bool IsValidAttempt(
-            NvencRunArtifactPublicationAttemptResult attempt,
-            NvencRunArtifactPublicationOperation operation)
-        {
-            if (attempt.IsNone || !attempt.IsValid)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(attempt.Publisher, _publisher)
-                || !ReferenceEquals(attempt.Operation, operation))
-            {
-                return false;
-            }
-
-            switch (attempt.Status)
-            {
-                case NvencRunArtifactPublicationStatus.Published:
-                {
-                    NvencRunArtifactPublicationReceipt receipt = attempt.Receipt;
-                    return receipt != null
-                        && receipt.IsIssuedFor(_publisher, operation);
-                }
-
-                case NvencRunArtifactPublicationStatus.Failed:
-                    return attempt.Receipt == null;
-
-                default:
-                    return false;
-            }
         }
     }
 }

@@ -282,7 +282,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ResultAndReceipt_ForwardOperationGraph_NoDuplication()
+        public void Result_ForwardsOperationGraph_ReceiptHoldsPublisherAndOperation()
         {
             using (Harness h = Harness.Create())
             {
@@ -292,10 +292,10 @@ namespace Zantetsu.Core.Tests
                 NvencRunArtifactPublicationAttemptResult result =
                     new NvencRunArtifactPublicationExecutionCoordinator(publisher).Execute(operation);
 
-                // The attempt result and receipt hold only the exact publisher
-                // and exact operation; descriptor, plan, finalization result,
-                // paths, hash, and run identity are forwarded on both surfaces
-                // from the operation without duplication.
+                // The attempt result and the receipt hold only the exact
+                // publisher and the exact operation; descriptor, plan,
+                // finalization result, paths, hash, and run identity are read
+                // off that operation.
                 Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
                 Assert.That(ReferenceEquals(result.Receipt.Operation, operation), Is.True);
 
@@ -314,19 +314,9 @@ namespace Zantetsu.Core.Tests
                 Assert.That(result.ExpectedByteLength, Is.EqualTo(operation.ExpectedByteLength));
                 Assert.That(result.ExpectedContentHash, Is.EqualTo(operation.ExpectedContentHash));
 
-                // Receipt forwarding: the same exact references and values.
-                Assert.That(result.Receipt.PlanCommitResult, Is.SameAs(operation.PlanCommitResult));
-                Assert.That(result.Receipt.Plan, Is.SameAs(operation.Plan));
-                Assert.That(result.Receipt.FinalizationResult, Is.SameAs(operation.FinalizationResult));
-                Assert.That(result.Receipt.Descriptor, Is.SameAs(operation.Descriptor));
-                Assert.That(result.Receipt.FrameRelation, Is.SameAs(operation.FrameRelation));
-                Assert.That(result.Receipt.RootLayout, Is.SameAs(operation.RootLayout));
-                Assert.That(result.Receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(result.Receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-                Assert.That(result.Receipt.StagingRelativePath, Is.EqualTo(operation.StagingRelativePath));
-                Assert.That(result.Receipt.FinalRelativePath, Is.EqualTo(operation.FinalRelativePath));
-                Assert.That(result.Receipt.ExpectedByteLength, Is.EqualTo(operation.ExpectedByteLength));
-                Assert.That(result.Receipt.ExpectedContentHash, Is.EqualTo(operation.ExpectedContentHash));
+                // The receipt names the publisher and the operation, nothing more.
+                Assert.That(result.Receipt.Publisher, Is.SameAs(publisher));
+                Assert.That(result.Receipt.IsIssuedFor(publisher, operation), Is.True);
             }
         }
 

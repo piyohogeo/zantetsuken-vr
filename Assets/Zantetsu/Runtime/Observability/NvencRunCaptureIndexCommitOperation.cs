@@ -55,13 +55,13 @@ namespace Zantetsu.Observability
 
         internal NvencRunArtifactPublicationOperation ArtifactPublicationOperation => _publicationReceipt.Operation;
 
-        internal CapturePublicationPlan Plan => _publicationReceipt.Plan;
+        internal CapturePublicationPlan Plan => _publicationReceipt.Operation.Plan;
 
-        internal CaptureRunRootLayout RootLayout => _publicationReceipt.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _publicationReceipt.Operation.RootLayout;
 
-        internal long TestRunId => _publicationReceipt.TestRunId;
+        internal long TestRunId => _publicationReceipt.Operation.TestRunId;
 
-        internal string RunInitializationId => _publicationReceipt.RunInitializationId;
+        internal string RunInitializationId => _publicationReceipt.Operation.RunInitializationId;
 
         internal bool IsValid =>
             _coordinator != null

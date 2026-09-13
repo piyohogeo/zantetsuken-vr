@@ -5823,10 +5823,12 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(operation.ArtifactPublicationOperation, result.Operation), Is.True);
                 Assert.That(ReferenceEquals(operation.Plan, result.Plan), Is.True);
                 Assert.That(ReferenceEquals(operation.RootLayout, result.RootLayout), Is.True);
-                Assert.That(ReferenceEquals(operation.Plan, result.Receipt.Plan), Is.True);
-                Assert.That(ReferenceEquals(operation.RootLayout, result.Receipt.RootLayout), Is.True);
+                Assert.That(ReferenceEquals(operation.Plan, result.Receipt.Operation.Plan), Is.True);
                 Assert.That(
-                    ReferenceEquals(operation.RunInitializationId, result.Receipt.RunInitializationId), Is.True);
+                    ReferenceEquals(operation.RootLayout, result.Receipt.Operation.RootLayout), Is.True);
+                Assert.That(
+                    ReferenceEquals(operation.RunInitializationId, result.Receipt.Operation.RunInitializationId),
+                    Is.True);
                 Assert.That(operation.TestRunId, Is.EqualTo(result.TestRunId));
                 Assert.That(operation.TestRunId, Is.EqualTo(h.Context.TestRunId));
                 Assert.That(operation.RunInitializationId,
