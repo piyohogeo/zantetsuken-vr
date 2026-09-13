@@ -210,6 +210,27 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void AnIncompleteRunThatDroppedNothingIsStillRead()
+        {
+            // A Run can be incomplete for reasons that are not a drop, and
+            // this format does not carry what those were. The reader takes the
+            // verdict as it stands.
+            byte[] saved = ChangedInt32(
+                OneRecordFile(),
+                TracePagedHistoryFileFormat.IntegrityStateOffset,
+                (int)TraceIntegrityState.Incomplete);
+
+            RecordingDestination destination = new RecordingDestination();
+            TracePagedHistoryFileSummary summary = Read(saved, destination);
+
+            Assert.That(summary.Integrity, Is.EqualTo(TraceIntegrityState.Incomplete));
+            Assert.That(summary.LaneDropCount, Is.EqualTo(0L));
+            Assert.That(summary.HistoryDropCount, Is.EqualTo(0L));
+            Assert.That(destination.Count, Is.EqualTo(1));
+            destination.AssertRecord(0, KindA, new byte[] { 1, 2, 3 });
+        }
+
+        [Test]
         public void PagesOutOfOrderOrRepeatedAreRefused()
         {
             byte[] saved = TwoPageFile(out int secondPageEntryOffset);
@@ -269,6 +290,16 @@ namespace Zantetsu.Core.Tests
             Array.Copy(saved, withTail, saved.Length);
             withTail[saved.Length] = 42;
             AssertRefused(withTail, "bytes after the last page");
+
+            // That refusal comes after the records have already gone over, and
+            // nothing takes them back: the caller keeps what it was given only
+            // when a summary comes back, which here it did not.
+            RecordingDestination destination = new RecordingDestination();
+            Assert.Throws<InvalidDataException>(() => Read(withTail, destination));
+            Assert.That(
+                destination.Count, Is.EqualTo(1),
+                "the record before the trouble had already been handed over");
+            destination.AssertRecord(0, KindA, new byte[] { 1, 2, 3 });
         }
 
         // -------------------------------------------------------------------

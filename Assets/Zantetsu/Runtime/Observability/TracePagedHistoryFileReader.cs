@@ -81,13 +81,24 @@ namespace Zantetsu.Observability
     /// is running, which is the contract that boundary already had.
     /// </para>
     /// <para>
-    /// Everything the file says is checked before it is acted on, and anything
-    /// that does not add up - a mark that is not this format, another version,
-    /// a count that disagrees with what was read, a record that would run past
-    /// the end of its page or past what the caller will accept, bytes after
-    /// the last page - is refused as bad data. There is one kind of refusal
-    /// and no catalogue of reasons. A failure raised by the stream or by the
-    /// destination is passed on exactly as it is, and no result is returned.
+    /// The header is checked before any of it is used, and each record is
+    /// checked against its page and the caller's limit before it is handed
+    /// over - so a record that would run past the end of its page or past
+    /// what the caller will take never reaches the destination. Some things
+    /// are only knowable at the end, though: whether the records and bytes
+    /// read match what the header promised, and whether anything follows the
+    /// last page. Those are checked after the records have gone over.
+    /// </para>
+    /// <para>
+    /// Nothing is taken back when they fail. Records already handed to the
+    /// destination stay where they went, and there is no undo, transaction, or
+    /// second pass to prevent it; what a failure does guarantee is that no
+    /// summary is returned. So a caller keeps what it was given only when a
+    /// summary comes back, and treats anything it accumulated before a failure
+    /// as a prefix of a file that turned out not to be one. A failure raised
+    /// by the stream or by the destination is passed on exactly as it is, and
+    /// is no different in this respect. Bad data is refused as bad data, once,
+    /// with no catalogue of reasons.
     /// </para>
     /// </remarks>
     internal static unsafe class TracePagedHistoryFileReader
@@ -232,12 +243,15 @@ namespace Zantetsu.Observability
                 throw Invalid("The header's integrity state is not one this format has.");
             }
 
-            // A Run is complete exactly when neither side dropped anything, so
-            // a header that says otherwise contradicts itself.
-            bool nothingDropped = laneDropCount == 0L && historyDropCount == 0L;
-            if (nothingDropped != (integrity == (int)TraceIntegrityState.Complete))
+            // A Run that says it kept everything cannot also say it dropped
+            // something. The other way round is not a contradiction: a Run can
+            // be incomplete for reasons that are not a drop and that this
+            // format does not carry, so Incomplete with nothing dropped is
+            // read as it stands.
+            if (integrity == (int)TraceIntegrityState.Complete
+                && (laneDropCount != 0L || historyDropCount != 0L))
             {
-                throw Invalid("The header's integrity state disagrees with what it says was dropped.");
+                throw Invalid("The header says the Run was complete but also that records were lost.");
             }
 
             return new TracePagedHistoryFileSummary(
