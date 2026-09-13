@@ -9,8 +9,8 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The session holds only ready evidence — whether from the fresh path or
-    /// the recovery path — and forwards run identity straight from it. Session
+    /// The session holds only ready evidence and forwards run identity
+    /// straight from it. Session
     /// validity means only that the ready evidence is valid, not that any lock
     /// is still held; lock liveness is confirmed through
     /// <see cref="CaptureRunLockIdentityEvidence"/>.
@@ -111,15 +111,6 @@ namespace Zantetsu.Observability
                     throw new ArgumentException("Lock identity evidence and ready evidence must share the same test run ID.", nameof(evidence));
                 }
 
-                if (evidence.IsRecovery)
-                {
-                    CaptureRunLockIdentityEvidence evidenceLock = evidence.RecoveryOrchestrationResult.LockIdentityEvidence;
-                    if (!ReferenceEquals(evidenceLock, lockIdentityEvidence))
-                    {
-                        throw new ArgumentException("Recovery ready evidence must reference the identity evidence being issued.", nameof(lockIdentityEvidence));
-                    }
-                }
-
                 CaptureRunInitializationSession session = new CaptureRunInitializationSession(evidence);
                 object nonce = new object();
                 IssuanceProof proof = new IssuanceProof(nonce, session, ownershipLease, lockIdentityEvidence, evidence);
@@ -147,8 +138,6 @@ namespace Zantetsu.Observability
         internal CaptureRunInitializationReadyEvidence ReadyEvidence => _readyEvidence;
 
         internal CaptureRunInitializationExecutionReceipt ExecutionReceipt => _readyEvidence.FreshExecutionReceipt;
-
-        internal CaptureRunInitializationRecoveryOrchestrationResult RecoveryOrchestrationResult => _readyEvidence.RecoveryOrchestrationResult;
 
         internal CaptureRunRootLayout RootLayout => _readyEvidence.RootLayout;
 

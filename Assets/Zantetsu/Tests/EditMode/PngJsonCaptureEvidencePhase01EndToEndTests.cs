@@ -916,7 +916,6 @@ namespace Zantetsu.Core.Tests
             // The formal Phase 0.1 backend delegates encode, hash, JSON, and
             // staging to the dedicated worker and has no main-thread fallback.
             Assert.That(source, Does.Contain("PngJsonCaptureEvidenceWorkerService"));
-            Assert.That(source, Does.Not.Contain("PngJsonSynchronousCaptureFrameEncodeService"));
             Assert.That(source, Does.Not.Contain("CaptureFramePngEncoder.Encode"));
             Assert.That(source, Does.Not.Contain("PngJsonFrameMetadataCodec"));
             Assert.That(source, Does.Not.Contain("SHA256"));

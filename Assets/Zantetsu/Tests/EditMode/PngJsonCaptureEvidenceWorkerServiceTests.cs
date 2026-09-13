@@ -138,11 +138,6 @@ namespace Zantetsu.Core.Tests
                 return new CaptureArtifactWriteReceipt(this, request.Descriptor, "C:\\staging\\" + request.Descriptor.ArtifactId);
             }
 
-            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
-            {
-                throw new NotSupportedException();
-            }
-
             public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
             {
                 return new CaptureArtifactVerificationResult(

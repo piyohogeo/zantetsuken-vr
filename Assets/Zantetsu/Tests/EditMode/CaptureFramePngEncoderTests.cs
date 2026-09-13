@@ -326,9 +326,6 @@ namespace Zantetsu.Core.Tests
             RenderTexture rt = null;
             CaptureFrameReadbackBufferPool pool = new CaptureFrameReadbackBufferPool(2, bytes);
             UnityRenderTextureReadbackDispatcher dispatcher = new UnityRenderTextureReadbackDispatcher(pool);
-            TraceLogger logger = new TraceLogger(8);
-            CaptureFrameTraceObserver observer = new CaptureFrameTraceObserver(logger);
-            PngJsonCaptureFrameReadbackCompletionRouter router = new PngJsonCaptureFrameReadbackCompletionRouter(dispatcher, observer);
 
             NativeArray<byte> png = default;
             CaptureFrameReadbackResult result = default;
@@ -346,7 +343,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(dispatcher.TryStart(request, rt), Is.True);
                 AsyncGPUReadback.WaitAllRequests();
 
-                Assert.That(router.TryCollect(out result), Is.EqualTo(CaptureFrameReadbackCollectStatus.Succeeded));
+                Assert.That(dispatcher.TryCollect(out result), Is.True);
 
                 NativeArray<byte> buffer = dispatcher.GetBuffer(result);
                 png = CaptureFramePngEncoder.Encode(buffer, request.PixelLayout);
@@ -369,7 +366,6 @@ namespace Zantetsu.Core.Tests
                 }
 
                 dispatcher.Dispose();
-                logger.Dispose();
                 pool.Dispose();
 
                 if (rt != null)

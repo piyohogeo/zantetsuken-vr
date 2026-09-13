@@ -631,11 +631,9 @@ namespace Zantetsu.Core.Tests
                 hasEntry |= fieldType == GetEntryType();
                 hasReason |= fieldType == typeof(CaptureFrameDropReason);
 
-                // No direct logger, recorder, queue, registry, manifest, lease, or native array.
+                // No direct logger, recorder, manifest, lease, or native array.
                 Assert.That(typeof(TraceLogger).IsAssignableFrom(fieldType), Is.False);
                 Assert.That(typeof(TraceFlightRecorder).IsAssignableFrom(fieldType), Is.False);
-                Assert.That(typeof(CaptureFrameRequestQueue).IsAssignableFrom(fieldType), Is.False);
-                Assert.That(typeof(CaptureFrameRenderTargetLeaseRegistry).IsAssignableFrom(fieldType), Is.False);
                 bool isNativeArray = fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(NativeArray<>);
                 Assert.That(isNativeArray, Is.False, "Intent must not hold a NativeArray.");
             }
