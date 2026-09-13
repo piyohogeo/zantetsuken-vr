@@ -18,8 +18,8 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="Execute"/> runs the fixed sequence exactly once per call:
     /// reject a null cleanup result, build the notification operation exactly
-    /// once through the operation factory (the single input validation
-    /// boundary), notify exactly once, verify the returned receipt immediately,
+    /// once through the operation's own creation boundary (the single input
+    /// validation boundary), notify exactly once, verify the returned receipt immediately,
     /// mint the coordinator-bound issuance proof only after that verification
     /// succeeds, and issue the immutable notification result. Notifier
     /// exceptions propagate unchanged and unwrapped. The coordinator performs
@@ -131,7 +131,7 @@ namespace Zantetsu.Observability
             }
 
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
 
             PngJsonCapturePublicationCaptureCompleteNotificationReceipt receipt = _notifier.Notify(operation);
 

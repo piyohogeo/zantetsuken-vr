@@ -616,7 +616,7 @@ namespace Zantetsu.Core.Tests
                 MakeRecoveryAuthority(layout, plan, commitRoute, out _);
             cleanupResult = MakeOrchestrationCoordinator().Execute(
                 BuildCleanupResult(authority, 1, EvMatchesExpected));
-            return PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+            return PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
         }
 
         // ---- Tests ----
@@ -900,7 +900,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult =
                 MakeOrchestrationCoordinator().Execute(BuildCleanupResult(authority, 1, EvMatchesExpected));
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
 
             owner.Dispose();
             _owners.Remove(owner);

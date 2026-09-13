@@ -813,13 +813,13 @@ namespace Zantetsu.Core.Tests
                     backend ?? new FakeCleanup()));
         }
 
-        private PngJsonCapturePublicationCaptureCompleteNotificationOperation BuildNotification(
+        private PngJsonCapturePublicationCaptureCompleteNotificationOperation CreateNotification(
             bool commitRoute,
             out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult)
         {
             cleanupResult = MakeOrchestrationCoordinator().Execute(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
-            return PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+            return PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
         }
 
         private static CaptureRunPublicationRecoveryInspectionOperation GetRecoveryOperation(
@@ -853,25 +853,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_Shape_StaticNoFields()
-        {
-            Type type = typeof(PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract && type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
-        public void Factory_Build_NullResult_Rejected()
-        {
-            Assert.That(
-                Assert.Throws<ArgumentNullException>(() =>
-                    PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(null)).ParamName,
-                Is.EqualTo("cleanupResult"));
-        }
-
-        [Test]
         public void Operation_Create_NullResult_Rejected()
         {
             Assert.That(
@@ -881,10 +862,10 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Build_CommitCaptureIndex_Route_Forwarding()
+        public void Create_CommitCaptureIndex_Route_Forwarding()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                CreateNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
 
             Assert.That(ReferenceEquals(operation.CleanupResult, cleanupResult), Is.True);
             Assert.That(ReferenceEquals(operation.ExecutionResult, cleanupResult.ExecutionResult), Is.True);
@@ -900,10 +881,10 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Build_CaptureComplete_Route()
+        public void Create_CaptureComplete_Route()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: false, out _);
+                CreateNotification(commitRoute: false, out _);
 
             Assert.That(operation.IsValid, Is.True);
             Assert.That(operation.Disposition, Is.EqualTo(CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete));
@@ -934,8 +915,7 @@ namespace Zantetsu.Core.Tests
         {
             foreach (Type type in new[]
             {
-                typeof(PngJsonCapturePublicationCaptureCompleteNotificationOperation),
-                typeof(PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory)
+                typeof(PngJsonCapturePublicationCaptureCompleteNotificationOperation)
             })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
@@ -970,7 +950,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult =
                 MakeOrchestrationCoordinator().Execute(recovery);
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
             Assert.That(operation.IsValid, Is.True);
 
             owner.Dispose();
@@ -983,7 +963,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_CleanupResultHeldTokenNull_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                CreateNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
             Assert.That(operation.IsValid, Is.True);
 
             SetField(cleanupResult, "_token", null);
@@ -995,7 +975,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_CompletedStepReceiptCorruption_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out _);
+                CreateNotification(commitRoute: true, out _);
             Assert.That(operation.IsValid, Is.True);
 
             PngJsonCapturePublicationCaptureCompleteCleanupCompletedStep completed =
@@ -1009,7 +989,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_DispositionCorruption_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                CreateNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
             Assert.That(operation.IsValid, Is.True);
 
             PngJsonCapturePublicationArtifactRecoveryDecision decision =
@@ -1023,7 +1003,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_ManifestHashCorruption_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                CreateNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
             Assert.That(operation.IsValid, Is.True);
 
             PngJsonCapturePublicationPlan plan = cleanupResult.ActionPlan.AuthoritativePlan;
@@ -1036,7 +1016,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_RunIdentityMismatch_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
+                CreateNotification(commitRoute: true, out PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult);
             Assert.That(operation.IsValid, Is.True);
 
             PngJsonCapturePublicationPlan plan = cleanupResult.ActionPlan.AuthoritativePlan;
@@ -1049,7 +1029,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_PathSetNull_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out _);
+                CreateNotification(commitRoute: true, out _);
             Assert.That(operation.IsValid, Is.True);
 
             SetField(GetRecoveryOperation(operation), "_publicationPaths", null);
@@ -1061,7 +1041,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_PathSetSwap_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out _);
+                CreateNotification(commitRoute: true, out _);
             Assert.That(operation.IsValid, Is.True);
 
             // Same root layout, same values, but a distinct path set instance.
@@ -1075,7 +1055,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_PathSetRootLayoutMismatch_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out _);
+                CreateNotification(commitRoute: true, out _);
             Assert.That(operation.IsValid, Is.True);
 
             SetField(GetPathSet(operation), "_rootLayout",
@@ -1091,33 +1071,13 @@ namespace Zantetsu.Core.Tests
         public void Operation_CaptureIndexPathCorruption_FailClosed()
         {
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                BuildNotification(commitRoute: true, out _);
+                CreateNotification(commitRoute: true, out _);
             Assert.That(operation.IsValid, Is.True);
 
             SetField(GetPathSet(operation), "_captureIndexPath",
                 IsWindows ? "C:\\forged\\capture.index" : "/forged/capture.index");
 
             Assert.That(operation.IsValid, Is.False);
-        }
-
-        [Test]
-        public void Source_Factory_SimpleDelegation()
-        {
-            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.cs");
-
-            int buildIndex = source.IndexOf(
-                "internal static PngJsonCapturePublicationCaptureCompleteNotificationOperation Build(",
-                StringComparison.Ordinal);
-            Assert.That(buildIndex, Is.GreaterThan(0));
-            int returnIndex = source.IndexOf(
-                "return PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(",
-                StringComparison.Ordinal);
-            Assert.That(returnIndex, Is.GreaterThan(buildIndex));
-            string body = source.Substring(buildIndex, returnIndex - buildIndex);
-
-            Assert.That(body, Does.Contain("ArgumentNullException"));
-            Assert.That(body, Does.Not.Contain("TryValidate"));
-            Assert.That(body, Does.Not.Contain("IsValid"));
         }
 
         [Test]

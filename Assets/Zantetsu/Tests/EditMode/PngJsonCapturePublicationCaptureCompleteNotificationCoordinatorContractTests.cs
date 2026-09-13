@@ -858,7 +858,7 @@ namespace Zantetsu.Core.Tests
         {
             cleanupResult = MakeOrchestrationCoordinator().Execute(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
-            return PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+            return PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
         }
 
         private PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult BuildCleanupResult(
@@ -1236,7 +1236,7 @@ namespace Zantetsu.Core.Tests
 
             // Same notification identity, but a distinct operation instance.
             PngJsonCapturePublicationCaptureCompleteNotificationOperation otherOperation =
-                PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(
                     MakeOrchestrationCoordinator().Execute(BuildCommitResult()));
             SetField(result, "_operation", otherOperation);
 

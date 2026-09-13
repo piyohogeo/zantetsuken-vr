@@ -828,7 +828,7 @@ namespace Zantetsu.Core.Tests
         {
             cleanupResult = MakeOrchestrationCoordinator().Execute(
                 commitRoute ? BuildCommitResult() : BuildCaptureCompleteResult());
-            return PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+            return PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
         }
 
         private static CaptureRunPublicationPathSet GetPathSet(
@@ -998,7 +998,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationCaptureCompleteCleanupOrchestrationResult cleanupResult =
                 MakeOrchestrationCoordinator().Execute(recovery);
             PngJsonCapturePublicationCaptureCompleteNotificationOperation operation =
-                PngJsonCapturePublicationCaptureCompleteNotificationOperationFactory.Build(cleanupResult);
+                PngJsonCapturePublicationCaptureCompleteNotificationOperation.Create(cleanupResult);
             FakeNotifier notifier = new FakeNotifier();
             PngJsonCapturePublicationCaptureCompleteNotificationReceipt receipt = notifier.Notify(operation);
             Assert.That(receipt.IsValid, Is.True);
