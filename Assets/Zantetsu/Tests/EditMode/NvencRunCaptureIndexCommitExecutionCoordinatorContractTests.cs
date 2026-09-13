@@ -306,8 +306,10 @@ namespace Zantetsu.Core.Tests
 
                 // The receipt holds only the exact committer and the exact
                 // operation. The attempt result also holds the status and the
-                // receipt, but every value it forwards is the operation's exact
-                // reference, so nothing is copied into a field of its own.
+                // receipt, but what it forwards comes from the operation: its
+                // reference-valued members preserve the operation's exact
+                // references, and its scalar values are read from the
+                // operation, so nothing is copied into a field of its own.
                 Assert.That(ReferenceEquals(
                     result.ArtifactPublicationReceipt, operation.ArtifactPublicationReceipt), Is.True);
                 Assert.That(ReferenceEquals(
