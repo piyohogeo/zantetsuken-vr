@@ -377,44 +377,102 @@ namespace Zantetsu.Core.Tests
             Func<bool> pump,
             int timeoutMs = 5000)
         {
-            using (ManualResetEvent signal = new ManualResetEvent(false))
+            WakeHint wake = new WakeHint();
+            Action handler = wake.Signal;
+            backend.CompletionEnqueued += handler;
+            try
             {
-                Action handler = () => signal.Set();
-                backend.CompletionEnqueued += handler;
-                try
-                {
-                    // Subscribe before pumping: the pump hands the readback to
-                    // the worker, which may enqueue a completion and fire the
-                    // event immediately. The non-blocking pump must still
-                    // report nothing ready before the worker completes.
-                    Assert.That(pump(), Is.False);
-                    return signal.WaitOne(timeoutMs);
-                }
-                finally
-                {
-                    backend.CompletionEnqueued -= handler;
-                }
+                // Subscribe before pumping: the pump hands the readback to
+                // the worker, which may enqueue a completion and fire the
+                // event immediately. The non-blocking pump must still
+                // report nothing ready before the worker completes.
+                Assert.That(pump(), Is.False);
+                return wake.WaitForSignal(timeoutMs);
+            }
+            finally
+            {
+                backend.CompletionEnqueued -= handler;
             }
         }
 
         private static bool WaitForBackendJoin(PngJsonCaptureEvidenceBackend backend, int timeoutMs = 5000)
         {
-            using (ManualResetEvent signal = new ManualResetEvent(false))
+            WakeHint wake = new WakeHint();
+            Action handler = wake.Signal;
+            backend.WorkerStopped += handler;
+            try
             {
-                Action handler = () => signal.Set();
-                backend.WorkerStopped += handler;
-                try
+                // Joining is what decides; the event only says when it is
+                // worth asking again. One wall-clock deadline covers the
+                // whole wait, and the last word is another join attempt.
+                System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+                while (true)
                 {
                     if (backend.TryJoin())
                     {
                         return true;
                     }
 
-                    return signal.WaitOne(timeoutMs);
+                    long remaining = timeoutMs - clock.ElapsedMilliseconds;
+                    if (remaining <= 0)
+                    {
+                        return backend.TryJoin();
+                    }
+
+                    wake.WaitForSignal((int)remaining);
                 }
-                finally
+            }
+            finally
+            {
+                backend.WorkerStopped -= handler;
+            }
+        }
+
+        /// <summary>
+        /// A wake hint from a backend event. The handler touches nothing but
+        /// this object, which holds no disposable resource, so a delegate that
+        /// arrives after it was unsubscribed - unsubscribing does not wait for
+        /// one already running - has nothing left to break.
+        /// </summary>
+        private sealed class WakeHint
+        {
+            private readonly object _gate = new object();
+
+            private bool _signalled;
+
+            internal void Signal()
+            {
+                lock (_gate)
                 {
-                    backend.WorkerStopped -= handler;
+                    _signalled = true;
+                    Monitor.Pulse(_gate);
+                }
+            }
+
+            /// <summary>
+            /// Waits for one signal or the given milliseconds, whichever comes
+            /// first, and says which it was. A signal already waiting is taken
+            /// and cleared, so a caller that loops waits again rather than
+            /// spinning.
+            /// </summary>
+            internal bool WaitForSignal(int milliseconds)
+            {
+                lock (_gate)
+                {
+                    System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+                    while (!_signalled)
+                    {
+                        long remaining = milliseconds - clock.ElapsedMilliseconds;
+                        if (remaining <= 0)
+                        {
+                            return false;
+                        }
+
+                        Monitor.Wait(_gate, (int)remaining);
+                    }
+
+                    _signalled = false;
+                    return true;
                 }
             }
         }

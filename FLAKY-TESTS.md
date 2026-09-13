@@ -92,6 +92,30 @@ unit's verification, and the test that produced it is gone.
 
 ## Resolved
 
+### EditMode: `Phase01_DeferredSurfaceRelease_BlocksJoinAndFreezeUntilRecovered`
+
+In run `20260913-132336-9bdc9c` the Phase 0.1 end-to-end case failed on an
+unhandled `ObjectDisposedException: Safe handle has been closed`, thrown on the
+backend's worker thread from the fixture's `WorkerStopped` handler: the handler
+called `Set()` on a `ManualResetEvent` the waiting helper had already disposed
+on its way out of the `using` block.
+
+Unsubscribing an event does not wait for a handler that is already running, so
+removing the subscription in the `finally` never guaranteed that no delegate
+was still on its way to the signal. Nothing about the backend, the join, or any
+timeout was at fault: the production path behaved as it should, and the join
+itself had not failed.
+
+It was fixed rather than given a longer timeout or re-run: both waits in that
+fixture now use a small object with a bool and `Monitor.Wait`/`Monitor.Pulse`,
+so a handler that arrives late touches nothing that can be disposed. The join
+wait treats the event only as a hint - `TryJoin` decides, is re-checked after
+every wake, and gets one last attempt when the single wall-clock deadline runs
+out.
+
+This failure is not permission to re-run anything. If it appears again it is a
+regression in that fixture.
+
 ### Submit worker: settle observed before the output queue was filled
 
 `NvencOrderedSubmitWorkerServiceContractTests.BeginDrain_WhileRunning_IsRejected_WorkerContinues`
