@@ -932,10 +932,6 @@ namespace Zantetsu.Core.Tests
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => PngJsonCapturePublicationCaptureCompleteReleaseOperation.Create(null));
             Assert.That(ex.ParamName, Is.EqualTo("lifecycleEvidence"));
-
-            ArgumentNullException factoryEx = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationCaptureCompleteReleaseOperationFactory.Build(null));
-            Assert.That(factoryEx.ParamName, Is.EqualTo("lifecycleEvidence"));
         }
 
         [Test]
@@ -1264,7 +1260,6 @@ namespace Zantetsu.Core.Tests
             string[] relativePaths =
             {
                 "Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteReleaseOperation.cs",
-                "Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteReleaseOperationFactory.cs",
                 "Assets/Zantetsu/Runtime/Observability/IPngJsonCapturePublicationCaptureCompleteReleaser.cs",
                 "Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteReleaser.cs",
                 "Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteReleaseReceipt.cs"
