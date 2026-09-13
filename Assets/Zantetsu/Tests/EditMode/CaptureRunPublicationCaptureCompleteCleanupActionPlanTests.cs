@@ -575,7 +575,7 @@ namespace Zantetsu.Core.Tests
             bool commitRoute,
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
-            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return new CaptureRunPublicationCaptureCompleteCleanupActionPlan(
                 commitRoute ? BuildCommitResult(out owner) : BuildCaptureCompleteResult(out owner));
         }
 
@@ -838,18 +838,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_Shape_StaticNoFields()
-        {
-            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract && type.IsSealed, Is.True);
-
-            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
-            Assert.That(fields, Is.Empty, "The builder must hold no fields.");
-        }
-
-        [Test]
         public void Shape_NoLeaseExposure()
         {
             foreach (Type type in new[]
@@ -888,18 +876,18 @@ namespace Zantetsu.Core.Tests
             }
         }
 
-        // ---- Builder rejection ----
+        // ---- Construction rejection ----
 
         [Test]
-        public void Builder_NullResult_Rejected()
+        public void Plan_NullResult_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(null));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(null));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
         [Test]
-        public void Builder_InvalidResult_Rejected()
+        public void Plan_InvalidResult_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult();
 
@@ -910,12 +898,12 @@ namespace Zantetsu.Core.Tests
             SetField(forged, "_executionResult", null);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(forged));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(forged));
             Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
         }
 
         [Test]
-        public void Builder_Rejects_NonCleanupStatuses()
+        public void Plan_Rejects_NonCleanupStatuses()
         {
             // ReinspectionRequired (publish).
             CaptureRunPublicationArtifactRecoveryOrchestrationResult publish = BuildArtifactResult(
@@ -944,7 +932,7 @@ namespace Zantetsu.Core.Tests
             })
             {
                 ArgumentException ex = Assert.Throws<ArgumentException>(
-                    () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                    () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result));
                 Assert.That(ex.ParamName, Is.EqualTo("orchestrationResult"));
             }
         }
@@ -959,7 +947,7 @@ namespace Zantetsu.Core.Tests
             SetField(step, "_commitReceipt", null);
 
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result));
         }
 
         [Test]
@@ -970,7 +958,7 @@ namespace Zantetsu.Core.Tests
             SetField(step.CommitReceipt, "_issuedBy", new FakeCommitter());
 
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result));
         }
 
         [Test]
@@ -984,7 +972,7 @@ namespace Zantetsu.Core.Tests
             SetField(step.CommitReceipt, "_operation", otherOperation);
 
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result));
         }
 
         [Test]
@@ -995,7 +983,7 @@ namespace Zantetsu.Core.Tests
             SetField(step.CommitReceipt, "_operation", null);
 
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result));
         }
 
         // ---- CaptureComplete index proof ----
@@ -1058,7 +1046,7 @@ namespace Zantetsu.Core.Tests
                 plan: planValue);
 
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             // 1 entry (2 staging steps) + 2 temporary + frames + publication + 4 tail = 10.
             Assert.That(plan.Count, Is.EqualTo(10));
@@ -1099,7 +1087,7 @@ namespace Zantetsu.Core.Tests
                 publicationPlanTemporary: MakeDoc(CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue),
                 plan: planValue);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
             Assert.That(plan.GetStep(0).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeletePublicationPlanTemporary, -1, CaptureRunPublicationArtifactKind.None), Is.True);
 
             // Capture index tmp canonical → DeleteCaptureIndexTemporary in the capture-complete route only.
@@ -1107,7 +1095,7 @@ namespace Zantetsu.Core.Tests
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, planValue),
                 plan: planValue);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan completePlan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(complete);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(complete);
             Assert.That(completePlan.GetStep(0).Matches(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary, -1, CaptureRunPublicationArtifactKind.None), Is.True);
 
             // Commit route: a canonical index tmp must not produce a delete step.
@@ -1115,7 +1103,7 @@ namespace Zantetsu.Core.Tests
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, planValue),
                 plan: planValue);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan committedPlan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(committed);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(committed);
             for (int i = 0; i < committedPlan.Count; i++)
             {
                 Assert.That(committedPlan.GetStep(i).Action, Is.Not.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteCaptureIndexTemporary));
@@ -1129,13 +1117,13 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryOrchestrationResult invalidPlanTmp = BuildCommitResult(
                 publicationPlanTemporary: MakeDoc(CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocInvalid, 0));
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(invalidPlanTmp));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(invalidPlanTmp));
 
             // Invalid capture index temporary (capture-complete route).
             CaptureRunPublicationArtifactRecoveryOrchestrationResult invalidIndexTmp = BuildCaptureCompleteResult(
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocInvalid, 0));
             Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(invalidIndexTmp));
+                () => new CaptureRunPublicationCaptureCompleteCleanupActionPlan(invalidIndexTmp));
 
             // A limit-exceeded temporary document is a classifier collision and can never
             // reach the builder through the normal pipeline; forge it to exercise the
@@ -1154,7 +1142,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(stagingStatus: EvAbsent);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             for (int i = 0; i < plan.Count; i++)
             {
@@ -1176,7 +1164,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 3);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             int position = 0;
             for (int entry = 0; entry < 3; entry++)
@@ -1222,7 +1210,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 2);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             int lastArtifact = -1;
             int publicationIndex = -1;
@@ -1358,7 +1346,7 @@ namespace Zantetsu.Core.Tests
                 disposeLog,
                 out CaptureRunInitializationSessionOwnershipLease owner);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             Assert.That(plan.IsValid, Is.True);
             Assert.That(plan.IsValidIndexLocal(plan.AcquireValidationToken(), 0), Is.True);
@@ -1375,7 +1363,7 @@ namespace Zantetsu.Core.Tests
             int count = 500;
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: count);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             // 500 entries * 2 staging steps + frames + publication + 4 tail = 1000 + 6 = 1006.
             Assert.That(plan.Count, Is.EqualTo(count * 2 + 6));
@@ -1389,7 +1377,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult();
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             Assert.That(plan.OrchestrationResult, Is.SameAs(result));
             Assert.That(plan.AuthoritativePlan, Is.SameAs(result.Decision.AuthoritativePlan));
@@ -1408,8 +1396,7 @@ namespace Zantetsu.Core.Tests
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupAction.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupStep.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupActionPlan.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupActionPlan.cs"
             };
 
             foreach (string relativePath in relativePaths)

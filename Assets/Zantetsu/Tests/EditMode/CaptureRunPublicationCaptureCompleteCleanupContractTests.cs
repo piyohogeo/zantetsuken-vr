@@ -550,7 +550,7 @@ namespace Zantetsu.Core.Tests
             bool commitRoute,
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
-            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(
+            return new CaptureRunPublicationCaptureCompleteCleanupActionPlan(
                 commitRoute ? BuildCommitResult(out owner) : BuildCaptureCompleteResult(out owner));
         }
 
@@ -1017,7 +1017,7 @@ namespace Zantetsu.Core.Tests
                 plan: planValue,
                 publicationPlanTemporary: MakeDoc(CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue));
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
@@ -1041,7 +1041,7 @@ namespace Zantetsu.Core.Tests
                 plan: planValue,
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, planValue));
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
 
@@ -1179,7 +1179,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(op.IsValid, Is.True);
 
             CaptureRunPublicationCaptureCompleteCleanupActionPlan foreignPlan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCommitResult());
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(BuildCommitResult());
             CaptureRunPublicationArtifactPathSet foreign = foreignPlan.OrchestrationResult.InspectionSnapshot.Operation.GetArtifactPaths(0);
 
             CaptureRunPublicationArtifactInspectionOperation inspection = plan.OrchestrationResult.InspectionSnapshot.Operation;
@@ -1252,7 +1252,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationCaptureCompleteCleanupActionPlan planA = BuildPlan(commitRoute: true);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan planB =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(BuildCommitResult());
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(BuildCommitResult());
 
             CaptureRunPublicationArtifactEntryObservation observationA = planA.OrchestrationResult.InspectionSnapshot.GetEntry(0);
             CaptureRunPublicationArtifactInspectionOperation operationB = planB.OrchestrationResult.InspectionSnapshot.Operation;
@@ -1428,7 +1428,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 500);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             // The last staging step is the sidecar of the last entry.
             int lastStagingStep = 500 * 2 - 1;
@@ -1462,7 +1462,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 500);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             CaptureRunPublicationPathSet publicationPaths = GetPublicationPaths(plan);
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(plan.RootLayout);
@@ -1959,7 +1959,7 @@ namespace Zantetsu.Core.Tests
                 CaptureRunPublicationFramesObservationStatus.Directory,
                 planValue,
                 out owner);
-            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            return new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
         }
 
         private CaptureRunPublicationCaptureCompleteCleanupActionPlan BuildCaptureCompletePlanWithCaptureIndexTemporary()
@@ -1981,13 +1981,13 @@ namespace Zantetsu.Core.Tests
                 CaptureRunPublicationFramesObservationStatus.Directory,
                 planValue,
                 out owner);
-            return CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+            return new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
         }
 
         private static CaptureRunPublicationCaptureCompleteCleanupExecutionBatch BuildBatch(
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan)
         {
-            return CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(plan);
+            return new CaptureRunPublicationCaptureCompleteCleanupExecutionBatch(plan);
         }
 
         // ---- Execution batch: route order ----
@@ -2092,7 +2092,7 @@ namespace Zantetsu.Core.Tests
                 publicationPlanTemporary: MakeDoc(
                     CaptureRunPublicationDocumentKind.PublicationPlanTemporary, DocCanonical, 100, planValue));
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
 
             CaptureRunPublicationCaptureCompleteCleanupAction[] expected =
@@ -2233,15 +2233,6 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Execution batch: rejection ----
-
-        [Test]
-        public void Builder_NullPlan_Rejected()
-        {
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(null));
-
-            Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
-        }
 
         [Test]
         public void Batch_NullPlan_Rejected()
@@ -3236,21 +3227,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Builder_Shape()
-        {
-            Type type = typeof(CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Empty);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-            Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
-            Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
-            Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
-        }
-
-        [Test]
         public void Batch_DoesNotDisposeOwner()
         {
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(
@@ -3267,7 +3243,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationPlan planValue = MakePlan(entries: MakeEntries(500));
             CaptureRunPublicationArtifactRecoveryOrchestrationResult result = BuildCommitResult(entryCount: 500, plan: planValue);
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(result);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(result);
 
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
 
@@ -3287,8 +3263,7 @@ namespace Zantetsu.Core.Tests
             string[] relativePaths =
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionBatch.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupPreparedStep.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupPreparedStep.cs"
             };
 
             foreach (string relativePath in relativePaths)

@@ -73,10 +73,10 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunPublicationCaptureCompleteCleanupActionPlan actionPlan =
-                CaptureRunPublicationCaptureCompleteCleanupActionPlanBuilder.Build(recoveryResult);
+                new CaptureRunPublicationCaptureCompleteCleanupActionPlan(recoveryResult);
 
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch =
-                CaptureRunPublicationCaptureCompleteCleanupExecutionBatchBuilder.Build(actionPlan);
+                new CaptureRunPublicationCaptureCompleteCleanupExecutionBatch(actionPlan);
 
             CaptureRunPublicationCaptureCompleteCleanupExecutionResult executionResult =
                 _executionCoordinator.Execute(batch);
