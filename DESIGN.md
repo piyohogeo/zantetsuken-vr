@@ -134,7 +134,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 | サブシステム | 責務 |
 | --- | --- |
-| Blade Pose Adapter | OpenXR Grip Poseへ持ち手別のGripToKatanaOffsetを適用し、BladeAxis、EdgeDirection、SideNormal、追跡有効性を提供 |
+| Blade Pose Adapter | 右手ControllerのOpenXR Grip Poseへ単一のGripToKatanaOffsetを適用し、BladeAxis、EdgeDirection、SideNormal、追跡有効性を提供 |
 | Cut State | LogicalFragmentの生存性、各Source最大1件のActive PhysicsSplitTransaction、Pending CutとGeometry依存、採用面・Side・親子履歴、受付上限を管理する |
 | Temporary Slice Renderer | clip、論理破片の分離オフセット、仮断面、切断縁演出 |
 | Visual Slice Worker | 4.5.2で導入を採用した未来Rig PoseのJobベイク・VP入力準備、VP入力の三角形切断、断面生成、属性補間、VPプールへの正負Index直接出力 |
@@ -1138,7 +1138,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-029 | Unity実行環境 | Unity Hub管理領域のUnity 6.3 LTS 6000.3.22f1を使用し、ProjectVersion.txtで完全固定する | 確定 |
 | D-030 | Repository構成 | 専用Repo直下をUnity Project Rootとし、ユーザーパスは%USERNAME%で匿名化する | 確定 |
 | D-031 | Unity CLI | PoC初期は使用せず、固定版Unity.exeのbatchmodeを基準にする | 確定 |
-| D-035 | 刀姿勢入力 | OpenXR Grip Poseと持ち手別GripToKatanaOffsetで刀の位置・回転を決定 | 確定 |
+| D-035 | 刀姿勢入力 | 右手ControllerのOpenXR Grip Poseと単一のGripToKatanaOffsetで刀1本の位置・回転を決定する（19.1.11） | 人間承認済み、2026-09-13。PoC・初期製品の左手持ち・持ち手切替・二刀流は対象外 |
 | D-036 | 片刃判定 | 刀身軸方向を除いた運動とEdgeDirectionの緩い内積Gateで、峰側の復路を除外 | 確定 |
 | D-037 | 刃筋難度 | SideNormal横滑りや厳密な角度を不合格条件にせず、遊びやすい判定を優先 | 確定 |
 | D-038 | 刀の衝突 | 刀へ物理反発Colliderを付けず、有効な論理Sweep以外は全オブジェクトを素通り | 確定 |
@@ -1237,7 +1237,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-016 | Unity CLI再評価 | 実験的CLIとUnity PipelineをCIへ採用するか | 保守性、自動導入、外部依存 | CI構築時 |
 | O-017 | Slash調整 | 19.1の実装済みLatch／Frame／Span Candidate／Close方式、Begin選択、Emitter、epsilon／q許容、必要時だけの候補上限、速度・寿命と実装済みVFXの主要な調整値を開発UIで調整する。生存Wave固定容量は0.55の観測から4.50開始前に決める | 応答・操作感・Span形状 | Phase 0.55以降。同じ出力契約内の交換で本書改訂・Phase再開を要求しない |
 | O-019 | Edge Gate閾値 | Edge Lead Score、CutSample速度・位置、次の振りの再準備条件、異常速度上限。Phase 0.52は機能確認用の暫定値とし、最終値を固定しない | 復路誤発射、取りこぼし、連続斬り感 | Phase 0.55で実機調整、4.50で製品回帰（T-038～T-041） |
-| O-020 | Grip校正 | 左右持ちの暫定固定OffsetはPhase 0.5で使用する。ユーザー校正機能の提供は0.5のGateにしない | 刀表示の一致、刃方向判定、導入工数 | Phase 0.55または後続UX判断 |
+| O-020 | Grip校正 | 右手用ユーザー校正機能の提供要否。Phase 0.5のGateにしない | 刀表示の一致、刃方向判定、導入工数 | Phase 0.55または後続UX判断 |
 | O-021 | AI LOD | 介入への応答と計画再利用を両立する負荷制御方式・判定指標・更新頻度 | CPU予算、見た目、予測再利用率 | 研究とT-045の本体実測で決める |
 | O-022 | MobPlan有効期間 | 採用方式で扱う計画期間と更新時期 | 切断計算猶予、無効化率、メモリ | 研究とT-044～T-046の本体実測で決める |
 | O-024 | Unity更新頻度 | 6000.3.22f1から同一LTSパッチへ更新する条件と回帰基準 | 修正取込み、再インポート時間、安定性 | 更新候補発生時 |
@@ -1281,7 +1281,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-011 | XR描画 | Single Pass環境で両眼のclip／Stencilが一致 | Phase 1.50～1.52の基本VP／即時Clip／Stencilの低レベル確認を再利用し、Phase 2で製品状態を含むclip／Stencilの左右眼スクリーンショットと実機確認 |
 | T-012 | Collider cooking | バックグラウンド化後にメインスレッドスパイクが残らない | Profilerで切断前後フレームを追跡 |
 | T-013 | 非VR性能基準 | 同一負荷を自動再生し、変更前後を比較可能 | 固定カメラ、固定乱数、切断スクリプトで計測 |
-| T-014 | Quest Link XR | Quest 3S有線Quest Linkの90HzモードとSingle Passで、単純Geometryと左右別の暫定固定GripToKatanaOffsetを適用した刀が両眼表示され、Controllerへ追従する | Phase 0.5。HMD内目視とProfilerで基本表示・追従と一度の追跡喪失／復帰を確認し、無効Poseを利用しない。固定測定時間、P95／P99、製品90fps SLA、任意校正UI、Slash生成は要求しない |
+| T-014 | Quest Link XR | Quest 3S有線Quest Linkの90HzモードとSingle Passで、単純Geometryと右手用の暫定固定GripToKatanaOffsetを適用した刀が両眼表示され、右手Controllerへ追従する | Phase 0.5。HMD内目視とProfilerで基本表示・追従と一度の追跡喪失／復帰を確認し、無効Poseを利用しない。固定測定時間、P95／P99、製品90fps SLA、任意校正UI、Slash生成は要求しない |
 | T-015 | 斬撃波先行切断 | 接触前の完了率が即時レンダラ負荷を有意に減らす | Phase 4.53。距離、速度、対象数別に事前完了率とPending時間を測定 |
 | T-016 | 未来評価器統合 | DAGで依存が解消した投機Workが共有Dispatchへ入り、取消・完了後採否・実Hit時Commitが競合なく成立する | Phase 4.53。遅延、進路変更、再切断で未Schedule取消、Schedule済み成果物の世代・前提不一致による不採用、有効成果物の実Hit時Commitを確認し、T-090の優先順と統合する。投機同士の厳密なDeadline順は合格条件にしない |
 | T-017 | 自由飛行剛体の直接予測 | 19.3の直接予測が本体状態と統合され、対象外・前提不一致は現在状態経路へ進む | Phase 4.54で開始Snapshot、重心／Actor原点、回転、WorldPhysicsProfile、FixedStep境界、予測Horizon、Gate対象外を確認する。点Anchor、接触／転動、既知Constraint付き対象を直接予測へ入れない。面リベースはT-093で確認し、外部Probeの測定値を製品保証にしない |
@@ -1305,7 +1305,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-036 | Segment Hit | 現在採用Convexとの共通閉Sweepと系譜消費が成立する | Phase 4.51。生成時の退化入力、4端点の閉凸包（通常は平行四辺形／台形）、増加領域Hit、Bounds／VFX非authority、厚み・端点領域なし、無関係Fragment個別Hit、子孫再Hit禁止と受付見送り後の非再試行を確認する。軸が平行または反平行で線分へ退化する代表1件を同じ現在採用Convexへの共通Queryで扱い、軸補正・厚み・端点領域・別Hitアルゴリズムを追加しない |
 | T-037 | 投機候補範囲 | 範囲外でも現在状態切断が成立する | Phase 4.53。有限包絡の保守Boundsと包絡を保証しない先行準備範囲を区別し、範囲外実Hitを4.51へ接続する。Clamp・範囲拡張・再探索を追加しない |
 | T-038 | Edge Direction Gate | 刃側の広い振り角を許容し、峰側移動はSlashを生成しない | Phase 0.52は少数固定Pose列、0.55で実機調整、4.50で製品回帰。Score閾値、速度、移動量、Sample Window別に往路・復路・斜め振りTraceを再生 |
-| T-039 | 連続斬り | 復路で誤Slashを生成せず、返した刀の次の有効斬りを受理する | Phase 0.52は少数固定Pose列、0.55で実機調整、4.50で製品回帰。代表的な抜刀・復路・返し・左右連続斬りで誤発射・欠落・再準備を確認する。各1000回の固定行列は要求しない |
+| T-039 | 連続斬り | 復路で誤Slashを生成せず、返した刀の次の有効斬りを受理する | Phase 0.52は少数固定Pose列、0.55で実機調整、4.50で製品回帰。代表的な抜刀・復路・返し・右手の刀による左右方向の連続斬りで誤発射・欠落・再準備を確認する。各1000回の固定行列は要求しない |
 | T-040 | 刀の非接触と新Wave受付 | 発射条件・再準備条件の不成立時に刀自身から新Wave・物理応答・Gameplay Hit・刀由来Hapticsを生成せず、生存Waveはその後のGate状態から独立に継続する | Phase 4.50は新Waveを生成・公開しないことと刀Colliderによる物理応答がないことを確認し、実対象Hit・Hit Detector・対象Queryを要求しない。Phase 4.51は発射条件・再準備条件の不成立中も生存WaveのSweep／Hit評価が継続し、刀自身から対象Query・Hit・Hapticsを生成しないことを確認する。生存Waveの実Hit通知・Hapticsは禁止対象に含めない |
 | T-041 | Tracking復帰 | 追跡喪失と再取得で巨大速度や誤Slashを生成しない | Phase 0.51／0.52は履歴Resetと受付を少数固定Pose列で確認し、0.55で実機調整、4.50で製品回帰。Controller遮蔽、Pose無効化、位置飛びを記録・再生しSample Resetを確認 |
 | T-043 | Unity更新再現性 | Project再作成や版別コピーなしで新Editorへ更新でき、旧版へGitで復帰できる | 専用ブランチと一時worktreeでProjectVersion、Package Lock、固定テスト、XRスモークを検査 |
@@ -1405,8 +1405,8 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。Release既定の採用と製品接続先がない場合の完了条件は21.16.1に従い、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
 | Phase 0.2 | 採用Fixtureの凍結 | 少数Geometry、表示切断／Physics Cook／正しさ確認の用途対応、公開Synthetic／非公開Licensed入力 | 10.2.2の採用ファイルと用途対応をmergeし、後続から利用できる時点で完了する。旧quota・全再生成・再監査・形式統合を条件にしない |
 | Phase 0.21 | Reference Asset Intake | 最初の利用Phaseに必要な10.2.3のAsset登録・内容識別・所在解決と一つのHarness接続 | 少数の実Assetで登録・更新と保持したrevisionの読込みを確認し、一つの対応Harnessへ限定サンプルを渡して実処理・結果記録まで通す。結果から実体と存在する参考資料へ辿れ、参考入力の有無・更新・失敗が標準実行の対象・集計・合否を自動変更しない。登録ツールだけで完了とせず、全Asset成功・全件実行・全Harness対応・乖離解消は要求しない |
-| Phase 0.5 | 最小XRスモーク | 共用Sandbox Sceneの初期状態、OpenXR、Quest 3S有線Link、左右Grip Pose＋暫定固定Offset、BladeAxis／EdgeDirection／SideNormal、位置・回転の利用可否を表す一つの追跡有効性、Single Pass | T-014だけで基本XRを確認する。Profilerは90Hzモードと明白な継続破綻の確認に使い、速度履歴、Gate、Stroke／Plane、Wave、校正UI、製品性能SLAを含めない |
-| Phase 0.51 | Blade Sample／追跡不連続 | 刀姿勢・軸・Cut Sample Point・Emitter・時刻・追跡有効性を後続処理へ渡す内部Sampleと履歴Reset | 固定Pose列と実入力の左右で、位置または回転が無効なSampleを除外し、追跡喪失前と復帰後を速度区間として結ばない。型・field列は固定せず、速度閾値・Gesture・調整UIは含めない |
+| Phase 0.5 | 最小XRスモーク | 共用Sandbox Sceneの初期状態、OpenXR、Quest 3S有線Link、右手ControllerのGrip Pose＋暫定固定Offset、BladeAxis／EdgeDirection／SideNormal、位置・回転の利用可否を表す一つの追跡有効性、Single Pass | T-014だけで基本XRを確認する。Profilerは90Hzモードと明白な継続破綻の確認に使い、速度履歴、Gate、Stroke／Plane、Wave、校正UI、製品性能SLAを含めない |
+| Phase 0.51 | Blade Sample／追跡不連続 | 刀姿勢・軸・Cut Sample Point・Emitter・時刻・追跡有効性を後続処理へ渡す内部Sampleと履歴Reset | 固定Pose列と右手Controllerの実入力で、位置または回転が無効なSampleを除外し、追跡喪失前と復帰後を速度区間として結ばない。型・field列は固定せず、速度閾値・Gesture・調整UIは含めない |
 | Phase 0.52 | Gesture受付／Plane候補 | Cut Sample Point速度と長軸成分除外、Edge Lead Score、暫定閾値、accepted samples、Stroke Begin、SourceSlashPlane候補、復路拒否・再準備 | 少数固定Pose列で往路受付、復路／峰側拒否、刀を返した新Stroke受付、斜め振り、復帰後の新Sample蓄積を確認し、受付列からfiniteなPlane候補を得る。Latch・Frame確定・SlashId・Waveは含めず、閾値は0.55で調整する |
 | Phase 0.53 | HitなしSlashWave Coreと第一候補 | 19.1のLatch／Frame、Emitter、初期Segment、19.1.5.1第一候補、Raw／Accepted Span、Live／Frozen Guide、Close、速度・Lifetime、前回／現在Segmentと閉Sweep領域、SlashWave VFX、開発用有限Wave格納 | 固定Pose列からGesture／Plane→有効FrameとLatch→初期Segment→Raw／Accepted Span→Close／Frozen Guide→Expireまで動作する。19.1のfinite条件・公開順序・満杯時規則を使い、Span非減少、Invalid保持、Plane／軸不変、CloseとExpireの分離、容量返却・複数Waveを確認する。少数Waveで19.1.8の面内配置、飛翔・Span拡大への追従と静的Geometry再利用を確認し、毎更新・毎描画のためのVertex／Index再生成・書換え・転送がないことをコードと必要時のProfilerで確かめる。Query・Hit・Cut State・Prediction・製品容量値は含めず、第一候補をモックで代替しない |
 | Phase 0.54 | Sandbox診断・再生・比較UI | 同じCoreに19.1.12の可視化、実装済み方式と値の切替入口、Pose記録再生、Current／Pinned比較、非canonical Presetを接続 | 第一候補を実入力・同じ記録Pose列で観察・再生・比較できる。Latch／Frame変更は未Latch評価、Span／Close変更は後続Waveだけへ反映する。比較候補がなければ常設の偽候補を作らず、交換境界の確認だけ一時Test Double等を使える。操作感の採否・最終値は決めない |
@@ -1535,7 +1535,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 刀は発射可否・再準備・追跡状態によらず、19.1.11とT-040に従い地形、プロップ、NPCへ物理的に引っ掛からない。
 
-- Quest左右コントローラのGrip PoseとBladeFrameが一致し、追跡復帰時に誤Slashを生成しない。
+- Quest右手ControllerのGrip PoseにOffsetを適用した刀姿勢とBladeFrameが整合し、追跡復帰時に誤Slashを生成しない。
 
 - 予測が外れた場合も4.5.2の必要な現在Pose入力を準備して即時切断レンダラへ接続し、古い成果物をコミットしない。
 
@@ -1581,7 +1581,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - D-017／D-130で簡素化するSchedulerと非同期Dispatchの旧内部契約は直接削除し、経緯はGitへ委ねる。同じ責務のDecision・Test IDは継続し、既存実装は実装詳細として利用できる。一般のTaskId相関、世代・公開・資源寿命と他Subsystemの契約は変更しない。
 
-- Phase 0.5系列とSlashの内部構造・二重識別・状態名・未採用比較方式・重複記述、および19.1.8で置換するVFX形状・式・必須演出項目の撤去は、旧詳細を温存せずGitへ委ねる。同じ責務のDecision／Test IDは継続し、欠番は再利用しない。19.1.5.1の第一候補の説明・式・更新順序は本文に維持し、既存コードの一括改名や互換層を要求しない。
+- Phase 0.5系列とSlashの内部構造・二重識別・状態名・未採用比較方式・重複記述・左手持ち対応、および19.1.8で置換するVFX形状・式・必須演出項目の撤去は、旧詳細を温存せずGitへ委ねる。同じ責務のDecision／Test IDは継続し、欠番は再利用しない。19.1.5.1の第一候補の説明・式・更新順序は本文に維持し、既存コードの一括改名や互換層を要求しない。
 
 - Phase 0.9～1と関連するGeometry仕様の旧工程・所属／Commit条件、不要な共通型・Profile・固定識別表現・Boundary件数上限は直接削除し、経緯をGitへ委ねる。同じ責務のDecision／Test IDは継続し、既存実装の一括改名・再生成や互換層を要求しない。Topology、公開・資源寿命、0.91／0.94の比較実験は維持する。
 
@@ -1962,7 +1962,7 @@ Phase 5.6の非命中追加分割との同時実行上の系譜扱いはPhase 5.
 
 #### 19.1.11 Quest Grip Poseと片刃方向Gate
 
-QuestコントローラのOpenXR `grip pose`から位置・回転・Tracking Stateを取得し、刀Prefabの`GripToKatanaOffset`を掛けて刀姿勢を決める。`aim pose`は照準用であり、剣を握る姿勢の正本には使用しない。左右持ち、表示モデル、任意の物理グリップアタッチメント差はOffsetで吸収する。
+PoC・初期製品の刀は1本とし、刀入力には右手Controllerのみを使用する。左手持ち・持ち手切替・二刀流は対象外とする。右手ControllerのOpenXR `grip pose`から位置・回転・Tracking Stateを取得し、刀Prefabの単一の`GripToKatanaOffset`を適用して刀姿勢を決める。`aim pose`は刀姿勢の正本に使用しない。表示モデル・任意の物理グリップアタッチメント差はこのOffsetで調整する。具体値は暫定設定・開発時調整で決める。この限定は刀入力だけに適用し、左手Controllerの非刀用途は変更しない。右手入力の無効時は本節の追跡規則に従い、左手への自動代替を行わない。
 
 刀Prefab内の`BladeFrame`へ次を定義する。
 
