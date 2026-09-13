@@ -309,10 +309,9 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunInitializationDocumentSet documents =
                 new CaptureRunInitializationDocumentSet(scope.Layout, InitId);
-            CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator execution =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(batch);
+            CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(documents);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt);
             CaptureRunInitializationSessionIssue issue =
                 CaptureRunInitializationSession.IssuanceProof.Mint(scope.Owner, scope.Identity, evidence);

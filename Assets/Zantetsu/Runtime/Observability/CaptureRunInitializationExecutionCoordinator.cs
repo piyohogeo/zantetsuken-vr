@@ -20,9 +20,12 @@ namespace Zantetsu.Observability
     /// <para>
     /// A partial failure may leave roots, temporary entries, or final markers
     /// on disk; resumption is the responsibility of a future recovery
-    /// coordinator, not of this type. This coordinator performs no filesystem
-    /// work itself, owns no batch or receipt across calls, never disposes its
-    /// dependencies, and mutates no batch, document set, or canonical bytes.
+    /// coordinator, not of this type. The four write operations are built from
+    /// the document set before any backend is called, so a rejected document
+    /// set stops the sequence before the first side effect. This coordinator
+    /// performs no filesystem work itself, owns no operation or receipt across
+    /// calls, never disposes its dependencies, and mutates no document set or
+    /// canonical bytes.
     /// Thread selection is the caller's responsibility.
     /// </para>
     /// </remarks>
@@ -49,52 +52,52 @@ namespace Zantetsu.Observability
             _markerWriter = markerWriter;
         }
 
-        internal CaptureRunInitializationExecutionReceipt Execute(CaptureRunInitializationWriteBatch batch)
+        internal CaptureRunInitializationExecutionReceipt Execute(CaptureRunInitializationDocumentSet documents)
         {
-            if (batch == null)
+            if (documents == null)
             {
-                throw new ArgumentNullException(nameof(batch));
+                throw new ArgumentNullException(nameof(documents));
             }
 
-            CaptureRunMarkerPathSet markerPaths = batch.MarkerPaths;
+            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
             if (markerPaths == null)
             {
-                throw new ArgumentException("Batch must hold a marker path set.", nameof(batch));
+                throw new ArgumentException("Documents must hold a marker path set.", nameof(documents));
             }
 
             CaptureRunRootLayout rootLayout = markerPaths.RootLayout;
             if (rootLayout == null)
             {
-                throw new ArgumentException("Marker path set must hold a root layout.", nameof(batch));
+                throw new ArgumentException("Marker path set must hold a root layout.", nameof(documents));
             }
 
-            if (batch.Count != 4)
-            {
-                throw new ArgumentException("Batch must contain exactly four operations.", nameof(batch));
-            }
+            CaptureRunMarkerWriteOperation stagingInitialization = new CaptureRunMarkerWriteOperation(
+                CaptureRunRootRole.Staging,
+                CaptureRunMarkerKind.Initialization,
+                markerPaths.StagingInitializationTemporaryPath,
+                markerPaths.StagingInitializationPath,
+                documents.GetStagingInitializationBytes());
 
-            CaptureRunMarkerWriteOperation stagingInitialization = batch.StagingInitialization;
-            CaptureRunMarkerWriteOperation finalInitialization = batch.FinalInitialization;
-            CaptureRunMarkerWriteOperation stagingReady = batch.StagingReady;
-            CaptureRunMarkerWriteOperation finalReady = batch.FinalReady;
+            CaptureRunMarkerWriteOperation finalInitialization = new CaptureRunMarkerWriteOperation(
+                CaptureRunRootRole.Final,
+                CaptureRunMarkerKind.Initialization,
+                markerPaths.FinalInitializationTemporaryPath,
+                markerPaths.FinalInitializationPath,
+                documents.GetFinalInitializationBytes());
 
-            if (stagingInitialization == null || finalInitialization == null || stagingReady == null || finalReady == null)
-            {
-                throw new ArgumentException("Batch must contain four non-null operations.", nameof(batch));
-            }
+            CaptureRunMarkerWriteOperation stagingReady = new CaptureRunMarkerWriteOperation(
+                CaptureRunRootRole.Staging,
+                CaptureRunMarkerKind.Ready,
+                markerPaths.StagingReadyTemporaryPath,
+                markerPaths.StagingReadyPath,
+                documents.GetStagingReadyBytes());
 
-            if (!ReferenceEquals(batch.GetOperation(0), stagingInitialization)
-                || !ReferenceEquals(batch.GetOperation(1), finalInitialization)
-                || !ReferenceEquals(batch.GetOperation(2), stagingReady)
-                || !ReferenceEquals(batch.GetOperation(3), finalReady))
-            {
-                throw new ArgumentException("Batch operations do not follow the fixed order.", nameof(batch));
-            }
-
-            RequireOperationMatches(stagingInitialization, CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, markerPaths.StagingInitializationTemporaryPath, markerPaths.StagingInitializationPath);
-            RequireOperationMatches(finalInitialization, CaptureRunRootRole.Final, CaptureRunMarkerKind.Initialization, markerPaths.FinalInitializationTemporaryPath, markerPaths.FinalInitializationPath);
-            RequireOperationMatches(stagingReady, CaptureRunRootRole.Staging, CaptureRunMarkerKind.Ready, markerPaths.StagingReadyTemporaryPath, markerPaths.StagingReadyPath);
-            RequireOperationMatches(finalReady, CaptureRunRootRole.Final, CaptureRunMarkerKind.Ready, markerPaths.FinalReadyTemporaryPath, markerPaths.FinalReadyPath);
+            CaptureRunMarkerWriteOperation finalReady = new CaptureRunMarkerWriteOperation(
+                CaptureRunRootRole.Final,
+                CaptureRunMarkerKind.Ready,
+                markerPaths.FinalReadyTemporaryPath,
+                markerPaths.FinalReadyPath,
+                documents.GetFinalReadyBytes());
 
             CaptureRunRootProvisionOperation stagingProvisionOperation = new CaptureRunRootProvisionOperation(rootLayout, CaptureRunRootRole.Staging);
             CaptureRunRootProvisionReceipt stagingProvisionReceipt = ValidateProvisionReceipt(
@@ -117,29 +120,14 @@ namespace Zantetsu.Observability
                 _markerWriter, finalReady, _markerWriter.WriteAtomic(finalReady));
 
             return new CaptureRunInitializationExecutionReceipt(
-                batch,
+                markerPaths,
+                documents.RunInitializationId,
                 stagingProvisionReceipt,
                 finalProvisionReceipt,
                 stagingInitializationWriteReceipt,
                 finalInitializationWriteReceipt,
                 stagingReadyWriteReceipt,
                 finalReadyWriteReceipt);
-        }
-
-        private static void RequireOperationMatches(
-            CaptureRunMarkerWriteOperation operation,
-            CaptureRunRootRole expectedRole,
-            CaptureRunMarkerKind expectedKind,
-            string expectedTemporaryPath,
-            string expectedFinalPath)
-        {
-            if (operation.RootRole != expectedRole
-                || operation.MarkerKind != expectedKind
-                || !string.Equals(operation.TemporaryPath, expectedTemporaryPath, StringComparison.Ordinal)
-                || !string.Equals(operation.FinalPath, expectedFinalPath, StringComparison.Ordinal))
-            {
-                throw new ArgumentException("A batch operation does not match the marker path set.", "batch");
-            }
         }
 
         private static CaptureRunRootProvisionReceipt ValidateProvisionReceipt(

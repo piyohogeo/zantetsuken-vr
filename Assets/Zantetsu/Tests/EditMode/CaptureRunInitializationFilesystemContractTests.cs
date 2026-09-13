@@ -168,7 +168,7 @@ namespace Zantetsu.Core.Tests
 
             provisioner.ProvisionNew(StagingProvision(layout));
 
-            CaptureRunMarkerWriteOperation operation = MakeBatch(layout).StagingInitialization;
+            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
 
             CaptureRunMarkerWriteReceipt receipt = writer.WriteAtomic(operation);
 
@@ -190,7 +190,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootOsProvisioner.Create().ProvisionNew(StagingProvision(layout));
             CaptureRunMarkerOsAtomicWriter writer = CaptureRunMarkerOsAtomicWriter.Create();
 
-            CaptureRunMarkerWriteOperation operation = MakeBatch(layout).StagingInitialization;
+            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
 
             File.WriteAllText(operation.FinalPath, "existing", Encoding.ASCII);
 
@@ -219,7 +219,7 @@ namespace Zantetsu.Core.Tests
             // the only thing under examination.
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
                 link, Path.Combine(_root, "final"), 1);
-            CaptureRunMarkerWriteOperation operation = MakeBatch(layout).StagingInitialization;
+            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
             Directory.CreateDirectory(Path.Combine(real, "runs", "run-1"));
 
             Assert.That(
@@ -251,14 +251,35 @@ namespace Zantetsu.Core.Tests
             provisioner.ProvisionNew(StagingProvision(layout));
             provisioner.ProvisionNew(FinalProvision(layout));
 
-            CaptureRunInitializationWriteBatch batch = MakeBatch(layout);
+            CaptureRunInitializationDocumentSet documents = MakeDocuments(layout);
+            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
 
             CaptureRunMarkerWriteOperation[] operations =
             {
-                batch.StagingInitialization,
-                batch.FinalInitialization,
-                batch.StagingReady,
-                batch.FinalReady,
+                new CaptureRunMarkerWriteOperation(
+                    CaptureRunRootRole.Staging,
+                    CaptureRunMarkerKind.Initialization,
+                    markerPaths.StagingInitializationTemporaryPath,
+                    markerPaths.StagingInitializationPath,
+                    documents.GetStagingInitializationBytes()),
+                new CaptureRunMarkerWriteOperation(
+                    CaptureRunRootRole.Final,
+                    CaptureRunMarkerKind.Initialization,
+                    markerPaths.FinalInitializationTemporaryPath,
+                    markerPaths.FinalInitializationPath,
+                    documents.GetFinalInitializationBytes()),
+                new CaptureRunMarkerWriteOperation(
+                    CaptureRunRootRole.Staging,
+                    CaptureRunMarkerKind.Ready,
+                    markerPaths.StagingReadyTemporaryPath,
+                    markerPaths.StagingReadyPath,
+                    documents.GetStagingReadyBytes()),
+                new CaptureRunMarkerWriteOperation(
+                    CaptureRunRootRole.Final,
+                    CaptureRunMarkerKind.Ready,
+                    markerPaths.FinalReadyTemporaryPath,
+                    markerPaths.FinalReadyPath,
+                    documents.GetFinalReadyBytes()),
             };
 
             foreach (CaptureRunMarkerWriteOperation operation in operations)
@@ -281,13 +302,11 @@ namespace Zantetsu.Core.Tests
         public void TheRealCoordinator_InitializesOneRunOnDisk_AndYieldsAUsableIssue()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationWriteBatch batch = MakeBatch(layout);
-
             CaptureRunInitializationExecutionReceipt receipt =
                 new CaptureRunInitializationExecutionCoordinator(
                     CaptureRunRootOsProvisioner.Create(),
                     CaptureRunMarkerOsAtomicWriter.Create())
-                .Execute(batch);
+                .Execute(MakeDocuments(layout));
 
             Assert.That(receipt, Is.Not.Null);
 
@@ -304,10 +323,11 @@ namespace Zantetsu.Core.Tests
                     "an initialized Run root holds its initialization and ready markers");
             }
 
-            Assert.That(File.Exists(batch.StagingInitialization.FinalPath), Is.True);
-            Assert.That(File.Exists(batch.FinalInitialization.FinalPath), Is.True);
-            Assert.That(File.Exists(batch.StagingReady.FinalPath), Is.True);
-            Assert.That(File.Exists(batch.FinalReady.FinalPath), Is.True);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
+            Assert.That(File.Exists(markerPaths.StagingInitializationPath), Is.True);
+            Assert.That(File.Exists(markerPaths.FinalInitializationPath), Is.True);
+            Assert.That(File.Exists(markerPaths.StagingReadyPath), Is.True);
+            Assert.That(File.Exists(markerPaths.FinalReadyPath), Is.True);
 
             // And the evidence a Run actually needs downstream.
             CaptureRunInitializationReadyEvidence evidence =
@@ -320,10 +340,22 @@ namespace Zantetsu.Core.Tests
         // Helpers
         // -------------------------------------------------------------------
 
-        private static CaptureRunInitializationWriteBatch MakeBatch(CaptureRunRootLayout layout)
+        private static CaptureRunInitializationDocumentSet MakeDocuments(CaptureRunRootLayout layout)
         {
-            return new CaptureRunInitializationWriteBatch(
-                new CaptureRunInitializationDocumentSet(layout, InitId));
+            return new CaptureRunInitializationDocumentSet(layout, InitId);
+        }
+
+        private static CaptureRunMarkerWriteOperation StagingInitializationWrite(CaptureRunRootLayout layout)
+        {
+            CaptureRunInitializationDocumentSet documents = MakeDocuments(layout);
+            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
+
+            return new CaptureRunMarkerWriteOperation(
+                CaptureRunRootRole.Staging,
+                CaptureRunMarkerKind.Initialization,
+                markerPaths.StagingInitializationTemporaryPath,
+                markerPaths.StagingInitializationPath,
+                documents.GetStagingInitializationBytes());
         }
 
         /// <summary>

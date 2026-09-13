@@ -109,9 +109,8 @@ namespace Zantetsu.Observability
                 string runInitializationId = _initializationIdSource.Create();
 
                 CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(rootLayout, runInitializationId);
-                CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
 
-                CaptureRunInitializationExecutionReceipt executionReceipt = _executionCoordinator.Execute(batch);
+                CaptureRunInitializationExecutionReceipt executionReceipt = _executionCoordinator.Execute(documents);
 
                 if (executionReceipt == null)
                 {

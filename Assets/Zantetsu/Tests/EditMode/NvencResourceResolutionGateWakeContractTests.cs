@@ -261,8 +261,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationExecutionReceipt receipt =
                 new CaptureRunInitializationExecutionCoordinator(
                     new FakeProvisioner(), new FakeMarkerWriter())
-                .Execute(new CaptureRunInitializationWriteBatch(
-                    new CaptureRunInitializationDocumentSet(layout, InitId)));
+                .Execute(new CaptureRunInitializationDocumentSet(layout, InitId));
 
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
             CaptureRunLockLease lease = new CaptureRunLockLease(

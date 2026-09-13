@@ -5626,10 +5626,9 @@ namespace Zantetsu.Core.Tests
             out CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
             CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
-            CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator execution = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(batch);
+            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(documents);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
 
             CaptureRunLockLease lease = MakeLease(layout);

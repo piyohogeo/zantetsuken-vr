@@ -132,10 +132,9 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
             CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
-            CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator executionCoordinator = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
-            return executionCoordinator.Execute(batch);
+            return executionCoordinator.Execute(documents);
         }
 
         private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(

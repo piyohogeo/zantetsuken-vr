@@ -4,30 +4,31 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable token returned after a Capture Run initialization sequence has
-    /// fully succeeded. It correlates the driving write batch with the two
-    /// provision receipts and four write receipts produced along the way.
+    /// fully succeeded. It correlates the Run's marker paths and initialization
+    /// id with the two provision receipts and four write receipts produced
+    /// along the way.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The constructor re-verifies every correlation itself rather than
-    /// trusting the coordinator: all seven references must be non-null, the two
+    /// trusting the coordinator: all eight references must be non-null, the two
     /// provision receipts must share one issuer, the four write receipts must
     /// share one issuer, the provision operations must be the staging and final
-    /// operations of the batch's root layout, the write receipts must match the
-    /// batch's four operations by reference, and the batch must preserve its
-    /// fixed four-operation order. <see cref="IsValid"/> recomputes the same
-    /// checks from the stored values without an independent flag.
+    /// operations of the marker paths' root layout, and each write receipt must
+    /// describe an operation that is one of the four the marker paths name.
+    /// <see cref="IsValid"/> recomputes the same checks from the stored values
+    /// without an independent flag.
     /// </para>
     /// <para>
-    /// <see cref="RootLayout"/>, <see cref="TestRunId"/>, and
-    /// <see cref="RunInitializationId"/> are forwarded from the batch and hold
-    /// no copied value. This type performs no filesystem work and is not an
+    /// <see cref="RootLayout"/> and <see cref="TestRunId"/> are forwarded from
+    /// the marker paths and hold no copied value. This type performs no filesystem work and is not an
     /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationExecutionReceipt
     {
-        private readonly CaptureRunInitializationWriteBatch _batch;
+        private readonly CaptureRunMarkerPathSet _markerPaths;
+        private readonly string _runInitializationId;
         private readonly CaptureRunRootProvisionReceipt _stagingProvision;
         private readonly CaptureRunRootProvisionReceipt _finalProvision;
         private readonly CaptureRunMarkerWriteReceipt _stagingInitializationWrite;
@@ -36,7 +37,8 @@ namespace Zantetsu.Observability
         private readonly CaptureRunMarkerWriteReceipt _finalReadyWrite;
 
         internal CaptureRunInitializationExecutionReceipt(
-            CaptureRunInitializationWriteBatch batch,
+            CaptureRunMarkerPathSet markerPaths,
+            string runInitializationId,
             CaptureRunRootProvisionReceipt stagingProvision,
             CaptureRunRootProvisionReceipt finalProvision,
             CaptureRunMarkerWriteReceipt stagingInitializationWrite,
@@ -44,9 +46,14 @@ namespace Zantetsu.Observability
             CaptureRunMarkerWriteReceipt stagingReadyWrite,
             CaptureRunMarkerWriteReceipt finalReadyWrite)
         {
-            if (batch == null)
+            if (markerPaths == null)
             {
-                throw new ArgumentNullException(nameof(batch));
+                throw new ArgumentNullException(nameof(markerPaths));
+            }
+
+            if (runInitializationId == null)
+            {
+                throw new ArgumentNullException(nameof(runInitializationId));
             }
 
             if (stagingProvision == null)
@@ -79,12 +86,13 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(finalReadyWrite));
             }
 
-            if (!CorrelationsHold(batch, stagingProvision, finalProvision, stagingInitializationWrite, finalInitializationWrite, stagingReadyWrite, finalReadyWrite))
+            if (!CorrelationsHold(markerPaths, stagingProvision, finalProvision, stagingInitializationWrite, finalInitializationWrite, stagingReadyWrite, finalReadyWrite))
             {
                 throw new ArgumentException("Execution receipt inputs are not mutually correlated.");
             }
 
-            _batch = batch;
+            _markerPaths = markerPaths;
+            _runInitializationId = runInitializationId;
             _stagingProvision = stagingProvision;
             _finalProvision = finalProvision;
             _stagingInitializationWrite = stagingInitializationWrite;
@@ -92,8 +100,6 @@ namespace Zantetsu.Observability
             _stagingReadyWrite = stagingReadyWrite;
             _finalReadyWrite = finalReadyWrite;
         }
-
-        internal CaptureRunInitializationWriteBatch Batch => _batch;
 
         internal CaptureRunRootProvisionReceipt StagingProvision => _stagingProvision;
 
@@ -107,16 +113,18 @@ namespace Zantetsu.Observability
 
         internal CaptureRunMarkerWriteReceipt FinalReadyWrite => _finalReadyWrite;
 
-        internal CaptureRunRootLayout RootLayout => _batch.MarkerPaths.RootLayout;
+        internal CaptureRunMarkerPathSet MarkerPaths => _markerPaths;
 
-        internal long TestRunId => _batch.MarkerPaths.RootLayout.TestRunId;
+        internal CaptureRunRootLayout RootLayout => _markerPaths.RootLayout;
 
-        internal string RunInitializationId => _batch.RunInitializationId;
+        internal long TestRunId => _markerPaths.RootLayout.TestRunId;
 
-        internal bool IsValid => CorrelationsHold(_batch, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
+        internal string RunInitializationId => _runInitializationId;
+
+        internal bool IsValid => CorrelationsHold(_markerPaths, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
 
         private static bool CorrelationsHold(
-            CaptureRunInitializationWriteBatch batch,
+            CaptureRunMarkerPathSet markerPaths,
             CaptureRunRootProvisionReceipt stagingProvision,
             CaptureRunRootProvisionReceipt finalProvision,
             CaptureRunMarkerWriteReceipt stagingInitializationWrite,
@@ -124,7 +132,7 @@ namespace Zantetsu.Observability
             CaptureRunMarkerWriteReceipt stagingReadyWrite,
             CaptureRunMarkerWriteReceipt finalReadyWrite)
         {
-            if (batch == null
+            if (markerPaths == null
                 || stagingProvision == null
                 || finalProvision == null
                 || stagingInitializationWrite == null
@@ -145,10 +153,8 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunMarkerPathSet markerPaths = batch.MarkerPaths;
-            CaptureRunRootLayout rootLayout = markerPaths != null ? markerPaths.RootLayout : null;
-
-            if (markerPaths == null || rootLayout == null)
+            CaptureRunRootLayout rootLayout = markerPaths.RootLayout;
+            if (rootLayout == null)
             {
                 return false;
             }
@@ -191,10 +197,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CaptureRunMarkerWriteOperation stagingInitialization = batch.StagingInitialization;
-            CaptureRunMarkerWriteOperation finalInitialization = batch.FinalInitialization;
-            CaptureRunMarkerWriteOperation stagingReady = batch.StagingReady;
-            CaptureRunMarkerWriteOperation finalReady = batch.FinalReady;
+            CaptureRunMarkerWriteOperation stagingInitialization = stagingInitializationWrite.Operation;
+            CaptureRunMarkerWriteOperation finalInitialization = finalInitializationWrite.Operation;
+            CaptureRunMarkerWriteOperation stagingReady = stagingReadyWrite.Operation;
+            CaptureRunMarkerWriteOperation finalReady = finalReadyWrite.Operation;
 
             if (stagingInitialization == null
                 || finalInitialization == null
@@ -212,23 +218,10 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!ReferenceEquals(stagingInitializationWrite.Operation, stagingInitialization)
-                || !ReferenceEquals(finalInitializationWrite.Operation, finalInitialization)
-                || !ReferenceEquals(stagingReadyWrite.Operation, stagingReady)
-                || !ReferenceEquals(finalReadyWrite.Operation, finalReady)
-                || !WriteReceiptMatches(stagingInitializationWrite, stagingInitialization)
+            if (!WriteReceiptMatches(stagingInitializationWrite, stagingInitialization)
                 || !WriteReceiptMatches(finalInitializationWrite, finalInitialization)
                 || !WriteReceiptMatches(stagingReadyWrite, stagingReady)
                 || !WriteReceiptMatches(finalReadyWrite, finalReady))
-            {
-                return false;
-            }
-
-            if (batch.Count != 4
-                || !ReferenceEquals(batch.GetOperation(0), stagingInitialization)
-                || !ReferenceEquals(batch.GetOperation(1), finalInitialization)
-                || !ReferenceEquals(batch.GetOperation(2), stagingReady)
-                || !ReferenceEquals(batch.GetOperation(3), finalReady))
             {
                 return false;
             }
