@@ -14,17 +14,18 @@ namespace Zantetsu.Observability
     /// snapshot, the publication recovery decision, the authoritative plan, the
     /// commit mode, the root layout, and the Run identity are read from
     /// <see cref="Operation"/>: the receipt restates none of it and duplicates
-    /// none of it as a field of its own. No canonical bytes, path, hash,
-    /// handle, filesystem observation, or token is held either.
+    /// none of it as a field of its own. Nor does it restate any canonical
+    /// bytes, path, hash, handle, filesystem observation, or token as a field
+    /// or property of its own.
     /// </para>
     /// <para>
     /// This is process-local evidence of one successful synchronous commit
     /// call and nothing more: not a durable filesystem proof and not proof that
     /// the OS lock was released. It says only that a call made under the
     /// still-held lock returned successfully; a later question about what is on
-    /// disk is answered by inspecting again, not by this receipt. It is minted only on success, through the success-only
-    /// factory, which requires a committer, an operation, and that the
-    /// operation is still valid.
+    /// disk is answered by inspecting again, not by this receipt. Only
+    /// <see cref="Committed"/> issues one, and only on success: it requires a
+    /// committer, an operation, and that the operation is still valid.
     /// </para>
     /// <para>
     /// This type does not own, change, or dispose the operation graph's
