@@ -1251,7 +1251,7 @@ namespace Zantetsu.Observability.StandaloneTests
                     Assert.That(descriptor.IsValid, Is.True);
 
                     string confirmedChunk = Path.Combine(
-                        run.Layout.StagingRunRoot,
+                        run.Layout.RunRoot,
                         descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
                     Assert.That(
@@ -2249,7 +2249,6 @@ namespace Zantetsu.Observability.StandaloneTests
         {
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
                 Path.DirectorySeparatorChar == '\\' ? "C:\\staging" : "/staging",
-                Path.DirectorySeparatorChar == '\\' ? "D:\\final" : "/final",
                 SentinelTestRunId);
 
             CaptureRunInitializationExecutionReceipt receipt =
@@ -2260,8 +2259,7 @@ namespace Zantetsu.Observability.StandaloneTests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
             CaptureRunLockLease lease = new CaptureRunLockLease(
                 pathSet,
-                new SentinelLockHandle(pathSet.FirstLockPath),
-                new SentinelLockHandle(pathSet.SecondLockPath));
+                new SentinelLockHandle(pathSet.LockPath));
             CaptureRunInitializationSessionOwnershipLease ownership =
                 CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
 
@@ -2402,10 +2400,8 @@ namespace Zantetsu.Observability.StandaloneTests
                     Path.GetTempPath(), "zantetsu-tierb-" + Guid.NewGuid().ToString("N"));
                 Layout = new CaptureRunRootLayout(
                     Path.Combine(TemporaryBase, "staging"),
-                    Path.Combine(TemporaryBase, "final"),
                     SentinelTestRunId);
-                Directory.CreateDirectory(Path.GetDirectoryName(Layout.StagingRunRoot));
-                Directory.CreateDirectory(Path.GetDirectoryName(Layout.FinalRunRoot));
+                Directory.CreateDirectory(Path.GetDirectoryName(Layout.RunRoot));
 
                 Assert.That(
                     new CaptureRunInitializationBootstrapCoordinator(
@@ -2526,7 +2522,7 @@ namespace Zantetsu.Observability.StandaloneTests
                     " completionCredits=" + CompletionCredits.OccupiedCount +
                     " appends=" + (ChunkWriter == null ? -1L : ChunkWriter.AppendCount) +
                     " writerState=" + (ChunkWriter == null ? "none" : ChunkWriter.State.ToString()) +
-                    " runRoot=" + (Layout == null ? "none" : Layout.StagingRunRoot) +
+                    " runRoot=" + (Layout == null ? "none" : Layout.RunRoot) +
                     " poisoned=" + ProcessState.IsPoisoned +
                     " submitFatal=" + (submitFailure == null ? "none" : submitFailure.GetType().Name) +
                     " outputFatal=" + (outputFailure == null ? "none" : outputFailure.GetType().Name);

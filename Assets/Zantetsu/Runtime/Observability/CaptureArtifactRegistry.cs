@@ -85,8 +85,7 @@ namespace Zantetsu.Observability
             for (int i = 0; i < _count; i++)
             {
                 if (string.Equals(_descriptors[i].ArtifactId, descriptor.ArtifactId, StringComparison.Ordinal)
-                    || string.Equals(_descriptors[i].StagingRelativePath, descriptor.StagingRelativePath, StringComparison.Ordinal)
-                    || string.Equals(_descriptors[i].FinalRelativePath, descriptor.FinalRelativePath, StringComparison.Ordinal))
+                    || string.Equals(_descriptors[i].StagingRelativePath, descriptor.StagingRelativePath, StringComparison.Ordinal))
                 {
                     throw new InvalidOperationException("Artifact identity or path is already registered.");
                 }

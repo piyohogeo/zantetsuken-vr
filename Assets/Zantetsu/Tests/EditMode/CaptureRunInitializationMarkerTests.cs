@@ -14,9 +14,8 @@ namespace Zantetsu.Core.Tests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
-        private const string StagingHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        private const string RootHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-        private const string FinalHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
@@ -29,13 +28,9 @@ namespace Zantetsu.Core.Tests
             return type;
         }
 
-        private static Type GetRoleType() => GetTypeFromAssembly("CaptureRunRootRole");
-
         private static Type GetMarkerType() => GetTypeFromAssembly("CaptureRunInitializationMarker");
 
         private static Type GetCodecType() => GetTypeFromAssembly("CaptureRunInitializationMarkerCodec");
-
-        private static object Role(string name) => Enum.Parse(GetRoleType(), name);
 
         private static object GetProperty(object target, string name)
         {
@@ -57,49 +52,35 @@ namespace Zantetsu.Core.Tests
         private static object MakeMarker(
             long testRunId = 1,
             string initId = Unspecified,
-            object rootRole = null,
-            string stagingHash = Unspecified,
-            string finalHash = Unspecified)
+            string rootHash = Unspecified)
         {
             if (initId == Unspecified)
             {
                 initId = InitId;
             }
 
-            if (rootRole == null)
+            if (rootHash == Unspecified)
             {
-                rootRole = Role("Staging");
-            }
-
-            if (stagingHash == Unspecified)
-            {
-                stagingHash = StagingHash;
-            }
-
-            if (finalHash == Unspecified)
-            {
-                finalHash = FinalHash;
+                rootHash = RootHash;
             }
 
             ConstructorInfo ctor = GetMarkerType().GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance,
                 null,
-                new[] { typeof(long), typeof(string), GetRoleType(), typeof(string), typeof(string) },
+                new[] { typeof(long), typeof(string), typeof(string) },
                 null);
             Assert.That(ctor, Is.Not.Null, "Initialization marker constructor not found.");
-            return ctor.Invoke(new object[] { testRunId, initId, rootRole, stagingHash, finalHash });
+            return ctor.Invoke(new object[] { testRunId, initId, rootHash });
         }
 
         private static Exception MakeMarkerException(
             long testRunId = 1,
             string initId = Unspecified,
-            object rootRole = null,
-            string stagingHash = Unspecified,
-            string finalHash = Unspecified)
+            string rootHash = Unspecified)
         {
             try
             {
-                MakeMarker(testRunId, initId, rootRole, stagingHash, finalHash);
+                MakeMarker(testRunId, initId, rootHash);
                 return null;
             }
             catch (Exception ex)
@@ -138,40 +119,17 @@ namespace Zantetsu.Core.Tests
             return new string(chars);
         }
 
-        // ---- Role enum ----
-
-        [Test]
-        public void RootRole_UnderlyingTypeNamesAndValues()
-        {
-            Type type = GetRoleType();
-            Assert.That(type.IsEnum, Is.True);
-            Assert.That(Enum.GetUnderlyingType(type), Is.EqualTo(typeof(int)));
-            Assert.That(Enum.GetNames(type), Is.EqualTo(new[] { "None", "Staging", "Final" }));
-
-            Array values = Enum.GetValues(type);
-            Assert.That(values.Length, Is.EqualTo(3));
-            for (int i = 0; i < values.Length; i++)
-            {
-                Assert.That(Convert.ToInt32(values.GetValue(i)), Is.EqualTo(i), "Value " + i + " must equal its numeric index.");
-            }
-
-            Assert.That(Enum.IsDefined(type, 3), Is.False);
-            Assert.That(Enum.IsDefined(type, -1), Is.False);
-        }
-
         // ---- Value contract ----
 
         [Test]
         public void Marker_HoldsAllProperties()
         {
-            object marker = MakeMarker(42, InitId, Role("Final"), StagingHash, FinalHash);
+            object marker = MakeMarker(42, InitId, RootHash);
 
             Assert.That((int)GetProperty(marker, "SchemaVersion"), Is.EqualTo(1));
             Assert.That((long)GetProperty(marker, "TestRunId"), Is.EqualTo(42));
             Assert.That((string)GetProperty(marker, "RunInitializationId"), Is.EqualTo(InitId));
-            Assert.That(GetProperty(marker, "RootRole"), Is.EqualTo(Role("Final")));
-            Assert.That((string)GetProperty(marker, "StagingRunRootSha256"), Is.EqualTo(StagingHash));
-            Assert.That((string)GetProperty(marker, "FinalRunRootSha256"), Is.EqualTo(FinalHash));
+            Assert.That((string)GetProperty(marker, "RunRootSha256"), Is.EqualTo(RootHash));
         }
 
         [Test]
@@ -200,56 +158,28 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void RootRole_NoneAndUndefined_Rejected()
+        public void RootHash_Invalid_Rejected()
         {
-            Exception none = MakeMarkerException(rootRole: Enum.ToObject(GetRoleType(), 0));
-            Assert.That(none, Is.TypeOf<ArgumentOutOfRangeException>());
-            Assert.That(((ArgumentOutOfRangeException)none).ParamName, Is.EqualTo("rootRole"));
+            Exception nullHash = MakeMarkerException(rootHash: null);
+            Assert.That(nullHash, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullHash).ParamName, Is.EqualTo("runRootSha256"));
 
-            Exception undefined = MakeMarkerException(rootRole: Enum.ToObject(GetRoleType(), 99));
-            Assert.That(undefined, Is.TypeOf<ArgumentOutOfRangeException>());
-            Assert.That(((ArgumentOutOfRangeException)undefined).ParamName, Is.EqualTo("rootRole"));
-        }
-
-        [Test]
-        public void RootHashes_Invalid_Rejected()
-        {
-            Exception nullStaging = MakeMarkerException(stagingHash: null);
-            Assert.That(nullStaging, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullStaging).ParamName, Is.EqualTo("stagingRunRootSha256"));
-
-            Exception nullFinal = MakeMarkerException(finalHash: null);
-            Assert.That(nullFinal, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullFinal).ParamName, Is.EqualTo("finalRunRootSha256"));
-
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('0', 63)), "stagingRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('0', 65)), "stagingRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('A', 64)), "stagingRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('g', 64)), "stagingRunRootSha256");
-
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('0', 63)), "finalRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('0', 65)), "finalRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('A', 64)), "finalRunRootSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('g', 64)), "finalRunRootSha256");
+            AssertInvalidArgument(MakeMarkerException(rootHash: new string('0', 63)), "runRootSha256");
+            AssertInvalidArgument(MakeMarkerException(rootHash: new string('0', 65)), "runRootSha256");
+            AssertInvalidArgument(MakeMarkerException(rootHash: new string('A', 64)), "runRootSha256");
+            AssertInvalidArgument(MakeMarkerException(rootHash: new string('g', 64)), "runRootSha256");
         }
 
         // ---- Canonical serialization ----
 
         [Test]
-        public void Serialize_StagingAndFinal_GoldenJson()
+        public void Serialize_GoldenJson()
         {
-            string stagingGolden =
+            string golden =
                 "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-                "\"RootRole\":\"Staging\",\"StagingRunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-                "\"FinalRunRootSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
+                "\"RunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}";
 
-            string finalGolden =
-                "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-                "\"RootRole\":\"Final\",\"StagingRunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-                "\"FinalRunRootSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
-
-            Assert.That(Json(Serialize(MakeMarker(rootRole: Role("Staging")))), Is.EqualTo(stagingGolden));
-            Assert.That(Json(Serialize(MakeMarker(rootRole: Role("Final")))), Is.EqualTo(finalGolden));
+            Assert.That(Json(Serialize(MakeMarker())), Is.EqualTo(golden));
         }
 
         [Test]
@@ -307,8 +237,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(after, Is.EqualTo(before));
             Assert.That((string)GetProperty(marker, "RunInitializationId"), Is.EqualTo(InitId));
-            Assert.That((string)GetProperty(marker, "StagingRunRootSha256"), Is.EqualTo(StagingHash));
-            Assert.That((string)GetProperty(marker, "FinalRunRootSha256"), Is.EqualTo(FinalHash));
+            Assert.That((string)GetProperty(marker, "RunRootSha256"), Is.EqualTo(RootHash));
         }
 
         [Test]
@@ -327,7 +256,7 @@ namespace Zantetsu.Core.Tests
             object marker = MakeMarker();
             string hash = ComputeContentSha256(marker);
 
-            Assert.That(hash, Is.EqualTo("16e6817b6cacafdde8c0d77f9fa370811e6b8df8155a25d3ecab0e51990284b1"));
+            Assert.That(hash, Is.EqualTo("17a8292a1664fbcb32029a75cc524060da9cc4437af9d7644aa2c9d9c93f54e5"));
 
             byte[] canonical = Serialize(marker);
             using (SHA256 sha = SHA256.Create())
@@ -358,7 +287,6 @@ namespace Zantetsu.Core.Tests
         {
             foreach (string relative in new[]
             {
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunRootRole.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationMarker.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationMarkerCodec.cs",
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunMarkerDecoderSupport.cs"

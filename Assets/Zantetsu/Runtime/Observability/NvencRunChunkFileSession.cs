@@ -150,7 +150,7 @@ namespace Zantetsu.Observability
             FileStream appendStream = null;
             try
             {
-                string stagingRunRoot = issue.Session.RootLayout.StagingRunRoot;
+                string stagingRunRoot = issue.Session.RootLayout.RunRoot;
 
                 runRootHandle = OpenRunRootDirectory(stagingRunRoot);
                 string runRootCanonical = GetCanonicalPathOrThrow(runRootHandle, "staging Run root");

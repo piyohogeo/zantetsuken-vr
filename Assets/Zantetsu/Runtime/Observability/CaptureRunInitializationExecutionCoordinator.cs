@@ -64,74 +64,39 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(rootLayout);
-
             CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
                 rootLayout.TestRunId,
                 runInitializationId,
-                rootLayout.StagingRunRootSha256,
-                rootLayout.FinalRunRootSha256);
+                rootLayout.RunRootSha256);
 
-            byte[] stagingInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
-            byte[] finalInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization);
-            byte[] readyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
-
-            CaptureRunMarkerWriteOperation stagingInitialization = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging,
+            CaptureRunMarkerWriteOperation initialization = new CaptureRunMarkerWriteOperation(
                 CaptureRunMarkerKind.Initialization,
-                markerPaths.StagingInitializationTemporaryPath,
-                markerPaths.StagingInitializationPath,
-                stagingInitializationBytes);
+                markerPaths.InitializationTemporaryPath,
+                markerPaths.InitializationPath,
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.Initialization));
 
-            CaptureRunMarkerWriteOperation finalInitialization = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Final,
-                CaptureRunMarkerKind.Initialization,
-                markerPaths.FinalInitializationTemporaryPath,
-                markerPaths.FinalInitializationPath,
-                finalInitializationBytes);
-
-            CaptureRunMarkerWriteOperation stagingReady = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging,
+            CaptureRunMarkerWriteOperation ready = new CaptureRunMarkerWriteOperation(
                 CaptureRunMarkerKind.Ready,
-                markerPaths.StagingReadyTemporaryPath,
-                markerPaths.StagingReadyPath,
-                readyBytes);
+                markerPaths.ReadyTemporaryPath,
+                markerPaths.ReadyPath,
+                CaptureRunReadyMarkerCodec.SerializeCanonical(binding.Ready));
 
-            CaptureRunMarkerWriteOperation finalReady = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Final,
-                CaptureRunMarkerKind.Ready,
-                markerPaths.FinalReadyTemporaryPath,
-                markerPaths.FinalReadyPath,
-                readyBytes);
+            CaptureRunRootProvisionOperation provisionOperation = new CaptureRunRootProvisionOperation(rootLayout);
+            CaptureRunRootProvisionReceipt provisionReceipt = ValidateProvisionReceipt(
+                _rootProvisioner, provisionOperation, _rootProvisioner.ProvisionNew(provisionOperation));
 
-            CaptureRunRootProvisionOperation stagingProvisionOperation = new CaptureRunRootProvisionOperation(rootLayout, CaptureRunRootRole.Staging);
-            CaptureRunRootProvisionReceipt stagingProvisionReceipt = ValidateProvisionReceipt(
-                _rootProvisioner, stagingProvisionOperation, _rootProvisioner.ProvisionNew(stagingProvisionOperation));
+            CaptureRunMarkerWriteReceipt initializationWriteReceipt = ValidateWriteReceipt(
+                _markerWriter, initialization, _markerWriter.WriteAtomic(initialization));
 
-            CaptureRunMarkerWriteReceipt stagingInitializationWriteReceipt = ValidateWriteReceipt(
-                _markerWriter, stagingInitialization, _markerWriter.WriteAtomic(stagingInitialization));
-
-            CaptureRunRootProvisionOperation finalProvisionOperation = new CaptureRunRootProvisionOperation(rootLayout, CaptureRunRootRole.Final);
-            CaptureRunRootProvisionReceipt finalProvisionReceipt = ValidateProvisionReceipt(
-                _rootProvisioner, finalProvisionOperation, _rootProvisioner.ProvisionNew(finalProvisionOperation));
-
-            CaptureRunMarkerWriteReceipt finalInitializationWriteReceipt = ValidateWriteReceipt(
-                _markerWriter, finalInitialization, _markerWriter.WriteAtomic(finalInitialization));
-
-            CaptureRunMarkerWriteReceipt stagingReadyWriteReceipt = ValidateWriteReceipt(
-                _markerWriter, stagingReady, _markerWriter.WriteAtomic(stagingReady));
-
-            CaptureRunMarkerWriteReceipt finalReadyWriteReceipt = ValidateWriteReceipt(
-                _markerWriter, finalReady, _markerWriter.WriteAtomic(finalReady));
+            CaptureRunMarkerWriteReceipt readyWriteReceipt = ValidateWriteReceipt(
+                _markerWriter, ready, _markerWriter.WriteAtomic(ready));
 
             return new CaptureRunInitializationExecutionReceipt(
                 markerPaths,
                 binding.RunInitializationId,
-                stagingProvisionReceipt,
-                finalProvisionReceipt,
-                stagingInitializationWriteReceipt,
-                finalInitializationWriteReceipt,
-                stagingReadyWriteReceipt,
-                finalReadyWriteReceipt);
+                provisionReceipt,
+                initializationWriteReceipt,
+                readyWriteReceipt);
         }
 
         private static CaptureRunRootProvisionReceipt ValidateProvisionReceipt(

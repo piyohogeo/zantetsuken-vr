@@ -28,7 +28,6 @@ namespace Zantetsu.Core.Tests
             }
 
             return new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging,
                 CaptureRunMarkerKind.Initialization,
                 temporaryPath,
                 finalPath,

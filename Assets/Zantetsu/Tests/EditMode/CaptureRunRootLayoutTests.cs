@@ -19,7 +19,6 @@ namespace Zantetsu.Core.Tests
 
         private static string StagingBaseRoot() => IsWindows ? "C:\\staging" : "/staging";
 
-        private static string FinalBaseRoot() => IsWindows ? "D:\\final" : "/final";
 
         private static string Separator => Path.DirectorySeparatorChar.ToString();
 
@@ -56,32 +55,27 @@ namespace Zantetsu.Core.Tests
             return ex;
         }
 
-        private static object MakeLayout(string stagingBase = Unspecified, string finalBase = Unspecified, long testRunId = 1)
+        private static object MakeLayout(string baseRoot = Unspecified, long testRunId = 1)
         {
-            if (stagingBase == Unspecified)
+            if (baseRoot == Unspecified)
             {
-                stagingBase = StagingBaseRoot();
-            }
-
-            if (finalBase == Unspecified)
-            {
-                finalBase = FinalBaseRoot();
+                baseRoot = StagingBaseRoot();
             }
 
             ConstructorInfo ctor = GetLayoutType().GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance,
                 null,
-                new[] { typeof(string), typeof(string), typeof(long) },
+                new[] { typeof(string), typeof(long) },
                 null);
             Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { stagingBase, finalBase, testRunId });
+            return ctor.Invoke(new object[] { baseRoot, testRunId });
         }
 
-        private static Exception MakeLayoutException(string stagingBase = Unspecified, string finalBase = Unspecified, long testRunId = 1)
+        private static Exception MakeLayoutException(string baseRoot = Unspecified, long testRunId = 1)
         {
             try
             {
-                MakeLayout(stagingBase, finalBase, testRunId);
+                MakeLayout(baseRoot, testRunId);
                 return null;
             }
             catch (Exception ex)
@@ -118,13 +112,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void NullAndRange_ParamName()
         {
-            Exception nullStaging = MakeLayoutException(null, FinalBaseRoot());
-            Assert.That(nullStaging, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullStaging).ParamName, Is.EqualTo("stagingTrustedBaseRoot"));
-
-            Exception nullFinal = MakeLayoutException(StagingBaseRoot(), null);
-            Assert.That(nullFinal, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullFinal).ParamName, Is.EqualTo("finalTrustedBaseRoot"));
+            Exception nullBase = MakeLayoutException(null);
+            Assert.That(nullBase, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullBase).ParamName, Is.EqualTo("trustedBaseRoot"));
 
             Exception zero = MakeLayoutException(testRunId: 0);
             Assert.That(zero, Is.TypeOf<ArgumentOutOfRangeException>());
@@ -138,17 +128,15 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void EmptyOrWhitespace_Rejected()
         {
-            AssertInvalidArgument(MakeLayoutException("", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException("   ", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException(StagingBaseRoot(), ""), "finalTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException(StagingBaseRoot(), "\t"), "finalTrustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException(""), "trustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("   "), "trustedBaseRoot");
         }
 
         [Test]
         public void RelativePath_Rejected()
         {
-            AssertInvalidArgument(MakeLayoutException("staging", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException("staging/child", FinalBaseRoot()), "stagingTrustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("staging"), "trustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("staging/child"), "trustedBaseRoot");
         }
 
         [Test]
@@ -160,10 +148,10 @@ namespace Zantetsu.Core.Tests
                 return;
             }
 
-            AssertInvalidArgument(MakeLayoutException("C:relative", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException("\\rooted", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException("\\\\server\\share", FinalBaseRoot()), "stagingTrustedBaseRoot");
-            AssertInvalidArgument(MakeLayoutException("\\\\?\\C:\\device", FinalBaseRoot()), "stagingTrustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("C:relative"), "trustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("\\rooted"), "trustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("\\\\server\\share"), "trustedBaseRoot");
+            AssertInvalidArgument(MakeLayoutException("\\\\?\\C:\\device"), "trustedBaseRoot");
         }
 
         // ---- Normalization ----
@@ -171,9 +159,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TrailingSeparator_Normalized()
         {
-            object layout = MakeLayout(StagingBaseRoot() + Separator, FinalBaseRoot() + Separator);
-            Assert.That((string)GetProperty(layout, "StagingTrustedBaseRoot"), Is.EqualTo(StagingBaseRoot()));
-            Assert.That((string)GetProperty(layout, "FinalTrustedBaseRoot"), Is.EqualTo(FinalBaseRoot()));
+            object layout = MakeLayout(StagingBaseRoot() + Separator);
+            Assert.That((string)GetProperty(layout, "TrustedBaseRoot"), Is.EqualTo(StagingBaseRoot()));
         }
 
         [Test]
@@ -185,22 +172,18 @@ namespace Zantetsu.Core.Tests
                 return;
             }
 
-            object rootLayout = MakeLayout("C:\\", "D:\\");
-            Assert.That((string)GetProperty(rootLayout, "StagingTrustedBaseRoot"), Is.EqualTo("C:\\"));
-            Assert.That((string)GetProperty(rootLayout, "FinalTrustedBaseRoot"), Is.EqualTo("D:\\"));
+            object rootLayout = MakeLayout("C:\\");
+            Assert.That((string)GetProperty(rootLayout, "TrustedBaseRoot"), Is.EqualTo("C:\\"));
         }
 
         [Test]
         public void DotDot_Normalized()
         {
             string stagingInput = StagingBaseRoot() + Separator + "child" + Separator + ".." + Separator + "final";
-            string finalInput = FinalBaseRoot() + Separator + "child" + Separator + ".." + Separator + "final";
             string stagingExpected = StagingBaseRoot() + Separator + "final";
-            string finalExpected = FinalBaseRoot() + Separator + "final";
 
-            object layout = MakeLayout(stagingInput, finalInput);
-            Assert.That((string)GetProperty(layout, "StagingTrustedBaseRoot"), Is.EqualTo(stagingExpected));
-            Assert.That((string)GetProperty(layout, "FinalTrustedBaseRoot"), Is.EqualTo(finalExpected));
+            object layout = MakeLayout(stagingInput);
+            Assert.That((string)GetProperty(layout, "TrustedBaseRoot"), Is.EqualTo(stagingExpected));
         }
 
         [Test]
@@ -212,9 +195,8 @@ namespace Zantetsu.Core.Tests
                 return;
             }
 
-            object layout = MakeLayout("C:/staging", "D:/final");
-            Assert.That((string)GetProperty(layout, "StagingTrustedBaseRoot"), Is.EqualTo("C:\\staging"));
-            Assert.That((string)GetProperty(layout, "FinalTrustedBaseRoot"), Is.EqualTo("D:\\final"));
+            object layout = MakeLayout("C:/staging");
+            Assert.That((string)GetProperty(layout, "TrustedBaseRoot"), Is.EqualTo("C:\\staging"));
         }
 
         // ---- Fixed relative path ----
@@ -237,63 +219,10 @@ namespace Zantetsu.Core.Tests
         public void RunRoots_UnderBase()
         {
             object layout = MakeLayout();
-            Assert.That((string)GetProperty(layout, "StagingRunRoot"), Is.EqualTo(StagingBaseRoot() + Separator + "runs" + Separator + "run-1"));
-            Assert.That((string)GetProperty(layout, "FinalRunRoot"), Is.EqualTo(FinalBaseRoot() + Separator + "runs" + Separator + "run-1"));
+            Assert.That((string)GetProperty(layout, "RunRoot"), Is.EqualTo(StagingBaseRoot() + Separator + "runs" + Separator + "run-1"));
         }
 
         // ---- Base relationship ----
-
-        [Test]
-        public void SameBase_Rejected()
-        {
-            Exception ex = MakeLayoutException(StagingBaseRoot(), StagingBaseRoot());
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalTrustedBaseRoot"));
-        }
-
-        [Test]
-        public void CaseOnlyDifference_Rejected()
-        {
-            string upper = IsWindows ? "C:\\STAGING" : "/STAGING";
-            Exception ex = MakeLayoutException(upper, StagingBaseRoot());
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalTrustedBaseRoot"));
-        }
-
-        [Test]
-        public void StagingAncestorOfFinal_Rejected()
-        {
-            string ancestor = IsWindows ? "C:\\root" : "/root";
-            Exception ex = MakeLayoutException(ancestor, ancestor + Separator + "final");
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalTrustedBaseRoot"));
-        }
-
-        [Test]
-        public void FinalAncestorOfStaging_Rejected()
-        {
-            string ancestor = IsWindows ? "C:\\root" : "/root";
-            Exception ex = MakeLayoutException(ancestor + Separator + "staging", ancestor);
-            Assert.That(ex, Is.TypeOf<ArgumentException>());
-            Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("finalTrustedBaseRoot"));
-        }
-
-        [Test]
-        public void CommonPrefixSiblings_Accepted()
-        {
-            string foo = IsWindows ? "C:\\foo" : "/foo";
-            string foobar = IsWindows ? "C:\\foobar" : "/foobar";
-            object layout = MakeLayout(foo, foobar);
-            Assert.That(layout, Is.Not.Null);
-        }
-
-        [Test]
-        public void IndependentBases_Accepted()
-        {
-            // Windows: distinct volumes; non-Windows: distinct sibling roots.
-            object layout = MakeLayout();
-            Assert.That(layout, Is.Not.Null);
-        }
 
         // ---- Root hash ----
 
@@ -302,8 +231,7 @@ namespace Zantetsu.Core.Tests
         {
             object layout = MakeLayout();
 
-            Assert.That((string)GetProperty(layout, "StagingRunRootSha256"), Does.Match("^[0-9a-f]{64}$"));
-            Assert.That((string)GetProperty(layout, "FinalRunRootSha256"), Does.Match("^[0-9a-f]{64}$"));
+            Assert.That((string)GetProperty(layout, "RunRootSha256"), Does.Match("^[0-9a-f]{64}$"));
         }
 
         [Test]
@@ -311,20 +239,18 @@ namespace Zantetsu.Core.Tests
         {
             object layout = MakeLayout();
 
-            string stagingRunRoot = (string)GetProperty(layout, "StagingRunRoot");
-            string finalRunRoot = (string)GetProperty(layout, "FinalRunRoot");
+            string stagingRunRoot = (string)GetProperty(layout, "RunRoot");
 
-            Assert.That((string)GetProperty(layout, "StagingRunRootSha256"), Is.EqualTo(ComputeSha256(stagingRunRoot)));
-            Assert.That((string)GetProperty(layout, "FinalRunRootSha256"), Is.EqualTo(ComputeSha256(finalRunRoot)));
+            Assert.That((string)GetProperty(layout, "RunRootSha256"), Is.EqualTo(ComputeSha256(stagingRunRoot)));
         }
 
         [Test]
         public void RootHash_ChangesWithOneCharDifference()
         {
             object a = MakeLayout();
-            object b = MakeLayout(StagingBaseRoot() + "2", FinalBaseRoot());
+            object b = MakeLayout(StagingBaseRoot() + "2");
 
-            Assert.That((string)GetProperty(a, "StagingRunRootSha256"), Is.Not.EqualTo((string)GetProperty(b, "StagingRunRootSha256")));
+            Assert.That((string)GetProperty(a, "RunRootSha256"), Is.Not.EqualTo((string)GetProperty(b, "RunRootSha256")));
         }
 
         // ---- IsValid recomputation ----
@@ -355,23 +281,7 @@ namespace Zantetsu.Core.Tests
         public void IsValid_False_WhenTrustedBaseNotNormalized()
         {
             object layout = MakeLayout();
-            SetField(layout, "_stagingTrustedBaseRoot", StagingBaseRoot() + Separator);
-            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
-        }
-
-        [Test]
-        public void IsValid_False_WhenBasesIdentical()
-        {
-            object layout = MakeLayout();
-            SetField(layout, "_finalTrustedBaseRoot", GetProperty(layout, "StagingTrustedBaseRoot"));
-            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
-        }
-
-        [Test]
-        public void IsValid_False_WhenStagingAncestorOfFinal()
-        {
-            object layout = MakeLayout();
-            SetField(layout, "_finalTrustedBaseRoot", StagingBaseRoot() + Separator + "child");
+            SetField(layout, "_trustedBaseRoot", StagingBaseRoot() + Separator);
             Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
         }
 
@@ -388,20 +298,17 @@ namespace Zantetsu.Core.Tests
         {
             string outside = IsWindows ? "X:\\outside-run" : "/outside-run";
 
-            object staging = MakeLayout();
-            SetField(staging, "_stagingRunRoot", outside);
-            Assert.That((bool)GetProperty(staging, "IsValid"), Is.False);
+            object layout = MakeLayout();
+            SetField(layout, "_runRoot", outside);
+            Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
 
-            object final = MakeLayout();
-            SetField(final, "_finalRunRoot", outside);
-            Assert.That((bool)GetProperty(final, "IsValid"), Is.False);
         }
 
         [Test]
         public void IsValid_False_WhenRootHashChanged()
         {
             object layout = MakeLayout();
-            SetField(layout, "_stagingRunRootSha256", new string('0', 64));
+            SetField(layout, "_runRootSha256", new string('0', 64));
             Assert.That((bool)GetProperty(layout, "IsValid"), Is.False);
         }
 
@@ -415,11 +322,11 @@ namespace Zantetsu.Core.Tests
             }
 
             object unc = MakeLayout();
-            SetField(unc, "_stagingTrustedBaseRoot", "\\\\server\\share");
+            SetField(unc, "_trustedBaseRoot", "\\\\server\\share");
             Assert.That((bool)GetProperty(unc, "IsValid"), Is.False);
 
             object device = MakeLayout();
-            SetField(device, "_stagingTrustedBaseRoot", "\\\\?\\C:\\device");
+            SetField(device, "_trustedBaseRoot", "\\\\?\\C:\\device");
             Assert.That((bool)GetProperty(device, "IsValid"), Is.False);
         }
 
@@ -428,13 +335,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void DoesNotModifyInputs()
         {
-            string staging = StagingBaseRoot();
-            string final = FinalBaseRoot();
+            string baseRoot = StagingBaseRoot();
 
-            MakeLayout(staging, final);
+            MakeLayout(baseRoot);
 
-            Assert.That(staging, Is.EqualTo(StagingBaseRoot()));
-            Assert.That(final, Is.EqualTo(FinalBaseRoot()));
+            Assert.That(baseRoot, Is.EqualTo(StagingBaseRoot()));
         }
 
         [Test]

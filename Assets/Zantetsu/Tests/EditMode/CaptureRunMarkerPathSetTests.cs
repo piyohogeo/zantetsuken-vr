@@ -15,8 +15,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
         {
             string staging = Path.DirectorySeparatorChar == '\\' ? "C:\\staging" : "/staging";
-            string final = Path.DirectorySeparatorChar == '\\' ? "D:\\final" : "/final";
-            return new CaptureRunRootLayout(staging, final, testRunId);
+            return new CaptureRunRootLayout(staging, testRunId);
         }
 
         // ---- Construction ----
@@ -34,19 +33,14 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(layout);
 
-            string stagingRoot = layout.StagingRunRoot;
-            string finalRoot = layout.FinalRunRoot;
+            string stagingRoot = layout.RunRoot;
             string sep = Separator;
 
-            Assert.That(set.StagingInitializationTemporaryPath, Is.EqualTo(stagingRoot + sep + "run.init.tmp"));
-            Assert.That(set.StagingInitializationPath, Is.EqualTo(stagingRoot + sep + "run.init"));
-            Assert.That(set.StagingReadyTemporaryPath, Is.EqualTo(stagingRoot + sep + "run.ready.tmp"));
-            Assert.That(set.StagingReadyPath, Is.EqualTo(stagingRoot + sep + "run.ready"));
+            Assert.That(set.InitializationTemporaryPath, Is.EqualTo(stagingRoot + sep + "run.init.tmp"));
+            Assert.That(set.InitializationPath, Is.EqualTo(stagingRoot + sep + "run.init"));
+            Assert.That(set.ReadyTemporaryPath, Is.EqualTo(stagingRoot + sep + "run.ready.tmp"));
+            Assert.That(set.ReadyPath, Is.EqualTo(stagingRoot + sep + "run.ready"));
 
-            Assert.That(set.FinalInitializationTemporaryPath, Is.EqualTo(finalRoot + sep + "run.init.tmp"));
-            Assert.That(set.FinalInitializationPath, Is.EqualTo(finalRoot + sep + "run.init"));
-            Assert.That(set.FinalReadyTemporaryPath, Is.EqualTo(finalRoot + sep + "run.ready.tmp"));
-            Assert.That(set.FinalReadyPath, Is.EqualTo(finalRoot + sep + "run.ready"));
         }
 
         [Test]
@@ -54,14 +48,10 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(MakeLayout());
 
-            Assert.That(Path.GetFileName(set.StagingInitializationTemporaryPath), Is.EqualTo("run.init.tmp"));
-            Assert.That(Path.GetFileName(set.StagingInitializationPath), Is.EqualTo("run.init"));
-            Assert.That(Path.GetFileName(set.StagingReadyTemporaryPath), Is.EqualTo("run.ready.tmp"));
-            Assert.That(Path.GetFileName(set.StagingReadyPath), Is.EqualTo("run.ready"));
-            Assert.That(Path.GetFileName(set.FinalInitializationTemporaryPath), Is.EqualTo("run.init.tmp"));
-            Assert.That(Path.GetFileName(set.FinalInitializationPath), Is.EqualTo("run.init"));
-            Assert.That(Path.GetFileName(set.FinalReadyTemporaryPath), Is.EqualTo("run.ready.tmp"));
-            Assert.That(Path.GetFileName(set.FinalReadyPath), Is.EqualTo("run.ready"));
+            Assert.That(Path.GetFileName(set.InitializationTemporaryPath), Is.EqualTo("run.init.tmp"));
+            Assert.That(Path.GetFileName(set.InitializationPath), Is.EqualTo("run.init"));
+            Assert.That(Path.GetFileName(set.ReadyTemporaryPath), Is.EqualTo("run.ready.tmp"));
+            Assert.That(Path.GetFileName(set.ReadyPath), Is.EqualTo("run.ready"));
         }
 
         [Test]
@@ -70,77 +60,19 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(layout);
 
-            Assert.That(Path.GetDirectoryName(set.StagingInitializationTemporaryPath), Is.EqualTo(layout.StagingRunRoot));
-            Assert.That(Path.GetDirectoryName(set.StagingInitializationPath), Is.EqualTo(layout.StagingRunRoot));
-            Assert.That(Path.GetDirectoryName(set.StagingReadyTemporaryPath), Is.EqualTo(layout.StagingRunRoot));
-            Assert.That(Path.GetDirectoryName(set.StagingReadyPath), Is.EqualTo(layout.StagingRunRoot));
-            Assert.That(Path.GetDirectoryName(set.FinalInitializationTemporaryPath), Is.EqualTo(layout.FinalRunRoot));
-            Assert.That(Path.GetDirectoryName(set.FinalInitializationPath), Is.EqualTo(layout.FinalRunRoot));
-            Assert.That(Path.GetDirectoryName(set.FinalReadyTemporaryPath), Is.EqualTo(layout.FinalRunRoot));
-            Assert.That(Path.GetDirectoryName(set.FinalReadyPath), Is.EqualTo(layout.FinalRunRoot));
+            Assert.That(Path.GetDirectoryName(set.InitializationTemporaryPath), Is.EqualTo(layout.RunRoot));
+            Assert.That(Path.GetDirectoryName(set.InitializationPath), Is.EqualTo(layout.RunRoot));
+            Assert.That(Path.GetDirectoryName(set.ReadyTemporaryPath), Is.EqualTo(layout.RunRoot));
+            Assert.That(Path.GetDirectoryName(set.ReadyPath), Is.EqualTo(layout.RunRoot));
         }
 
         [Test]
-        public void TmpAndFinal_Correspondence()
+        public void TemporaryAndFinal_Correspondence()
         {
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(MakeLayout());
 
-            Assert.That(set.StagingInitializationTemporaryPath, Is.EqualTo(set.StagingInitializationPath + ".tmp"));
-            Assert.That(set.StagingReadyTemporaryPath, Is.EqualTo(set.StagingReadyPath + ".tmp"));
-            Assert.That(set.FinalInitializationTemporaryPath, Is.EqualTo(set.FinalInitializationPath + ".tmp"));
-            Assert.That(set.FinalReadyTemporaryPath, Is.EqualTo(set.FinalReadyPath + ".tmp"));
-        }
-
-        [Test]
-        public void StagingAndFinal_NotMixed()
-        {
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(layout);
-
-            Assert.That(set.StagingInitializationPath, Is.Not.EqualTo(set.FinalInitializationPath));
-            Assert.That(set.StagingReadyPath, Is.Not.EqualTo(set.FinalReadyPath));
-
-            Assert.That(set.StagingInitializationPath.StartsWith(layout.FinalRunRoot, StringComparison.Ordinal), Is.False);
-            Assert.That(set.FinalInitializationPath.StartsWith(layout.StagingRunRoot, StringComparison.Ordinal), Is.False);
-        }
-
-        [Test]
-        public void StagingFinal_Mismatch_FailsClosed_WithoutFilesystemContact()
-        {
-            string runRoot = Path.DirectorySeparatorChar == '\\'
-                ? "C:\\zantetsuken-marker-invalid-run-root"
-                : "/zantetsuken-marker-invalid-run-root";
-
-            CaptureRunRootLayout layout = MakeInvalidLayoutWithEqualRunRoots(runRoot);
-
-            Assert.That(layout.StagingRunRoot, Is.EqualTo(runRoot));
-            Assert.That(layout.FinalRunRoot, Is.EqualTo(runRoot));
-
-            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
-                () => new CaptureRunMarkerPathSet(layout));
-
-            Assert.That(ex.Message, Does.Contain("differ"));
-            Assert.That(Directory.Exists(runRoot), Is.False);
-            Assert.That(File.Exists(runRoot), Is.False);
-        }
-
-        private static CaptureRunRootLayout MakeInvalidLayoutWithEqualRunRoots(string runRoot)
-        {
-            CaptureRunRootLayout layout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunRootLayout));
-
-            FieldInfo stagingField = typeof(CaptureRunRootLayout).GetField(
-                "_stagingRunRoot", BindingFlags.NonPublic | BindingFlags.Instance);
-            FieldInfo finalField = typeof(CaptureRunRootLayout).GetField(
-                "_finalRunRoot", BindingFlags.NonPublic | BindingFlags.Instance);
-
-            Assert.That(stagingField, Is.Not.Null, "Reflection field _stagingRunRoot must exist.");
-            Assert.That(finalField, Is.Not.Null, "Reflection field _finalRunRoot must exist.");
-
-            stagingField.SetValue(layout, runRoot);
-            finalField.SetValue(layout, runRoot);
-
-            return layout;
+            Assert.That(set.InitializationTemporaryPath, Is.EqualTo(set.InitializationPath + ".tmp"));
+            Assert.That(set.ReadyTemporaryPath, Is.EqualTo(set.ReadyPath + ".tmp"));
         }
 
         [Test]
@@ -158,9 +90,9 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout(long.MaxValue);
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(layout);
 
-            Assert.That(layout.StagingRunRoot, Does.Contain("9223372036854775807"));
-            Assert.That(Path.GetFileName(set.StagingInitializationPath), Is.EqualTo("run.init"));
-            Assert.That(set.StagingInitializationPath.StartsWith(layout.StagingRunRoot, StringComparison.Ordinal), Is.True);
+            Assert.That(layout.RunRoot, Does.Contain("9223372036854775807"));
+            Assert.That(Path.GetFileName(set.InitializationPath), Is.EqualTo("run.init"));
+            Assert.That(set.InitializationPath.StartsWith(layout.RunRoot, StringComparison.Ordinal), Is.True);
         }
 
         [Test]
@@ -173,8 +105,7 @@ namespace Zantetsu.Core.Tests
             }
 
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(MakeLayout());
-            Assert.That(set.StagingInitializationPath, Does.Not.Contain(Path.AltDirectorySeparatorChar.ToString()));
-            Assert.That(set.FinalReadyPath, Does.Not.Contain(Path.AltDirectorySeparatorChar.ToString()));
+            Assert.That(set.InitializationPath, Does.Not.Contain(Path.AltDirectorySeparatorChar.ToString()));
         }
 
         [Test]
@@ -183,18 +114,13 @@ namespace Zantetsu.Core.Tests
             string staging = Path.DirectorySeparatorChar == '\\'
                 ? "C:\\zantetsuken-marker-does-not-exist-staging"
                 : "/zantetsuken-marker-does-not-exist-staging";
-            string final = Path.DirectorySeparatorChar == '\\'
-                ? "D:\\zantetsuken-marker-does-not-exist-final"
-                : "/zantetsuken-marker-does-not-exist-final";
 
-            CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, final, 1);
+            CaptureRunRootLayout layout = new CaptureRunRootLayout(staging, 1);
             CaptureRunMarkerPathSet set = new CaptureRunMarkerPathSet(layout);
 
             Assert.That(set, Is.Not.Null);
-            Assert.That(Directory.Exists(layout.StagingRunRoot), Is.False);
-            Assert.That(Directory.Exists(layout.FinalRunRoot), Is.False);
-            Assert.That(File.Exists(layout.StagingRunRoot), Is.False);
-            Assert.That(File.Exists(layout.FinalRunRoot), Is.False);
+            Assert.That(Directory.Exists(layout.RunRoot), Is.False);
+            Assert.That(File.Exists(layout.RunRoot), Is.False);
         }
 
         [Test]
@@ -205,14 +131,10 @@ namespace Zantetsu.Core.Tests
             CaptureRunMarkerPathSet second = new CaptureRunMarkerPathSet(layout);
 
             Assert.That(second, Is.Not.SameAs(first));
-            Assert.That(second.StagingInitializationTemporaryPath, Is.EqualTo(first.StagingInitializationTemporaryPath));
-            Assert.That(second.StagingInitializationPath, Is.EqualTo(first.StagingInitializationPath));
-            Assert.That(second.StagingReadyTemporaryPath, Is.EqualTo(first.StagingReadyTemporaryPath));
-            Assert.That(second.StagingReadyPath, Is.EqualTo(first.StagingReadyPath));
-            Assert.That(second.FinalInitializationTemporaryPath, Is.EqualTo(first.FinalInitializationTemporaryPath));
-            Assert.That(second.FinalInitializationPath, Is.EqualTo(first.FinalInitializationPath));
-            Assert.That(second.FinalReadyTemporaryPath, Is.EqualTo(first.FinalReadyTemporaryPath));
-            Assert.That(second.FinalReadyPath, Is.EqualTo(first.FinalReadyPath));
+            Assert.That(second.InitializationTemporaryPath, Is.EqualTo(first.InitializationTemporaryPath));
+            Assert.That(second.InitializationPath, Is.EqualTo(first.InitializationPath));
+            Assert.That(second.ReadyTemporaryPath, Is.EqualTo(first.ReadyTemporaryPath));
+            Assert.That(second.ReadyPath, Is.EqualTo(first.ReadyPath));
         }
 
         // ---- Shape ----
@@ -233,12 +155,12 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Fields_AreRootLayoutAndEightReadonlyStrings()
+        public void Fields_AreRootLayoutAndFourReadonlyStrings()
         {
             Type type = typeof(CaptureRunMarkerPathSet);
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-            Assert.That(fields.Length, Is.EqualTo(9), "Must hold exactly the layout reference and eight path strings.");
+            Assert.That(fields.Length, Is.EqualTo(5), "Must hold exactly the layout reference and four path strings.");
 
             int layoutFields = 0;
             int stringFields = 0;
@@ -260,7 +182,7 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(layoutFields, Is.EqualTo(1));
-            Assert.That(stringFields, Is.EqualTo(8));
+            Assert.That(stringFields, Is.EqualTo(4));
 
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
             {

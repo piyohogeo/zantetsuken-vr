@@ -255,7 +255,6 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
                 Path.DirectorySeparatorChar == '\\' ? "C:\\staging" : "/staging",
-                Path.DirectorySeparatorChar == '\\' ? "D:\\final" : "/final",
                 1);
 
             CaptureRunInitializationExecutionReceipt receipt =
@@ -266,8 +265,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
             CaptureRunLockLease lease = new CaptureRunLockLease(
                 pathSet,
-                new FakeHandle(pathSet.FirstLockPath),
-                new FakeHandle(pathSet.SecondLockPath));
+                new FakeHandle(pathSet.LockPath));
             CaptureRunInitializationSessionOwnershipLease ownership =
                 CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
 

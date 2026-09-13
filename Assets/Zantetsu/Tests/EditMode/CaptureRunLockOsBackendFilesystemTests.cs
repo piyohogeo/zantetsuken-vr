@@ -78,7 +78,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunRootLayout MakeLayout(string staging, string final)
         {
-            return new CaptureRunRootLayout(staging, final, 1);
+            return new CaptureRunRootLayout(staging, 1);
         }
 
         private static void CreateJunction(string linkPath, string targetPath)
@@ -110,12 +110,12 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            bool acquired = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle handle);
+            bool acquired = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle handle);
 
             Assert.That(acquired, Is.True);
             Assert.That(handle, Is.Not.Null);
             Assert.That(handle.IsCreated, Is.True);
-            Assert.That(handle.LockPath, Is.EqualTo(pathSet.FirstLockPath));
+            Assert.That(handle.LockPath, Is.EqualTo(pathSet.LockPath));
 
             handle.Dispose();
             Assert.That(handle.IsCreated, Is.False);
@@ -152,10 +152,10 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockOsBackend firstBackend = CaptureRunLockOsBackend.Create();
             CaptureRunLockOsBackend secondBackend = CaptureRunLockOsBackend.Create();
 
-            bool first = firstBackend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle firstHandle);
+            bool first = firstBackend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle firstHandle);
             Assert.That(first, Is.True);
 
-            bool second = secondBackend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle secondHandle);
+            bool second = secondBackend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle secondHandle);
             Assert.That(second, Is.False);
             Assert.That(secondHandle, Is.Null);
             Assert.That(firstHandle.IsCreated, Is.True);
@@ -171,11 +171,11 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            bool first = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle firstHandle);
+            bool first = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle firstHandle);
             Assert.That(first, Is.True);
             firstHandle.Dispose();
 
-            bool second = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle secondHandle);
+            bool second = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle secondHandle);
             Assert.That(second, Is.True);
             Assert.That(secondHandle.IsCreated, Is.True);
             secondHandle.Dispose();
@@ -189,20 +189,20 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            bool first = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle firstHandle);
+            bool first = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle firstHandle);
             Assert.That(first, Is.True);
             firstHandle.Dispose();
 
             // The lock file is not ownership evidence and must persist.
-            Assert.That(File.Exists(pathSet.FirstLockPath), Is.True);
+            Assert.That(File.Exists(pathSet.LockPath), Is.True);
 
-            bool second = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle secondHandle);
+            bool second = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle secondHandle);
             Assert.That(second, Is.True);
             secondHandle.Dispose();
         }
 
         [Test]
-        public void Coordinator_TwoLocksAcquired_OtherCoordinatorSamePathSetFails()
+        public void Coordinator_LockAcquired_OtherCoordinatorSamePathSetFails()
         {
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
@@ -241,42 +241,16 @@ namespace Zantetsu.Core.Tests
             Assert.That(owner.IsCreated, Is.True);
 
             CaptureRunLockOsBackend contender = CaptureRunLockOsBackend.Create();
-            bool contended = contender.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle contendedHandle);
+            bool contended = contender.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle contendedHandle);
             Assert.That(contended, Is.False);
             Assert.That(contendedHandle, Is.Null);
 
             owner.Dispose();
             Assert.That(owner.IsReleaseComplete, Is.True);
 
-            bool reacquired = contender.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle reacquiredHandle);
+            bool reacquired = contender.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle reacquiredHandle);
             Assert.That(reacquired, Is.True);
             reacquiredHandle.Dispose();
-        }
-
-        [Test]
-        public void Coordinator_SecondLockPreHeld_FailsAndRollsBackFirst_FirstReacquirable()
-        {
-            RequireWindows();
-            (_, string staging, string final) = MakeSandbox();
-            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
-
-            CaptureRunLockOsBackend preholdBackend = CaptureRunLockOsBackend.Create();
-            bool preheld = preholdBackend.TryAcquire(pathSet.SecondLockPath, out ICaptureRunLockHandle secondPreheld);
-            Assert.That(preheld, Is.True);
-
-            CaptureRunLockAcquisitionCoordinator coordinator =
-                new CaptureRunLockAcquisitionCoordinator(CaptureRunLockOsBackend.Create());
-            bool acquired = coordinator.TryAcquire(pathSet, out CaptureRunLockLease lease);
-            Assert.That(acquired, Is.False);
-            Assert.That(lease, Is.Null);
-
-            // Rollback released the first handle, so it must be re-acquirable.
-            CaptureRunLockOsBackend verifyBackend = CaptureRunLockOsBackend.Create();
-            bool reacquired = verifyBackend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle firstAgain);
-            Assert.That(reacquired, Is.True);
-            firstAgain.Dispose();
-
-            secondPreheld.Dispose();
         }
 
         [Test]
@@ -294,7 +268,7 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            Assert.Throws<IOException>(() => backend.TryAcquire(pathSet.StagingLockPath, out _));
+            Assert.Throws<IOException>(() => backend.TryAcquire(pathSet.LockPath, out _));
             Assert.That(Directory.GetFiles(outside), Is.Empty);
         }
 
@@ -314,19 +288,19 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            Assert.Throws<IOException>(() => backend.TryAcquire(pathSet.StagingLockPath, out _));
+            Assert.Throws<IOException>(() => backend.TryAcquire(pathSet.LockPath, out _));
             Assert.That(Directory.GetFiles(outside), Is.Empty);
         }
 
         [Test]
-        public void FailurePath_AfterRollback_SandboxDeletable_NoHandleLeak()
+        public void FailurePath_AfterContention_SandboxDeletable_NoHandleLeak()
         {
             RequireWindows();
             (string sandbox, string staging, string final) = MakeSandbox();
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
 
             CaptureRunLockOsBackend preholdBackend = CaptureRunLockOsBackend.Create();
-            bool preheld = preholdBackend.TryAcquire(pathSet.SecondLockPath, out ICaptureRunLockHandle secondPreheld);
+            bool preheld = preholdBackend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle preheldHandle);
             Assert.That(preheld, Is.True);
 
             CaptureRunLockAcquisitionCoordinator coordinator =
@@ -335,7 +309,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(acquired, Is.False);
             Assert.That(lease, Is.Null);
 
-            secondPreheld.Dispose();
+            preheldHandle.Dispose();
 
             // If any base, .locks, or lock file handle leaked, the recursive
             // delete fails with a sharing violation.
@@ -351,7 +325,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(MakeLayout(staging, final));
             CaptureRunLockOsBackend backend = CaptureRunLockOsBackend.Create();
 
-            bool acquired = backend.TryAcquire(pathSet.FirstLockPath, out ICaptureRunLockHandle handle);
+            bool acquired = backend.TryAcquire(pathSet.LockPath, out ICaptureRunLockHandle handle);
             Assert.That(acquired, Is.True);
 
             handle.Dispose();

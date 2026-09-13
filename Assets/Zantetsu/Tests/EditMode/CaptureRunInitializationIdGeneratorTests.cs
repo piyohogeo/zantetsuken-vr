@@ -63,7 +63,7 @@ namespace Zantetsu.Core.Tests
 
         private static object CreateBinding(long testRunId, string initId, string stagingHash, string finalHash)
         {
-            return new CaptureRunMarkerBinding(testRunId, initId, stagingHash, finalHash);
+            return new CaptureRunMarkerBinding(testRunId, initId, stagingHash);
         }
 
         // ---- Create ----

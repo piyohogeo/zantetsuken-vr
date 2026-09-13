@@ -20,14 +20,12 @@ namespace Zantetsu.Observability
     {
         private readonly long _testRunId;
         private readonly string _runInitializationId;
-        private readonly string _stagingInitSha256;
-        private readonly string _finalInitSha256;
+        private readonly string _initSha256;
 
         internal CaptureRunReadyMarker(
             long testRunId,
             string runInitializationId,
-            string stagingInitSha256,
-            string finalInitSha256)
+            string initSha256)
         {
             if (testRunId <= 0)
             {
@@ -44,30 +42,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Run initialization ID must be 32 lowercase ASCII hex characters.", nameof(runInitializationId));
             }
 
-            if (stagingInitSha256 == null)
+            if (initSha256 == null)
             {
-                throw new ArgumentNullException(nameof(stagingInitSha256));
+                throw new ArgumentNullException(nameof(initSha256));
             }
 
-            if (!IsLowercaseHex(stagingInitSha256, 64))
+            if (!IsLowercaseHex(initSha256, 64))
             {
-                throw new ArgumentException("Staging init SHA-256 must be 64 lowercase ASCII hex characters.", nameof(stagingInitSha256));
-            }
-
-            if (finalInitSha256 == null)
-            {
-                throw new ArgumentNullException(nameof(finalInitSha256));
-            }
-
-            if (!IsLowercaseHex(finalInitSha256, 64))
-            {
-                throw new ArgumentException("Final init SHA-256 must be 64 lowercase ASCII hex characters.", nameof(finalInitSha256));
+                throw new ArgumentException("Init SHA-256 must be 64 lowercase ASCII hex characters.", nameof(initSha256));
             }
 
             _testRunId = testRunId;
             _runInitializationId = runInitializationId;
-            _stagingInitSha256 = stagingInitSha256;
-            _finalInitSha256 = finalInitSha256;
+            _initSha256 = initSha256;
         }
 
         internal int SchemaVersion => 1;
@@ -76,9 +63,7 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _runInitializationId;
 
-        internal string StagingInitSha256 => _stagingInitSha256;
-
-        internal string FinalInitSha256 => _finalInitSha256;
+        internal string InitSha256 => _initSha256;
 
         private static bool IsLowercaseHex(string value, int length)
         {

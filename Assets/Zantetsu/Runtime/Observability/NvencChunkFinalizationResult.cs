@@ -104,7 +104,6 @@ namespace Zantetsu.Observability
 
         internal string StagingRelativePath => _receipt.Descriptor.StagingRelativePath;
 
-        internal string FinalRelativePath => _receipt.Descriptor.FinalRelativePath;
 
         internal long ByteLength => _receipt.Descriptor.ByteLength;
 

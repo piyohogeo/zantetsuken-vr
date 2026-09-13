@@ -106,7 +106,6 @@ namespace Zantetsu.Observability
 
         internal string StagingRelativePath => NvencRunChunkArtifactDescriptorFactory.StagingRelativePath;
 
-        internal string FinalRelativePath => NvencRunChunkArtifactDescriptorFactory.FinalRelativePath;
 
         internal string PendingRelativePath => NvencRunChunkArtifactDescriptorFactory.PendingRelativePath;
 

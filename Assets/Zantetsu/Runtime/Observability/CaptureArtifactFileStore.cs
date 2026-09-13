@@ -10,7 +10,6 @@ namespace Zantetsu.Observability
         private readonly CaptureRunRootLayout _rootLayout;
         private readonly long _testRunId;
         private readonly string _stagingRunRoot;
-        private readonly string _finalRunRoot;
         private readonly CaptureArtifactVerificationBufferPool _verificationBufferPool;
         private readonly ICaptureArtifactNoFollowOpener _noFollowOpener;
 
@@ -53,8 +52,7 @@ namespace Zantetsu.Observability
 
             _rootLayout = rootLayout;
             _testRunId = rootLayout.TestRunId;
-            _stagingRunRoot = rootLayout.StagingRunRoot;
-            _finalRunRoot = rootLayout.FinalRunRoot;
+            _stagingRunRoot = rootLayout.RunRoot;
             _verificationBufferPool = verificationBufferPool;
             _noFollowOpener = noFollowOpener;
         }
@@ -93,12 +91,6 @@ namespace Zantetsu.Observability
             }
 
             return new CaptureArtifactWriteReceipt(this, descriptor, target);
-        }
-
-        public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
-        {
-            if (descriptor == null || !descriptor.IsValid) throw new ArgumentException("Descriptor must be valid.", nameof(descriptor));
-            return VerifyAt(descriptor, _finalRunRoot, descriptor.FinalRelativePath);
         }
 
         public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)

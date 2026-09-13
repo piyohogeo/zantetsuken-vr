@@ -11,12 +11,10 @@ namespace Zantetsu.Observability
     /// <see cref="CaptureRunInitializationMarker"/>. The canonical form is
     /// byte-for-byte deterministic: no BOM, no trailing newline, no extra
     /// whitespace, fixed PascalCase property order, invariant shortest decimal
-    /// integers, and literal ASCII strings without escape representations. The
-    /// root role is serialized as the exact string <c>"Staging"</c> or
-    /// <c>"Final"</c>, never as a number.
+    /// integers, and literal ASCII strings without escape representations.
     /// </summary>
     /// <remarks>
-    /// This codec performs no file I/O, no role derivation, no root hash
+    /// This codec performs no file I/O, no root hash
     /// computation, no clock, no random, and no Unity static API access.
     /// </remarks>
     internal static class CaptureRunInitializationMarkerCodec
@@ -39,12 +37,8 @@ namespace Zantetsu.Observability
             AppendLong(sb, marker.TestRunId);
             sb.Append(",\"RunInitializationId\":");
             AppendLiteral(sb, marker.RunInitializationId);
-            sb.Append(",\"RootRole\":");
-            AppendLiteral(sb, RootRoleLiteral(marker.RootRole));
-            sb.Append(",\"StagingRunRootSha256\":");
-            AppendLiteral(sb, marker.StagingRunRootSha256);
-            sb.Append(",\"FinalRunRootSha256\":");
-            AppendLiteral(sb, marker.FinalRunRootSha256);
+            sb.Append(",\"RunRootSha256\":");
+            AppendLiteral(sb, marker.RunRootSha256);
             sb.Append('}');
 
             if (sb.Length > MaximumCanonicalByteCount)
@@ -130,20 +124,9 @@ namespace Zantetsu.Observability
             string runInitializationId = reader.ReadString(32);
 
             reader.Expect((byte)',');
-            reader.Expect("\"RootRole\"");
+            reader.Expect("\"RunRootSha256\"");
             reader.Expect((byte)':');
-            string rootRole = reader.ReadString(7);
-            CaptureRunRootRole role = ParseRootRole(rootRole);
-
-            reader.Expect((byte)',');
-            reader.Expect("\"StagingRunRootSha256\"");
-            reader.Expect((byte)':');
-            string stagingRunRootSha256 = reader.ReadString(64);
-
-            reader.Expect((byte)',');
-            reader.Expect("\"FinalRunRootSha256\"");
-            reader.Expect((byte)':');
-            string finalRunRootSha256 = reader.ReadString(64);
+            string runRootSha256 = reader.ReadString(64);
 
             reader.Expect((byte)'}');
             reader.ExpectEnd();
@@ -151,7 +134,7 @@ namespace Zantetsu.Observability
             CaptureRunInitializationMarker marker;
             try
             {
-                marker = new CaptureRunInitializationMarker(testRunId, runInitializationId, role, stagingRunRootSha256, finalRunRootSha256);
+                marker = new CaptureRunInitializationMarker(testRunId, runInitializationId, runRootSha256);
             }
             catch (ArgumentException ex)
             {
@@ -174,34 +157,6 @@ namespace Zantetsu.Observability
             }
 
             return marker;
-        }
-
-        private static CaptureRunRootRole ParseRootRole(string role)
-        {
-            if (string.Equals(role, "Staging", StringComparison.Ordinal))
-            {
-                return CaptureRunRootRole.Staging;
-            }
-
-            if (string.Equals(role, "Final", StringComparison.Ordinal))
-            {
-                return CaptureRunRootRole.Final;
-            }
-
-            throw new InvalidDataException("RootRole must be 'Staging' or 'Final'.");
-        }
-
-        private static string RootRoleLiteral(CaptureRunRootRole role)
-        {
-            switch (role)
-            {
-                case CaptureRunRootRole.Staging:
-                    return "Staging";
-                case CaptureRunRootRole.Final:
-                    return "Final";
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(role), role, "Root role must be Staging or Final.");
-            }
         }
 
         private static void AppendLong(StringBuilder sb, long value)

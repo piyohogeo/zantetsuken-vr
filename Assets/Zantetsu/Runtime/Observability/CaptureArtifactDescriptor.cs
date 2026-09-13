@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Zantetsu.Observability
 {
-    /// <summary>Format-neutral immutable artifact identity and publication expectation.</summary>
+    /// <summary>Format-neutral immutable artifact identity and staging location.</summary>
     internal sealed class CaptureArtifactDescriptor
     {
         internal CaptureArtifactDescriptor(
@@ -12,14 +12,12 @@ namespace Zantetsu.Observability
             string formatId,
             int formatVersion,
             string stagingRelativePath,
-            string finalRelativePath,
             long byteLength,
             string contentHash)
         {
             RequireText(artifactId, nameof(artifactId));
             RequireText(formatId, nameof(formatId));
             RequireRelativePath(stagingRelativePath, nameof(stagingRelativePath));
-            RequireRelativePath(finalRelativePath, nameof(finalRelativePath));
             if (artifactKind == CaptureArtifactKind.None || !Enum.IsDefined(typeof(CaptureArtifactKind), artifactKind))
             {
                 throw new ArgumentOutOfRangeException(nameof(artifactKind));
@@ -45,7 +43,6 @@ namespace Zantetsu.Observability
             FormatId = formatId;
             FormatVersion = formatVersion;
             StagingRelativePath = stagingRelativePath;
-            FinalRelativePath = finalRelativePath;
             ByteLength = byteLength;
             ContentHash = contentHash;
         }
@@ -55,7 +52,6 @@ namespace Zantetsu.Observability
         internal string FormatId { get; }
         internal int FormatVersion { get; }
         internal string StagingRelativePath { get; }
-        internal string FinalRelativePath { get; }
         internal long ByteLength { get; }
         internal string ContentHash { get; }
 
@@ -66,7 +62,6 @@ namespace Zantetsu.Observability
             && !string.IsNullOrEmpty(FormatId)
             && FormatVersion > 0
             && IsRelativePath(StagingRelativePath)
-            && IsRelativePath(FinalRelativePath)
             && ByteLength > 0
             && IsLowerHex(ContentHash, 64);
 

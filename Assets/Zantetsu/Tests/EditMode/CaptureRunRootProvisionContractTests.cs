@@ -15,16 +15,15 @@ namespace Zantetsu.Core.Tests
 
         private static string StagingBase() => IsWindows ? "C:\\staging" : "/staging";
 
-        private static string FinalBase() => IsWindows ? "D:\\final" : "/final";
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
         {
-            return new CaptureRunRootLayout(StagingBase(), FinalBase(), testRunId);
+            return new CaptureRunRootLayout(StagingBase(), testRunId);
         }
 
-        private static CaptureRunRootProvisionOperation MakeOperation(CaptureRunRootRole role = CaptureRunRootRole.Staging)
+        private static CaptureRunRootProvisionOperation MakeOperation()
         {
-            return new CaptureRunRootProvisionOperation(MakeLayout(), role);
+            return new CaptureRunRootProvisionOperation(MakeLayout());
         }
 
         private static void SetField(object target, string fieldName, object value)
@@ -68,52 +67,19 @@ namespace Zantetsu.Core.Tests
         public void Operation_NullLayout_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunRootProvisionOperation(null, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(null));
 
             Assert.That(ex.ParamName, Is.EqualTo("rootLayout"));
         }
 
         [Test]
-        public void Operation_InvalidRole_RejectedWithParamName()
-        {
-            CaptureRunRootLayout layout = MakeLayout();
-
-            foreach (CaptureRunRootRole role in new[]
-            {
-                CaptureRunRootRole.None,
-                (CaptureRunRootRole)(-1),
-                (CaptureRunRootRole)3,
-                (CaptureRunRootRole)int.MaxValue
-            })
-            {
-                ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => new CaptureRunRootProvisionOperation(layout, role));
-
-                Assert.That(ex.ParamName, Is.EqualTo("rootRole"));
-            }
-        }
-
-        [Test]
-        public void Operation_StagingForwarding_Exact()
+        public void Operation_Forwarding_Exact()
         {
             CaptureRunRootLayout layout = MakeLayout(7);
-            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Staging);
+            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout);
 
-            Assert.That(operation.RootRole, Is.EqualTo(CaptureRunRootRole.Staging));
-            Assert.That(operation.TrustedBaseRoot, Is.EqualTo(layout.StagingTrustedBaseRoot));
-            Assert.That(operation.RunRoot, Is.EqualTo(layout.StagingRunRoot));
-            Assert.That(operation.TestRunId, Is.EqualTo(layout.TestRunId));
-        }
-
-        [Test]
-        public void Operation_FinalForwarding_Exact()
-        {
-            CaptureRunRootLayout layout = MakeLayout(9);
-            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Final);
-
-            Assert.That(operation.RootRole, Is.EqualTo(CaptureRunRootRole.Final));
-            Assert.That(operation.TrustedBaseRoot, Is.EqualTo(layout.FinalTrustedBaseRoot));
-            Assert.That(operation.RunRoot, Is.EqualTo(layout.FinalRunRoot));
+            Assert.That(operation.TrustedBaseRoot, Is.EqualTo(layout.TrustedBaseRoot));
+            Assert.That(operation.RunRoot, Is.EqualTo(layout.RunRoot));
             Assert.That(operation.TestRunId, Is.EqualTo(layout.TestRunId));
         }
 
@@ -121,40 +87,25 @@ namespace Zantetsu.Core.Tests
         public void Operation_RootLayout_HeldByReference()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Staging);
+            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout);
 
             Assert.That(operation.RootLayout, Is.SameAs(layout));
         }
 
         [Test]
-        public void Operation_Fields_AreExactlyTwoReadonly()
+        public void Operation_Fields_AreExactlyOneReadonly()
         {
             Type type = typeof(CaptureRunRootProvisionOperation);
             FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-            Assert.That(fields.Length, Is.EqualTo(2), "Must hold only the layout and the role; no copied path or ID.");
+            Assert.That(fields.Length, Is.EqualTo(1), "Must hold only the layout; no copied path or ID.");
 
-            int layoutFields = 0;
-            int roleFields = 0;
             foreach (FieldInfo field in fields)
             {
                 Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                if (field.FieldType == typeof(CaptureRunRootLayout))
-                {
-                    layoutFields++;
-                }
-                else if (field.FieldType == typeof(CaptureRunRootRole))
-                {
-                    roleFields++;
-                }
-                else
-                {
-                    Assert.Fail(field.Name + " has unexpected type " + field.FieldType.Name + ".");
-                }
+                Assert.That(field.FieldType, Is.EqualTo(typeof(CaptureRunRootLayout)),
+                    field.Name + " has unexpected type " + field.FieldType.Name + ".");
             }
-
-            Assert.That(layoutFields, Is.EqualTo(1));
-            Assert.That(roleFields, Is.EqualTo(1));
         }
 
         [Test]
@@ -164,21 +115,21 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunRootLayout));
 
             ArgumentException exAllNull = Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(emptyLayout, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(emptyLayout));
             Assert.That(exAllNull.ParamName, Is.EqualTo("rootLayout"));
 
             CaptureRunRootLayout emptyBase = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(emptyBase, "_stagingTrustedBaseRoot", string.Empty);
-            SetField(emptyBase, "_stagingRunRoot", StagingBase() + (IsWindows ? "\\" : "/") + "runs");
+            SetField(emptyBase, "_trustedBaseRoot", string.Empty);
+            SetField(emptyBase, "_runRoot", StagingBase() + (IsWindows ? "\\" : "/") + "runs");
             Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(emptyBase, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(emptyBase));
 
             CaptureRunRootLayout nullRunRoot = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(nullRunRoot, "_stagingTrustedBaseRoot", StagingBase());
+            SetField(nullRunRoot, "_trustedBaseRoot", StagingBase());
             Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(nullRunRoot, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(nullRunRoot));
         }
 
         [Test]
@@ -187,18 +138,18 @@ namespace Zantetsu.Core.Tests
             string outside = IsWindows ? "C:\\other\\run" : "/other/run";
             CaptureRunRootLayout outsideLayout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(outsideLayout, "_stagingTrustedBaseRoot", StagingBase());
-            SetField(outsideLayout, "_stagingRunRoot", outside);
+            SetField(outsideLayout, "_trustedBaseRoot", StagingBase());
+            SetField(outsideLayout, "_runRoot", outside);
             Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(outsideLayout, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(outsideLayout));
 
             string boundary = IsWindows ? "C:\\staging2\\run" : "/staging2/run";
             CaptureRunRootLayout boundaryLayout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(boundaryLayout, "_stagingTrustedBaseRoot", StagingBase());
-            SetField(boundaryLayout, "_stagingRunRoot", boundary);
+            SetField(boundaryLayout, "_trustedBaseRoot", StagingBase());
+            SetField(boundaryLayout, "_runRoot", boundary);
             Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(boundaryLayout, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(boundaryLayout));
         }
 
         [Test]
@@ -206,11 +157,11 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(layout, "_stagingTrustedBaseRoot", StagingBase());
-            SetField(layout, "_stagingRunRoot", StagingBase());
+            SetField(layout, "_trustedBaseRoot", StagingBase());
+            SetField(layout, "_runRoot", StagingBase());
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Staging));
+                () => new CaptureRunRootProvisionOperation(layout));
 
             Assert.That(ex.ParamName, Is.EqualTo("rootLayout"));
         }
@@ -221,22 +172,22 @@ namespace Zantetsu.Core.Tests
             string directChild = Path.Combine(StagingBase(), "run");
             CaptureRunRootLayout directLayout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(directLayout, "_stagingTrustedBaseRoot", StagingBase());
-            SetField(directLayout, "_stagingRunRoot", directChild);
+            SetField(directLayout, "_trustedBaseRoot", StagingBase());
+            SetField(directLayout, "_runRoot", directChild);
 
             CaptureRunRootProvisionOperation directOp = new CaptureRunRootProvisionOperation(
-                directLayout, CaptureRunRootRole.Staging);
+                directLayout);
             Assert.That(directOp.RunRoot, Is.EqualTo(directChild));
             Assert.That(directOp.TrustedBaseRoot, Is.EqualTo(StagingBase()));
 
             string multiSegment = Path.Combine(StagingBase(), "runs", "run-1");
             CaptureRunRootLayout multiLayout = (CaptureRunRootLayout)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootLayout));
-            SetField(multiLayout, "_stagingTrustedBaseRoot", StagingBase());
-            SetField(multiLayout, "_stagingRunRoot", multiSegment);
+            SetField(multiLayout, "_trustedBaseRoot", StagingBase());
+            SetField(multiLayout, "_runRoot", multiSegment);
 
             CaptureRunRootProvisionOperation multiOp = new CaptureRunRootProvisionOperation(
-                multiLayout, CaptureRunRootRole.Staging);
+                multiLayout);
             Assert.That(multiOp.RunRoot, Is.EqualTo(multiSegment));
         }
 
@@ -379,19 +330,15 @@ namespace Zantetsu.Core.Tests
         public void Construction_DoesNotMutateRootLayout()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            string stagingRootBefore = layout.StagingRunRoot;
-            string finalRootBefore = layout.FinalRunRoot;
-            string stagingBaseBefore = layout.StagingTrustedBaseRoot;
-            string finalBaseBefore = layout.FinalTrustedBaseRoot;
+            string stagingRootBefore = layout.RunRoot;
+            string stagingBaseBefore = layout.TrustedBaseRoot;
             long testRunIdBefore = layout.TestRunId;
 
-            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Staging);
+            CaptureRunRootProvisionOperation operation = new CaptureRunRootProvisionOperation(layout);
             CaptureRunRootProvisionReceipt receipt = new CaptureRunRootProvisionReceipt(new FakeProvisioner(), operation);
 
-            Assert.That(layout.StagingRunRoot, Is.EqualTo(stagingRootBefore));
-            Assert.That(layout.FinalRunRoot, Is.EqualTo(finalRootBefore));
-            Assert.That(layout.StagingTrustedBaseRoot, Is.EqualTo(stagingBaseBefore));
-            Assert.That(layout.FinalTrustedBaseRoot, Is.EqualTo(finalBaseBefore));
+            Assert.That(layout.RunRoot, Is.EqualTo(stagingRootBefore));
+            Assert.That(layout.TrustedBaseRoot, Is.EqualTo(stagingBaseBefore));
             Assert.That(layout.TestRunId, Is.EqualTo(testRunIdBefore));
             Assert.That(receipt.Operation.RootLayout, Is.SameAs(layout));
         }

@@ -12,28 +12,20 @@ namespace Zantetsu.Core.Tests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
-        private const string StagingHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        private const string RootHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-        private const string FinalHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
         private const int MaxMarker = 4 * 1024;
 
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
-        private const string InitStagingJson =
+        private const string InitJson =
             "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-            "\"RootRole\":\"Staging\",\"StagingRunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-            "\"FinalRunRootSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
-
-        private const string InitFinalJson =
-            "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-            "\"RootRole\":\"Final\",\"StagingRunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-            "\"FinalRunRootSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
+            "\"RunRootSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}";
 
         private const string ReadyJson =
             "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-            "\"StagingInitSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-            "\"FinalInitSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
+            "\"InitSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}";
 
         // ---- Reflection helpers ----
 
@@ -47,8 +39,6 @@ namespace Zantetsu.Core.Tests
         private static Type GetInitCodecType() => GetTypeFromAssembly("CaptureRunInitializationMarkerCodec");
 
         private static Type GetReadyCodecType() => GetTypeFromAssembly("CaptureRunReadyMarkerCodec");
-
-        private static Type GetRoleType() => GetTypeFromAssembly("CaptureRunRootRole");
 
         private static object GetProperty(object target, string name)
         {
@@ -194,7 +184,7 @@ namespace Zantetsu.Core.Tests
 
         private static byte[] WithInvalidUtf8InInitId(byte[] invalidBytes)
         {
-            byte[] canonical = JsonBytes(InitStagingJson);
+            byte[] canonical = JsonBytes(InitJson);
             byte[] marker = Utf8NoBom.GetBytes("\"RunInitializationId\":\"");
             int index = IndexOfBytes(canonical, marker);
             Assert.That(index, Is.GreaterThanOrEqualTo(0), "RunInitializationId marker not found.");
@@ -331,11 +321,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Roundtrip_Bytes()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             Assert.That(SerializeInit(DeserializeInitBytes(init)), Is.EqualTo(init));
-
-            byte[] final = JsonBytes(InitFinalJson);
-            Assert.That(SerializeInit(DeserializeInitBytes(final)), Is.EqualTo(final));
 
             byte[] ready = JsonBytes(ReadyJson);
             Assert.That(SerializeReady(DeserializeReadyBytes(ready)), Is.EqualTo(ready));
@@ -344,7 +331,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Roundtrip_Stream_SeekableAndNonSeekable()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             Assert.That(SerializeInit(DeserializeInitStream(new MemoryStream(init))), Is.EqualTo(init));
             Assert.That(SerializeInit(DeserializeInitStream(new NonSeekableStream(init))), Is.EqualTo(init));
 
@@ -356,7 +343,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Roundtrip_Seekable_NonZeroPosition()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             byte[] prefixed = new byte[init.Length + 5];
             prefixed[0] = (byte)'x';
             prefixed[1] = (byte)'y';
@@ -374,7 +361,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Stream_NotDisposed_Success()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             TrackDisposeStream tracking = new TrackDisposeStream(new MemoryStream(init));
             DeserializeInitStream(tracking);
@@ -414,7 +401,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MaxMarkerBytes_Invalid_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             foreach (int bad in new[] { 0, -1, 4097 })
             {
                 Exception ex = DeserializeInitBytesException(init, bad);
@@ -430,7 +417,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MaxMarkerBytes_ExactAccepted_NextRejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             Assert.That(DeserializeInitBytesException(init, init.Length), Is.Null);
             Assert.That(DeserializeInitBytesException(init, init.Length - 1), Is.TypeOf<InvalidDataException>());
 
@@ -442,7 +429,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Seekable_GrowsAfterLength_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             byte[] withExtra = new byte[init.Length + 1];
             Array.Copy(init, withExtra, init.Length);
             withExtra[init.Length] = (byte)' ';
@@ -453,7 +440,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void NonSeekable_LimitPlusOne_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Assert.That(DeserializeInitStreamException(new NonSeekableStream(init), init.Length - 1), Is.TypeOf<InvalidDataException>());
         }
@@ -465,7 +452,7 @@ namespace Zantetsu.Core.Tests
         {
             Assert.That(DeserializeInitBytesException(new byte[0]), Is.TypeOf<InvalidDataException>());
 
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             byte[] withBom = new byte[init.Length + 3];
             withBom[0] = 0xEF;
@@ -485,7 +472,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void TrailingData_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s + "\n")), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s + " ")), Is.TypeOf<InvalidDataException>());
@@ -495,7 +482,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Whitespace_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(":", ": "))), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(",", " ,"))), Is.TypeOf<InvalidDataException>());
@@ -504,21 +491,21 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void PropertyOrder_Unknown_Missing_Duplicate_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"SchemaVersion\":1,\"TestRunId\":1", "\"TestRunId\":1,\"SchemaVersion\":1"))), Is.TypeOf<InvalidDataException>());
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"RootRole\"", ",\"Foo\":\"x\",\"RootRole\""))), Is.TypeOf<InvalidDataException>());
+            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"RunRootSha256\"", ",\"Foo\":\"x\",\"RunRootSha256\""))), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"TestRunId\":1", ""))), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"TestRunId\":1", ",\"TestRunId\":1,\"TestRunId\":1"))), Is.TypeOf<InvalidDataException>());
 
             byte[] ready = JsonBytes(ReadyJson);
-            Assert.That(DeserializeReadyBytesException(Mutate(ready, s => s.Replace(",\"StagingInitSha256\"", ",\"Foo\":\"x\",\"StagingInitSha256\""))), Is.TypeOf<InvalidDataException>());
+            Assert.That(DeserializeReadyBytesException(Mutate(ready, s => s.Replace(",\"InitSha256\"", ",\"Foo\":\"x\",\"InitSha256\""))), Is.TypeOf<InvalidDataException>());
         }
 
         [Test]
         public void SchemaVersionMismatch_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"SchemaVersion\":1", "\"SchemaVersion\":2"))), Is.TypeOf<InvalidDataException>());
 
             byte[] ready = JsonBytes(ReadyJson);
@@ -528,7 +515,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void IntegerNonCanonical_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"TestRunId\":1", "\"TestRunId\":1.0"))), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"TestRunId\":1", "\"TestRunId\":1e1"))), Is.TypeOf<InvalidDataException>());
@@ -540,7 +527,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Escape_NonAscii_InvalidUtf8_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             // Escaped quote inside a string.
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + InitId + "\"", "\"abc\\\"def\""))), Is.TypeOf<InvalidDataException>());
@@ -558,7 +545,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void IdAndHash_LengthUpperNonHex_Rejected()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             // RunInitializationId length / uppercase / non-hex.
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + InitId + "\"", "\"" + new string('0', 31) + "\""))), Is.TypeOf<InvalidDataException>());
@@ -566,45 +553,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + InitId + "\"", "\"" + new string('A', 32) + "\""))), Is.TypeOf<InvalidDataException>());
             Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + InitId + "\"", "\"" + new string('g', 32) + "\""))), Is.TypeOf<InvalidDataException>());
 
-            // StagingRunRootSha256 length / uppercase / non-hex.
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + StagingHash + "\"", "\"" + new string('0', 63) + "\""))), Is.TypeOf<InvalidDataException>());
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + StagingHash + "\"", "\"" + new string('0', 65) + "\""))), Is.TypeOf<InvalidDataException>());
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + StagingHash + "\"", "\"" + new string('A', 64) + "\""))), Is.TypeOf<InvalidDataException>());
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + StagingHash + "\"", "\"" + new string('g', 64) + "\""))), Is.TypeOf<InvalidDataException>());
-        }
-
-        // ---- RootRole specifics ----
-
-        [Test]
-        public void Init_RootRole_StagingAndFinal()
-        {
-            byte[] staging = JsonBytes(InitStagingJson);
-            object stagingMarker = DeserializeInitBytes(staging);
-            Assert.That(SerializeInit(stagingMarker), Is.EqualTo(staging));
-            Assert.That(GetProperty(stagingMarker, "RootRole"), Is.EqualTo(Enum.Parse(GetRoleType(), "Staging")));
-
-            byte[] final = JsonBytes(InitFinalJson);
-            object finalMarker = DeserializeInitBytes(final);
-            Assert.That(SerializeInit(finalMarker), Is.EqualTo(final));
-            Assert.That(GetProperty(finalMarker, "RootRole"), Is.EqualTo(Enum.Parse(GetRoleType(), "Final")));
-        }
-
-        [Test]
-        public void Init_RootRole_Invalid_Rejected()
-        {
-            byte[] init = JsonBytes(InitStagingJson);
-
-            // Numeric role.
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"RootRole\":\"Staging\"", "\"RootRole\":1"))), Is.TypeOf<InvalidDataException>());
-
-            // Unknown role.
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"RootRole\":\"Staging\"", "\"RootRole\":\"Unknown\""))), Is.TypeOf<InvalidDataException>());
-
-            // Wrong case.
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"RootRole\":\"Staging\"", "\"RootRole\":\"staging\""))), Is.TypeOf<InvalidDataException>());
-
-            // Longer than the 7-byte scan limit.
-            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"RootRole\":\"Staging\"", "\"RootRole\":\"StagingX\""))), Is.TypeOf<InvalidDataException>());
+            // RunRootSha256 length / uppercase / non-hex.
+            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + RootHash + "\"", "\"" + new string('0', 63) + "\""))), Is.TypeOf<InvalidDataException>());
+            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + RootHash + "\"", "\"" + new string('0', 65) + "\""))), Is.TypeOf<InvalidDataException>());
+            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + RootHash + "\"", "\"" + new string('A', 64) + "\""))), Is.TypeOf<InvalidDataException>());
+            Assert.That(DeserializeInitBytesException(Mutate(init, s => s.Replace("\"" + RootHash + "\"", "\"" + new string('g', 64) + "\""))), Is.TypeOf<InvalidDataException>());
         }
 
         // ---- Exception contract ----
@@ -612,16 +565,13 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ContentErrors_AreInvalidDataException()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
 
             Exception bom = DeserializeInitBytesException(new byte[] { 0xEF, 0xBB, 0xBF, (byte)'x' });
             Assert.That(bom, Is.TypeOf<InvalidDataException>());
 
-            Exception unknown = DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"RootRole\"", ",\"Foo\":\"x\",\"RootRole\"")));
+            Exception unknown = DeserializeInitBytesException(Mutate(init, s => s.Replace(",\"RunRootSha256\"", ",\"Foo\":\"x\",\"RunRootSha256\"")));
             Assert.That(unknown, Is.TypeOf<InvalidDataException>());
-
-            Exception role = DeserializeInitBytesException(Mutate(init, s => s.Replace("\"RootRole\":\"Staging\"", "\"RootRole\":\"Unknown\"")));
-            Assert.That(role, Is.TypeOf<InvalidDataException>());
         }
 
         [Test]
@@ -629,7 +579,7 @@ namespace Zantetsu.Core.Tests
         {
             // A 32-character uppercase ID passes the string scan but fails the
             // marker constructor's lowercase hex validation.
-            string bad = InitStagingJson.Replace("\"" + InitId + "\"", "\"" + new string('A', 32) + "\"");
+            string bad = InitJson.Replace("\"" + InitId + "\"", "\"" + new string('A', 32) + "\"");
 
             Exception ex = DeserializeInitBytesException(JsonBytes(bad));
             Assert.That(ex, Is.TypeOf<InvalidDataException>());
@@ -639,7 +589,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void DoesNotMutateInputBytes()
         {
-            byte[] init = JsonBytes(InitStagingJson);
+            byte[] init = JsonBytes(InitJson);
             byte[] copy = (byte[])init.Clone();
 
             DeserializeInitBytes(init);

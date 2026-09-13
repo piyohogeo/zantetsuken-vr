@@ -115,7 +115,7 @@ namespace Zantetsu.Core.Tests
             using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
             {
                 CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 7);
-                CaptureArtifactDescriptor descriptor = Descriptor("frame/7/image", "frames/7.png.stage", "frames/7.png", HashA);
+                CaptureArtifactDescriptor descriptor = Descriptor("frame/7/image", "frames/7.png.stage", HashA);
                 CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\frames\\7.png.stage");
                 CaptureArtifactCompletion artifact = new CaptureArtifactCompletion(
                     token, 7, descriptor, new CaptureArtifactFrameRelation(new[] { 7L }),
@@ -141,13 +141,11 @@ namespace Zantetsu.Core.Tests
         {
             string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-evidence-" + Guid.NewGuid().ToString("N"));
             string stagingBase = Path.Combine(sandbox, "staging");
-            string finalBase = Path.Combine(sandbox, "final");
             Directory.CreateDirectory(stagingBase);
-            Directory.CreateDirectory(finalBase);
 
             try
             {
-                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, 3);
                 CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
 
                 using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
@@ -346,7 +344,7 @@ namespace Zantetsu.Core.Tests
             CaptureArtifactFrameRelation runScoped = new CaptureArtifactFrameRelation(Array.Empty<long>());
             CaptureArtifactFrameRelation shared = new CaptureArtifactFrameRelation(new[] { 4L, 9L });
             CaptureFrameWorkToken producer = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 4);
-            CaptureArtifactDescriptor descriptor = Descriptor("segment/4-9", "segments/4-9.stage", "segments/4-9", HashA);
+            CaptureArtifactDescriptor descriptor = Descriptor("segment/4-9", "segments/4-9.stage", HashA);
             using (FakeArtifactStore store = new FakeArtifactStore())
             {
                 CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\segments\\4-9.stage");
@@ -372,7 +370,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(registry.ReservedArtifactCount, Is.EqualTo(1));
 
             CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 1);
-            CaptureArtifactDescriptor descriptor = Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA);
+            CaptureArtifactDescriptor descriptor = Descriptor("a", "artifacts/a.stage", HashA);
             CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new[] { 1L });
             Assert.That(registry.TryRegister(token, descriptor, relation), Is.True);
             Assert.That(registry.ReservedArtifactCount, Is.Zero);
@@ -385,7 +383,7 @@ namespace Zantetsu.Core.Tests
             CaptureFrameEnvelope frame = MakeEnvelope(7);
             CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
                 "frame/7/image", CaptureArtifactKind.FrameImage, "image/png", 1,
-                "frames/7.png.stage", "frames/7.png", 20, HashA);
+                "frames/7.png", 20, HashA);
             string json = Encoding.UTF8.GetString(PngJsonFrameMetadataCodec.SerializeCanonical(frame, image));
             Assert.That(json, Does.Contain("\"captureFrameId\":7"));
             Assert.That(json, Does.Contain("\"testCaseId\":91"));
@@ -532,9 +530,9 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameProfile.CreatePhaseZeroUnityLeftEye(9, new CaptureImageRect(0, 0, 2, 2)));
         }
 
-        private static CaptureArtifactDescriptor Descriptor(string id, string staging, string final, string hash)
+        private static CaptureArtifactDescriptor Descriptor(string id, string staging, string hash)
         {
-            return new CaptureArtifactDescriptor(id, CaptureArtifactKind.TraceBundle, "application/octet-stream", 1, staging, final, 1, hash);
+            return new CaptureArtifactDescriptor(id, CaptureArtifactKind.TraceBundle, "application/octet-stream", 1, staging, 1, hash);
         }
 
         private static string Hash(byte[] payload)

@@ -48,7 +48,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.FormatId, Is.EqualTo("NvencH264IdrChunk"));
             Assert.That(result.FormatVersion, Is.EqualTo(1));
             Assert.That(result.StagingRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(result.FinalRelativePath, Is.EqualTo(ChunkPath));
             Assert.That(result.ByteLength, Is.EqualTo(64));
             Assert.That(result.ContentHash, Is.EqualTo(Hash64));
             Assert.That(result.AppendedCount, Is.EqualTo(1));

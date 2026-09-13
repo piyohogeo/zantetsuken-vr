@@ -43,7 +43,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(operation.FormatId, Is.EqualTo("NvencH264IdrChunk"));
             Assert.That(operation.FormatVersion, Is.EqualTo(1));
             Assert.That(operation.StagingRelativePath, Is.EqualTo("chunks/chunk-0.nvenc-idr-chunk-v1.h264"));
-            Assert.That(operation.FinalRelativePath, Is.EqualTo("chunks/chunk-0.nvenc-idr-chunk-v1.h264"));
             Assert.That(operation.PendingRelativePath, Is.EqualTo("chunks/chunk-0.nvenc-idr-chunk-v1.h264.partial"));
             Assert.That(operation.IsValid, Is.True);
         }
@@ -180,7 +179,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(operation.FormatId, Is.EqualTo(NvencRunChunkArtifactDescriptorFactory.FormatId));
             Assert.That(operation.FormatVersion, Is.EqualTo(NvencRunChunkArtifactDescriptorFactory.FormatVersion));
             Assert.That(operation.StagingRelativePath, Is.EqualTo(NvencRunChunkArtifactDescriptorFactory.StagingRelativePath));
-            Assert.That(operation.FinalRelativePath, Is.EqualTo(NvencRunChunkArtifactDescriptorFactory.FinalRelativePath));
             Assert.That(operation.PendingRelativePath, Is.EqualTo(NvencRunChunkArtifactDescriptorFactory.PendingRelativePath));
         }
 

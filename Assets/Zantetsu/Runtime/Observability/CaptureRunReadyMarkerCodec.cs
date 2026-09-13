@@ -36,10 +36,8 @@ namespace Zantetsu.Observability
             AppendLong(sb, marker.TestRunId);
             sb.Append(",\"RunInitializationId\":");
             AppendLiteral(sb, marker.RunInitializationId);
-            sb.Append(",\"StagingInitSha256\":");
-            AppendLiteral(sb, marker.StagingInitSha256);
-            sb.Append(",\"FinalInitSha256\":");
-            AppendLiteral(sb, marker.FinalInitSha256);
+            sb.Append(",\"InitSha256\":");
+            AppendLiteral(sb, marker.InitSha256);
             sb.Append('}');
 
             if (sb.Length > MaximumCanonicalByteCount)
@@ -106,14 +104,9 @@ namespace Zantetsu.Observability
             string runInitializationId = reader.ReadString(32);
 
             reader.Expect((byte)',');
-            reader.Expect("\"StagingInitSha256\"");
+            reader.Expect("\"InitSha256\"");
             reader.Expect((byte)':');
-            string stagingInitSha256 = reader.ReadString(64);
-
-            reader.Expect((byte)',');
-            reader.Expect("\"FinalInitSha256\"");
-            reader.Expect((byte)':');
-            string finalInitSha256 = reader.ReadString(64);
+            string initSha256 = reader.ReadString(64);
 
             reader.Expect((byte)'}');
             reader.ExpectEnd();
@@ -121,7 +114,7 @@ namespace Zantetsu.Observability
             CaptureRunReadyMarker marker;
             try
             {
-                marker = new CaptureRunReadyMarker(testRunId, runInitializationId, stagingInitSha256, finalInitSha256);
+                marker = new CaptureRunReadyMarker(testRunId, runInitializationId, initSha256);
             }
             catch (ArgumentException ex)
             {

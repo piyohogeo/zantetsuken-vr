@@ -259,7 +259,7 @@ namespace Zantetsu.Core.Tests
             Scope scope = new Scope
             {
                 Sandbox = sandbox,
-                Layout = new CaptureRunRootLayout(staging, final, 3),
+                Layout = new CaptureRunRootLayout(staging, 3),
                 Logger = new TraceLogger(16, 3),
                 Encoder = encoder,
                 ArtifactRegistryCapacity = artifactRegistryCapacity,
@@ -321,9 +321,8 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            ICaptureRunLockHandle first = new FakeHandle(pathSet.FirstLockPath, true);
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true);
-            return new CaptureRunLockLease(pathSet, first, second);
+            ICaptureRunLockHandle first = new FakeHandle(pathSet.LockPath, true);
+            return new CaptureRunLockLease(pathSet, first);
         }
 
         // ---- Draft / submission helpers ----
@@ -616,7 +615,7 @@ namespace Zantetsu.Core.Tests
                 // PNG decode via the existing Unity decoder: dimensions and the
                 // asymmetric cell placement prove top/bottom and left/right
                 // orientation, and every RGBA byte round-trips losslessly.
-                byte[] pngBytes = File.ReadAllBytes(Path.Combine(scope.Layout.StagingRunRoot, image.StagingRelativePath));
+                byte[] pngBytes = File.ReadAllBytes(Path.Combine(scope.Layout.RunRoot, image.StagingRelativePath));
                 Assert.That(pngBytes.Length, Is.EqualTo(image.ByteLength));
                 Texture2D decoded = new Texture2D(scope.Width, scope.Height, TextureFormat.RGBA32, false);
                 try
@@ -647,7 +646,7 @@ namespace Zantetsu.Core.Tests
 
                 // Metadata canonical round-trip: re-serializing the exact
                 // envelope and image descriptor reproduces the stored bytes.
-                byte[] metadataBytes = File.ReadAllBytes(Path.Combine(scope.Layout.StagingRunRoot, metadata.StagingRelativePath));
+                byte[] metadataBytes = File.ReadAllBytes(Path.Combine(scope.Layout.RunRoot, metadata.StagingRelativePath));
                 Assert.That(metadataBytes.Length, Is.EqualTo(metadata.ByteLength));
                 byte[] canonical = PngJsonFrameMetadataCodec.SerializeCanonical(
                     CaptureFrameEnvelope.FromDraft(draft, CaptureColorSpace.Srgb),

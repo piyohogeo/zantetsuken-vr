@@ -13,9 +13,8 @@ namespace Zantetsu.Core.Tests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
-        private const string StagingHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        private const string InitHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-        private const string FinalHash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
@@ -52,42 +51,35 @@ namespace Zantetsu.Core.Tests
         private static object MakeMarker(
             long testRunId = 1,
             string initId = Unspecified,
-            string stagingHash = Unspecified,
-            string finalHash = Unspecified)
+            string initHash = Unspecified)
         {
             if (initId == Unspecified)
             {
                 initId = InitId;
             }
 
-            if (stagingHash == Unspecified)
+            if (initHash == Unspecified)
             {
-                stagingHash = StagingHash;
-            }
-
-            if (finalHash == Unspecified)
-            {
-                finalHash = FinalHash;
+                initHash = InitHash;
             }
 
             ConstructorInfo ctor = GetMarkerType().GetConstructor(
                 BindingFlags.NonPublic | BindingFlags.Instance,
                 null,
-                new[] { typeof(long), typeof(string), typeof(string), typeof(string) },
+                new[] { typeof(long), typeof(string), typeof(string) },
                 null);
             Assert.That(ctor, Is.Not.Null, "Ready marker constructor not found.");
-            return ctor.Invoke(new object[] { testRunId, initId, stagingHash, finalHash });
+            return ctor.Invoke(new object[] { testRunId, initId, initHash });
         }
 
         private static Exception MakeMarkerException(
             long testRunId = 1,
             string initId = Unspecified,
-            string stagingHash = Unspecified,
-            string finalHash = Unspecified)
+            string initHash = Unspecified)
         {
             try
             {
-                MakeMarker(testRunId, initId, stagingHash, finalHash);
+                MakeMarker(testRunId, initId, initHash);
                 return null;
             }
             catch (Exception ex)
@@ -110,13 +102,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Marker_HoldsAllProperties()
         {
-            object marker = MakeMarker(42, InitId, StagingHash, FinalHash);
+            object marker = MakeMarker(42, InitId, InitHash);
 
             Assert.That((int)GetProperty(marker, "SchemaVersion"), Is.EqualTo(1));
             Assert.That((long)GetProperty(marker, "TestRunId"), Is.EqualTo(42));
             Assert.That((string)GetProperty(marker, "RunInitializationId"), Is.EqualTo(InitId));
-            Assert.That((string)GetProperty(marker, "StagingInitSha256"), Is.EqualTo(StagingHash));
-            Assert.That((string)GetProperty(marker, "FinalInitSha256"), Is.EqualTo(FinalHash));
+            Assert.That((string)GetProperty(marker, "InitSha256"), Is.EqualTo(InitHash));
         }
 
         [Test]
@@ -147,23 +138,16 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void InitHashes_Invalid_Rejected()
         {
-            Exception nullStaging = MakeMarkerException(stagingHash: null);
-            Assert.That(nullStaging, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullStaging).ParamName, Is.EqualTo("stagingInitSha256"));
+            Exception nullHash = MakeMarkerException(initHash: null);
+            Assert.That(nullHash, Is.TypeOf<ArgumentNullException>());
+            Assert.That(((ArgumentNullException)nullHash).ParamName, Is.EqualTo("initSha256"));
 
-            Exception nullFinal = MakeMarkerException(finalHash: null);
-            Assert.That(nullFinal, Is.TypeOf<ArgumentNullException>());
-            Assert.That(((ArgumentNullException)nullFinal).ParamName, Is.EqualTo("finalInitSha256"));
 
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('0', 63)), "stagingInitSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('0', 65)), "stagingInitSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('A', 64)), "stagingInitSha256");
-            AssertInvalidArgument(MakeMarkerException(stagingHash: new string('g', 64)), "stagingInitSha256");
+            AssertInvalidArgument(MakeMarkerException(initHash: new string('0', 63)), "initSha256");
+            AssertInvalidArgument(MakeMarkerException(initHash: new string('0', 65)), "initSha256");
+            AssertInvalidArgument(MakeMarkerException(initHash: new string('A', 64)), "initSha256");
+            AssertInvalidArgument(MakeMarkerException(initHash: new string('g', 64)), "initSha256");
 
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('0', 63)), "finalInitSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('0', 65)), "finalInitSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('A', 64)), "finalInitSha256");
-            AssertInvalidArgument(MakeMarkerException(finalHash: new string('g', 64)), "finalInitSha256");
         }
 
         // ---- Canonical serialization ----
@@ -173,8 +157,7 @@ namespace Zantetsu.Core.Tests
         {
             string golden =
                 "{\"SchemaVersion\":1,\"TestRunId\":1,\"RunInitializationId\":\"0123456789abcdef0123456789abcdef\"," +
-                "\"StagingInitSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"," +
-                "\"FinalInitSha256\":\"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\"}";
+                "\"InitSha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}";
 
             Assert.That(Json(Serialize(MakeMarker())), Is.EqualTo(golden));
         }
@@ -234,8 +217,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(after, Is.EqualTo(before));
             Assert.That((string)GetProperty(marker, "RunInitializationId"), Is.EqualTo(InitId));
-            Assert.That((string)GetProperty(marker, "StagingInitSha256"), Is.EqualTo(StagingHash));
-            Assert.That((string)GetProperty(marker, "FinalInitSha256"), Is.EqualTo(FinalHash));
+            Assert.That((string)GetProperty(marker, "InitSha256"), Is.EqualTo(InitHash));
         }
 
         [Test]

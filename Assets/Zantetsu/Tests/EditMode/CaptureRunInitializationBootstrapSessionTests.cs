@@ -19,7 +19,6 @@ namespace Zantetsu.Core.Tests
         {
             return new CaptureRunRootLayout(
                 IsWindows ? "C:\\staging" : "/staging",
-                IsWindows ? "D:\\final" : "/final",
                 testRunId);
         }
 
@@ -87,7 +86,7 @@ namespace Zantetsu.Core.Tests
 
             public Exception ThrowOnAcquire { get; set; }
 
-            public bool ThrowOnDisposeSecond { get; set; }
+            public bool ThrowOnHandleDispose { get; set; }
 
             public int AcquireCount { get; private set; }
 
@@ -110,7 +109,7 @@ namespace Zantetsu.Core.Tests
                 {
                     _createdCount++;
                     FakeHandle created = new FakeHandle(absoluteLockPath, true, _disposeLog);
-                    if (_createdCount == 2 && ThrowOnDisposeSecond)
+                    if (ThrowOnHandleDispose)
                     {
                         created.ThrowOnDispose = true;
                     }
@@ -173,7 +172,7 @@ namespace Zantetsu.Core.Tests
             public CaptureRunRootProvisionReceipt ProvisionNew(CaptureRunRootProvisionOperation operation)
             {
                 _callCount++;
-                _log.Add("Provision:" + operation.RootRole);
+                _log.Add("Provision");
 
                 if (_exceptions.TryGetValue(_callCount, out Exception exception))
                 {
@@ -205,7 +204,7 @@ namespace Zantetsu.Core.Tests
             public CaptureRunMarkerWriteReceipt WriteAtomic(CaptureRunMarkerWriteOperation operation)
             {
                 _callCount++;
-                _log.Add("Write:" + operation.RootRole + ":" + operation.MarkerKind);
+                _log.Add("Write:" + operation.MarkerKind);
 
                 if (_exceptions.TryGetValue(_callCount, out Exception exception))
                 {
@@ -231,7 +230,7 @@ namespace Zantetsu.Core.Tests
         {
             return new FakeBackend(log, disposeLog)
             {
-                Label = p => p == pathSet.FirstLockPath ? "Lock:first" : "Lock:second",
+                Label = p => "Lock",
                 OnAcquire = onAcquire ?? (_ => true)
             };
         }
@@ -244,17 +243,16 @@ namespace Zantetsu.Core.Tests
             return executionCoordinator.Execute(layout, InitId);
         }
 
-        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle first, out FakeHandle second)
+        private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle handle)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            first = new FakeHandle(pathSet.FirstLockPath, true, disposeLog) { Tag = "first" };
-            second = new FakeHandle(pathSet.SecondLockPath, true, disposeLog) { Tag = "second" };
-            return new CaptureRunLockLease(pathSet, first, second);
+            handle = new FakeHandle(pathSet.LockPath, true, disposeLog) { Tag = "handle" };
+            return new CaptureRunLockLease(pathSet, handle);
         }
 
-        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle first, out FakeHandle second)
+        private static CaptureRunInitializationSessionOwnershipLease MakeOwnershipLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle handle)
         {
-            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out first, out second);
+            CaptureRunLockLease lease = MakeLease(layout, disposeLog, out handle);
             return CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
         }
 
@@ -272,7 +270,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout,
             CaptureRunInitializationExecutionReceipt receipt)
         {
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
             return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence).Session;
@@ -350,7 +348,7 @@ namespace Zantetsu.Core.Tests
         public void SessionIssue_NullEvidence_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
@@ -363,7 +361,7 @@ namespace Zantetsu.Core.Tests
         public void OwnershipLease_DisposedLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockLease lease = MakeLease(layout, null, out _, out _);
+            CaptureRunLockLease lease = MakeLease(layout, null, out _);
             lease.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
@@ -376,7 +374,7 @@ namespace Zantetsu.Core.Tests
         public void SessionIssue_InvalidEvidence_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
 
             CaptureRunInitializationReadyEvidence invalid = (CaptureRunInitializationReadyEvidence)FormatterServices.GetUninitializedObject(
@@ -423,11 +421,11 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
 
-            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
             CaptureRunInitializationReadyEvidence evidenceA = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
-            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityB = MakeIdentityEvidence(ownerB);
             CaptureRunInitializationReadyEvidence evidenceB = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
@@ -451,11 +449,11 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
 
-            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
             CaptureRunInitializationReadyEvidence evidenceA = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
-            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityB = MakeIdentityEvidence(ownerB);
             CaptureRunInitializationReadyEvidence evidenceB = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
@@ -508,11 +506,11 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
 
-            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityA = MakeIdentityEvidence(ownerA);
             CaptureRunInitializationReadyEvidence evidenceA = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
-            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence identityB = MakeIdentityEvidence(ownerB);
             CaptureRunInitializationReadyEvidence evidenceB = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
 
@@ -534,8 +532,8 @@ namespace Zantetsu.Core.Tests
         public void SessionIssuance_ForeignOwnershipLease_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
-            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence evidenceA = MakeIdentityEvidence(ownerA);
 
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
@@ -566,7 +564,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void OwnershipLease_IsCreated_BeforeAndAfterDispose()
         {
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), null, out _);
 
             Assert.That(owner.IsCreated, Is.True);
             owner.Dispose();
@@ -574,45 +572,35 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void OwnershipLease_Dispose_ReleasesSecondThenFirst()
-        {
-            List<string> disposeLog = new List<string>();
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), disposeLog, out _, out _);
-
-            owner.Dispose();
-
-            Assert.That(disposeLog, Is.EqualTo(new[] { owner.LockPathSet.SecondLockPath, owner.LockPathSet.FirstLockPath }));
-        }
-
-        [Test]
         public void OwnershipLease_Dispose_Idempotent()
         {
             List<string> disposeLog = new List<string>();
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), disposeLog, out FakeHandle first, out FakeHandle second);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), disposeLog, out FakeHandle handle);
 
             owner.Dispose();
             owner.Dispose();
 
-            Assert.That(first.DisposeCount, Is.EqualTo(1));
-            Assert.That(second.DisposeCount, Is.EqualTo(1));
+            Assert.That(handle.DisposeCount, Is.EqualTo(1));
         }
 
         [Test]
         public void OwnershipLease_Dispose_RetryAfterFailure()
         {
             List<string> disposeLog = new List<string>();
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), disposeLog, out FakeHandle first, out FakeHandle second);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(MakeLayout(), disposeLog, out FakeHandle handle);
 
-            second.ThrowOnDispose = true;
-            Assert.Throws<AggregateException>(() => owner.Dispose());
-            Assert.That(owner.IsCreated, Is.False);
+            handle.ThrowOnDispose = true;
+            Assert.Throws<InvalidOperationException>(() => owner.Dispose());
 
-            second.ThrowOnDispose = false;
+            // A release that failed is not a release: the lease still owns the
+            // handle, so the caller can retry it.
+            Assert.That(owner.IsCreated, Is.True);
+
+            handle.ThrowOnDispose = false;
             owner.Dispose();
 
             Assert.That(owner.IsCreated, Is.False);
-            Assert.That(second.DisposeCount, Is.EqualTo(2));
-            Assert.That(first.DisposeCount, Is.EqualTo(1));
+            Assert.That(handle.DisposeCount, Is.EqualTo(2));
         }
 
         [Test]
@@ -622,7 +610,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
             CaptureRunInitializationSession session = MakeSession(layout, receipt);
-            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog, out _);
             string initIdBefore = receipt.RunInitializationId;
 
             owner.Dispose();
@@ -636,8 +624,8 @@ namespace Zantetsu.Core.Tests
         public void IdentityEvidence_IsIssuedFor_ForeignOwner_Rejected()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _, out _);
-            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerA = MakeOwnershipLease(layout, null, out _);
+            CaptureRunInitializationSessionOwnershipLease ownerB = MakeOwnershipLease(layout, null, out _);
             CaptureRunLockIdentityEvidence evidenceA = MakeIdentityEvidence(ownerA);
 
             Assert.That(evidenceA.IsIssuedFor(ownerA), Is.True);
@@ -782,7 +770,7 @@ namespace Zantetsu.Core.Tests
         // ---- Bootstrap normal order ----
 
         [Test]
-        public void Bootstrap_NormalOrder_And_SessionDisposeReleasesSecondThenFirst()
+        public void Bootstrap_NormalOrder_And_SessionDisposeReleasesTheLock()
         {
             List<string> log = new List<string>();
             List<string> disposeLog = new List<string>();
@@ -803,23 +791,19 @@ namespace Zantetsu.Core.Tests
             Assert.That(issue, Is.Not.Null);
             Assert.That(log, Is.EqualTo(new[]
             {
-                "Lock:first",
-                "Lock:second",
+                "Lock",
                 "Id:Create",
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready",
-                "Write:Final:Ready"
+                "Provision",
+                "Write:Initialization",
+                "Write:Ready"
             }));
             Assert.That(idSource.CallCount, Is.EqualTo(1));
-            Assert.That(provisioner.CallCount, Is.EqualTo(2));
-            Assert.That(writer.CallCount, Is.EqualTo(4));
+            Assert.That(provisioner.CallCount, Is.EqualTo(1));
+            Assert.That(writer.CallCount, Is.EqualTo(2));
             Assert.That(disposeLog, Is.Empty, "Handles must stay held until the session is disposed.");
 
             issue.OwnershipLease.Dispose();
-            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.SecondLockPath, pathSet.FirstLockPath }));
+            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.LockPath }));
         }
 
         // ---- Lock contention ----
@@ -847,34 +831,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(idSource.CallCount, Is.EqualTo(0));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
             Assert.That(writer.CallCount, Is.EqualTo(0));
-            Assert.That(log, Is.EqualTo(new[] { "Lock:first" }));
-        }
-
-        [Test]
-        public void Bootstrap_SecondLockContention_False_FirstReleased_NoIdNoExecution()
-        {
-            List<string> log = new List<string>();
-            List<string> disposeLog = new List<string>();
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-
-            FakeBackend backend = MakeBackend(log, disposeLog, pathSet, p => p == pathSet.FirstLockPath);
-            FakeIdSource idSource = new FakeIdSource(log);
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-
-            CaptureRunInitializationBootstrapCoordinator coordinator = MakeBootstrap(backend, idSource, provisioner, writer);
-
-            CaptureRunInitializationSessionIssue issue;
-            bool success = coordinator.TryInitialize(layout, out issue);
-
-            Assert.That(success, Is.False);
-            Assert.That(issue, Is.Null);
-            Assert.That(idSource.CallCount, Is.EqualTo(0));
-            Assert.That(provisioner.CallCount, Is.EqualTo(0));
-            Assert.That(writer.CallCount, Is.EqualTo(0));
-            Assert.That(log, Is.EqualTo(new[] { "Lock:first", "Lock:second" }));
-            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.FirstLockPath }));
+            Assert.That(log, Is.EqualTo(new[] { "Lock" }));
         }
 
         // ---- Invalid IDs ----
@@ -909,7 +866,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(idSource.CallCount, Is.EqualTo(1));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
             Assert.That(writer.CallCount, Is.EqualTo(0));
-            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.SecondLockPath, pathSet.FirstLockPath }));
+            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.LockPath }));
         }
 
         // ---- Failure boundaries ----
@@ -938,7 +895,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(provisioner.CallCount, Is.EqualTo(expectedProvisionCalls));
             Assert.That(writer.CallCount, Is.EqualTo(expectedWriteCalls));
             Assert.That(log, Is.EqualTo(expectedLog));
-            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.SecondLockPath, pathSet.FirstLockPath }));
+            Assert.That(disposeLog, Is.EqualTo(new[] { pathSet.LockPath }));
         }
 
         [Test]
@@ -956,7 +913,7 @@ namespace Zantetsu.Core.Tests
             idSource.Throw = injected;
 
             AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[] { "Lock:first", "Lock:second", "Id:Create" }, 0, 0);
+                new[] { "Lock", "Id:Create" }, 0, 0);
         }
 
         [Test]
@@ -974,7 +931,7 @@ namespace Zantetsu.Core.Tests
             provisioner.ThrowOnCall(1, injected);
 
             AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[] { "Lock:first", "Lock:second", "Id:Create", "Provision:Staging" }, 1, 0);
+                new[] { "Lock", "Id:Create", "Provision" }, 1, 0);
         }
 
         [Test]
@@ -992,29 +949,11 @@ namespace Zantetsu.Core.Tests
             writer.ThrowOnCall(1, injected);
 
             AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[] { "Lock:first", "Lock:second", "Id:Create", "Provision:Staging", "Write:Staging:Initialization" }, 1, 1);
+                new[] { "Lock", "Id:Create", "Provision", "Write:Initialization" }, 1, 1);
         }
 
         [Test]
-        public void Bootstrap_Failure_FinalProvision_CleansUpLeaseAndRethrows()
-        {
-            List<string> log = new List<string>();
-            List<string> disposeLog = new List<string>();
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeBackend backend = MakeBackend(log, disposeLog, pathSet);
-            FakeIdSource idSource = new FakeIdSource(log);
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("provision boom");
-            provisioner.ThrowOnCall(2, injected);
-
-            AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[] { "Lock:first", "Lock:second", "Id:Create", "Provision:Staging", "Write:Staging:Initialization", "Provision:Final" }, 2, 1);
-        }
-
-        [Test]
-        public void Bootstrap_Failure_FinalInitWrite_CleansUpLeaseAndRethrows()
+        public void Bootstrap_Failure_StagingReadyWrite_CleansUpLeaseAndRethrows()
         {
             List<string> log = new List<string>();
             List<string> disposeLog = new List<string>();
@@ -1030,58 +969,10 @@ namespace Zantetsu.Core.Tests
             AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
                 new[]
                 {
-                    "Lock:first", "Lock:second", "Id:Create",
-                    "Provision:Staging", "Write:Staging:Initialization",
-                    "Provision:Final", "Write:Final:Initialization"
-                }, 2, 2);
-        }
-
-        [Test]
-        public void Bootstrap_Failure_StagingReadyWrite_CleansUpLeaseAndRethrows()
-        {
-            List<string> log = new List<string>();
-            List<string> disposeLog = new List<string>();
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeBackend backend = MakeBackend(log, disposeLog, pathSet);
-            FakeIdSource idSource = new FakeIdSource(log);
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("write boom");
-            writer.ThrowOnCall(3, injected);
-
-            AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[]
-                {
-                    "Lock:first", "Lock:second", "Id:Create",
-                    "Provision:Staging", "Write:Staging:Initialization",
-                    "Provision:Final", "Write:Final:Initialization",
-                    "Write:Staging:Ready"
-                }, 2, 3);
-        }
-
-        [Test]
-        public void Bootstrap_Failure_FinalReadyWrite_CleansUpLeaseAndRethrows()
-        {
-            List<string> log = new List<string>();
-            List<string> disposeLog = new List<string>();
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeBackend backend = MakeBackend(log, disposeLog, pathSet);
-            FakeIdSource idSource = new FakeIdSource(log);
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("write boom");
-            writer.ThrowOnCall(4, injected);
-
-            AssertBootstrapFailure(backend, idSource, provisioner, writer, layout, pathSet, log, disposeLog, injected,
-                new[]
-                {
-                    "Lock:first", "Lock:second", "Id:Create",
-                    "Provision:Staging", "Write:Staging:Initialization",
-                    "Provision:Final", "Write:Final:Initialization",
-                    "Write:Staging:Ready", "Write:Final:Ready"
-                }, 2, 4);
+                    "Lock", "Id:Create",
+                    "Provision", "Write:Initialization",
+                    "Write:Ready"
+                }, 1, 2);
         }
 
         [Test]
@@ -1093,7 +984,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
 
             FakeBackend backend = MakeBackend(log, disposeLog, pathSet);
-            backend.ThrowOnDisposeSecond = true;
+            backend.ThrowOnHandleDispose = true;
             FakeIdSource idSource = new FakeIdSource(log);
             IOException injected = new IOException("id boom");
             idSource.Throw = injected;
@@ -1108,7 +999,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(issue, Is.Null);
             Assert.That(ex.InnerExceptions.Count, Is.EqualTo(2));
             Assert.That(ex.InnerExceptions[0], Is.SameAs(injected));
-            Assert.That(ex.InnerExceptions[1], Is.InstanceOf<AggregateException>());
+            Assert.That(ex.InnerExceptions[1], Is.InstanceOf<InvalidOperationException>());
         }
 
         // ---- Source inspection ----
