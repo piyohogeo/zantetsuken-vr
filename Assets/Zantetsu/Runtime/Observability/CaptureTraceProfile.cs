@@ -5,14 +5,13 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Immutable trace capture capacity configuration for one capture profile.
     /// It fixes the draft post-roll capacity, the pending in-flight draft cap,
-    /// and the per-run append-only draft cap so later factories can size their
-    /// queues and terminal reserve deterministically from a single profile.
+    /// and the per-run append-only draft cap, so that one profile settles them
+    /// deterministically for whoever reads it.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <see cref="PostRollCapacity"/> covers both the normal draft region and
-    /// the freeze terminal reserve. The terminal reserve is not stored here:
-    /// later factories derive it as <c>MaxInFlightDraftCount + 1</c>.
+    /// the freeze terminal reserve. The terminal reserve is not stored here.
     /// <see cref="MaxInFlightDraftCount"/> is the cap on the total pending
     /// draft count across every queue and worker, and
     /// <see cref="MaxDraftCountPerRun"/> is the cap on the total append-only
