@@ -31,7 +31,7 @@ namespace Zantetsu.Observability
         private readonly TraceIntegrityState _integrity;
         private readonly TracePagedHistoryView _view;
 
-        internal TracePagedRunResult(
+        private TracePagedRunResult(
             TraceFinalDrainResult finalDrain,
             long historyCommittedRecordCount,
             long historyDropCount,
@@ -71,51 +71,46 @@ namespace Zantetsu.Observability
         /// only good for as long as the history itself is.
         /// </summary>
         internal TracePagedHistoryView View => _view;
-    }
-
-    /// <summary>
-    /// Ends one Run's variable-length trace: takes the last records out of the
-    /// lanes, sees what the history came to, and says whether anything was
-    /// lost.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// It holds the drainer and the history it was given and nothing else. The
-    /// producers having stopped is the caller's promise, as it already was for
-    /// the final drain, and nothing here proves it again or keeps a registry,
-    /// lease, receipt, generation, latch, or state of its own to say so.
-    /// </para>
-    /// <para>
-    /// Finishing twice is refused by the drainer's own seal, which is where
-    /// that rule lives; this type adds no second one. A failure on the way
-    /// through - a destination that throws, a history already released - comes
-    /// back as it is, and no result is handed out: there is nothing to roll
-    /// back, nothing is retried, and nothing is written into the history to say
-    /// what happened, which would be a record needing room of its own.
-    /// </para>
-    /// </remarks>
-    internal sealed class TracePagedRunFinalizer
-    {
-        private readonly TraceLaneDrainer _drainer;
-        private readonly TracePagedHistory _history;
-
-        internal TracePagedRunFinalizer(TraceLaneDrainer drainer, TracePagedHistory history)
-        {
-            _drainer = drainer ?? throw new ArgumentNullException(nameof(drainer));
-            _history = history ?? throw new ArgumentNullException(nameof(history));
-        }
 
         /// <summary>
-        /// Drains what is left into the history, reads what the history came
-        /// to, and returns the Run's trace result.
+        /// Ends one Run's variable-length trace and says what it came to: the
+        /// last records come out of the lanes, the history is asked what it
+        /// holds, and the Run is judged.
         /// </summary>
-        internal TracePagedRunResult Finish()
+        /// <remarks>
+        /// <para>
+        /// The producers having stopped - every job finished, every worker
+        /// stopped, every writer done with - is the caller's promise, exactly
+        /// as it was for the final drain. Nothing here proves it again, owns
+        /// or releases the lanes or the history, or keeps anything of its own
+        /// between calls. Finishing twice is refused by the drainer's own
+        /// seal, which is where that rule lives.
+        /// </para>
+        /// <para>
+        /// A failure on the way through comes back as it is and no result is
+        /// made: nothing is rolled back, nothing is retried, and nothing is
+        /// written into the history to say what happened, which would itself
+        /// be a record needing room.
+        /// </para>
+        /// </remarks>
+        internal static TracePagedRunResult Finish(
+            TraceLaneDrainer drainer, TracePagedHistory history)
         {
-            TraceFinalDrainResult finalDrain = _drainer.DrainToEndAndSeal(_history);
+            if (drainer == null)
+            {
+                throw new ArgumentNullException(nameof(drainer));
+            }
 
-            long committed = _history.CommittedRecordCount;
-            long dropped = _history.DropCount;
-            TracePagedHistoryView view = _history.CreateView();
+            if (history == null)
+            {
+                throw new ArgumentNullException(nameof(history));
+            }
+
+            TraceFinalDrainResult finalDrain = drainer.DrainToEndAndSeal(history);
+
+            long committed = history.CommittedRecordCount;
+            long dropped = history.DropCount;
+            TracePagedHistoryView view = history.CreateView();
 
             // A Run is complete only if nothing was lost on either side: a
             // producer the lane had no room for, or a record the history had no

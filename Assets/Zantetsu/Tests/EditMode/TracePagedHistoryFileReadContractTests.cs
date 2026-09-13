@@ -407,7 +407,7 @@ namespace Zantetsu.Core.Tests
         {
             private readonly TraceLaneSet _lanes;
             private readonly TracePagedHistory _history;
-            private readonly TracePagedRunFinalizer _finalizer;
+            private readonly TraceLaneDrainer _drainer;
 
             internal Run(int laneIndexCapacity, int pageSize, int pageCount)
             {
@@ -426,7 +426,7 @@ namespace Zantetsu.Core.Tests
 
                 _lanes = new TraceLaneSet(profile);
                 _history = new TracePagedHistory(profile);
-                _finalizer = new TracePagedRunFinalizer(new TraceLaneDrainer(_lanes), _history);
+                _drainer = new TraceLaneDrainer(_lanes);
             }
 
             internal void Write(int ordinal, TraceEventType kind, params byte[] payload)
@@ -447,7 +447,7 @@ namespace Zantetsu.Core.Tests
             {
                 using (MemoryStream stream = new MemoryStream())
                 {
-                    TracePagedHistoryFileWriter.Write(stream, _finalizer.Finish());
+                    TracePagedHistoryFileWriter.Write(stream, TracePagedRunResult.Finish(_drainer, _history));
                     return stream.ToArray();
                 }
             }

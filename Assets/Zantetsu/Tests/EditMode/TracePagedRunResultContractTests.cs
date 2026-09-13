@@ -17,7 +17,7 @@ namespace Zantetsu.Core.Tests
     /// result is read as a value. The producers having stopped is the same
     /// promise the final drain already relied on.
     /// </remarks>
-    public unsafe class TracePagedRunFinalizerContractTests
+    public unsafe class TracePagedRunResultContractTests
     {
         private const TraceEventType KindA = TraceEventType.TaskScheduled;
         private const TraceEventType KindB = TraceEventType.TaskStarted;
@@ -39,7 +39,7 @@ namespace Zantetsu.Core.Tests
                 Write(lanes.CreateWriter(0), KindA, 1);
                 Write(lanes.CreateWriter(1), KindB, 2);
 
-                TracePagedRunResult result = Finalizer(lanes, history).Finish();
+                TracePagedRunResult result = TracePagedRunResult.Finish(Drainer(lanes), history);
 
                 Assert.That(result.Integrity, Is.EqualTo(TraceIntegrityState.Complete));
                 Assert.That(result.FinalDrain.RecordCount, Is.EqualTo(2L));
@@ -62,7 +62,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(TryWrite(writer, KindA, 1), Is.True);
                 Assert.That(TryWrite(writer, KindA, 2), Is.False, "the lane is full");
 
-                TracePagedRunResult result = Finalizer(lanes, history).Finish();
+                TracePagedRunResult result = TracePagedRunResult.Finish(Drainer(lanes), history);
 
                 Assert.That(result.Integrity, Is.EqualTo(TraceIntegrityState.Incomplete));
                 Assert.That(result.FinalDrain.DropCount, Is.EqualTo(1L));
@@ -88,7 +88,7 @@ namespace Zantetsu.Core.Tests
                     Assert.That(TryWrite(writer, KindA, (byte)record), Is.True);
                 }
 
-                TracePagedRunResult result = Finalizer(lanes, history).Finish();
+                TracePagedRunResult result = TracePagedRunResult.Finish(Drainer(lanes), history);
 
                 Assert.That(result.Integrity, Is.EqualTo(TraceIntegrityState.Incomplete));
                 Assert.That(
@@ -125,7 +125,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(drainer.Drain(history), Is.EqualTo(NormalDrainMaxRecordCount));
 
                 TracePagedRunResult result =
-                    new TracePagedRunFinalizer(drainer, history).Finish();
+                    TracePagedRunResult.Finish(drainer, history);
 
                 Assert.That(
                     result.FinalDrain.RecordCount, Is.EqualTo(4L),
@@ -150,7 +150,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(TryWrite(second, KindB, 3), Is.True);
                 Assert.That(TryWrite(first, KindA, 4, 5), Is.True);
 
-                TracePagedRunResult result = Finalizer(lanes, history).Finish();
+                TracePagedRunResult result = TracePagedRunResult.Finish(Drainer(lanes), history);
 
                 ReadRecords records = new ReadRecords();
                 result.View.VisitCommittedPages(records);
@@ -177,7 +177,7 @@ namespace Zantetsu.Core.Tests
                     Assert.That(TryWrite(writer, KindA, (byte)record), Is.True);
                 }
 
-                TracePagedRunResult result = Finalizer(lanes, history).Finish();
+                TracePagedRunResult result = TracePagedRunResult.Finish(Drainer(lanes), history);
 
                 Assert.That(
                     lanes.TryPeek(0, out TraceLaneIndexEntry _, out byte* _), Is.False,
@@ -208,11 +208,12 @@ namespace Zantetsu.Core.Tests
             {
                 Write(lanes.CreateWriter(0), KindA, 1);
 
-                TracePagedRunFinalizer finalizer = Finalizer(lanes, history);
-                TracePagedRunResult result = finalizer.Finish();
+                TraceLaneDrainer drainer = Drainer(lanes);
+                TracePagedRunResult result = TracePagedRunResult.Finish(drainer, history);
                 Assert.That(result.HistoryCommittedRecordCount, Is.EqualTo(1L));
 
-                Assert.Throws<InvalidOperationException>(() => finalizer.Finish());
+                Assert.Throws<InvalidOperationException>(
+                    () => TracePagedRunResult.Finish(drainer, history));
                 Assert.That(
                     history.CommittedRecordCount, Is.EqualTo(1L),
                     "a refused second finish records nothing more");
@@ -232,8 +233,8 @@ namespace Zantetsu.Core.Tests
                 // calling code, and the failure it raises is what comes back.
                 history.Dispose();
 
-                TracePagedRunFinalizer finalizer = Finalizer(lanes, history);
-                Assert.Throws<ObjectDisposedException>(() => finalizer.Finish());
+                Assert.Throws<ObjectDisposedException>(
+                    () => TracePagedRunResult.Finish(Drainer(lanes), history));
 
                 // Nothing was handed over, so the record is still the lane's
                 // and the drainer was never sealed.
@@ -244,16 +245,16 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void AFinalizerNeedsBothADrainerAndAHistory()
+        public void FinishingNeedsBothADrainerAndAHistory()
         {
             TraceLaneSetProfile profile = Profile(laneIndexCapacity: 8, pageSize: 128, pageCount: 4);
             using (TraceLaneSet lanes = new TraceLaneSet(profile))
             using (TracePagedHistory history = new TracePagedHistory(profile))
             {
                 Assert.Throws<ArgumentNullException>(
-                    () => new TracePagedRunFinalizer(null, history));
+                    () => TracePagedRunResult.Finish(null, history));
                 Assert.Throws<ArgumentNullException>(
-                    () => new TracePagedRunFinalizer(new TraceLaneDrainer(lanes), null));
+                    () => TracePagedRunResult.Finish(new TraceLaneDrainer(lanes), null));
             }
         }
 
@@ -278,10 +279,9 @@ namespace Zantetsu.Core.Tests
                 });
         }
 
-        private static TracePagedRunFinalizer Finalizer(
-            TraceLaneSet lanes, TracePagedHistory history)
+        private static TraceLaneDrainer Drainer(TraceLaneSet lanes)
         {
-            return new TracePagedRunFinalizer(new TraceLaneDrainer(lanes), history);
+            return new TraceLaneDrainer(lanes);
         }
 
         private static void Write(TraceLaneWriter writer, TraceEventType kind, params byte[] payload)

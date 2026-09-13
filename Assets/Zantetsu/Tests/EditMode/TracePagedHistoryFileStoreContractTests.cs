@@ -321,7 +321,7 @@ namespace Zantetsu.Core.Tests
         {
             private readonly TraceLaneSet _lanes;
             private readonly TracePagedHistory _history;
-            private readonly TracePagedRunFinalizer _finalizer;
+            private readonly TraceLaneDrainer _drainer;
 
             internal Run(int laneIndexCapacity, int pageSize, int pageCount)
             {
@@ -340,7 +340,7 @@ namespace Zantetsu.Core.Tests
 
                 _lanes = new TraceLaneSet(profile);
                 _history = new TracePagedHistory(profile);
-                _finalizer = new TracePagedRunFinalizer(new TraceLaneDrainer(_lanes), _history);
+                _drainer = new TraceLaneDrainer(_lanes);
             }
 
             internal bool HistoryIsLive => _history.AllocatedBytes > 0L;
@@ -363,7 +363,7 @@ namespace Zantetsu.Core.Tests
 
             internal TracePagedRunResult Finish()
             {
-                return _finalizer.Finish();
+                return TracePagedRunResult.Finish(_drainer, _history);
             }
 
             /// <summary>
