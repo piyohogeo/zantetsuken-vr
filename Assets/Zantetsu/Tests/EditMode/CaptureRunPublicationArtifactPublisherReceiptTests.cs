@@ -331,7 +331,7 @@ namespace Zantetsu.Core.Tests
             plan = new CaptureRunPublicationArtifactRecoveryActionPlan(
                 CaptureRunPublicationArtifactRecoveryClassifier.Classify(
                     MakeArtifactSnapshot(new FakeArtifactInspector(), inspectionOperation, EvMatchesExpected, 100, new[] { observation })));
-            return CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            return new CaptureRunPublicationArtifactPublishOperation(plan, 0);
         }
 
         private static string LocateSource(string relativePath)

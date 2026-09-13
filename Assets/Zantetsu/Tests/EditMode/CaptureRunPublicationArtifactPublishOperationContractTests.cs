@@ -10,7 +10,7 @@ using Zantetsu.Observability;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureRunPublicationArtifactPublishOperationFactoryTests
+    public class CaptureRunPublicationArtifactPublishOperationContractTests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
@@ -433,7 +433,7 @@ namespace Zantetsu.Core.Tests
                 return relativePath;
             }
 
-            string dir = Path.GetDirectoryName(typeof(CaptureRunPublicationArtifactPublishOperationFactoryTests).Assembly.Location);
+            string dir = Path.GetDirectoryName(typeof(CaptureRunPublicationArtifactPublishOperationContractTests).Assembly.Location);
             while (dir != null)
             {
                 string candidate = Path.Combine(dir, relativePath);
@@ -551,7 +551,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _);
             CaptureRunPublicationArtifactPathSet pathSet = operation.GetArtifactPaths(0);
 
-            CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation publish = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
 
             Assert.That(publish.ActionPlan, Is.SameAs(plan));
             Assert.That(publish.StepIndex, Is.EqualTo(0));
@@ -577,7 +577,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishSidecarPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _);
             CaptureRunPublicationArtifactPathSet pathSet = operation.GetArtifactPaths(0);
 
-            CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation publish = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
 
             Assert.That(publish.ArtifactKind, Is.EqualTo(Sidecar));
             Assert.That(publish.SourcePath, Is.EqualTo(pathSet.StagingSidecarPath));
@@ -605,7 +605,7 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPlan(operation, new[] { e0, e1 });
 
-            CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation publish = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
 
             Assert.That(publish.StepIndex, Is.EqualTo(0));
             Assert.That(publish.EntryIndex, Is.EqualTo(1));
@@ -619,39 +619,39 @@ namespace Zantetsu.Core.Tests
         // ---- Rejection ----
 
         [Test]
-        public void Factory_NullPlan_Rejected()
+        public void Construction_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunPublicationArtifactPublishOperationFactory.Create(null, 0));
+                () => new CaptureRunPublicationArtifactPublishOperation(null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_InvalidPlan_Rejected()
+        public void Construction_InvalidPlan_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = (CaptureRunPublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunPublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0));
+                () => new CaptureRunPublicationArtifactPublishOperation(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_StepIndexOutOfRange_Rejected()
+        public void Construction_StepIndexOutOfRange_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
 
             foreach (int bad in new[] { -1, 2, int.MinValue, int.MaxValue })
             {
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, bad));
+                    () => new CaptureRunPublicationArtifactPublishOperation(plan, bad));
                 Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
             }
         }
 
         [Test]
-        public void Factory_NonPublishStep_Rejected()
+        public void Construction_NonPublishStep_Rejected()
         {
             // A CommitCaptureIndex plan's only step is a routing step.
             CaptureRunPublicationArtifactInspectionOperation operation = MakeOperation();
@@ -662,26 +662,26 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPlan(operation, new[] { observation });
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0));
+                () => new CaptureRunPublicationArtifactPublishOperation(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_ReinspectStep_Rejected()
+        public void Construction_ReinspectStep_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             // The last step of a publish plan is ReinspectArtifacts.
             int reinspectIndex = plan.Count - 1;
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, reinspectIndex));
+                () => new CaptureRunPublicationArtifactPublishOperation(plan, reinspectIndex));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         // ---- Precondition ----
 
         [Test]
-        public void Factory_StagingNotMatches_Rejected()
+        public void Construction_StagingNotMatches_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out CaptureRunPublicationArtifactEntryObservation observation);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
@@ -689,12 +689,12 @@ namespace Zantetsu.Core.Tests
             SetField(observation, "_stagingPngStatus", EvAbsent);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactPublishOperation(plan, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactPublishOperation(plan, token, 0));
         }
 
         [Test]
-        public void Factory_FinalNotAbsent_Rejected()
+        public void Construction_FinalNotAbsent_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out CaptureRunPublicationArtifactEntryObservation observation);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
@@ -703,53 +703,24 @@ namespace Zantetsu.Core.Tests
             SetField(observation, "_finalPngProbedByteCount", PngBytes);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
-        }
-
-        // ---- Correlation ----
-
-        [Test]
-        public void Factory_ForeignDecisionPathSet_Rejected()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            CaptureRunPublicationArtifactPathSet foreignPaths = MakeOperation().GetArtifactPaths(0);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunPublicationArtifactPublishOperation(plan, token, 0, foreignPaths));
-            Assert.That(ex.ParamName, Is.EqualTo("artifactPaths"));
+            Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactPublishOperation(plan, 0));
+            Assert.Throws<ArgumentException>(() => new CaptureRunPublicationArtifactPublishOperation(plan, token, 0));
         }
 
         [Test]
-        public void Factory_StepObservationEntryIndexMismatch_Rejected()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            CaptureRunPublicationArtifactPathSet pathSet = operation.GetArtifactPaths(0);
-            SetField(pathSet, "_entryIndex", 1);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunPublicationArtifactPublishOperation(plan, token, 0, pathSet));
-            Assert.That(ex.ParamName, Is.EqualTo("artifactPaths"));
-        }
-
-        [Test]
-        public void Factory_CrossToken_Rejected()
+        public void IndexLocalConstruction_CrossToken_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan planA = BuildPublishPngPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan planB = BuildPublishPngPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(planB, tokenA, 0));
+                new CaptureRunPublicationArtifactPublishOperation(planB, tokenA, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
         [Test]
-        public void Factory_StaleToken_Rejected()
+        public void IndexLocalConstruction_StaleToken_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(
                 out CaptureRunPublicationArtifactInspectionOperation operation,
@@ -760,7 +731,7 @@ namespace Zantetsu.Core.Tests
             owner.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+                new CaptureRunPublicationArtifactPublishOperation(plan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
@@ -772,7 +743,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out CaptureRunPublicationArtifactInspectionOperation operation, out CaptureRunPublicationArtifactEntryObservation observation);
             CaptureRunPublicationArtifactPathSet pathSet = operation.GetArtifactPaths(0);
 
-            CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation publish = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
             Assert.That(publish.IsValid, Is.True);
 
             // Null plan.
@@ -794,7 +765,7 @@ namespace Zantetsu.Core.Tests
 
             // Forged plan entry hash invalidates the whole plan and any operation over it.
             CaptureRunPublicationArtifactRecoveryActionPlan plan2 = BuildPublishPngPlan(out CaptureRunPublicationArtifactInspectionOperation operation2, out _);
-            CaptureRunPublicationArtifactPublishOperation publish2 = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan2, 0);
+            CaptureRunPublicationArtifactPublishOperation publish2 = new CaptureRunPublicationArtifactPublishOperation(plan2, 0);
             Assert.That(publish2.IsValid, Is.True);
             SetField(operation2.GetArtifactPaths(0).Entry, "_pngContentSha256", "nothex");
             Assert.That(plan2.IsValid, Is.False);
@@ -806,8 +777,8 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
 
-            CaptureRunPublicationArtifactPublishOperation first = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
-            CaptureRunPublicationArtifactPublishOperation second = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation first = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation second = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
 
             Assert.That(ReferenceEquals(first, second), Is.False);
             Assert.That(first.ActionPlan, Is.SameAs(plan));
@@ -831,9 +802,9 @@ namespace Zantetsu.Core.Tests
                 finalSidecarStatus: EvMatchesExpected, finalSidecarCount: SidecarBytes);
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPlan(operation, new[] { observation });
 
-            CaptureRunPublicationArtifactPublishOperation publish = CaptureRunPublicationArtifactPublishOperationFactory.Create(plan, 0);
+            CaptureRunPublicationArtifactPublishOperation publish = new CaptureRunPublicationArtifactPublishOperation(plan, 0);
 
-            Assert.That(disposeLog, Is.Empty, "Factory must not dispose the owner.");
+            Assert.That(disposeLog, Is.Empty, "Construction must not dispose the owner.");
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(operation.LockIdentityEvidence.IsIssuedFor(owner), Is.True);
             Assert.That(plan.IsValid, Is.True);
@@ -874,19 +845,9 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_IsStaticWithNoState()
-        {
-            Type type = typeof(CaptureRunPublicationArtifactPublishOperationFactory);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseExposure()
         {
-            foreach (Type type in new[] { typeof(CaptureRunPublicationArtifactPublishOperation), typeof(CaptureRunPublicationArtifactPublishOperationFactory) })
+            foreach (Type type in new[] { typeof(CaptureRunPublicationArtifactPublishOperation) })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
                 {
@@ -920,7 +881,7 @@ namespace Zantetsu.Core.Tests
         // ---- Linearity / source ----
 
         [Test]
-        public void Factory_LargePlan_IndexLocalLinear()
+        public void IndexLocalConstruction_LargePlan_Linear()
         {
             int count = 500;
             PngJsonCapturePublicationPlan planEntries = MakePlan(entries: MakeEntries(count));
@@ -940,19 +901,19 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPlan(operation, entries);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
 
-            CaptureRunPublicationArtifactPublishOperation first = CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+            CaptureRunPublicationArtifactPublishOperation first = new CaptureRunPublicationArtifactPublishOperation(plan, token, 0);
             Assert.That(first.EntryIndex, Is.EqualTo(0));
             Assert.That(first.ArtifactKind, Is.EqualTo(Png));
 
-            CaptureRunPublicationArtifactPublishOperation last = CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 2 * count - 1);
+            CaptureRunPublicationArtifactPublishOperation last = new CaptureRunPublicationArtifactPublishOperation(plan, token, 2 * count - 1);
             Assert.That(last.EntryIndex, Is.EqualTo(count - 1));
             Assert.That(last.ArtifactKind, Is.EqualTo(Sidecar));
         }
 
         [Test]
-        public void Factory_Source_NoForbiddenDependencies()
+        public void Construction_Source_NoForbiddenDependencies()
         {
-            string source = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperationFactory.cs"));
+            string source = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperation.cs"));
 
             Assert.That(source, Does.Not.Contain("List<"));
             Assert.That(source, Does.Not.Contain("ToArray"));
@@ -967,33 +928,17 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("SHA"));
             Assert.That(source, Does.Not.Contain("Serialize"));
             Assert.That(source, Does.Not.Contain("Deserialize"));
-
-            // The index-local path must not re-validate the whole plan.
-            int indexLocal = source.IndexOf("CreateIndexLocal", StringComparison.Ordinal);
-            Assert.That(indexLocal, Is.GreaterThan(0));
-            Assert.That(source.Substring(indexLocal), Does.Not.Contain("actionPlan.IsValid"));
-
-            // The operation file must not recompute hashes or touch the filesystem.
-            string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperation.cs"));
-            Assert.That(operationSource, Does.Not.Contain("File."));
-            Assert.That(operationSource, Does.Not.Contain("Directory."));
-            Assert.That(operationSource, Does.Not.Contain("SHA"));
-            Assert.That(operationSource, Does.Not.Contain("System.Linq"));
-            Assert.That(operationSource, Does.Not.Contain("List<"));
         }
 
         [Test]
-        public void Factory_Create_SingleFullValidation()
+        public void Construction_SingleFullValidation()
         {
-            string factorySource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperationFactory.cs"));
             string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactPublishOperation.cs"));
 
             // Full plan validation must happen only inside AcquireValidationToken;
-            // the normal entry and normal constructor must delegate instead of
-            // re-checking the plan's validity themselves.
-            Assert.That(factorySource, Does.Not.Contain("!actionPlan.IsValid"));
+            // the normal constructor must delegate instead of re-checking the
+            // plan's validity itself.
             Assert.That(operationSource, Does.Not.Contain("!actionPlan.IsValid"));
-            Assert.That(factorySource, Does.Contain("AcquireValidationToken"));
             Assert.That(operationSource, Does.Contain("AcquireValidationToken"));
         }
     }

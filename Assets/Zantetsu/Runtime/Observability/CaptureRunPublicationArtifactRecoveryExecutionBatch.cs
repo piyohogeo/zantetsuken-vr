@@ -66,7 +66,7 @@ namespace Zantetsu.Observability
                             actionPlan,
                             token,
                             i,
-                            CaptureRunPublicationArtifactPublishOperationFactory.CreateIndexLocal(actionPlan, token, i),
+                            new CaptureRunPublicationArtifactPublishOperation(actionPlan, token, i),
                             null);
                         break;
 

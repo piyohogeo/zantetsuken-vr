@@ -4,7 +4,8 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable, filesystem-free publication operation for one publish step:
-    /// the action plan, the step index, and the resolved artifact path set.
+    /// the action plan and the step index. The artifact path set is derived
+    /// from the authoritative plan's own snapshot observation.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -32,17 +33,15 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationArtifactPublishOperation(
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan,
-            int stepIndex,
-            CaptureRunPublicationArtifactPathSet artifactPaths)
-            : this(actionPlan, ValidateAndIssueToken(actionPlan), stepIndex, artifactPaths)
+            int stepIndex)
+            : this(actionPlan, ValidateAndIssueToken(actionPlan), stepIndex)
         {
         }
 
         internal CaptureRunPublicationArtifactPublishOperation(
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan,
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token,
-            int stepIndex,
-            CaptureRunPublicationArtifactPathSet artifactPaths)
+            int stepIndex)
         {
             if (actionPlan == null)
             {
@@ -64,11 +63,6 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(stepIndex), stepIndex, "Step index must be within the step count.");
             }
 
-            if (artifactPaths == null)
-            {
-                throw new ArgumentNullException(nameof(artifactPaths));
-            }
-
             CaptureRunPublicationArtifactRecoveryStep step = actionPlan.GetStep(stepIndex);
             if (step == null || !step.IsValid || step.Action != CaptureRunPublicationArtifactRecoveryAction.PublishArtifact)
             {
@@ -84,24 +78,20 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(stepIndex), entryIndex, "Publish entry index must be within the authoritative plan entry count.");
             }
 
-            if (!ReferenceEquals(artifactPaths.Decision, actionPlan.Decision.PublicationDecision) || artifactPaths.EntryIndex != entryIndex)
-            {
-                throw new ArgumentException("Artifact path set must belong to the plan's decision and entry index.", nameof(artifactPaths));
-            }
-
-            if (!artifactPaths.IsValidIndexLocal())
-            {
-                throw new ArgumentException("Artifact path set must be valid.", nameof(artifactPaths));
-            }
-
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = actionPlan.Decision.Snapshot;
             CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(entryIndex);
-            if (observation == null || !ReferenceEquals(observation.ArtifactPaths, artifactPaths))
+            if (observation == null)
             {
-                throw new ArgumentException("Artifact path set must be the observation's path set for the target entry.", nameof(artifactPaths));
+                throw new ArgumentException("Target entry must have an observation.", nameof(stepIndex));
             }
 
-            RequirePublishable(observation, kind, artifactPaths, nameof(artifactPaths));
+            CaptureRunPublicationArtifactPathSet artifactPaths = observation.ArtifactPaths;
+            if (artifactPaths == null || !artifactPaths.IsValidIndexLocal())
+            {
+                throw new ArgumentException("Observed artifact path set must be valid.", nameof(stepIndex));
+            }
+
+            RequirePublishable(observation, kind, artifactPaths, nameof(stepIndex));
 
             _actionPlan = actionPlan;
             _stepIndex = stepIndex;
@@ -130,7 +120,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactEntryObservation observation,
             CaptureRunPublicationArtifactKind kind,
             CaptureRunPublicationArtifactPathSet artifactPaths,
-            string artifactPathsParamName)
+            string stepIndexParamName)
         {
             PngJsonCapturePublicationPlanEntry entry = artifactPaths.Entry;
 
@@ -139,17 +129,17 @@ namespace Zantetsu.Observability
                 if (observation.StagingPngStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
                     || observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.Absent)
                 {
-                    throw new ArgumentException("PNG must have a matching staging source and an absent final artifact.", artifactPathsParamName);
+                    throw new ArgumentException("PNG must have a matching staging source and an absent final artifact.", stepIndexParamName);
                 }
 
                 if (string.Equals(artifactPaths.StagingPngPath, artifactPaths.FinalPngPath, StringComparison.Ordinal))
                 {
-                    throw new ArgumentException("PNG source and destination paths must differ.", artifactPathsParamName);
+                    throw new ArgumentException("PNG source and destination paths must differ.", stepIndexParamName);
                 }
 
                 if (entry.PngByteLength <= 0 || entry.PngContentSha256 == null)
                 {
-                    throw new ArgumentException("PNG expected byte count and hash must be present.", artifactPathsParamName);
+                    throw new ArgumentException("PNG expected byte count and hash must be present.", stepIndexParamName);
                 }
 
                 return;
@@ -158,17 +148,17 @@ namespace Zantetsu.Observability
             if (observation.StagingSidecarStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
                 || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.Absent)
             {
-                throw new ArgumentException("Sidecar must have a matching staging source and an absent final artifact.", artifactPathsParamName);
+                throw new ArgumentException("Sidecar must have a matching staging source and an absent final artifact.", stepIndexParamName);
             }
 
             if (string.Equals(artifactPaths.StagingSidecarPath, artifactPaths.FinalSidecarPath, StringComparison.Ordinal))
             {
-                throw new ArgumentException("Sidecar source and destination paths must differ.", artifactPathsParamName);
+                throw new ArgumentException("Sidecar source and destination paths must differ.", stepIndexParamName);
             }
 
             if (entry.SidecarByteLength <= 0 || entry.SidecarContentSha256 == null)
             {
-                throw new ArgumentException("Sidecar expected byte count and hash must be present.", artifactPathsParamName);
+                throw new ArgumentException("Sidecar expected byte count and hash must be present.", stepIndexParamName);
             }
         }
 
