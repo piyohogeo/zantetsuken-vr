@@ -826,7 +826,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, token);
@@ -856,7 +856,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => PngJsonCaptureRunCaptureIndexCommitReceipt.Create(null, commit, token));
@@ -880,7 +880,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => PngJsonCaptureRunCaptureIndexCommitReceipt.Create(new FakeCommitter(), commit, null));
@@ -897,7 +897,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenB = planB.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(planA, tokenA, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(planA, tokenA, 0);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => PngJsonCaptureRunCaptureIndexCommitReceipt.Create(new FakeCommitter(), commit, tokenB));
@@ -911,7 +911,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             owner.Dispose();
             _owners.Remove(owner);
@@ -927,7 +927,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             byte[] tampered = commit.GetCanonicalBytes();
             tampered[0] = (byte)(tampered[0] ^ 0xFF);
@@ -946,9 +946,9 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation first =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
             PngJsonCaptureRunCaptureIndexCommitOperation second =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(first, token);
@@ -965,7 +965,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken first = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken second = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, first, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, first, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, first);
@@ -981,7 +981,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             FakeCommitter foreign = new FakeCommitter();
@@ -1000,7 +1000,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, token);
@@ -1021,7 +1021,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
             FakeCommitter committer = new FakeCommitter();
@@ -1044,7 +1044,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, token);
@@ -1063,7 +1063,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, token);
@@ -1084,7 +1084,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             FakeCommitter committer = new FakeCommitter();
             PngJsonCaptureRunCaptureIndexCommitReceipt receipt = committer.Commit(commit, token);
@@ -1104,7 +1104,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.Throws<InvalidOperationException>(() => new ThrowingCommitter().Commit(commit, token));
         }

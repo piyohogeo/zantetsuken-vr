@@ -953,7 +953,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(batch.GetStep(0).CaptureIndexCommitOperation, Is.Not.Null);
 
             PngJsonCaptureRunCaptureIndexCommitOperation expected =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
             PngJsonCaptureRunCaptureIndexCommitOperation actual = batch.GetStep(0).CaptureIndexCommitOperation;
 
             Assert.That(actual.Mode, Is.EqualTo(expected.Mode));
@@ -1303,7 +1303,7 @@ namespace Zantetsu.Core.Tests
 
             // A fresh instance built for the same step is equivalent.
             PngJsonCaptureRunCaptureIndexCommitOperation other =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
             Assert.That(ReferenceEquals(preparedStep.CaptureIndexCommitOperation, other), Is.False);
             SetField(preparedStep, "_captureIndexCommitOperation", other);
 

@@ -96,7 +96,7 @@ namespace Zantetsu.Observability
                     break;
 
                 case CaptureRunPublicationArtifactRecoveryAction.CommitCaptureIndex:
-                    captureIndexCommitOperation = PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(
+                    captureIndexCommitOperation = PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(
                         actionPlan, token, stepIndex);
                     break;
 

@@ -823,73 +823,73 @@ namespace Zantetsu.Core.Tests
         // ---- Factory rejection ----
 
         [Test]
-        public void Factory_NullPlan_Rejected()
+        public void Create_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(null, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_InvalidPlan_Rejected()
+        public void Create_InvalidPlan_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = (PngJsonCapturePublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_NullToken_Rejected()
+        public void Create_NullToken_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, null, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
         [Test]
-        public void Factory_StepIndexOutOfRange_Rejected()
+        public void Create_StepIndexOutOfRange_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
 
             foreach (int bad in new[] { -1, 1, int.MinValue, int.MaxValue })
             {
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, bad));
+                    () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, bad));
                 Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
             }
         }
 
         [Test]
-        public void Factory_PublishStep_Rejected()
+        public void Create_PublishStep_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
                 MakeRecoveryAuthority(), EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_ReinspectStep_Rejected()
+        public void Create_ReinspectStep_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
                 MakeRecoveryAuthority(), EvMatchesExpected, 1, EvMatchesExpected, EvAbsent, EvAbsent, EvMatchesExpected);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 1));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 1));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_StopStep_Rejected()
+        public void Create_StopStep_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
                 MakeRecoveryAuthority(), EvAbsent, 0, EvAbsent, EvAbsent, EvAbsent, EvAbsent);
@@ -897,12 +897,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.Count, Is.EqualTo(1));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_CaptureCompleteStep_Rejected()
+        public void Create_CaptureCompleteStep_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
                 MakeRecoveryAuthority(indexAuthoritative: true), EvMatchesExpected, 1, EvAbsent, EvAbsent, EvMatchesExpected, EvMatchesExpected);
@@ -910,24 +910,24 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.Count, Is.EqualTo(1));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_CrossPlanToken_Rejected()
+        public void Create_CrossPlanToken_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan planA = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan planB = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(planB, tokenA, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(planB, tokenA, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_StaleToken_Rejected()
+        public void Create_StaleToken_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(out CaptureRunInitializationSessionOwnershipLease owner);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(authority);
@@ -937,7 +937,7 @@ namespace Zantetsu.Core.Tests
             _owners.Remove(owner);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
@@ -1192,7 +1192,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -1206,7 +1206,7 @@ namespace Zantetsu.Core.Tests
                 out _, plan, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(actionPlan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -1219,7 +1219,7 @@ namespace Zantetsu.Core.Tests
                 out _, MakePlan(), MakeDoc(CaptureIndexTemporary, DocInvalid, 10));
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(actionPlan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -1245,7 +1245,7 @@ namespace Zantetsu.Core.Tests
                 SetField(publicationSnapshot, "_captureIndex", index);
 
                 ArgumentException ex = Assert.Throws<ArgumentException>(
-                    () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0));
+                    () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(actionPlan, token, 0));
                 Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
             }
         }
@@ -1262,7 +1262,7 @@ namespace Zantetsu.Core.Tests
             SetField(actionPlan.Authority.RecoveryDecision.Snapshot.CaptureIndexTemporary, "_plan", MakePlan(entries: new[] { MakeEntry(11) }));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.Create(actionPlan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
@@ -1274,7 +1274,7 @@ namespace Zantetsu.Core.Tests
                 out _, plan, MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan));
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(actionPlan, token, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
 
@@ -1300,7 +1300,7 @@ namespace Zantetsu.Core.Tests
             SetField(tmp, "_probedByteCount", 1001);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(actionPlan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
@@ -1314,7 +1314,7 @@ namespace Zantetsu.Core.Tests
             SetField(tmp, "_status", (CaptureRunPublicationDocumentObservationStatus)99);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0));
+                () => PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(actionPlan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
@@ -1345,7 +1345,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(authority.Kind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
             Assert.That(commit.AuthorityKind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
@@ -1397,7 +1397,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             Assert.That(commit.ActionPlan, Is.SameAs(plan));
             Assert.That(commit.StepIndex, Is.EqualTo(0));
@@ -1421,7 +1421,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             Assert.That(commit.TemporaryPath, Is.EqualTo(paths.CaptureIndexTemporaryPath));
             Assert.That(commit.FinalPath, Is.EqualTo(paths.CaptureIndexPath));
@@ -1436,7 +1436,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(commit.AuthoritativePlan);
             Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
@@ -1448,7 +1448,7 @@ namespace Zantetsu.Core.Tests
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.Create(plan, 0);
 
             byte[] first = commit.GetCanonicalBytes();
             byte[] second = commit.GetCanonicalBytes();
@@ -1471,7 +1471,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildFreshCommitPlan(out PngJsonCapturePublicationArtifactInspectionAuthority authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(commit.IsValidIndexLocal(token), Is.True);
 
@@ -1487,7 +1487,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             PngJsonCapturePublicationArtifactRecoveryDecision other = BuildRecoveryCommitPlan(out _).Decision;
             SetField(plan, "_decision", other);
@@ -1502,7 +1502,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             PngJsonCapturePublicationArtifactInspectionSnapshot other =
                 MakeCommitSnapshot(MakeRecoveryAuthority());
@@ -1518,7 +1518,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(plan.Decision.Snapshot.Operation, "_authority", MakeRecoveryAuthority());
 
@@ -1532,7 +1532,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out PngJsonCapturePublicationArtifactInspectionAuthority authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(authority.RecoveryDecision.Snapshot.Operation, "_publicationPaths", new CaptureRunPublicationPathSet(MakeLayout(2)));
 
@@ -1546,7 +1546,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out PngJsonCapturePublicationArtifactInspectionAuthority authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(authority.PublicationPaths, "_rootLayout", MakeLayout(2));
 
@@ -1560,7 +1560,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(plan.Decision.Snapshot, "_traceManifestStatus", EvMismatch);
 
@@ -1574,7 +1574,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(plan.AuthoritativePlan, "_testRunId", 2L);
 
@@ -1588,7 +1588,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(plan.AuthoritativePlan, "_runInitializationId", "11111111111111111111111111111111");
 
@@ -1602,7 +1602,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildFreshCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             SetField(plan.AuthoritativePlan, "_runManifestContentSha256", ManifestHash);
 
@@ -1616,7 +1616,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             CaptureRunPublicationArtifactRecoveryStep[] steps =
                 (CaptureRunPublicationArtifactRecoveryStep[])GetField(plan, "_steps");
@@ -1632,7 +1632,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(commit.IsValidWithToken(token), Is.True);
             Assert.That(commit.IsValidIndexLocal(token), Is.True);
@@ -1653,7 +1653,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(authority);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(commit.IsValid, Is.True);
             Assert.That(commit.IsValidWithToken(token), Is.True);
@@ -1673,7 +1673,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
             Assert.That(commit.IsValid, Is.True);
@@ -1742,19 +1742,9 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_IsStaticWithNoState()
-        {
-            Type type = typeof(PngJsonCaptureRunCaptureIndexCommitOperationFactory);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseOrTokenExposure()
         {
-            foreach (Type type in new[] { typeof(PngJsonCaptureRunCaptureIndexCommitOperation), typeof(PngJsonCaptureRunCaptureIndexCommitOperationFactory) })
+            foreach (Type type in new[] { typeof(PngJsonCaptureRunCaptureIndexCommitOperation) })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
                 {
@@ -1803,9 +1793,8 @@ namespace Zantetsu.Core.Tests
         public void Source_NoForbiddenDependencies()
         {
             string operationSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperation.cs");
-            string factorySource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperationFactory.cs");
 
-            foreach (string source in new[] { operationSource, factorySource })
+            foreach (string source in new[] { operationSource })
             {
                 Assert.That(source, Does.Not.Contain("List<"));
                 Assert.That(source, Does.Not.Contain("ToArray"));
@@ -1827,11 +1816,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain("Store"));
             }
 
-            // The factory must not serialize or copy bytes; the operation
-            // serializes once at construction and once in IsValidWithToken,
-            // and defensively copies only in the byte getter.
-            Assert.That(factorySource, Does.Not.Contain("Array.Copy"));
-            Assert.That(factorySource, Does.Not.Contain("SerializeCanonical"));
+            // The operation serializes once at construction and once in
+            // IsValidWithToken, and defensively copies only in the byte getter.
             Assert.That(operationSource, Does.Contain("SerializeCanonical"));
             Assert.That(operationSource, Does.Contain("GetCanonicalBytes"));
         }
@@ -1840,19 +1826,9 @@ namespace Zantetsu.Core.Tests
         public void Source_CreateSingleFullValidation_NoDuplication()
         {
             string operationSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperation.cs");
-            string factorySource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCaptureRunCaptureIndexCommitOperationFactory.cs");
 
             Assert.That(operationSource, Does.Not.Contain("!actionPlan.IsValid"));
-            Assert.That(factorySource, Does.Not.Contain("!actionPlan.IsValid"));
             Assert.That(operationSource, Does.Contain("TryAcquireValidationToken"));
-
-            // The factory must not duplicate full validation, serialization, or
-            // mode derivation: it only delegates to the operation's statics.
-            Assert.That(factorySource, Does.Not.Contain("TryAcquireValidationToken"));
-            Assert.That(factorySource, Does.Not.Contain("SerializeCanonical"));
-            Assert.That(factorySource, Does.Not.Contain("CaptureIndexTemporary"));
-            Assert.That(factorySource, Does.Contain("PngJsonCaptureRunCaptureIndexCommitOperation.Create"));
-            Assert.That(factorySource, Does.Contain("PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal"));
 
             // The operation serializes exactly once at construction and once in
             // IsValidWithToken; the index-local validity path never serializes.
@@ -1864,7 +1840,7 @@ namespace Zantetsu.Core.Tests
         // ---- Scale ----
 
         [Test]
-        public void Factory_ThousandEntryPlan_SingleTokenSingleOperationSingleSerialization()
+        public void Create_ThousandEntryPlan_SingleTokenSingleOperationSingleSerialization()
         {
             const int count = 1000;
 
@@ -1891,7 +1867,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
             Assert.That(commit.IsValidIndexLocal(token), Is.True);
@@ -1920,7 +1896,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
 
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
-                PngJsonCaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, 0);
+                PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(actionPlan, token, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
             Assert.That(commit.IsValidIndexLocal(token), Is.True);
