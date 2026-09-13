@@ -297,19 +297,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_Forwarding_Exact()
-        {
-            CaptureRunRootProvisionOperation operation = MakeOperation();
-            CaptureRunRootProvisionReceipt receipt = new CaptureRunRootProvisionReceipt(new FakeProvisioner(), operation);
-
-            Assert.That(receipt.RootLayout, Is.SameAs(operation.RootLayout));
-            Assert.That(receipt.RootRole, Is.EqualTo(operation.RootRole));
-            Assert.That(receipt.TrustedBaseRoot, Is.EqualTo(operation.TrustedBaseRoot));
-            Assert.That(receipt.RunRoot, Is.EqualTo(operation.RunRoot));
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-        }
-
-        [Test]
         public void Receipt_IsValid_True()
         {
             CaptureRunRootProvisionReceipt receipt = new CaptureRunRootProvisionReceipt(new FakeProvisioner(), MakeOperation());
@@ -406,7 +393,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(layout.StagingTrustedBaseRoot, Is.EqualTo(stagingBaseBefore));
             Assert.That(layout.FinalTrustedBaseRoot, Is.EqualTo(finalBaseBefore));
             Assert.That(layout.TestRunId, Is.EqualTo(testRunIdBefore));
-            Assert.That(receipt.RootLayout, Is.SameAs(layout));
+            Assert.That(receipt.Operation.RootLayout, Is.SameAs(layout));
         }
 
         [Test]

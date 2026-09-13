@@ -11,7 +11,8 @@ namespace Zantetsu.Observability
     /// <para>
     /// <see cref="IsValid"/> is computed from whether both references are
     /// non-null; no validity flag is stored. The receipt holds no copied path
-    /// or ID value; forwarding properties read straight from the operation.
+    /// or ID value. What root was created is read from
+    /// <see cref="Operation"/>; the receipt does not restate it.
     /// </para>
     /// <para>
     /// This type performs no filesystem work and is not an
@@ -46,15 +47,5 @@ namespace Zantetsu.Observability
         internal CaptureRunRootProvisionOperation Operation => _operation;
 
         internal bool IsValid => _issuedBy != null && _operation != null;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunRootRole RootRole => _operation.RootRole;
-
-        internal string TrustedBaseRoot => _operation.TrustedBaseRoot;
-
-        internal string RunRoot => _operation.RunRoot;
-
-        internal long TestRunId => _operation.TestRunId;
     }
 }

@@ -159,15 +159,6 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Provision receipt corresponds to an unexpected operation.");
             }
 
-            if (!ReferenceEquals(receipt.RootLayout, expectedOperation.RootLayout)
-                || receipt.RootRole != expectedOperation.RootRole
-                || !string.Equals(receipt.TrustedBaseRoot, expectedOperation.TrustedBaseRoot, StringComparison.Ordinal)
-                || !string.Equals(receipt.RunRoot, expectedOperation.RunRoot, StringComparison.Ordinal)
-                || receipt.TestRunId != expectedOperation.TestRunId)
-            {
-                throw new InvalidOperationException("Provision receipt values do not match the operation.");
-            }
-
             return receipt;
         }
 

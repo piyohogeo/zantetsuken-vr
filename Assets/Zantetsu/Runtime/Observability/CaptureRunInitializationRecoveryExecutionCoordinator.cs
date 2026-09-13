@@ -142,15 +142,6 @@ namespace Zantetsu.Observability
             {
                 throw new InvalidOperationException("Provision receipt must be valid and issued for the provision operation.");
             }
-
-            if (receipt.RootRole != operation.RootRole
-                || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || !string.Equals(receipt.TrustedBaseRoot, operation.TrustedBaseRoot, StringComparison.Ordinal)
-                || !string.Equals(receipt.RunRoot, operation.RunRoot, StringComparison.Ordinal)
-                || receipt.TestRunId != operation.TestRunId)
-            {
-                throw new InvalidOperationException("Provision receipt must match the provision operation.");
-            }
         }
 
         private void VerifyWriteReceipt(
