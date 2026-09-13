@@ -95,7 +95,7 @@ namespace Zantetsu.Core.Tests
         // ---- The existing-final path ----
 
         [Test]
-        public void Execute_ExistingFinalIndex_CompletesOnceAndCarriesNoCommitReceipt()
+        public void Execute_ExistingFinalIndex_CompletesOnceWithCorrelatedReceipt()
         {
             FakeCompleter completer = new FakeCompleter();
             NvencRunCaptureCompleteRecoveryOperation operation = MakeExistingFinalOperation();
@@ -108,18 +108,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(completer.LastOperation, operation), Is.True);
             Assert.That(ReferenceEquals(receipt, completer.LastReceipt), Is.True);
             Assert.That(receipt.IsIssuedFor(completer, operation), Is.True);
-
-            Assert.That(receipt.HasCommitReceipt, Is.False);
-            Assert.That(receipt.CaptureIndexRecoveryCommitReceipt, Is.Null);
-            Assert.That(receipt.CaptureIndexRecoveryDecision.Disposition, Is.EqualTo(
-                NvencRunCaptureIndexRecoveryDisposition.CaptureCompleteRequired));
-            AssertForwardsTheGraphOf(receipt, operation);
         }
 
         // ---- The recovery-committed path ----
 
         [Test]
-        public void Execute_CommittedIndex_CompletesOnceAndCarriesTheExactCommitReceipt()
+        public void Execute_CommittedIndex_CompletesOnceWithCorrelatedReceipt()
         {
             FakeCompleter completer = new FakeCompleter();
             NvencRunCaptureCompleteRecoveryOperation operation = MakeCommittedOperation(
@@ -131,14 +125,6 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(completer.CallCount, Is.EqualTo(1));
             Assert.That(receipt.IsIssuedFor(completer, operation), Is.True);
-
-            Assert.That(receipt.HasCommitReceipt, Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryCommitReceipt, commitReceipt),
-                Is.True);
-            Assert.That(receipt.CaptureIndexRecoveryDecision.Disposition,
-                Is.EqualTo(NvencRunCaptureIndexRecoveryDisposition.CommitRequired));
-            AssertForwardsTheGraphOf(receipt, operation);
         }
 
         [Test]
@@ -310,34 +296,6 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Fixture helpers ----
-
-        private static void AssertForwardsTheGraphOf(
-            NvencRunCaptureCompleteRecoveryReceipt receipt,
-            NvencRunCaptureCompleteRecoveryOperation operation)
-        {
-            Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryDecision,
-                    operation.CaptureIndexRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoverySnapshot,
-                    operation.CaptureIndexRecoverySnapshot),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.PublicationRecoveryDecision,
-                    operation.PublicationRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.AuthoritativePlan, operation.AuthoritativePlan),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId),
-                Is.True);
-            Assert.That(receipt.HasCommitReceipt, Is.EqualTo(operation.HasCommitReceipt));
-            Assert.That(receipt.IsValid, Is.True);
-        }
 
         private static void AssertReadonlyFields(Type type, params Type[] expected)
         {

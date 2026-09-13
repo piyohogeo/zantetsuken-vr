@@ -181,8 +181,8 @@ namespace Zantetsu.Core.Tests
                 out NvencRunCaptureIndexRecoveryCommitReceipt commitReceipt);
             CaptureRunInitializationSessionOwnershipLease owner = _owners[_owners.Count - 1];
 
-            NvencRunCaptureIndexRecoveryDecision decision = receipt.CaptureIndexRecoveryDecision;
-            CapturePublicationPlan plan = receipt.AuthoritativePlan;
+            NvencRunCaptureIndexRecoveryDecision decision = receipt.Operation.CaptureIndexRecoveryDecision;
+            CapturePublicationPlan plan = receipt.Operation.AuthoritativePlan;
             CaptureArtifactDescriptor chunk = plan.GetArtifact(0);
             string chunkHash = chunk.ContentHash;
 
@@ -194,17 +194,17 @@ namespace Zantetsu.Core.Tests
             Assert.That(decision.Snapshot.FinalIndexStatus, Is.EqualTo(Absent));
             Assert.That(decision.Snapshot.TemporaryIndexStatus, Is.EqualTo(Absent));
             Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryCommitReceipt, commitReceipt),
+                    receipt.Operation.CaptureIndexRecoveryCommitReceipt, commitReceipt),
                 Is.True);
             Assert.That(ReferenceEquals(plan.GetArtifact(0), chunk), Is.True);
             Assert.That(chunk.ContentHash, Is.EqualTo(chunkHash));
-            Assert.That(receipt.PublicationRecoveryDecision.IsValid, Is.True);
+            Assert.That(receipt.Operation.PublicationRecoveryDecision.IsValid, Is.True);
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(owner.IsReleaseComplete, Is.False);
 
             // This layer owns no filesystem work of its own.
-            Assert.That(Directory.Exists(receipt.RootLayout.StagingRunRoot), Is.False);
-            Assert.That(Directory.Exists(receipt.RootLayout.FinalRunRoot), Is.False);
+            Assert.That(Directory.Exists(receipt.Operation.RootLayout.StagingRunRoot), Is.False);
+            Assert.That(Directory.Exists(receipt.Operation.RootLayout.FinalRunRoot), Is.False);
         }
 
         [Test]
@@ -268,7 +268,7 @@ namespace Zantetsu.Core.Tests
             NvencRunCaptureCompleteRecoveryReceipt receipt =
                 MakeOrchestration().Execute(Classify(Absent, Absent));
 
-            commitReceipt = receipt.CaptureIndexRecoveryCommitReceipt;
+            commitReceipt = receipt.Operation.CaptureIndexRecoveryCommitReceipt;
             return receipt;
         }
 

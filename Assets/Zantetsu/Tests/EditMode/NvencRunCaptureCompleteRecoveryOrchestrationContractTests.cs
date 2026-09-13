@@ -130,8 +130,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Completer.CallCount, Is.EqualTo(1));
 
             // Nothing was committed, so no commit receipt is invented.
-            Assert.That(receipt.HasCommitReceipt, Is.False);
-            Assert.That(receipt.CaptureIndexRecoveryCommitReceipt, Is.Null);
+            Assert.That(receipt.Operation.HasCommitReceipt, Is.False);
+            Assert.That(receipt.Operation.CaptureIndexRecoveryCommitReceipt, Is.Null);
             Assert.That(receipt.IsIssuedFor(h.Completer, h.Completer.LastOperation), Is.True);
             AssertForwardsTheGraphOf(receipt, decision);
         }
@@ -151,9 +151,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Completer.CallCount, Is.EqualTo(1));
 
             // The commit's own receipt is what the CaptureComplete carries.
-            Assert.That(receipt.HasCommitReceipt, Is.True);
+            Assert.That(receipt.Operation.HasCommitReceipt, Is.True);
             Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryCommitReceipt, h.Committer.LastReceipt),
+                    receipt.Operation.CaptureIndexRecoveryCommitReceipt, h.Committer.LastReceipt),
                 Is.True);
             Assert.That(ReferenceEquals(
                     h.Committer.LastOperation.CaptureIndexRecoveryDecision, decision),
@@ -274,20 +274,24 @@ namespace Zantetsu.Core.Tests
             NvencRunCaptureCompleteRecoveryReceipt receipt,
             NvencRunCaptureIndexRecoveryDecision decision)
         {
-            Assert.That(ReferenceEquals(receipt.CaptureIndexRecoveryDecision, decision), Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoverySnapshot, decision.Snapshot),
+            Assert.That(
+                ReferenceEquals(receipt.Operation.CaptureIndexRecoveryDecision, decision),
                 Is.True);
             Assert.That(ReferenceEquals(
-                    receipt.PublicationRecoveryDecision,
+                    receipt.Operation.CaptureIndexRecoverySnapshot, decision.Snapshot),
+                Is.True);
+            Assert.That(ReferenceEquals(
+                    receipt.Operation.PublicationRecoveryDecision,
                     decision.Operation.PublicationRecoveryDecision),
                 Is.True);
-            Assert.That(ReferenceEquals(receipt.AuthoritativePlan, decision.AuthoritativePlan),
+            Assert.That(
+                ReferenceEquals(receipt.Operation.AuthoritativePlan, decision.AuthoritativePlan),
                 Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, decision.RootLayout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(decision.TestRunId));
+            Assert.That(
+                ReferenceEquals(receipt.Operation.RootLayout, decision.RootLayout), Is.True);
+            Assert.That(receipt.Operation.TestRunId, Is.EqualTo(decision.TestRunId));
             Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, decision.RunInitializationId),
+                    receipt.Operation.RunInitializationId, decision.RunInitializationId),
                 Is.True);
             Assert.That(receipt.IsValid, Is.True);
         }

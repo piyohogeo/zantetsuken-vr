@@ -8,13 +8,15 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The exact CaptureComplete receipt is the whole state. The CaptureComplete
-    /// operation, the Capture Index classification and its snapshot, the
-    /// optional commit receipt, the publication recovery decision, the
-    /// authoritative plan, the root layout, and the Run identity are all
-    /// forwarded from that graph rather than copied, and how the Run arrived -
-    /// with an already authoritative final index or with a committed one -
-    /// stays visible through <see cref="HasCommitReceipt"/>.
+    /// The exact CaptureComplete receipt is the whole state. Everything else —
+    /// the CaptureComplete operation, the Capture Index classification and its
+    /// snapshot, the optional commit receipt, the publication recovery
+    /// decision, the authoritative plan, the root layout, and the Run
+    /// identity — is read from that receipt's own operation graph, which is
+    /// the authority for all of it; nothing is copied into a field here, and
+    /// how the Run arrived - with an already authoritative final index or with
+    /// a committed one - stays visible through
+    /// <see cref="HasCommitReceipt"/>.
     /// </para>
     /// <para>
     /// What the Capture Index temporary looked like at inspection time remains
@@ -74,7 +76,7 @@ namespace Zantetsu.Observability
             _captureCompleteReceipt.Operation;
 
         internal NvencRunCaptureIndexRecoveryDecision CaptureIndexRecoveryDecision =>
-            _captureCompleteReceipt.CaptureIndexRecoveryDecision;
+            _captureCompleteReceipt.Operation.CaptureIndexRecoveryDecision;
 
         /// <summary>
         /// The Capture Index observation this recovery classified, including
@@ -82,24 +84,25 @@ namespace Zantetsu.Observability
         /// cleanup instruction.
         /// </summary>
         internal NvencRunCaptureIndexRecoveryInspectionSnapshot CaptureIndexRecoverySnapshot =>
-            _captureCompleteReceipt.CaptureIndexRecoverySnapshot;
+            _captureCompleteReceipt.Operation.CaptureIndexRecoverySnapshot;
 
         internal NvencRunCaptureIndexRecoveryCommitReceipt CaptureIndexRecoveryCommitReceipt =>
-            _captureCompleteReceipt.CaptureIndexRecoveryCommitReceipt;
+            _captureCompleteReceipt.Operation.CaptureIndexRecoveryCommitReceipt;
 
-        internal bool HasCommitReceipt => _captureCompleteReceipt.HasCommitReceipt;
+        internal bool HasCommitReceipt => _captureCompleteReceipt.Operation.HasCommitReceipt;
 
         internal NvencRunPublicationRecoveryDecision PublicationRecoveryDecision =>
-            _captureCompleteReceipt.PublicationRecoveryDecision;
+            _captureCompleteReceipt.Operation.PublicationRecoveryDecision;
 
         internal CapturePublicationPlan AuthoritativePlan =>
-            _captureCompleteReceipt.AuthoritativePlan;
+            _captureCompleteReceipt.Operation.AuthoritativePlan;
 
-        internal CaptureRunRootLayout RootLayout => _captureCompleteReceipt.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _captureCompleteReceipt.Operation.RootLayout;
 
-        internal long TestRunId => _captureCompleteReceipt.TestRunId;
+        internal long TestRunId => _captureCompleteReceipt.Operation.TestRunId;
 
-        internal string RunInitializationId => _captureCompleteReceipt.RunInitializationId;
+        internal string RunInitializationId =>
+            _captureCompleteReceipt.Operation.RunInitializationId;
 
         internal bool IsValid
         {
@@ -122,10 +125,8 @@ namespace Zantetsu.Observability
         {
             NvencRunCaptureCompleteRecoveryOperation operation = receipt.Operation;
 
-            return receipt.IsValid
-                && receipt.IsIssuedFor(receipt.Completer, operation)
-                && operation != null
-                && operation.IsValid;
+            return operation != null
+                && receipt.IsIssuedFor(receipt.Completer, operation);
         }
     }
 }

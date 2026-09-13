@@ -171,17 +171,17 @@ namespace Zantetsu.Core.Tests
                     .Execute(captureIndexRecovery);
 
             Assert.That(captureComplete.IsValid, Is.True);
-            Assert.That(captureComplete.HasCommitReceipt, Is.True);
+            Assert.That(captureComplete.Operation.HasCommitReceipt, Is.True);
 
             NvencRunCaptureIndexRecoveryCommitReceipt commitReceipt =
-                captureComplete.CaptureIndexRecoveryCommitReceipt;
+                captureComplete.Operation.CaptureIndexRecoveryCommitReceipt;
             Assert.That(commitReceipt, Is.Not.Null);
             Assert.That(commitReceipt.IsIssuedFor(committer, commitReceipt.Operation), Is.True);
             Assert.That(ReferenceEquals(
                     commitReceipt.Operation.CaptureIndexRecoveryDecision, captureIndexRecovery),
                 Is.True);
             Assert.That(ReferenceEquals(
-                    captureComplete.CaptureIndexRecoveryDecision, captureIndexRecovery),
+                    captureComplete.Operation.CaptureIndexRecoveryDecision, captureIndexRecovery),
                 Is.True);
 
             // The committed index is exactly the authoritative plan's canonical

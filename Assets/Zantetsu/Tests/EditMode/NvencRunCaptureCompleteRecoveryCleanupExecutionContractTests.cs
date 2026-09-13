@@ -554,7 +554,7 @@ namespace Zantetsu.Core.Tests
             NvencRunCaptureCompleteRecoveryReceipt receipt =
                 MakeOrchestration().Execute(Classify(Absent, Absent));
 
-            commitReceipt = receipt.CaptureIndexRecoveryCommitReceipt;
+            commitReceipt = receipt.Operation.CaptureIndexRecoveryCommitReceipt;
             return NvencRunCaptureCompleteRecoveryCleanupOperation.Create(receipt);
         }
 

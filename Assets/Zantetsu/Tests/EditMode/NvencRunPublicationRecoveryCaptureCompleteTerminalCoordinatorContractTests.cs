@@ -196,8 +196,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.IsCaptureCompleted, Is.True);
 
             // Nothing had to be committed on this arrival.
-            Assert.That(coordinator.CaptureCompleteReceipt.HasCommitReceipt, Is.False);
-            Assert.That(coordinator.CaptureCompleteReceipt.CaptureIndexRecoveryCommitReceipt,
+            Assert.That(
+                coordinator.CaptureCompleteReceipt.Operation.HasCommitReceipt, Is.False);
+            Assert.That(
+                coordinator.CaptureCompleteReceipt.Operation.CaptureIndexRecoveryCommitReceipt,
                 Is.Null);
             Assert.That(h.Committer.CallCount, Is.EqualTo(0));
         }
@@ -215,9 +217,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(h.Committer.CallCount, Is.EqualTo(1));
 
             NvencRunCaptureIndexRecoveryCommitReceipt commit =
-                coordinator.CaptureCompleteReceipt.CaptureIndexRecoveryCommitReceipt;
+                coordinator.CaptureCompleteReceipt.Operation.CaptureIndexRecoveryCommitReceipt;
             Assert.That(commit, Is.Not.Null);
-            Assert.That(coordinator.CaptureCompleteReceipt.HasCommitReceipt, Is.True);
+            Assert.That(
+                coordinator.CaptureCompleteReceipt.Operation.HasCommitReceipt, Is.True);
 
             // The receipt names that exact committer. Its own validity rests
             // on the upstream operation, which the completed release has

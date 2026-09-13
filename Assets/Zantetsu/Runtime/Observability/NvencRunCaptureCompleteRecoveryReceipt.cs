@@ -9,23 +9,28 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those two references are the whole state. The decision, snapshot,
-    /// optional commit receipt, publication recovery decision, authoritative
-    /// plan, root layout, and Run identity are forwarded from the operation's
-    /// graph rather than copied, and which of the two authorities the Run
-    /// arrived by stays visible through
-    /// <see cref="HasCommitReceipt"/> rather than being flattened away.
+    /// The receipt holds exactly two readonly references, the exact completer
+    /// and the exact operation, and they are the whole state. The recovery
+    /// decision, its snapshot, the optional commit receipt, the publication
+    /// recovery decision, the authoritative plan, the root layout, and the Run
+    /// identity are read from <see cref="Operation"/>: the receipt restates
+    /// none of it and duplicates none of it as a field of its own. Which of the
+    /// two authorities the Run arrived by is still there to read on that
+    /// operation rather than flattened away.
     /// </para>
     /// <para>
-    /// This is not a durable filesystem proof, not evidence that any cleanup
-    /// ran, and not evidence that the OS lock was released. It says only that a
-    /// synchronous call made under the still-held lock returned successfully.
+    /// This is process-local evidence of one successful synchronous
+    /// CaptureComplete call and nothing more: not a durable filesystem proof,
+    /// not evidence that any cleanup ran, and not evidence that the OS lock was
+    /// released. It says only that a call made under the still-held lock
+    /// returned successfully.
     /// It is minted only on success, through the success-only factory, which
     /// requires a completer, an operation, and that the operation is still
     /// valid.
     /// </para>
     /// <para>
-    /// This type owns, mutates, and disposes nothing, touches no file, releases
+    /// This type does not own, change, or dispose the operation graph's
+    /// lifetime, touches no file, releases
     /// no lock, and is not an <see cref="IDisposable"/>, MonoBehaviour, or
     /// ScriptableObject. <see cref="IsValid"/> never throws, so once the OS
     /// lock is released the operation becomes invalid and this receipt follows
@@ -75,32 +80,6 @@ namespace Zantetsu.Observability
         internal INvencRunCaptureCompleteRecoveryCompleter Completer => _completer;
 
         internal NvencRunCaptureCompleteRecoveryOperation Operation => _operation;
-
-        internal NvencRunCaptureIndexRecoveryDecision CaptureIndexRecoveryDecision =>
-            _operation.CaptureIndexRecoveryDecision;
-
-        internal NvencRunCaptureIndexRecoveryInspectionSnapshot CaptureIndexRecoverySnapshot =>
-            _operation.CaptureIndexRecoverySnapshot;
-
-        /// <summary>
-        /// The recovery commit receipt, present only when the Run reached an
-        /// authoritative Capture Index by committing one.
-        /// </summary>
-        internal NvencRunCaptureIndexRecoveryCommitReceipt CaptureIndexRecoveryCommitReceipt =>
-            _operation.CaptureIndexRecoveryCommitReceipt;
-
-        internal bool HasCommitReceipt => _operation.HasCommitReceipt;
-
-        internal NvencRunPublicationRecoveryDecision PublicationRecoveryDecision =>
-            _operation.PublicationRecoveryDecision;
-
-        internal CapturePublicationPlan AuthoritativePlan => _operation.AuthoritativePlan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {

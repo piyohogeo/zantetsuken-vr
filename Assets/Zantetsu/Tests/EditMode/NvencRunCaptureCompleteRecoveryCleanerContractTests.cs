@@ -865,7 +865,7 @@ namespace Zantetsu.Core.Tests
                             new NvencRunCaptureCompleteRecoveryCompleter()))
                     .Execute(decision);
 
-            Assert.That(captureComplete.HasCommitReceipt, Is.EqualTo(committed));
+            Assert.That(captureComplete.Operation.HasCommitReceipt, Is.EqualTo(committed));
 
             return NvencRunCaptureCompleteRecoveryCleanupOperation.Create(captureComplete);
         }
