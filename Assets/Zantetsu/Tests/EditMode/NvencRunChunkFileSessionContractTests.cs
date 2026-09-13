@@ -145,19 +145,13 @@ namespace Zantetsu.Core.Tests
             return CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
         }
 
-        private static CaptureRunLockIdentityEvidence MakeIdentityEvidence(
-            CaptureRunInitializationSessionOwnershipLease ownershipLease)
-        {
-            return CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
-        }
 
         private static CaptureRunInitializationSessionIssue MakeIssue(
             CaptureRunRootLayout layout, List<string> disposeLog)
         {
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            return CaptureRunInitializationSessionIssue.Create(owner, evidence);
         }
 
         private static string RuntimeDirectory()
@@ -531,9 +525,8 @@ namespace Zantetsu.Core.Tests
 
             List<string> disposeLog = new List<string>();
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionIssue.Create(owner, evidence);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(issue))
             {
@@ -571,9 +564,8 @@ namespace Zantetsu.Core.Tests
             Directory.CreateDirectory(layout.RunRoot);
 
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionIssue.Create(owner, evidence);
 
             owner.Dispose();
 

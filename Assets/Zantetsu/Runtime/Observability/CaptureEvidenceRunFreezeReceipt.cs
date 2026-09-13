@@ -13,20 +13,20 @@ namespace Zantetsu.Observability
         private readonly CaptureFrameFreezeTerminalCoordinator _issuedBy;
         private readonly CaptureEvidenceDraftCoordinator _evidence;
         private readonly CaptureRunInitializationSession _runSession;
-        private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
+        private readonly CaptureRunInitializationSessionOwnershipLease _ownershipLease;
         private readonly FreezeTerminalTraceBuffer _terminalBuffer;
 
         internal CaptureEvidenceRunFreezeReceipt(
             CaptureFrameFreezeTerminalCoordinator issuedBy,
             CaptureEvidenceDraftCoordinator evidence,
             CaptureRunInitializationSession runSession,
-            CaptureRunLockIdentityEvidence lockIdentityEvidence,
+            CaptureRunInitializationSessionOwnershipLease ownershipLease,
             FreezeTerminalTraceBuffer terminalBuffer)
         {
             _issuedBy = issuedBy ?? throw new ArgumentNullException(nameof(issuedBy));
             _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
             _runSession = runSession ?? throw new ArgumentNullException(nameof(runSession));
-            _lockIdentityEvidence = lockIdentityEvidence ?? throw new ArgumentNullException(nameof(lockIdentityEvidence));
+            _ownershipLease = ownershipLease ?? throw new ArgumentNullException(nameof(ownershipLease));
             _terminalBuffer = terminalBuffer ?? throw new ArgumentNullException(nameof(terminalBuffer));
             if (!CorrelationsHold()) throw new ArgumentException("Freeze evidence is not fully correlated.", nameof(evidence));
         }
@@ -36,16 +36,16 @@ namespace Zantetsu.Observability
         internal CaptureArtifactRegistry Artifacts => _evidence.Artifacts;
         internal CaptureRunInitializationSession RunSession => _runSession;
         internal FreezeTerminalTraceBuffer TerminalBuffer => _terminalBuffer;
-        internal CaptureRunRootLayout RootLayout => _lockIdentityEvidence.RootLayout;
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
-        internal long TestRunId => _lockIdentityEvidence.TestRunId;
+        internal CaptureRunRootLayout RootLayout => _ownershipLease.LockPathSet.RootLayout;
+        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease => _ownershipLease;
+        internal long TestRunId => _ownershipLease.LockPathSet.RootLayout.TestRunId;
         internal string RunInitializationId => _runSession.RunInitializationId;
         internal bool IsValid => CorrelationsHold();
 
         /// <summary>
         /// O(1) exception-safe structural guard for proof matching: safely
-        /// reads the current drafts, artifacts, session, and lock identity
-        /// evidence without throwing when the freeze receipt's evidence or
+        /// reads the current drafts, artifacts, session, and ownership lease
+        /// without throwing when the freeze receipt's evidence or
         /// session references have been nulled after issuance. Returns
         /// <c>false</c> for any corrupted reference.
         /// </summary>
@@ -53,16 +53,16 @@ namespace Zantetsu.Observability
             out CaptureFrameDraftRegistry drafts,
             out CaptureArtifactRegistry artifacts,
             out CaptureRunInitializationSession session,
-            out CaptureRunLockIdentityEvidence lockIdentityEvidence)
+            out CaptureRunInitializationSessionOwnershipLease ownershipLease)
         {
             drafts = null;
             artifacts = null;
             session = null;
-            lockIdentityEvidence = null;
+            ownershipLease = null;
 
             CaptureEvidenceDraftCoordinator evidence = _evidence;
-            CaptureRunLockIdentityEvidence identity = _lockIdentityEvidence;
-            if (evidence == null || identity == null)
+            CaptureRunInitializationSessionOwnershipLease lease = _ownershipLease;
+            if (evidence == null || lease == null)
             {
                 return false;
             }
@@ -74,7 +74,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!identity.IsValid)
+            if (!lease.IsCreated || lease.LockPathSet == null || lease.LockPathSet.RootLayout == null)
             {
                 return false;
             }
@@ -82,13 +82,13 @@ namespace Zantetsu.Observability
             drafts = d;
             artifacts = a;
             session = _runSession;
-            lockIdentityEvidence = identity;
+            ownershipLease = lease;
             return true;
         }
 
         private bool CorrelationsHold()
         {
-            if (_issuedBy == null || _evidence == null || _runSession == null || _lockIdentityEvidence == null || _terminalBuffer == null)
+            if (_issuedBy == null || _evidence == null || _runSession == null || _ownershipLease == null || _terminalBuffer == null)
             {
                 return false;
             }
@@ -98,17 +98,13 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!_lockIdentityEvidence.IsValid)
+            CaptureRunLockPathSet lockPathSet = _ownershipLease.LockPathSet;
+            if (!_ownershipLease.IsCreated || lockPathSet == null || lockPathSet.RootLayout == null)
             {
                 return false;
             }
 
-            if (_runSession.TestRunId != _lockIdentityEvidence.TestRunId)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(_runSession.RootLayout, _lockIdentityEvidence.RootLayout))
+            if (!ReferenceEquals(_runSession.RootLayout, lockPathSet.RootLayout))
             {
                 return false;
             }

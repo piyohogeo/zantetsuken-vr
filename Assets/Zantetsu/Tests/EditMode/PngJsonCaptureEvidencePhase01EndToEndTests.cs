@@ -200,7 +200,6 @@ namespace Zantetsu.Core.Tests
             public CaptureFrameDraftTerminalIntentQueue Queue;
             public CaptureFrameDraftFactory Factory;
             public CaptureRunInitializationSession Session;
-            public CaptureRunLockIdentityEvidence Identity;
             public CaptureRunInitializationSessionOwnershipLease Owner;
 
             public void Dispose()
@@ -305,14 +304,13 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockLease lease = MakeLease(scope.Layout);
             scope.Owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
             _owners.Add(scope.Owner);
-            scope.Identity = CaptureRunLockIdentityEvidence.Create(scope.Owner, scope.Owner.LockPathSet);
 
             CaptureRunInitializationExecutionCoordinator execution =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(scope.Layout, InitId);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt);
             CaptureRunInitializationSessionIssue issue =
-                CaptureRunInitializationSession.IssuanceProof.Mint(scope.Owner, scope.Identity, evidence);
+                CaptureRunInitializationSessionIssue.Create(scope.Owner, evidence);
             scope.Session = issue.Session;
 
             return scope;
@@ -550,7 +548,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -564,7 +562,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(receipt.Drafts, scope.Registry), Is.True);
                 Assert.That(ReferenceEquals(receipt.Artifacts, scope.Artifacts), Is.True);
                 Assert.That(ReferenceEquals(receipt.RunSession, scope.Session), Is.True);
-                Assert.That(ReferenceEquals(receipt.LockIdentityEvidence, scope.Identity), Is.True);
+                Assert.That(ReferenceEquals(receipt.OwnershipLease, scope.Owner), Is.True);
                 Assert.That(receipt.TestRunId, Is.EqualTo(scope.TestRunId));
                 Assert.That(receipt.RunInitializationId, Is.EqualTo(InitId));
                 Assert.That(receipt.TerminalBuffer.TestRunId, Is.EqualTo(scope.TestRunId));
@@ -808,7 +806,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -867,7 +865,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -887,7 +885,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,

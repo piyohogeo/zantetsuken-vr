@@ -38,7 +38,6 @@ namespace Zantetsu.Observability
     internal sealed class NvencRunChunkContext
     {
         private readonly CaptureRunInitializationSession _session;
-        private readonly CaptureRunLockIdentityEvidence _lockIdentityEvidence;
         private readonly NvencRunChunkSink _sink;
         private readonly NvencRunChunkFinalizationCoordinator _finalizationCoordinator;
         private readonly string _artifactId;
@@ -78,16 +77,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Session must hold a root layout.", nameof(issue));
             }
 
-            CaptureRunLockIdentityEvidence lockIdentityEvidence = issue.LockIdentityEvidence;
-            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
-            {
-                throw new ArgumentException("Session issue must hold valid lock identity evidence.", nameof(issue));
-            }
-
-            if (!ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
+            CaptureRunLockPathSet lockPathSet = issue.LockPathSet;
+            if (lockPathSet == null || !ReferenceEquals(session.RootLayout, lockPathSet.RootLayout))
             {
                 throw new ArgumentException(
-                    "Session and lock identity evidence must share the same root layout.", nameof(issue));
+                    "Session and held lock must share the same root layout.", nameof(issue));
             }
 
             if (sink == null)
@@ -118,7 +112,6 @@ namespace Zantetsu.Observability
             RequireArtifactId(artifactId);
 
             _session = session;
-            _lockIdentityEvidence = lockIdentityEvidence;
             _sink = sink;
             _finalizationCoordinator = finalizationCoordinator;
             _artifactId = artifactId;
@@ -135,8 +128,6 @@ namespace Zantetsu.Observability
 
         internal CaptureRunRootLayout RootLayout => _session.RootLayout;
 
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _lockIdentityEvidence;
-
         /// <summary>
         /// O(1) exception-safe correlation predicate against the exact session
         /// issue this context was built from: the exact session, the exact
@@ -152,13 +143,7 @@ namespace Zantetsu.Observability
             }
 
             CaptureRunInitializationSession session = issue.Session;
-            CaptureRunLockIdentityEvidence lockIdentityEvidence = issue.LockIdentityEvidence;
-            if (session == null || !session.IsValid || lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(_session, session) || !ReferenceEquals(_lockIdentityEvidence, lockIdentityEvidence))
+            if (session == null || !session.IsValid || !ReferenceEquals(_session, session))
             {
                 return false;
             }

@@ -103,8 +103,6 @@ namespace Zantetsu.Observability
                 }
 
                 ownershipLease = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
-                CaptureRunLockIdentityEvidence lockIdentityEvidence =
-                    CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
 
                 string runInitializationId = _initializationIdSource.Create();
 
@@ -131,9 +129,8 @@ namespace Zantetsu.Observability
                     throw new InvalidOperationException("Execution receipt initialization ID does not match the issued ID.");
                 }
 
-                issue = CaptureRunInitializationSession.IssuanceProof.Mint(
+                issue = CaptureRunInitializationSessionIssue.Create(
                     ownershipLease,
-                    lockIdentityEvidence,
                     CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt));
 
                 return true;
