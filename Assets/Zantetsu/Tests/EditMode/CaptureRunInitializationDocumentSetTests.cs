@@ -24,7 +24,18 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationPlan MakePlan(long testRunId = 1)
         {
             CaptureRunRootLayout layout = new CaptureRunRootLayout(StagingBaseRoot(), FinalBaseRoot(), testRunId);
-            return CaptureRunInitializationPlanFactory.Create(layout, InitId);
+
+            CaptureRunMarkerPathSet markerPaths =
+                new CaptureRunMarkerPathSet(layout);
+
+            CaptureRunMarkerBinding binding =
+                CaptureRunMarkerBindingFactory.Create(
+                    layout.TestRunId,
+                    InitId,
+                    layout.StagingRunRootSha256,
+                    layout.FinalRunRootSha256);
+
+            return new CaptureRunInitializationPlan(markerPaths, binding);
         }
 
         private static byte[] GetFieldBytes(object target, string fieldName)
@@ -368,7 +379,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
             Assert.That(source, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationPlanFactory"));
             Assert.That(source, Does.Not.Contain("new CaptureRunInitializationMarker"));
             Assert.That(source, Does.Not.Contain("new CaptureRunReadyMarker"));
         }

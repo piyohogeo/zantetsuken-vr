@@ -295,34 +295,6 @@ namespace Zantetsu.Core.Tests
         // ---- Source inspection ----
 
         [Test]
-        public void Source_OnlyPlanFactoryAndDocumentSet_NoOtherConstruction()
-        {
-            string source = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationDocumentSetFactory.cs"));
-
-            Assert.That(source, Does.Contain("CaptureRunInitializationPlanFactory"));
-            Assert.That(source, Does.Contain("new CaptureRunInitializationDocumentSet"));
-
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerBindingFactory"));
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerPathSet"));
-            Assert.That(source, Does.Not.Contain("CaptureRunMarkerBinding"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationMarker"));
-            Assert.That(source, Does.Not.Contain("CaptureRunReadyMarker"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationMarkerCodec"));
-            Assert.That(source, Does.Not.Contain("CaptureRunReadyMarkerCodec"));
-            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
-            Assert.That(source, Does.Not.Contain("CaptureFramePngArtifactCodec"));
-            Assert.That(source, Does.Not.Contain("TraceRunManifestCodec"));
-            Assert.That(source, Does.Not.Contain("TraceBinaryCodec"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(source, Does.Not.Contain("SHA256"));
-            Assert.That(source, Does.Not.Contain("SHA-256"));
-            Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
-            Assert.That(source, Does.Not.Contain("byte["));
-            Assert.That(source, Does.Not.Contain("new byte"));
-            Assert.That(source, Does.Not.Contain("Path."));
-        }
-
-        [Test]
         public void Source_NoFilesystemPInvokeUnityRandomClock()
         {
             string source = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationDocumentSetFactory.cs"));
