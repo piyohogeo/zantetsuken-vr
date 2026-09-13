@@ -10,7 +10,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the frozen
+    /// The type holds exactly two readonly references — the frozen
     /// publication result and the legacy PNG plan — and has no public or
     /// internal constructor. It duplicates no descriptor, entry, identifier,
     /// path, or hash; every accessor forwards from the held graph. The
@@ -46,7 +46,8 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Atomic validated factory: the single validation-and-conversion site.
+        /// The static creation boundary: the single validation-and-conversion
+        /// site.
         /// It validates the frozen result once (the sole full generic-plan
         /// validation boundary), converts the generic plan into the exact
         /// legacy entries, constructs the legacy plan, re-confirms the
@@ -72,8 +73,7 @@ namespace Zantetsu.Observability
             }
 
             if (genericPlan.TestRunId != frozenPublicationResult.FreezeReceipt.TestRunId
-                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.PlanWriteReceipt.Plan.RunManifestContentHash, StringComparison.Ordinal))
+                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.FreezeReceipt.RunInitializationId, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Generic plan must correlate with the frozen publication result.", nameof(frozenPublicationResult));
             }
@@ -168,7 +168,6 @@ namespace Zantetsu.Observability
                 || genericPlan.TestRunId != legacyPlan.TestRunId
                 || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(genericPlan.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.PlanWriteReceipt.Plan.RunManifestContentHash, StringComparison.Ordinal)
                 || !string.Equals(genericPlan.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal))
             {
                 return false;

@@ -879,7 +879,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(constructors[0].IsPrivate, Is.True);
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
-            // The atomic factory takes only the frozen result, so no legacy
+            // The Create boundary takes only the frozen result, so no legacy
             // plan can be injected from outside.
             MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(create, Is.Not.Null);
