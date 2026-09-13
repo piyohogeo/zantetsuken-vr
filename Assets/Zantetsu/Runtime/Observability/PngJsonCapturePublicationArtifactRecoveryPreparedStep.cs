@@ -91,7 +91,7 @@ namespace Zantetsu.Observability
             switch (step.Action)
             {
                 case CaptureRunPublicationArtifactRecoveryAction.PublishArtifact:
-                    publishOperation = PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(
+                    publishOperation = PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(
                         actionPlan, token, stepIndex);
                     break;
 

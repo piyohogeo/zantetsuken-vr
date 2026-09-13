@@ -760,7 +760,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionPathSet pathSet = operation.GetArtifactPaths(0);
 
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
 
             Assert.That(publish.ActionPlan, Is.SameAs(plan));
             Assert.That(publish.Decision, Is.SameAs(plan.Decision));
@@ -794,7 +794,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionPathSet pathSet = snapshot.Operation.GetArtifactPaths(0);
 
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
 
             Assert.That(publish.ArtifactKind, Is.EqualTo(Sidecar));
             Assert.That(publish.SourcePath, Is.EqualTo(pathSet.StagingSidecarPath));
@@ -814,7 +814,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.AuthorityKind, Is.EqualTo(PngJsonCapturePublicationArtifactInspectionAuthorityKind.FreshFrozenRun));
 
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
 
             Assert.That(publish.ArtifactKind, Is.EqualTo(Png));
             Assert.That(publish.EntryIndex, Is.EqualTo(0));
@@ -831,9 +831,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.Count, Is.EqualTo(3));
 
             PngJsonCapturePublicationArtifactPublishOperation png =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
             PngJsonCapturePublicationArtifactPublishOperation sidecar =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 1);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 1);
 
             Assert.That(png.ArtifactKind, Is.EqualTo(Png));
             Assert.That(png.EntryIndex, Is.EqualTo(0));
@@ -846,39 +846,39 @@ namespace Zantetsu.Core.Tests
         // ---- Factory rejection ----
 
         [Test]
-        public void Factory_NullPlan_Rejected()
+        public void Create_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(null, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.Create(null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_InvalidPlan_Rejected()
+        public void Create_InvalidPlan_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = (PngJsonCapturePublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(PngJsonCapturePublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_StepIndexOutOfRange_Rejected()
+        public void Create_StepIndexOutOfRange_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
 
             foreach (int bad in new[] { -1, 2, int.MinValue, int.MaxValue })
             {
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, bad));
+                    () => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, bad));
                 Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
             }
         }
 
         [Test]
-        public void Factory_NonPublishRoutingStep_Rejected()
+        public void Create_NonPublishRoutingStep_Rejected()
         {
             // A CommitCaptureIndex plan's only step is a routing step.
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
@@ -887,45 +887,45 @@ namespace Zantetsu.Core.Tests
             Assert.That(plan.Count, Is.EqualTo(1));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_ReinspectStep_Rejected()
+        public void Create_ReinspectStep_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             int reinspectIndex = plan.Count - 1;
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, reinspectIndex));
+                () => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, reinspectIndex));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_NullToken_Rejected()
+        public void Create_NullToken_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, null, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
         [Test]
-        public void Factory_CrossPlanToken_Rejected()
+        public void Create_CrossPlanToken_Rejected()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan planA = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan planB = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(planB, tokenA, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(planB, tokenA, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         [Test]
-        public void Factory_StaleToken_Rejected()
+        public void Create_StaleToken_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionAuthority authority = MakeRecoveryAuthority(out CaptureRunInitializationSessionOwnershipLease owner);
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakeSnapshotSingle(
@@ -937,14 +937,14 @@ namespace Zantetsu.Core.Tests
             _owners.Remove(owner);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+                () => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
         // ---- Precondition rejection ----
 
         [Test]
-        public void Factory_StagingNotMatches_Rejected()
+        public void Create_StagingNotMatches_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakePublishPngSnapshot(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
@@ -953,12 +953,12 @@ namespace Zantetsu.Core.Tests
             SetField(snapshot.GetEntry(0), "_stagingPngStatus", EvAbsent);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
         }
 
         [Test]
-        public void Factory_FinalNotAbsent_Rejected()
+        public void Create_FinalNotAbsent_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakePublishPngSnapshot(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
@@ -968,12 +968,12 @@ namespace Zantetsu.Core.Tests
             SetField(snapshot.GetEntry(0), "_finalPngProbedByteCount", 16L);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
         }
 
         [Test]
-        public void Factory_SourceEqualsDestination_Rejected()
+        public void Create_SourceEqualsDestination_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakePublishPngSnapshot(out PngJsonCapturePublicationArtifactInspectionOperation operation, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
@@ -983,12 +983,12 @@ namespace Zantetsu.Core.Tests
             SetField(pathSet, "_stagingPngPath", pathSet.FinalPngPath);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
         }
 
         [Test]
-        public void Factory_ExpectedByteCountCorrupt_Rejected()
+        public void Create_ExpectedByteCountCorrupt_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakePublishPngSnapshot(out PngJsonCapturePublicationArtifactInspectionOperation operation, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
@@ -997,12 +997,12 @@ namespace Zantetsu.Core.Tests
             SetField(operation.GetArtifactPaths(0).Entry, "_pngByteLength", 0L);
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
         }
 
         [Test]
-        public void Factory_ExpectedHashCorrupt_Rejected()
+        public void Create_ExpectedHashCorrupt_Rejected()
         {
             PngJsonCapturePublicationArtifactInspectionSnapshot snapshot = MakePublishPngSnapshot(out PngJsonCapturePublicationArtifactInspectionOperation operation, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
@@ -1011,8 +1011,8 @@ namespace Zantetsu.Core.Tests
             SetField(operation.GetArtifactPaths(0).Entry, "_pngContentSha256", "nothex");
 
             Assert.That(plan.IsValid, Is.False);
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0));
-            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0));
+            Assert.Throws<ArgumentException>(() => PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0));
         }
 
         // ---- Forge defense and validity under mutation ----
@@ -1025,7 +1025,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionPathSet pathSet = operation.GetArtifactPaths(0);
 
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
             Assert.That(publish.IsValid, Is.True);
 
             // Null plan.
@@ -1049,7 +1049,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(publish.IsValidIndexLocal(token), Is.True);
 
@@ -1070,7 +1070,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(publish.IsValid, Is.True);
             Assert.That(publish.IsValidIndexLocal(token), Is.True);
@@ -1089,7 +1089,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.That(publish.IsValidIndexLocal(token), Is.True);
 
@@ -1109,9 +1109,9 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
 
             PngJsonCapturePublicationArtifactPublishOperation first =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
             PngJsonCapturePublicationArtifactPublishOperation second =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
 
             Assert.That(ReferenceEquals(first, second), Is.False);
             Assert.That(first.ActionPlan, Is.SameAs(plan));
@@ -1132,7 +1132,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
 
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.Create(plan, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.Create(plan, 0);
 
             Assert.That(owner.IsCreated, Is.True);
             Assert.That(plan.IsValid, Is.True);
@@ -1171,19 +1171,9 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_IsStaticWithNoState()
-        {
-            Type type = typeof(PngJsonCapturePublicationArtifactPublishOperationFactory);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseTokenBytesOrStreamExposure()
         {
-            foreach (Type type in new[] { typeof(PngJsonCapturePublicationArtifactPublishOperation), typeof(PngJsonCapturePublicationArtifactPublishOperationFactory) })
+            foreach (Type type in new[] { typeof(PngJsonCapturePublicationArtifactPublishOperation) })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
                 {
@@ -1230,9 +1220,8 @@ namespace Zantetsu.Core.Tests
         public void Source_NoFilesystemOrForbiddenDependencies()
         {
             string operationSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactPublishOperation.cs");
-            string factorySource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactPublishOperationFactory.cs");
 
-            foreach (string source in new[] { operationSource, factorySource })
+            foreach (string source in new[] { operationSource })
             {
                 Assert.That(source, Does.Not.Contain("List<"));
                 Assert.That(source, Does.Not.Contain("ToArray"));
@@ -1262,21 +1251,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(operationSource, Does.Not.Contain("actionPlan.IsValid"));
             Assert.That(operationSource, Does.Not.Contain("_actionPlan.IsValid"));
             Assert.That(operationSource, Does.Contain("TryGetIssuedPublishInputs"));
-        }
-
-        [Test]
-        public void Factory_Create_SingleFullValidation()
-        {
-            string factorySource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactPublishOperationFactory.cs");
-            string operationSource = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationArtifactPublishOperation.cs");
-
-            Assert.That(factorySource, Does.Not.Contain("!actionPlan.IsValid"));
-            Assert.That(operationSource, Does.Not.Contain("!actionPlan.IsValid"));
-            Assert.That(operationSource, Does.Contain("TryAcquireValidationToken"));
-
-            // Create delegates full validation to the operation's static factory.
-            Assert.That(factorySource, Does.Contain("PngJsonCapturePublicationArtifactPublishOperation.Create"));
-            Assert.That(factorySource, Does.Contain("PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal"));
         }
 
         // ---- Token API ----
@@ -1366,7 +1340,7 @@ namespace Zantetsu.Core.Tests
         // ---- Scale ----
 
         [Test]
-        public void Factory_ThousandPublishSteps_TokenOnce_IndexLocalPerStep()
+        public void Create_ThousandPublishSteps_TokenOnce_IndexLocalPerStep()
         {
             const int count = 1000;
 
@@ -1397,7 +1371,7 @@ namespace Zantetsu.Core.Tests
             for (int i = 0; i < count; i++)
             {
                 PngJsonCapturePublicationArtifactPublishOperation publish =
-                    PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, i);
+                    PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, i);
 
                 Assert.That(publish.ArtifactKind, Is.EqualTo(Png));
                 Assert.That(publish.EntryIndex, Is.EqualTo(i));

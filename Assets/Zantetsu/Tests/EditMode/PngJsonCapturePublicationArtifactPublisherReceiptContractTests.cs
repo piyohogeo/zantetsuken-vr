@@ -875,7 +875,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactInspectionPathSet pathSet = operation.GetArtifactPaths(0);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
@@ -908,7 +908,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => PngJsonCapturePublicationArtifactPublishReceipt.Create(null, publish, token));
@@ -932,7 +932,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
                 () => PngJsonCapturePublicationArtifactPublishReceipt.Create(new FakePublisher(), publish, null));
@@ -949,7 +949,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken tokenB = planB.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(planA, tokenA, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(planA, tokenA, 0);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
                 () => PngJsonCapturePublicationArtifactPublishReceipt.Create(new FakePublisher(), publish, tokenB));
@@ -965,7 +965,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             owner.Dispose();
             _owners.Remove(owner);
@@ -997,9 +997,9 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation first =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
             PngJsonCapturePublicationArtifactPublishOperation second =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(first, token);
@@ -1016,7 +1016,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken first = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken second = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, first, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, first, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, first);
@@ -1032,7 +1032,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             FakePublisher foreign = new FakePublisher();
@@ -1053,7 +1053,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
@@ -1078,7 +1078,7 @@ namespace Zantetsu.Core.Tests
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt valid =
-                publisher.Publish(PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0), token);
+                publisher.Publish(PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0), token);
             Assert.That(valid.IsValid, Is.True);
 
             // Null operation.
@@ -1100,7 +1100,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
@@ -1120,7 +1120,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
@@ -1142,7 +1142,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPlan(snapshot);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             FakePublisher publisher = new FakePublisher();
             PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
@@ -1162,7 +1162,7 @@ namespace Zantetsu.Core.Tests
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _, out _);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
 
             Assert.Throws<InvalidOperationException>(() => new ThrowingPublisher().Publish(publish, token));
         }
@@ -1320,7 +1320,7 @@ namespace Zantetsu.Core.Tests
             for (int i = 0; i < count; i++)
             {
                 PngJsonCapturePublicationArtifactPublishOperation publish =
-                    PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, i);
+                    PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, i);
                 PngJsonCapturePublicationArtifactPublishReceipt receipt = publisher.Publish(publish, token);
 
                 Assert.That(receipt.IssuedBy, Is.SameAs(publisher));

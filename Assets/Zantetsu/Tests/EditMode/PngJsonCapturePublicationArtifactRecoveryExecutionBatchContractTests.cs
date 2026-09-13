@@ -1266,7 +1266,7 @@ namespace Zantetsu.Core.Tests
 
             // Step 1's publish operation (sidecar) in step 0 (png) is rejected.
             PngJsonCapturePublicationArtifactPublishOperation step1Operation =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 1);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 1);
             SetField(preparedStep, "_publishOperation", step1Operation);
 
             Assert.That(preparedStep.IsValidIndexLocal(token), Is.False);
@@ -1284,7 +1284,7 @@ namespace Zantetsu.Core.Tests
 
             // A fresh instance built for the same step is equivalent.
             PngJsonCapturePublicationArtifactPublishOperation other =
-                PngJsonCapturePublicationArtifactPublishOperationFactory.CreateIndexLocal(plan, token, 0);
+                PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
             Assert.That(ReferenceEquals(preparedStep.PublishOperation, other), Is.False);
             SetField(preparedStep, "_publishOperation", other);
 
