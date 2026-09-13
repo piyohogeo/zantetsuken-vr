@@ -72,7 +72,7 @@ namespace Zantetsu.Observability
 
             CaptureRunInitializationRecoveryDecision decision = CaptureRunInitializationRecoveryClassifier.Classify(snapshot);
             CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(decision);
-            CaptureRunInitializationRecoveryExecutionBatch batch = CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(plan);
+            CaptureRunInitializationRecoveryExecutionBatch batch = new CaptureRunInitializationRecoveryExecutionBatch(plan);
 
             CaptureRunInitializationRecoveryExecutionResult executionResult = _executionCoordinator.Execute(batch);
             VerifyExecutionResult(executionResult, batch);

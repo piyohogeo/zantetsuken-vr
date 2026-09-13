@@ -169,7 +169,7 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunInitializationRecoveryActionPlan plan = CaptureRunInitializationRecoveryActionPlanBuilder.Build(
                 CaptureRunInitializationRecoveryClassifier.Classify(MakeSnapshot(staging, final, layout)));
-            return CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(plan);
+            return new CaptureRunInitializationRecoveryExecutionBatch(plan);
         }
 
         private static void SetField(object target, string fieldName, object value)
@@ -631,7 +631,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationRootObservation staging = MakeObservation(Staging, true, Canonical, binding.StagingInitialization, Absent, null, hasInitTmp: true);
             CaptureRunInitializationRootObservation final = MakeAbsent(Final);
             CaptureRunInitializationRecoveryInspectionSnapshot snapshot = MakeSnapshot(staging, final, layout, disposeLog, out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunInitializationRecoveryExecutionBatch batch = CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(
+            CaptureRunInitializationRecoveryExecutionBatch batch = new CaptureRunInitializationRecoveryExecutionBatch(
                 CaptureRunInitializationRecoveryActionPlanBuilder.Build(
                     CaptureRunInitializationRecoveryClassifier.Classify(snapshot)));
 

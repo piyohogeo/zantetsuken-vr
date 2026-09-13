@@ -174,7 +174,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationRecoveryExecutionBatch BuildBatch(
             CaptureRunInitializationRecoveryActionPlan plan)
         {
-            return CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(plan);
+            return new CaptureRunInitializationRecoveryExecutionBatch(plan);
         }
 
         private static CaptureRunMarkerPathSet ForgePathSet(CaptureRunMarkerPathSet source, string fieldName, string corruptedValue)
@@ -487,7 +487,7 @@ namespace Zantetsu.Core.Tests
         public void Batch_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(null));
+                () => new CaptureRunInitializationRecoveryExecutionBatch(null));
 
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
@@ -499,7 +499,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunInitializationRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunInitializationRecoveryExecutionBatchBuilder.Build(plan));
+                () => new CaptureRunInitializationRecoveryExecutionBatch(plan));
 
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
@@ -819,17 +819,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(fields.All(f => f.IsInitOnly), Is.True);
         }
 
-        [Test]
-        public void Builder_Shape_NoFields()
-        {
-            Type type = typeof(CaptureRunInitializationRecoveryExecutionBatchBuilder);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance), Is.Empty);
-        }
-
         // ---- Source inspection ----
 
         [Test]
@@ -838,8 +827,7 @@ namespace Zantetsu.Core.Tests
             string[] relativePaths =
             {
                 "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryPreparedStep.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryExecutionBatch.cs",
-                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryExecutionBatchBuilder.cs"
+                "Assets/Zantetsu/Runtime/Observability/CaptureRunInitializationRecoveryExecutionBatch.cs"
             };
 
             foreach (string relativePath in relativePaths)
