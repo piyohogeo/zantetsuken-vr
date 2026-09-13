@@ -45,7 +45,7 @@
 
 - 非同期処理と状態遷移は最初のPoCから相関ID付きで記録し、性能計測と因果関係の調査を同じ時間軸で行えるようにする。
 
-- デバッグ映像はTraceを補助する証拠としてFrameIdと同期し、PoC初期はUnity側の選択的キャプチャ、必要性確認後はOpenXR Projection Swapchain Captureを段階導入する。
+- デバッグ映像はUnity側の選択的Captureを使用し、Traceを補助する証拠としてFrameIdと対応付ける。
 
 ## 3. スコープ
 
@@ -150,7 +150,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 | Mob Future Planner | 20章のRoot姿勢とAnimation入力を整合した未来計画、更新・失効を担当する。具体的な生成・保持・負荷制御方式は研究後に決める |
 | Animation Pose Evaluator | 19.3の明示入力と対象時刻から、リターゲット済み骨Pose Tableを使ってCurrent／Future共通のRig Poseを生成する |
 | Observability／Trace | Profiler計測、状態イベント、Work Item／Job相関、boundedな履歴、診断保存、Editorタイムラインを提供 |
-| Visual Capture | Unity側の選択的片眼録画と異常時静止画をTraceへ関連付け、後期にはOpenXR API LayerによるProjection Swapchain Captureを提供 |
+| Visual Capture | Unity側の選択的片眼録画と異常時静止画をTraceへ関連付ける |
 | Asset Preprocessor | Blenderをヘッドレス実行し、ライセンスAssetから表示／Stencil共用Geometry、幾何Topology、点Anchor、Compound Physics Proxy、検証レポートをローカル生成。Phase 5.5で建物由来Metadataと初期Depthを生成する。製品用Strict Solidは生成しない |
 
 ### 4.2 切断イベントの時系列
@@ -1151,13 +1151,8 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-045 | 遠距離モブ | 介入までの猶予を有効なRoot・Animation計画と切断先行準備へ利用する。特定の経路生成・予約方式は要求しない | 確定 |
 | D-046 | MobPlan Commit | 未来モブ姿勢に基づく切断成果物は、実命中、ObjectGeneration、PlanGeneration、姿勢許容誤差の一致時だけCommitする | 確定 |
 | D-052 | 候補範囲 | 候補範囲は投機専用で、実HitはSlashWave Segment Sweepだけで確定する。有限包絡がなければ全Hitを含まない先行準備範囲を使い、範囲外は現在状態経路へ進む | 確定。19.1.10／Phase 4.53 |
-| D-059 | 映像キャプチャ段階導入 | PoC初期はUnity側の選択的キャプチャを使用し、切断PoC成立後にOpenXR API Layer方式を追加検証する | 確定 |
 | D-060 | PoC録画負荷 | 21.7／21.15の選択的Captureを使用し、非待機とbounded資源を維持する | 確定。早期の録画条件は実装詳細 |
-| D-061 | OpenXR Capture責務 | Windows PCVRのD3D11（D-137／21.7.4）だけから開始し、Projection Swapchain ImageをRelease前に専用GPU TextureへCopyしてTraceと同期する | 技術検証付き確定 |
-| D-062 | 映像の証拠範囲 | Projection Captureはアプリ提出画像の証拠とし、Meta compositor、Reprojection、レンズ補正、Quest Link圧縮後の最終HMD像は保証しない | 確定 |
-| D-063 | Capture相関 | 撮影した画像とFrame・対象・処理を対応付ける。OpenXR固有の相関は21.7に従う | 確定。Record形式は固定しない |
-| D-065 | Capture Fail Fast | 実行時のGraphics API、Format、Sample Count、Array Size、Layer、SubImageが固定Profileと違う場合は録画だけを停止し、構成差をTraceする | 確定 |
-| D-066 | Capture環境記録 | 21.7.6に従い測定環境を識別し、環境差を同一条件として比較しない | 確定。保存形式・照合方法は実装詳細 |
+| D-063 | Capture相関 | 撮影した画像とFrame・対象・処理を対応付ける。 | 確定。Record形式は固定しない |
 | D-067 | cooking非同期化 | Bake／cookingは即切断表示・初回仮運動のクリティカルパスから外す。表示は4.5.2の準備後に開始し、実Geometryは4.5.6の現在の参照・frameと転送条件で公開する。固定側も描画するが動かさない | 確定 |
 | D-069 | 物理分裂Commit | Bake済みConvexの完成後、物理ステップ境界で左右Rigidbodyへ分裂し、親の線速度・角速度から各重心位置の速度を継承する | 廃止（D-132でProvisional生成時の分裂とFinal handoffへ置換） |
 | D-070 | Cooking Profile | 初期製品は7.3の単一ProfileをBakeとColliderへ同一指定する | Phase 4で構成を選ぶ |
@@ -1195,7 +1190,6 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-134 | Mob計画方式の研究後採用 | 移動・Animation計画、保持・更新・AI LODの具体方式は先行独立研究後に人間が選定し、Phase 4.70で20章の意味契約へ接続する。方式未決の間は固定計画による接続検証を進められるが、製品計画機能の完了とはしない | 人間承認済み、2026-09-13。同じSeedからの計画再生成・経路hash一致とMob計画固有の無割当保証を外す |
 | D-135 | NPC Pose Table一本化 | 製品RuntimeのCurrent／Futureを19.3のリターゲット済み骨Pose Tableと共通評価へ統一する。対象時刻と明示入力を正本とし、オンライン代替Backend・方式再比較を要求しない。品質・容量・費用は本体で確認する | 人間承認済み、2026-09-13。方式統一のため追加費用を引き受け、高速化を保証しない |
 | D-136 | IK／Pose Layer scope | 初期予測対象NPCのLook、腕／Foot IK、左右反転等のオンラインPose補正はCurrent／Future双方で対象外とする。導入は別の設計変更とし、将来入力Schemaを先行させない。実測Controller姿勢によるプレイヤー腕IKは別scopeとする | D-009を置換。T-018付き確定 |
-| D-137 | 後期OpenXR Capture構成 | Phase 4.8は21.7.4のWindows PCVR／D3D11固定構成を使う | 確定。Phase 0.11の短時間NVENC確認とは分離する |
 | D-138 | 短時間NVENC確認 | Phase 0.11は21.15の実際に使用するCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離で完了する | 人間承認済み。固定録画条件・内部方式・試験階層を維持する義務を外し、進行中実装はそのまま完了できる |
 | D-148 | Phase 0.2の凍結 | 採用する少数Geometryと用途対応だけを引き継ぎ、10.2.2に従いmergeして利用できる時点で完了する | 人間承認済み。旧quota・網羅性・形式互換・同一手順の再生成を維持する義務を外す |
 | D-149 | 剛体Local Plane実姿勢リベース | 19.5.1の自由飛行剛体だけ、予測Pose差の一致判定を世代・前提と実姿勢での面誤差Gateへ置き換える。攻撃SourceSlashPlaneは不変、命中前の仮Local Planeを命中時に一度だけ採用／Fallback確定し、7.6の受付判定と、受付済みのTemporary／Provisional／Stable／Finalへ共通使用する。面採否と受付判定はMesh／Collider Readyから独立し、未完成だけを理由に切断位置を変更しない。対象ごとの面差と固定点近似の未検出差を許容するが、Actor pose／速度を予測または命中Snapshotへ戻さず、自前B-repの包含・支持安全・世代検証を維持する | 確定。4.2／19.1／19.5の姿勢一致規則に対する限定例外。D-046のMob／Skinned契約は変更しない。O(1)直接予測式の標準採用とは独立 |
@@ -1241,9 +1235,6 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-021 | AI LOD | 介入への応答と計画再利用を両立する負荷制御方式・判定指標・更新頻度 | CPU予算、見た目、予測再利用率 | 研究とT-045の本体実測で決める |
 | O-022 | MobPlan有効期間 | 採用方式で扱う計画期間と更新時期 | 切断計算猶予、無効化率、メモリ | 研究とT-044～T-046の本体実測で決める |
 | O-024 | Unity更新頻度 | 6000.3.22f1から同一LTSパッチへ更新する条件と回帰基準 | 修正取込み、再インポート時間、安定性 | 更新候補発生時 |
-| O-026 | 後期連続録画 | Phase 4.8で採用の要否と容量・停止時間を判断する。Phase 0.11の固定値を引き継がない | Gameplay負荷と調査用途 | Phase 4.8 |
-| O-027 | API Layer対象 | Phase 4.8はD-137のD3D11構成から開始する。Phase 0.11にOpenXR API Layerを前倒ししない | API互換性・GPU所有権 | Phase 4.8 |
-| O-028 | 最終像録画 | Meta compositor／Quest Link後の映像を併録する条件と手段 | Reprojection、圧縮、HMD固有不具合の切分け | T-056後 |
 | O-032 | 最終重力と周辺調整 | 0.35G／0.5G／0.7G／1.0Gの採用値と、反発、Drag、分離Impulse、Animation、破片寿命の追加調整要否 | 空中斬り成功率、世界の重量感、テンポ、物理安定性 | T-064のプレイテスト後 |
 | O-033 | Shadow近似品質 | 両面・キャップなし近似を許容する距離／時間、Stable専用Shader分離、問題時の簡易Shadow Cap導入条件 | Shadow GPU時間、Draw、接地影、Self Shadow、実装複雑度 | T-065後 |
 | O-034 | Stencil Batch予算 | `MaxStencilColors`、OBB／Cap Bounds Margin、World Plane一致epsilon、Facing epsilonを決める。Count方式は128初期化の正符号8bitへ固定し、相殺・Color超過の救済条件、距離別Cap省略、別Backendは追加しない | CPU分類・Color割当て時間、Stencil GPU時間、Draw、最後の統合Color比率、仮断面品質 | T-066～T-068後 |
@@ -1316,10 +1307,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-049 | Mob Trace因果相関 | 計画・Work・Slashと採否の因果を既存IDで追える | MobId／PlanGeneration／SlashId／TaskIdで確認する。計画単体は4.70、未来VP準備は条件付き4.71、切断Commitは条件付き4.72で扱い、後段不採用を計画Traceの未完了にしない |
 | T-050 | 断面表示一貫性 | 通常表示で仮断面と実断面が同じグレー・同じトゥーン応答となり、差し替えで陰影や輪郭が目立って変化しない | 共通トゥーン設定下で箱、凹形、人物を多方向に切断し、両眼映像とフレーム差分を確認する。既存FixtureでBase Texture／Material UV Transformを変更しても実断面色が変わらないことを確認する |
 | T-051 | 断面デバッグ表示 | 5.3の通常グレー／仮断面赤／実断面緑が描画対象に対応し、デバッグ切替でGeometryを書き換えない | Final／Logical公開前、公開後Geometry未Commit、Geometry Commit後を一連で確認し、再切断では既存実Capの緑と新しい仮Capの赤を維持する。色変更だけを目的とするVertex／Index書換え・VB／IB転送・Geometry複製がないことを確認する。処理経路別の色行列、色覚補助、専用パネル、独立性能SLAを要求しない |
-| T-054 | Unity選択的録画 | Frameと画像が対応し、21.15の非待機・容量・寿命・故障分離を満たす | Phase 0.11では21.15のCapture経路での複数Frame処理・出力確定・decode対応と資源寿命を確認する。Phase 4.8の連続録画採否・負荷確認を前倒しせず、旧固定fps・Frame数・試験階層を要求しない |
-| T-055 | OpenXR Projection Capture | D3D11固定ProfileでRelease前CopyがSwapchain所有権、Texture Array、左眼SubImage Rect／Array Indexを正しく扱い、提出画像を破損しない。MSAA、別API、想定外LayerはFail Fast | 正常Profileで非録画時との画像・Frame timing差を比較し、MSAA、D3D12、別Array Size、追加App Layerを故意に与えて録画停止とTrace理由を検査 |
-| T-056 | Capture相関と限界 | predictedDisplayTime、Pose、TestRunId、ゲーム内ID、画像が一意に対応し、Projection正常／最終HMD異常を区別できる | 意図的な描画不具合、Dropped Frame、Reprojection、Link品質低下を発生させ、Unity Capture、API Layer Capture、HMD観察を比較 |
-| T-057 | Capture環境識別 | 21.7.6に従い異なる環境のRunを同一条件として比較しない | 代表的な構成差を識別できることを確認する。保存形式と差分照合方法は実装詳細 |
+| T-054 | Unity選択的録画 | Frameと画像が対応し、21.15の非待機・容量・寿命・故障分離を満たす | Phase 0.11では21.15のCapture経路での複数Frame処理・出力確定・decode対応と資源寿命を確認する。旧固定fps・Frame数・試験階層を要求しない |
 | T-058 | Pending物理共有 | 4.5.2の入力準備条件に従って切断表示を開始し、cook遅延中の共有Colliderによるめり込みと透明接触が許容範囲に収まる | Bake遅延を0～数秒へ変え、表示開始フレーム、分離量、接触差、Timeout品質低下を測定する。処理中は同一Sourceへの再切断を拒否し、Final／Logical公開成功後は子への切断を受付可能とし、Final不成立時は7.1に従ってSourceを退役することを確認する |
 | T-059 | 物理分裂Commit | 7.1／7.2の初回分裂とFinal handoffのpose／速度・一体公開を確認する | 並進・回転・接触中の代表例で、Anchor点速度継承とFinal Actorのpose／速度維持、主スレッド時間、Impulse、視覚差を記録する |
 | T-064 | 全体低重力プレイ | 一般プレイヤーが空中物体を狙いやすく、世界全体の浮遊感とゲームテンポが許容でき、全軌道系で重力が一致する | 0.35G／0.5G／0.7G／1.0Gを同一投擲・切断Scenarioで比較し、滞空時間、斬撃成功率、主観評価、Physics／予測／VFXの軌道差を記録 |
@@ -1381,7 +1369,7 @@ T-091のLease確認は、各旧Cooked GeometryをProvisional Shapeへ結び付�
 
 ## 15. 実装ロードマップ
 
-Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視せず、一括改番しない。Slash UX系列は0.5→0.51→0.52→0.53→0.54→0.55、表示系列は0.9→0.91→0.92→0.93→0.94→1→1.50→1.51→1.52→2→3→4→4.1→4.3とする。両系列は0.5後に並行可能で、1.50は0.5と0.94／1を前提とし、0.51～0.55を待たない。0.55と4.3の双方から4.50→4.51→4.52へ合流し、基本Playableを成立させる。4.52以降は4.53→4.54→任意4.55と、4.52→4.61→4.65→4.70の分岐とする。4.71は4.65採用時だけ未来VP準備を既存DAG／VPプールへ接続し、4.72は4.52＋4.53＋4.71を統合する。4.55は基本ゲームと4.61以降の必須依存にせず、4.65不採用なら4.71／4.72を省略して4.70から4.8へ進む。いずれも未完了負債にしない。
+Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視せず、一括改番しない。Slash UX系列は0.5→0.51→0.52→0.53→0.54→0.55、表示系列は0.9→0.91→0.92→0.93→0.94→1→1.50→1.51→1.52→2→3→4→4.1→4.3とする。両系列は0.5後に並行可能で、1.50は0.5と0.94／1を前提とし、0.51～0.55を待たない。0.55と4.3の双方から4.50→4.51→4.52へ合流し、基本Playableを成立させる。4.52以降は4.53→4.54→任意4.55と、4.52→4.61→4.65→4.70の分岐とする。4.71は4.65採用時だけ未来VP準備を既存DAG／VPプールへ接続し、4.72は4.52＋4.53＋4.71を統合する。4.55は基本ゲームと4.61以降の必須依存にせず、4.65不採用なら4.71／4.72を省略して4.70から5.5へ進む。いずれも未完了負債にしない。
 
 Phase 0.21は10.2.3の受入れ責務を定め、最初に必要とするPhaseが、その用途に必要な登録・内容識別・所在解決・Harness接続を具体化する。初回利用元と接続先は実施記録へ残し、特定のPhase番号や全Consumer共通API・汎用Runnerを先に固定しない。独立した先行作業でも利用Phaseとの並行実装でもよく、Phase 0.2の完了・再開や未実装Consumerの前倒しを要求しない。個別データの持込みや独立した他Phaseの進行を0.21完了待ちにせず、既存Harnessへの入力は先行できる。導入後の入力更新・参考実行と、後続用途に必要な拡張・変更は通常作業とし、同じ受入れ責務の範囲では0.21を再開しない。
 
@@ -1399,7 +1387,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | --- | --- | --- | --- |
 | Phase 0 | 非VR基盤・観測（完了済み） | 固定Unity環境、非VR観測、Profiler／Traceと対応Capture | 必要な性能と因果関係・Frame相関を確認でき、観測資源をboundedに管理しCapture失敗をGameplayへ拡大しない。形式変更だけで再実行・再承認しない |
 | Phase 0.1 | Capture非同期化（完了済み） | Main Threadを長時間待たせないCapture処理 | 21.15の非同期・容量・資源寿命・故障分離を引き継ぐ。Encoder、Worker、保存・通知形式、検証方法は実装詳細とし、今回の改訂で作り直さない |
-| Phase 0.11 | 短時間NVENC確認 | 対応環境のGPU画像から短い映像を生成する非同期Capture | 21.15のCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離を満たす。既存の承認済み方式で完了でき、固定fps・Frame数・時間・試験階層は要求しない。製品連続録画形式は確定しない |
+| Phase 0.11 | 短時間NVENC確認 | 対応環境のGPU画像から短い映像を生成する非同期Capture | 21.15のCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離を満たす。既存の承認済み方式で完了でき、固定fps・Frame数・時間・試験階層は要求しない |
 | Phase 0.12 | 可変長Trace Writer | D-159と21.16のprivate Writer、producer専用固定容量Payload／Runtime Index Ring、固定Event mask、bounded Drain、stop／join後の単純sealを同一移行系列の内部backendとして実装する | 通常writeに共有locked RMWと実行中allocationがなく、payloadコピー完了後だけRuntime Indexが公開される。lane FIFO、wrap、Index／Payload容量不足、oversize Drop、固定件数Drain、最終Drainを検証し、現行WriterとCPU時間、copy byte、allocation、Dropを比較する。Release既定の切替と旧経路削除はまだ行わない |
 | Phase 0.13 | MemoryBounded Paged Trace History | ProfileでPage size／Page数／総容量を決めてRun開始前に確保するPayload Page列、Pageごとの`CommittedByteCount`、History全体の64 bit `CommittedRecordCount`を0.12 backendへ追加する。History Index、Page状態enum、live Snapshotを持たない | 21.16.3の最大record全体のPage収容条件とProducer Lane容量条件を開始前に確認する。record全体を単一Pageへ書いた後だけcommit値を進め、Page末尾不足、History満杯、確保不能を待機や拡張なしでReject／Dropできる。停止後Viewは全record配列を生成しない。Release既定はまだ切り替えない |
 | Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。Release既定の採用と製品接続先がない場合の完了条件は21.16.1に従い、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
@@ -1439,7 +1427,6 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 4.70 | Mob未来計画の本体導入 | 研究後に人間が採用した移動・Animation計画方式と20章への接続、T-092 | 現在／未来整合、更新・失効・寿命・予算を確認する。固定計画による先行接続検証だけでは完了しない。Jobベイク不採用でも計画単体で閉じ、未来VP入力・人形先行切断は要求しない |
 | Phase 4.71（条件付き） | 未来VP入力準備統合 | 4.61＋4.65採用結果＋4.70を4.53の投機DAGと既存VPプールへ接続し、候補Pose／VP入力準備・失効・回収を行う | 4.65不採用ならPhase自体を省略し、未完了負債にしない。人形の実切断Commitをまだ要求しない |
 | Phase 4.72（条件付き） | Humanoid先行切断統合 | 4.52の現在Pose経路、4.53の投機経路、4.71の未来VP入力を接続 | 有効成果物採用、未完成／Pose不一致時の4.52同期経路、世代失効回収を確認する。4.65不採用なら省略可能 |
-| Phase 4.8 | OpenXR Projection Capture＋正式録画判断（4.70と有効化した4.71／4.72の後） | 21.7.4の固定構成、Release前GPU Copy、Trace相関と負荷確認 | 切断PoCの異常を提出画像とTraceで調査でき、想定外構成ではCaptureだけを停止する。連続録画が必要ならT-054の実測から容量・停止時間を満たす方式を選び、0.11の短時間確認方式を自動採用しない。API Layerまたは連続録画を個別に見送れる |
 | Phase 5.5 | Asset自動前処理 | Phase 0.2の採用入力と利用可能な知見を参考に、完全なPortable Blender Manifest／Bootstrap、固定版ヘッドレス実行、Asset別Recipe、表示／Stencil共用Cut Geometryと`RenderCutTopologyMap`、必要な幾何Topology Metadata、Component単位の閉鎖・manifold・局所winding整合、見た目を保つReduction、UV／Material再構成、点Anchor入力、建物由来Metadataと初期Depth、Compound Physics Proxy、検証、キャッシュを実装する | Phase 0.2でRejectした複雑Assetも対象に含め、代表家具・車・建物を別PCでもGUIなしで再現生成する。相互に食い込む閉ComponentをBoolean Unionせず共用Geometryへ通し、FBX control point／Import topologyからattribute seamを越える安定したTopology対応とcanonical posed positionを生成し、6章の共通入力Gateに合格したGeometryだけを切断対象へ公開する。開放Boundary、局所winding不整合、edge／vertex Non-manifoldはAsset修正またはRecipeで解決し、解決しない入力を切断対象外とする。用途別Stencil Shell、小部品専用分類・消去用ID・Shard、符号証明、signed-volume分類、向き正規化、Winding上界Metadata、Runtime修復を生成・保存しない。Geometryの同Side所属は7.6に従う。製品用Strict Solidを生成・検証・Fallbackせず、その成功を代表Assetの合格条件にしない。Phase 1／4の合成入力を実AssetのGeometry・Convex・点Anchorへ接続し、Phase 0.2より広いAsset範囲と製品品質を達成する |
 | Phase 5.6 | 追加空間分割（任意） | 7.9の単一平面探索・範囲内部の面配分、新Index領域への振り分けコピー・必要転送・旧領域Free、既存Convex処理・cook・質量・点Anchor、7.2.2の建物Depth・子D6生成と親D6退役、非命中公開、全体1未回収試行と入力別抑止 | 大きなIndex範囲内の離れた部分を2物体へ分け、Vertex共有と読者寿命後の旧Index回収を確認する。成功後は通常再切断でき、不成立・無効時は元物体が通常完成状態で残る。通常切断とGCを依存させず、7.9.5の共有資源競合による遅延を許容する。Phase自体を省略可能 |
 | Phase 5.7 | 表示なし物理物体の遅延回収（任意） | 7.9の確定空判定、物理所有単位の登録終了、既存Actor／Shape／システム所有Constraint／Job資源退役への接続 | 7.9.7のGC選択・接触中退役・共有資源寿命・所有D6の一度だけの退役・後着成果物拒否を確認し、無関係Siblingを維持する。追加分割の実装・有効化・成功へ依存せず、Phase自体を省略可能 |
@@ -1453,7 +1440,7 @@ Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も
 
 Phase 2.9の直接出力をPhase 3で既存VPプール・転送・現在frameでの公開へ接続する。切断Kernelの意味・Topology・Cap品質・世代の有効性・表示／Stencil同時公開は維持し、Final物理所属の確定をIndex配置・転送の前提にしない。詳細layoutやKernel内部の書込み方式は必要な段階まで未決とし、物理用の処理は7.2の実行分担に従う。Phase 4.53の剛体先行計算と、4.5.2の人形経路分離も同じ出力と準備済み範囲再利用へ接続する。0.92へAnimation／Pose Evaluatorを前倒ししない。Stage 3とGPU並行ベイクは実測に応じた後段最適化に残す。
 
-Phase 4.52で少数TableのCurrent評価を接続し、4.61は同じ評価処理のT-018確認で閉じる。4.65は固定Rig Poseによる限定Jobベイク・比較・人間採否を維持し、Pose Table採用をJobベイク採用へ読み替えない。4.52／4.61／4.65は移動研究の完成を待たない。4.70は研究結果から人間が製品方式と必要な要求・完了条件を決めて本体へ導入し、研究側の全仕様・Dataset・UIを自動採用しない。内部構造は実装詳細に留める。Jobベイク採用時だけ4.71で未来VP準備、4.72で先行切断を統合し、不採用なら両Phaseを省略する。4.70自体と4.8以降への依存は維持し、少数Fixtureのために5.5や0.21の全Consumer対応を前倒ししない。
+Phase 4.52で少数TableのCurrent評価を接続し、4.61は同じ評価処理のT-018確認で閉じる。4.65は固定Rig Poseによる限定Jobベイク・比較・人間採否を維持し、Pose Table採用をJobベイク採用へ読み替えない。4.52／4.61／4.65は移動研究の完成を待たない。4.70は研究結果から人間が製品方式と必要な要求・完了条件を決めて本体へ導入し、研究側の全仕様・Dataset・UIを自動採用しない。内部構造は実装詳細に留める。Jobベイク採用時だけ4.71で未来VP準備、4.72で先行切断を統合し、不採用なら両Phaseを省略する。4.70と採用時の4.71／4.72を終えて5.5へ進み、少数Fixtureのために5.5や0.21の全Consumer対応を前倒ししない。
 
 Phase 1～3はHarness内の合成Final Physics成功／失敗入力により7.1のLogical Publication／Abortと4.5.6のGeometry順序を検証する。製品Runtime用の代替Physics Modeや公開schemaは作らない。SourceがActive中は受付を見送り、別LogicalFragmentは並行可能とする。Final／Logical公開後はGeometry未完了でも子を受付け、後続Kernelだけ祖先Commitを待つ。実Actor／cook／D6との一体公開はPhase 4で確認する。
 
@@ -1471,7 +1458,7 @@ Phase 7.1は通常切断・共通退役・VPプールへ後付けする後期の
 
 ## 16. 垂直スライス受け入れ基準
 
-基本Playableは4.51／4.52の現在状態経路で成立させる。本章のPrediction・MobPlan・製品Asset・正式録画の確認は担当する後続Phaseへ適用し、基本Playableへ前倒ししない。任意4.55と条件付き4.71／4.72の省略条件は15章に従う。
+基本Playableは4.51／4.52の現在状態経路で成立させる。本章のPrediction・MobPlan・製品Assetの確認は担当する後続Phaseへ適用し、基本Playableへ前倒ししない。任意4.55と条件付き4.71／4.72の省略条件は15章に従う。
 
 Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.2の明示的品質例外を適用する。物理Convexの内接削減による接触・形状・No-op・質量特性の変化には7.2の許容を適用する。即時表示は4.5.2の必要なベイク・VP変換後に始まり、残る準備費用による表示開始の遅れを許容する。4.5.4のGPU容量拡張に伴う停止と容量限界での開始拒否／終了を許容し、無制限の切断寿命を要求しない。固定状態による仮描画省略を行わない費用、7.9の任意分割でのIndexコピー・新旧範囲共存を許容する。実断面Geometryの品質、支持・物理の安全条件、世代の有効性は緩和せず、表示Commitは4.5.6の現在frame・参照・転送条件に従う。
 
@@ -1549,7 +1536,6 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - PoCでは選択的な片眼映像または静止画をFrameIdからTraceへ対応付けられ、録画停止時と比較して90fps性能判断を歪めない。
 
-- OpenXR API Layerを有効にした検証では、D3D11固定Capture Profile上でProjection画像と`predictedDisplayTime`、Pose、TestRunId、Slash／Object／Task IDを一意に関連付け、API Layer自身のGPU／CPU負荷も別計測できる。Profile逸脱時はゲームを止めず録画だけをFail Fastし、理由と実構成を記録する。
 
 - 大型建物は共用Cut GeometryとCompound Physics Proxyで切断でき、点Anchorを失った所有単位は通常の動的物理へ進む。建物由来の動的な1→2分裂子には7.2.2のWorld D6を生成・維持できる。落下・横倒し・完全倒壊を引き続き許容し、D6の実際の拘束効果やSolver品質を合格条件にしない。一般外部Joint付き物体は製品切断対象に含めない。
 
@@ -2202,75 +2188,15 @@ PlayerLocomotionRejectedは固定Occupancyへの候補次姿勢Overlapによる�
 
 #### 21.7.1 目的と証拠の範囲
 
-映像はTemporary／Committed断面、VFX、左右眼差、表示の巻戻りを確認する補助情報とする。撮影した画像とゲームのFrame・対象・処理を対応付け、未撮影やDropを別フレームの画像で補わない。
+映像はTemporary／Committed断面、VFX、表示の巻戻りを確認する補助情報とする。未撮影やDropを別フレームの画像で補わない。証拠の範囲はUnity側の実際の取得画像に限り、OpenXR提出画像や最終HMD像との一致を保証しない。Unity側Captureが正常でもHMDだけに問題が出る場合、追加調査が必要になり得ることを許容する。
 
-#### 21.7.2 Phase A：Unity側の選択的キャプチャ
+#### 21.7.2 Unity側の選択的キャプチャ
 
-PoCではUnity側から必要な片眼映像または静止画を選択取得する。Window録画やHMD Mirrorを必須にせず、同期GPU Readbackやencode・保存の待機でGameplayを止めない。Phase 0.11の短時間NVENC確認と、Phase 4.8の連続録画の採否判断を分離する。早期確認のfps、寸法、Frame数、保存期間・形式は実装詳細とする。
+Unity側から必要な片眼映像または静止画を選択取得する。Window録画やHMD Mirrorを必須にせず、非同期・bounded資源・資源寿命・故障分離と短時間NVENC確認は21.15に従う。fps、寸法、Frame数、保存期間・形式は実装詳細とする。
 
 #### 21.7.3 Capture相関
 
-CaptureしたFrameとTraceの時刻・FrameId・対象IDを関連付け、後期OpenXR CaptureではOpenXR Frame、predictedDisplayTime、Pose、眼とSubImageも対応付ける。相関のために全Recordへ共通field列、Manifest、Receipt、専用保存schemaを要求しない。
-
-#### 21.7.4 Phase B：OpenXR Projection Swapchain Capture
-
-切断PoCとUnity選択録画の有用性を確認した後、必要ならWindows PCVR専用のOpenXR API Layerを追加する。開発Capture Profileは次へ固定し、汎用録画製品としての互換性は目標にしない。
-
-| 項目 | 固定値 |
-| --- | --- |
-| Platform | Windows PCVR／Quest 3S有線Link／90Hz |
-| Unity | 6.3 LTS 6000.3.22f1とPackage Lock |
-| Graphics API | Direct3D 11のみ。Auto Graphics APIを無効化し、Editorも`-force-d3d11`で照合 |
-| Color | SDR／sRGB 8bit |
-| MSAA | 無効、`sampleCount = 1`を要求 |
-| Dynamic Resolution | 無効 |
-| Stereo | Single Pass Instanced／2D Texture Arrayを期待 |
-| App Composition | Projection Layer 1枚。アプリ由来の追加Quad等は初期非対応 |
-| Continuous Capture | 左眼、45fps、必要に応じ縮小解像度 |
-| Encoder | 開発PCで利用可能なHardware Encoder 1系統だけを選定 |
-
-API Layerは`xrCreateSwapchain`、`xrEnumerateSwapchainImages`、Acquire／Wait／Release、`xrWaitFrame`、`xrEndFrame`を追跡し、SwapchainのFormat、Width、Height、Sample Count、Array Size、Image Indexを管理する。設定を固定してもこれらの実値はRuntimeから取得し、決め打ちしたTexture HandleやImage Indexへ依存しない。
-
-次の構成差を検出した場合、ゲーム本体やOpenXR Frame Loopは継続したままCaptureだけを無効化し、`UnsupportedCaptureConfig`と実値をTraceする。
-
-```text
-Graphics API != D3D11
-HDRまたは未対応Format
-sampleCount != 1
-期待外のarraySize／Texture Layout
-Dynamic ResolutionまたはImage Rectの想定外変化
-Projection以外の未対応App Composition Layer
-Eye／Array Indexを一意に対応付けられない
-GPU Queue上で安全にCopy順序を保証できない
-```
-
-```text
-xrWaitFrame -> predictedDisplayTimeを記録
-xrAcquireSwapchainImage
-xrWaitSwapchainImage
-Unityが描画コマンドを投入
-API LayerがxrReleaseSwapchainImageをIntercept
-  -> 下流へReleaseする前に専用GPU TextureへCopy／MSAA Resolveを投入
-  -> Graphics APIのQueue順序、Resource State、Array Sliceを保証
-  -> 下流のxrReleaseSwapchainImageを呼ぶ
-xrEndFrameをIntercept
-  -> Composition Layer、SubImage Rect、Array Index、眼とCopyを対応付け
-専用TextureをGPU Encoderへ渡す
-```
-
-Releaseを下流Runtimeへ渡した後のSwapchain Imageをアプリ所有物として読み書きしない。Copy／Resolveがアプリ描画より後、Runtime利用より前になるよう、対象Graphics APIのQueueと同期規則を守る。CPU待ちや全Texture Readbackで順序を保証するとVRフレームを阻害するため、GPU Queue上で完結できない構成は不採用とする。
-
-「GPU-to-CPU Readbackなし」はフルサイズRGBA画像をCPUへ戻さないという意味に限定する。GPU Texture Copy、MSAA Resolve、Texture Array Slice選択、色空間／NV12等への変換、ハードウェアEncode、圧縮BitstreamのCPU／Disk転送は必要であり、各段階をProfilerMarkerとGPU Timestampで別計測する。
-
-#### 21.7.5 取得範囲の限界
-
-OpenXR API Layerが記録するのはUnityアプリが提出したProjection Swapchain Imageであり、Meta compositorが後段で行うReprojection／TimeWarp、追加Overlay、レンズ歪み補正、フレーム再利用、Quest Link圧縮後の最終HMD像は含まない。したがって、切断面、VFX、左右眼内容、古いMesh Commitの調査には使用できるが、HMD固有の残像、Link圧縮、Compositor timingの最終証拠にはしない。
-
-Projection Captureが正常でHMD観察だけ異常な場合に限り、O-028で最終像側の併録を追加検討する。API Layerを入れた状態と外した状態でApp GPU Time、Compositor GPU Time、Dropped Frame、Frame Presentを比較し、録画機構自身が問題を作っていないことを必須条件とする。
-
-#### 21.7.6 環境差
-
-測定に使ったUnity／Package、Runtime、GPU／Driver、SwapchainとLink等の構成を識別し、異なる環境の結果を同一条件として比較しない。記録媒体、Profile ID、Manifest形式やhashによる照合方法は実装詳細とする。
+CaptureしたFrameとTraceの時刻・FrameId・対象IDを関連付ける。相関のために全Recordへ共通field列、Manifest、Receipt、専用保存schemaを要求しない。
 
 ### 21.15 非同期Captureと短時間NVENC確認
 
@@ -2280,7 +2206,7 @@ Phase 0／0.1から引き継ぐ能力は、非VR観測、Frame相関、必要な
 
 Captureの不成立、故障、対応外構成はCapture内に閉じ、ゲーム停止を要求しない。ただし共有Device／Driver自体の喪失後の描画継続は保証しない。安全な所有状態や処理の停止を確認できない場合は、成功・完了・安全な解放を推測せず、同process内でCaptureを再開しない。後から呼出しが帰還してもこの制限を解除せず、process再起動を境界とする。Main／Renderに停止中Workerの帰還やJoinを待たせない。
 
-実行中のPhase 0.11は改訂前に承認済みの方式でそのまま完了してよく、今回の改訂に合わせたWorker・Queue・Pool・NVENC・Publication・試験の作り直しを要求しない。完了条件は本節の能力と寿命条件とし、旧固定fps・Frame数・時間・試験階層を要求しない。製品用連続録画形式はPhase 4.8で必要性を判断し、この短時間確認の形式を自動的に昇格しない。
+実行中のPhase 0.11は改訂前に承認済みの方式でそのまま完了してよく、今回の改訂に合わせたWorker・Queue・Pool・NVENC・Publication・試験の作り直しを要求しない。完了条件は本節の能力と寿命条件とし、旧固定fps・Frame数・時間・試験階層を要求しない。
 
 ### 21.16 Phase 0.12～0.14 可変長Trace移行
 
@@ -2344,7 +2270,6 @@ Unity Packageの正確な採用版は`Packages/manifest.json`と`Packages/packag
 
 - [OpenXR 1.1 Swapchain／Frame Submission仕様](https://registry.khronos.org/OpenXR/specs/1.1-khr/html/xrspec.html#rendering)
 
-- [Khronos OpenXR API Layer仕様](https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/main/specification/loader/api_layer.adoc)
 
 - [Unity XR Interaction Toolkit 3.0 Action-based Controller](https://docs.unity3d.com/Packages/com.unity.xr.interaction.toolkit%403.0/manual/xr-controller-action-based.html)
 
