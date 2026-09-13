@@ -2,6 +2,7 @@
     "name": "Zantetsu.MeshCut.Verification",
     "rootNamespace": "Zantetsu.MeshCut.Verification",
     "references": [
+        "Zantetsu.Core",
         "Zantetsu.MeshCut",
         "Unity.Mathematics",
         "Unity.Collections",
