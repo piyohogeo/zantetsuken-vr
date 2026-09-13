@@ -113,7 +113,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.IncompleteRelease, Is.Null);
             Assert.That(terminal.StopRelease, Is.Null);
 
-            AssertForwardsSharedGraph(terminal, run, receipt.CleanupOperation.RunInitializationId);
+            AssertForwardsSharedGraph(
+                terminal, run, receipt.Operation.CleanupOperation.RunInitializationId);
         }
 
         [Test]
@@ -261,7 +262,7 @@ namespace Zantetsu.Core.Tests
                 NvencRunPublicationRecoveryTerminalResult.CaptureCompleted(
                     captureCompleteReceipt);
 
-            Assert.That(captureCompleteReceipt.CleanupStatus,
+            Assert.That(captureCompleteReceipt.Operation.CleanupStatus,
                 Is.EqualTo(NvencRunCaptureCompleteRecoveryCleanupStatus.Failed));
             Assert.That(fromCaptureComplete.IsValid, Is.True);
             Assert.That(fromCaptureComplete.IsCaptureCompleted, Is.True);

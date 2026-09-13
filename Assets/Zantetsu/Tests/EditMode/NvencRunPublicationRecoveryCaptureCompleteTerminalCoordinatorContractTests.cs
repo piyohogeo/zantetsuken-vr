@@ -261,7 +261,7 @@ namespace Zantetsu.Core.Tests
                         ? NvencRunCaptureCompleteRecoveryCleanupStatus.Failed
                         : NvencRunCaptureCompleteRecoveryCleanupStatus.Cleaned),
                     because);
-                Assert.That(terminal.CaptureCompleteRelease.CleanupStatus,
+                Assert.That(terminal.CaptureCompleteRelease.Operation.CleanupStatus,
                     Is.EqualTo(coordinator.CleanupResult.Status), because);
 
                 Assert.That(h.Owner.IsReleaseComplete, Is.True, because);

@@ -33,9 +33,9 @@ namespace Zantetsu.Observability
     /// receipt is never valid.
     /// </para>
     /// <para>
-    /// The graph the three paths share is read from the held receipt - for the
-    /// incomplete and stopping paths, from that receipt's own operation -
-    /// rather than copied into fields of its own. What is specific to one path
+    /// The graph the three paths share is read from the held receipt's own
+    /// operation, which is the authority for it, rather than copied into fields
+    /// of its own. What is specific to one path
     /// - the cleanup result and its status, the Capture Index commit receipt,
     /// the stopping disposition - stays reachable through that receipt and is
     /// deliberately not re-exposed here.
@@ -153,7 +153,8 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.CleanupOperation?.PublicationRecoveryDecision;
+                    return _captureCompleteRelease.Operation.CleanupOperation
+                        ?.PublicationRecoveryDecision;
                 }
 
                 if (_incompleteRelease != null)
@@ -174,7 +175,7 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.OpenOutcome;
+                    return _captureCompleteRelease.Operation.OpenOutcome;
                 }
 
                 if (_incompleteRelease != null)
@@ -192,7 +193,7 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.OwnershipLease;
+                    return _captureCompleteRelease.Operation.OwnershipLease;
                 }
 
                 if (_incompleteRelease != null)
@@ -210,7 +211,7 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.RootLayout;
+                    return _captureCompleteRelease.Operation.RootLayout;
                 }
 
                 if (_incompleteRelease != null)
@@ -228,7 +229,7 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.TestRunId;
+                    return _captureCompleteRelease.Operation.TestRunId;
                 }
 
                 if (_incompleteRelease != null)
@@ -246,7 +247,7 @@ namespace Zantetsu.Observability
             {
                 if (_captureCompleteRelease != null)
                 {
-                    return _captureCompleteRelease.RunInitializationId;
+                    return _captureCompleteRelease.Operation.RunInitializationId;
                 }
 
                 if (_incompleteRelease != null)
