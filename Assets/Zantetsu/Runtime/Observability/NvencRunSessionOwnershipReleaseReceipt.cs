@@ -24,9 +24,9 @@ namespace Zantetsu.Observability
     /// exact operation. What was released — the cleanup graph, the root layout,
     /// and the Run identity — is read from <see cref="Operation"/>: the receipt
     /// restates none of it and duplicates none of it as a field of its own. The
-    /// Session Ownership Lease and the raw lock handle are never exposed,
-    /// never held, and never disposed, and no proof, token, or nonce is
-    /// introduced.
+    /// receipt does not restate the Session Ownership Lease or raw lock handle
+    /// as fields or properties of its own, and it does not dispose them, and no
+    /// proof, token, or nonce is introduced.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunSessionOwnershipReleaseReceipt
