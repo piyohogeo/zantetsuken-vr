@@ -863,14 +863,13 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(PngJsonCapturePublicationArtifactPublishReceipt), Is.Not.SameAs(typeof(PngJsonCaptureRunCaptureIndexCommitReceipt)));
         }
 
-        // ---- Issuance / forwarding ----
+        // ---- Issuance ----
 
         [Test]
-        public void Receipt_ForwardsAllValuesAndReferences()
+        public void Receipt_HoldsIssuerOperationAndTokenBinding()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(
                 out PngJsonCapturePublicationArtifactInspectionOperation operation, out PngJsonCapturePublicationArtifactInspectionAuthority authority);
-            PngJsonCapturePublicationArtifactInspectionPathSet pathSet = operation.GetArtifactPaths(0);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCapturePublicationArtifactPublishOperation publish =
                 PngJsonCapturePublicationArtifactPublishOperation.CreateIndexLocal(plan, token, 0);
@@ -880,20 +879,6 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt.IssuedBy, Is.SameAs(publisher));
             Assert.That(receipt.Operation, Is.SameAs(publish));
-            Assert.That(receipt.ActionPlan, Is.SameAs(plan));
-            Assert.That(receipt.StepIndex, Is.EqualTo(0));
-            Assert.That(receipt.EntryIndex, Is.EqualTo(0));
-            Assert.That(receipt.ArtifactKind, Is.EqualTo(Png));
-            Assert.That(receipt.CaptureFrameId, Is.EqualTo(10));
-            Assert.That(receipt.SourcePath, Is.EqualTo(pathSet.StagingPngPath));
-            Assert.That(receipt.DestinationPath, Is.EqualTo(pathSet.FinalPngPath));
-            Assert.That(receipt.ExpectedByteCount, Is.EqualTo(pathSet.Entry.PngByteLength));
-            Assert.That(receipt.ExpectedContentSha256, Is.EqualTo(pathSet.Entry.PngContentSha256));
-            Assert.That(receipt.RootLayout, Is.SameAs(plan.RootLayout));
-            Assert.That(receipt.LockIdentityEvidence, Is.SameAs(plan.LockIdentityEvidence));
-            Assert.That(receipt.TestRunId, Is.EqualTo(plan.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(plan.RunInitializationId));
-
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(receipt.IsIssuedFor(publisher, publish, token), Is.True);
         }
@@ -1323,7 +1308,6 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(receipt.IssuedBy, Is.SameAs(publisher));
                 Assert.That(receipt.Operation, Is.SameAs(publish));
-                Assert.That(receipt.EntryIndex, Is.EqualTo(i));
                 Assert.That(receipt.IsValid, Is.True);
                 Assert.That(receipt.IsIssuedFor(publisher, publish, token), Is.True);
             }
