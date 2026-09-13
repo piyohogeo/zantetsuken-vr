@@ -495,7 +495,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("SHA-256"));
             Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationDocumentSetFactory"));
             Assert.That(source, Does.Not.Contain("UnityEngine"));
             Assert.That(source, Does.Not.Contain("Random"));
             Assert.That(source, Does.Not.Contain("DateTime"));

@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
-using System.Runtime.Serialization;
 using NUnit.Framework;
 using UnityEngine;
 using Zantetsu.Observability;
@@ -17,25 +16,20 @@ namespace Zantetsu.Core.Tests
 
         private static bool IsWindows => Path.DirectorySeparatorChar == '\\';
 
+        private static string Separator => Path.DirectorySeparatorChar.ToString();
+
         private static string StagingBaseRoot() => IsWindows ? "C:\\staging" : "/staging";
 
         private static string FinalBaseRoot() => IsWindows ? "D:\\final" : "/final";
 
-        private static CaptureRunInitializationPlan MakePlan(long testRunId = 1)
+        private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
         {
-            CaptureRunRootLayout layout = new CaptureRunRootLayout(StagingBaseRoot(), FinalBaseRoot(), testRunId);
+            return new CaptureRunRootLayout(StagingBaseRoot(), FinalBaseRoot(), testRunId);
+        }
 
-            CaptureRunMarkerPathSet markerPaths =
-                new CaptureRunMarkerPathSet(layout);
-
-            CaptureRunMarkerBinding binding =
-                new CaptureRunMarkerBinding(
-                    layout.TestRunId,
-                    InitId,
-                    layout.StagingRunRootSha256,
-                    layout.FinalRunRootSha256);
-
-            return new CaptureRunInitializationPlan(markerPaths, binding);
+        private static CaptureRunInitializationDocumentSet Create(CaptureRunRootLayout layout, string initId = InitId)
+        {
+            return new CaptureRunInitializationDocumentSet(layout, initId);
         }
 
         private static byte[] GetFieldBytes(object target, string fieldName)
@@ -45,39 +39,124 @@ namespace Zantetsu.Core.Tests
             return (byte[])field.GetValue(target);
         }
 
-        private static void SetField(object target, string fieldName, object value)
-        {
-            FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(field, Is.Not.Null, fieldName + " field not found.");
-            field.SetValue(target, value);
-        }
-
         // ---- Construction ----
 
         [Test]
-        public void NullPlan_Rejected()
+        public void NullRootLayout_Rejected()
         {
-            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => new CaptureRunInitializationDocumentSet(null));
-
-            Assert.That(ex.ParamName, Is.EqualTo("plan"));
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => Create(null));
+            Assert.That(ex.ParamName, Is.EqualTo("rootLayout"));
         }
 
         [Test]
-        public void ValidPlan_Constructs()
+        public void ValidInput_ProducesDocumentSet()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet result = Create(MakeLayout());
 
-            Assert.That(set, Is.Not.Null);
+            Assert.That(result, Is.Not.Null);
         }
 
         [Test]
-        public void Plan_HeldByReference()
+        public void RootLayout_ReferenceEqual()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet result = Create(layout);
 
-            Assert.That(set.Plan, Is.SameAs(plan));
+            Assert.That(result.MarkerPaths, Is.Not.Null);
+            Assert.That(result.MarkerBinding, Is.Not.Null);
+            Assert.That(result.MarkerPaths.RootLayout, Is.SameAs(layout));
+            Assert.That(result.RootLayout, Is.SameAs(layout));
+        }
+
+        [Test]
+        public void ForwardingValues_Exact()
+        {
+            CaptureRunRootLayout layout = MakeLayout(13);
+            CaptureRunInitializationDocumentSet result = Create(layout);
+
+            Assert.That(result.TestRunId, Is.EqualTo(layout.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(result.RootLayout.StagingRunRoot, Is.EqualTo(layout.StagingRunRoot));
+            Assert.That(result.RootLayout.FinalRunRoot, Is.EqualTo(layout.FinalRunRoot));
+            Assert.That(result.RootLayout.StagingRunRootSha256, Is.EqualTo(layout.StagingRunRootSha256));
+            Assert.That(result.RootLayout.FinalRunRootSha256, Is.EqualTo(layout.FinalRunRootSha256));
+        }
+
+        [Test]
+        public void MarkerPaths_FollowPathSetRules()
+        {
+            CaptureRunRootLayout layout = MakeLayout(7);
+            CaptureRunInitializationDocumentSet result = Create(layout);
+
+            CaptureRunMarkerPathSet paths = result.MarkerPaths;
+            string sep = Separator;
+            string staging = layout.StagingRunRoot;
+            string final = layout.FinalRunRoot;
+
+            Assert.That(paths.StagingInitializationTemporaryPath, Is.EqualTo(staging + sep + "run.init.tmp"));
+            Assert.That(paths.StagingInitializationPath, Is.EqualTo(staging + sep + "run.init"));
+            Assert.That(paths.StagingReadyTemporaryPath, Is.EqualTo(staging + sep + "run.ready.tmp"));
+            Assert.That(paths.StagingReadyPath, Is.EqualTo(staging + sep + "run.ready"));
+            Assert.That(paths.FinalInitializationTemporaryPath, Is.EqualTo(final + sep + "run.init.tmp"));
+            Assert.That(paths.FinalInitializationPath, Is.EqualTo(final + sep + "run.init"));
+            Assert.That(paths.FinalReadyTemporaryPath, Is.EqualTo(final + sep + "run.ready.tmp"));
+            Assert.That(paths.FinalReadyPath, Is.EqualTo(final + sep + "run.ready"));
+        }
+
+        [Test]
+        public void InitMarkers_HaveRolesAndValues()
+        {
+            CaptureRunRootLayout layout = MakeLayout(3);
+            CaptureRunInitializationDocumentSet result = Create(layout);
+
+            CaptureRunMarkerBinding binding = result.MarkerBinding;
+
+            Assert.That(binding.StagingInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Staging));
+            Assert.That(binding.FinalInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Final));
+
+            Assert.That(binding.StagingInitialization.TestRunId, Is.EqualTo(layout.TestRunId));
+            Assert.That(binding.StagingInitialization.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(binding.StagingInitialization.StagingRunRootSha256, Is.EqualTo(layout.StagingRunRootSha256));
+            Assert.That(binding.StagingInitialization.FinalRunRootSha256, Is.EqualTo(layout.FinalRunRootSha256));
+
+            Assert.That(binding.FinalInitialization.TestRunId, Is.EqualTo(layout.TestRunId));
+            Assert.That(binding.FinalInitialization.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(binding.FinalInitialization.StagingRunRootSha256, Is.EqualTo(layout.StagingRunRootSha256));
+            Assert.That(binding.FinalInitialization.FinalRunRootSha256, Is.EqualTo(layout.FinalRunRootSha256));
+        }
+
+        // ---- Initialization ID delegation ----
+
+        [Test]
+        public void NullInitializationId_RejectedWithParamName()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+
+            ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => Create(layout, null));
+            Assert.That(ex.ParamName, Is.EqualTo("runInitializationId"));
+        }
+
+        [Test]
+        public void InvalidInitializationIds_Rejected()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+
+            Assert.Throws<ArgumentException>(() => Create(layout, new string('a', 31)));
+            Assert.Throws<ArgumentException>(() => Create(layout, new string('a', 33)));
+            Assert.Throws<ArgumentException>(() => Create(layout, InitId.ToUpperInvariant()));
+            Assert.Throws<ArgumentException>(() => Create(layout, "0123456789abcdef0123456789abcdeg"));
+        }
+
+        [Test]
+        public void Exceptions_NotTransformedOrAggregated()
+        {
+            CaptureRunRootLayout layout = MakeLayout();
+
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => Create(layout, new string('a', 31)));
+
+            Assert.That(ex.GetType(), Is.EqualTo(typeof(ArgumentException)));
+            Assert.That(ex.ParamName, Is.EqualTo("runInitializationId"));
+            Assert.That(ex.InnerException, Is.Null);
         }
 
         // ---- Canonical bytes ----
@@ -85,10 +164,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void StagingInitBytes_MatchCodec()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(plan.MarkerBinding.StagingInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingInitialization);
 
             Assert.That(set.GetStagingInitializationBytes(), Is.EqualTo(expected));
         }
@@ -96,10 +174,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void FinalInitBytes_MatchCodec()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(plan.MarkerBinding.FinalInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.FinalInitialization);
 
             Assert.That(set.GetFinalInitializationBytes(), Is.EqualTo(expected));
         }
@@ -107,10 +184,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReadyBytes_MatchCodec()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
-            byte[] expected = CaptureRunReadyMarkerCodec.SerializeCanonical(plan.MarkerBinding.StagingReady);
+            byte[] expected = CaptureRunReadyMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingReady);
 
             Assert.That(set.GetStagingReadyBytes(), Is.EqualTo(expected));
             Assert.That(set.GetFinalReadyBytes(), Is.EqualTo(expected));
@@ -119,7 +195,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReadyBytes_ValueEqual()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
             Assert.That(set.GetFinalReadyBytes(), Is.EqualTo(set.GetStagingReadyBytes()));
         }
@@ -127,7 +203,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ByteCounts_MatchLengths()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
             Assert.That(set.StagingInitializationByteCount, Is.EqualTo(set.GetStagingInitializationBytes().Length));
             Assert.That(set.FinalInitializationByteCount, Is.EqualTo(set.GetFinalInitializationBytes().Length));
@@ -138,7 +214,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Bytes_NonEmptyWithinLimit()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
             Assert.That(set.GetStagingInitializationBytes().Length, Is.GreaterThan(0));
             Assert.That(set.GetFinalInitializationBytes().Length, Is.GreaterThan(0));
@@ -154,7 +230,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Getters_ReturnDistinctCopies()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
             Assert.That(set.GetStagingInitializationBytes(), Is.Not.SameAs(set.GetStagingInitializationBytes()));
             Assert.That(set.GetFinalInitializationBytes(), Is.Not.SameAs(set.GetFinalInitializationBytes()));
@@ -165,7 +241,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReadyGetters_ReturnDistinctInstances()
         {
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(MakePlan());
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
             Assert.That(set.GetFinalReadyBytes(), Is.Not.SameAs(set.GetStagingReadyBytes()));
         }
@@ -173,10 +249,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MutatingReturnedCopy_DoesNotAffectNext()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(plan.MarkerBinding.StagingInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingInitialization);
 
             byte[] copy = set.GetStagingInitializationBytes();
             for (int i = 0; i < copy.Length; i++)
@@ -190,11 +265,10 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void StagingInitMutation_DoesNotAffectFinalOrReady()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
 
-            byte[] finalExpected = CaptureRunInitializationMarkerCodec.SerializeCanonical(plan.MarkerBinding.FinalInitialization);
-            byte[] readyExpected = CaptureRunReadyMarkerCodec.SerializeCanonical(plan.MarkerBinding.StagingReady);
+            byte[] finalExpected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.FinalInitialization);
+            byte[] readyExpected = CaptureRunReadyMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingReady);
 
             byte[] staging = set.GetStagingInitializationBytes();
             for (int i = 0; i < staging.Length; i++)
@@ -210,9 +284,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ConsecutiveConstructions_DoNotShareInternalArrays()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunInitializationDocumentSet first = new CaptureRunInitializationDocumentSet(plan);
-            CaptureRunInitializationDocumentSet second = new CaptureRunInitializationDocumentSet(plan);
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet first = Create(layout);
+            CaptureRunInitializationDocumentSet second = Create(layout);
 
             Assert.That(second, Is.Not.SameAs(first));
             Assert.That(GetFieldBytes(second, "_stagingInitializationBytes"), Is.Not.SameAs(GetFieldBytes(first, "_stagingInitializationBytes")));
@@ -221,33 +295,26 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Inputs_NotMutated()
+        public void Inputs_NotChanged()
         {
-            CaptureRunInitializationPlan plan = MakePlan();
-            CaptureRunMarkerBinding binding = plan.MarkerBinding;
+            CaptureRunRootLayout layout = MakeLayout(5);
+            string initId = InitId;
 
-            CaptureRunInitializationMarker stagingInit = binding.StagingInitialization;
-            CaptureRunInitializationMarker finalInit = binding.FinalInitialization;
-            CaptureRunReadyMarker stagingReady = binding.StagingReady;
-            CaptureRunReadyMarker finalReady = binding.FinalReady;
+            long testRunIdBefore = layout.TestRunId;
+            string stagingRootBefore = layout.StagingRunRoot;
+            string finalRootBefore = layout.FinalRunRoot;
+            string stagingHashBefore = layout.StagingRunRootSha256;
+            string finalHashBefore = layout.FinalRunRootSha256;
 
-            string initIdBefore = stagingInit.RunInitializationId;
-            string stagingHashBefore = stagingInit.StagingRunRootSha256;
-            string finalHashBefore = finalInit.FinalRunRootSha256;
-            string readyStagingHashBefore = stagingReady.StagingInitSha256;
+            CaptureRunInitializationDocumentSet result = Create(layout, initId);
 
-            CaptureRunInitializationDocumentSet set = new CaptureRunInitializationDocumentSet(plan);
-
-            Assert.That(plan.MarkerBinding, Is.SameAs(binding));
-            Assert.That(binding.StagingInitialization, Is.SameAs(stagingInit));
-            Assert.That(binding.FinalInitialization, Is.SameAs(finalInit));
-            Assert.That(binding.StagingReady, Is.SameAs(stagingReady));
-            Assert.That(binding.FinalReady, Is.SameAs(finalReady));
-
-            Assert.That(stagingInit.RunInitializationId, Is.EqualTo(initIdBefore));
-            Assert.That(stagingInit.StagingRunRootSha256, Is.EqualTo(stagingHashBefore));
-            Assert.That(finalInit.FinalRunRootSha256, Is.EqualTo(finalHashBefore));
-            Assert.That(stagingReady.StagingInitSha256, Is.EqualTo(readyStagingHashBefore));
+            Assert.That(layout.TestRunId, Is.EqualTo(testRunIdBefore));
+            Assert.That(layout.StagingRunRoot, Is.EqualTo(stagingRootBefore));
+            Assert.That(layout.FinalRunRoot, Is.EqualTo(finalRootBefore));
+            Assert.That(layout.StagingRunRootSha256, Is.EqualTo(stagingHashBefore));
+            Assert.That(layout.FinalRunRootSha256, Is.EqualTo(finalHashBefore));
+            Assert.That(initId, Is.EqualTo(InitId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(InitId));
         }
 
         // ---- Shape ----
@@ -276,37 +343,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(MonoBehaviour).IsAssignableFrom(type), Is.False);
             Assert.That(typeof(ScriptableObject).IsAssignableFrom(type), Is.False);
-        }
-
-        [Test]
-        public void Fields_ArePlanAndThreeReadonlyByteArrays()
-        {
-            Type type = typeof(CaptureRunInitializationDocumentSet);
-            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            Assert.That(fields.Length, Is.EqualTo(4), "Must hold the plan and three byte arrays.");
-
-            int planFields = 0;
-            int byteArrayFields = 0;
-            foreach (FieldInfo field in fields)
-            {
-                Assert.That(field.IsInitOnly, Is.True, field.Name + " must be readonly.");
-                if (field.FieldType == typeof(CaptureRunInitializationPlan))
-                {
-                    planFields++;
-                }
-                else if (field.FieldType == typeof(byte[]))
-                {
-                    byteArrayFields++;
-                }
-                else
-                {
-                    Assert.Fail(field.Name + " has unexpected type " + field.FieldType.Name + ".");
-                }
-            }
-
-            Assert.That(planFields, Is.EqualTo(1));
-            Assert.That(byteArrayFields, Is.EqualTo(3));
         }
 
         [Test]

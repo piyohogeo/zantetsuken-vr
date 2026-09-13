@@ -50,16 +50,10 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(documents));
             }
 
-            CaptureRunInitializationPlan plan = documents.Plan;
-            if (plan == null)
-            {
-                throw new ArgumentException("Documents must hold an initialization plan.", nameof(documents));
-            }
-
-            CaptureRunMarkerPathSet markerPaths = plan.MarkerPaths;
+            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
             if (markerPaths == null)
             {
-                throw new ArgumentException("Plan must hold a marker path set.", nameof(documents));
+                throw new ArgumentException("Documents must hold a marker path set.", nameof(documents));
             }
 
             byte[] stagingInitializationBytes = documents.GetStagingInitializationBytes();

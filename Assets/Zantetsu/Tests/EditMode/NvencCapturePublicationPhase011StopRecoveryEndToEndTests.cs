@@ -349,7 +349,7 @@ namespace Zantetsu.Core.Tests
                 MakeFrameEvidence());
 
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+                new CaptureRunInitializationDocumentSet(layout, InitId);
 
             Directory.CreateDirectory(Path.Combine(layout.StagingRunRoot, ChunksDirectoryName));
             File.WriteAllBytes(

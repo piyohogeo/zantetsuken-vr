@@ -308,7 +308,7 @@ namespace Zantetsu.Core.Tests
             scope.Identity = CaptureRunLockIdentityEvidence.Create(scope.Owner, scope.Owner.LockPathSet);
 
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(scope.Layout, InitId);
+                new CaptureRunInitializationDocumentSet(scope.Layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator execution =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeWriter());

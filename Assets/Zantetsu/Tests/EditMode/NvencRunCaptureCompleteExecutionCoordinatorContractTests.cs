@@ -752,7 +752,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+                new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator executionCoordinator =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeMarkerWriter());

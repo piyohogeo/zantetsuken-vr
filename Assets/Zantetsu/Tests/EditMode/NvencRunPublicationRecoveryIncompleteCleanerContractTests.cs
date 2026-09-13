@@ -1039,11 +1039,11 @@ namespace Zantetsu.Core.Tests
             internal void Seed(bool temporaryPresent, bool partialChunk, bool finalizedChunk)
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
                 StagingInitBytes = documents.GetStagingInitializationBytes();
 
                 CaptureRunInitializationDocumentSet foreign =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, OtherInitId);
+                    new CaptureRunInitializationDocumentSet(Layout, OtherInitId);
                 ForeignStagingInitBytes = foreign.GetStagingInitializationBytes();
                 ForeignReadyBytes = MakeForeignPeerReadyBytes();
 
@@ -1117,7 +1117,7 @@ namespace Zantetsu.Core.Tests
             internal void Populate()
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
 
                 string chunks = Path.Combine(Layout.StagingRunRoot, ChunksDirectoryName);
                 Directory.CreateDirectory(chunks);

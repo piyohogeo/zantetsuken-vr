@@ -26,7 +26,7 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationDocumentSet MakeDocuments()
         {
-            return CaptureRunInitializationDocumentSetFactory.Create(MakeLayout(), InitId);
+            return new CaptureRunInitializationDocumentSet(MakeLayout(), InitId);
         }
 
         private static CaptureRunInitializationWriteBatch MakeBatch()
@@ -141,7 +141,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationDocumentSet documents = MakeDocuments();
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
 
-            CaptureRunMarkerPathSet paths = documents.Plan.MarkerPaths;
+            CaptureRunMarkerPathSet paths = documents.MarkerPaths;
 
             Assert.That(batch.StagingInitialization.TemporaryPath, Is.EqualTo(paths.StagingInitializationTemporaryPath));
             Assert.That(batch.StagingInitialization.FinalPath, Is.EqualTo(paths.StagingInitializationPath));
@@ -240,18 +240,16 @@ namespace Zantetsu.Core.Tests
         public void Inputs_NotMutated()
         {
             CaptureRunInitializationDocumentSet documents = MakeDocuments();
-            CaptureRunInitializationPlan plan = documents.Plan;
-            CaptureRunMarkerPathSet paths = plan.MarkerPaths;
-            CaptureRunMarkerBinding binding = plan.MarkerBinding;
+            CaptureRunMarkerPathSet paths = documents.MarkerPaths;
+            CaptureRunMarkerBinding binding = documents.MarkerBinding;
 
             string stagingInitPathBefore = paths.StagingInitializationPath;
             string initIdBefore = binding.RunInitializationId;
 
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
 
-            Assert.That(documents.Plan, Is.SameAs(plan));
-            Assert.That(plan.MarkerPaths, Is.SameAs(paths));
-            Assert.That(plan.MarkerBinding, Is.SameAs(binding));
+            Assert.That(documents.MarkerPaths, Is.SameAs(paths));
+            Assert.That(documents.MarkerBinding, Is.SameAs(binding));
             Assert.That(paths.StagingInitializationPath, Is.EqualTo(stagingInitPathBefore));
             Assert.That(binding.RunInitializationId, Is.EqualTo(initIdBefore));
         }
@@ -312,23 +310,10 @@ namespace Zantetsu.Core.Tests
         // ---- Fail-closed (reflection for unreachable branches) ----
 
         [Test]
-        public void MissingPlan_RejectedAsDocuments()
-        {
-            CaptureRunInitializationDocumentSet documents = (CaptureRunInitializationDocumentSet)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationDocumentSet));
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(() => new CaptureRunInitializationWriteBatch(documents));
-            Assert.That(ex.ParamName, Is.EqualTo("documents"));
-        }
-
-        [Test]
         public void MissingMarkerPaths_RejectedAsDocuments()
         {
             CaptureRunInitializationDocumentSet documents = (CaptureRunInitializationDocumentSet)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationDocumentSet));
-            CaptureRunInitializationPlan plan = (CaptureRunInitializationPlan)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationPlan));
-            SetField(documents, "_plan", plan);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() => new CaptureRunInitializationWriteBatch(documents));
             Assert.That(ex.ParamName, Is.EqualTo("documents"));
@@ -348,7 +333,7 @@ namespace Zantetsu.Core.Tests
             SetField(badPaths, "_stagingInitializationTemporaryPath", "bad.tmp");
             SetField(badPaths, "_stagingInitializationPath", "bad");
 
-            SetField(documents.Plan, "_markerPaths", badPaths);
+            SetField(documents, "_markerPaths", badPaths);
 
             Assert.Throws<ArgumentException>(() => new CaptureRunInitializationWriteBatch(documents));
 
@@ -472,7 +457,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("SHA-256"));
             Assert.That(source, Does.Not.Contain("System.Security.Cryptography"));
             Assert.That(source, Does.Not.Contain("CaptureRunInitializationIdGenerator"));
-            Assert.That(source, Does.Not.Contain("CaptureRunInitializationDocumentSetFactory"));
             Assert.That(source, Does.Not.Contain("new CaptureRunInitializationMarker"));
             Assert.That(source, Does.Not.Contain("new CaptureRunReadyMarker"));
             Assert.That(source, Does.Not.Contain("File."));

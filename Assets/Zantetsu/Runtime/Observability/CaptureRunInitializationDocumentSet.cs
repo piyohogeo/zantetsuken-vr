@@ -4,17 +4,20 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable, filesystem-free Capture Run initialization document set: the
-    /// canonical bytes of the four markers of a Run's initialization plan,
-    /// serialized once at construction and exposed only as defensive copies.
+    /// marker paths and markers of one Run, plus the canonical bytes of the
+    /// four markers it must write, serialized once at construction and exposed
+    /// only as defensive copies.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Construction serializes, in order, the staging and final initialization
-    /// markers with <see cref="CaptureRunInitializationMarkerCodec"/> and then
-    /// the binding's ready marker with
-    /// <see cref="CaptureRunReadyMarkerCodec"/>, and verifies that every byte
-    /// array is non-empty and within the codec's documented maximum. The plan
-    /// reference and the three owned byte arrays are held only after every
+    /// Construction builds the marker path set and the marker binding from the
+    /// same root layout, so they describe one Run by construction and nothing
+    /// correlates them afterwards. It then serializes, in order, the staging
+    /// and final initialization markers with
+    /// <see cref="CaptureRunInitializationMarkerCodec"/> and the ready marker
+    /// with <see cref="CaptureRunReadyMarkerCodec"/>, and verifies that every
+    /// byte array is non-empty and within the codec's documented maximum. The
+    /// two references and the three owned byte arrays are held only after every
     /// check succeeds.
     /// </para>
     /// <para>
@@ -26,34 +29,38 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// This type owns the arrays returned by the codecs, but never re-computes
-    /// or caches any hash, never decodes or re-parses, and treats the existing
-    /// binding as the authority for init hashes. It performs no marker
-    /// construction, no binding or plan factory call, no initialization ID
-    /// generation, no file, directory, or stream access, no tmp write, flush,
-    /// or rename, no OS locking, and no recovery or collision classification.
+    /// or caches any hash, never decodes or re-parses, and treats the binding
+    /// as the authority for init hashes. It generates no initialization ID,
+    /// performs no file, directory, or stream access, no tmp write, flush, or
+    /// rename, no OS locking, and no recovery or collision classification.
     /// It is not an <see cref="IDisposable"/>, MonoBehaviour, or
     /// ScriptableObject.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationDocumentSet
     {
-        private readonly CaptureRunInitializationPlan _plan;
+        private readonly CaptureRunMarkerPathSet _markerPaths;
+        private readonly CaptureRunMarkerBinding _markerBinding;
         private readonly byte[] _stagingInitializationBytes;
         private readonly byte[] _finalInitializationBytes;
         private readonly byte[] _readyBytes;
 
-        internal CaptureRunInitializationDocumentSet(CaptureRunInitializationPlan plan)
+        internal CaptureRunInitializationDocumentSet(
+            CaptureRunRootLayout rootLayout,
+            string runInitializationId)
         {
-            if (plan == null)
+            if (rootLayout == null)
             {
-                throw new ArgumentNullException(nameof(plan));
+                throw new ArgumentNullException(nameof(rootLayout));
             }
 
-            CaptureRunMarkerBinding binding = plan.MarkerBinding;
-            if (binding == null)
-            {
-                throw new ArgumentException("Plan must hold a marker binding.", nameof(plan));
-            }
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(rootLayout);
+
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
+                rootLayout.TestRunId,
+                runInitializationId,
+                rootLayout.StagingRunRootSha256,
+                rootLayout.FinalRunRootSha256);
 
             byte[] stagingInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
             byte[] finalInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization);
@@ -63,13 +70,22 @@ namespace Zantetsu.Observability
             RequireNonEmptyWithinLimit(finalInitializationBytes, CaptureRunInitializationMarkerCodec.MaximumCanonicalByteCount, "Final initialization");
             RequireNonEmptyWithinLimit(readyBytes, CaptureRunReadyMarkerCodec.MaximumCanonicalByteCount, "Ready");
 
-            _plan = plan;
+            _markerPaths = markerPaths;
+            _markerBinding = binding;
             _stagingInitializationBytes = stagingInitializationBytes;
             _finalInitializationBytes = finalInitializationBytes;
             _readyBytes = readyBytes;
         }
 
-        internal CaptureRunInitializationPlan Plan => _plan;
+        internal CaptureRunMarkerPathSet MarkerPaths => _markerPaths;
+
+        internal CaptureRunMarkerBinding MarkerBinding => _markerBinding;
+
+        internal CaptureRunRootLayout RootLayout => _markerPaths.RootLayout;
+
+        internal long TestRunId => _markerPaths.RootLayout.TestRunId;
+
+        internal string RunInitializationId => _markerBinding.RunInitializationId;
 
         internal int StagingInitializationByteCount => _stagingInitializationBytes.Length;
 

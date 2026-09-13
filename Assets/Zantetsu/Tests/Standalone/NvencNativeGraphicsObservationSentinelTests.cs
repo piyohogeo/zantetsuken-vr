@@ -2256,7 +2256,7 @@ namespace Zantetsu.Observability.StandaloneTests
                 new CaptureRunInitializationExecutionCoordinator(
                     new SentinelRootProvisioner(), new SentinelMarkerWriter())
                 .Execute(new CaptureRunInitializationWriteBatch(
-                    CaptureRunInitializationDocumentSetFactory.Create(
+                    new CaptureRunInitializationDocumentSet(
                         layout, SentinelRunInitId)));
 
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);

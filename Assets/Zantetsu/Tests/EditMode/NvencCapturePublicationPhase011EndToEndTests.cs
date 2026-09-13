@@ -384,7 +384,7 @@ namespace Zantetsu.Core.Tests
             internal void WriteMarkers()
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
 
                 File.WriteAllBytes(StagingInitPath, documents.GetStagingInitializationBytes());
                 File.WriteAllBytes(StagingReadyPath, documents.GetStagingReadyBytes());
@@ -520,7 +520,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+                new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator executionCoordinator =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeMarkerWriter());

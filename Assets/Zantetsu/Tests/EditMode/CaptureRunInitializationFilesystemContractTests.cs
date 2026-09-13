@@ -323,7 +323,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationWriteBatch MakeBatch(CaptureRunRootLayout layout)
         {
             return new CaptureRunInitializationWriteBatch(
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId));
+                new CaptureRunInitializationDocumentSet(layout, InitId));
         }
 
         /// <summary>

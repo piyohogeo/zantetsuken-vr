@@ -358,7 +358,7 @@ namespace Zantetsu.Core.Tests
             Harness h = MakeHarness(Absent);
             CaptureRunRootLayout foreignLayout = MakeLayout();
             CaptureRunInitializationDocumentSet foreign =
-                CaptureRunInitializationDocumentSetFactory.Create(foreignLayout, InitId);
+                new CaptureRunInitializationDocumentSet(foreignLayout, InitId);
             h.FileSystem.SetFile(h.ReadyPath, foreign.GetStagingReadyBytes());
 
             NvencRunCaptureCompleteRecoveryCleanupAttemptResult result =
@@ -378,7 +378,7 @@ namespace Zantetsu.Core.Tests
             // A ready marker of this Run whose staging init hash belongs to a
             // different initialization document.
             CaptureRunInitializationDocumentSet other =
-                CaptureRunInitializationDocumentSetFactory.Create(
+                new CaptureRunInitializationDocumentSet(
                     h.Layout, "fedcba9876543210fedcba9876543210");
             h.FileSystem.SetFile(h.InitPath, other.GetStagingInitializationBytes());
 
@@ -1033,7 +1033,7 @@ namespace Zantetsu.Core.Tests
                 byte[] canonicalPlan)
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
 
                 FileSystem.AddDirectory(Path.GetDirectoryName(Layout.StagingRunRoot));
                 FileSystem.AddDirectory(Layout.StagingRunRoot);
@@ -1100,7 +1100,7 @@ namespace Zantetsu.Core.Tests
                 NvencRunCaptureIndexObservationStatus temporaryStatus, byte[] canonicalPlan)
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
 
                 Directory.CreateDirectory(Path.Combine(Layout.StagingRunRoot, ChunksDirectoryName));
                 Directory.CreateDirectory(Path.GetDirectoryName(FinalChunkPath));

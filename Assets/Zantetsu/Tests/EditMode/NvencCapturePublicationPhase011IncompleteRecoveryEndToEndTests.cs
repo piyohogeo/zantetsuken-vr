@@ -287,7 +287,7 @@ namespace Zantetsu.Core.Tests
                 Path.Combine(root, "staging"), Path.Combine(root, "final"), 1);
 
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+                new CaptureRunInitializationDocumentSet(layout, InitId);
 
             string chunksDirectory = Path.Combine(layout.StagingRunRoot, ChunksDirectoryName);
             Directory.CreateDirectory(chunksDirectory);

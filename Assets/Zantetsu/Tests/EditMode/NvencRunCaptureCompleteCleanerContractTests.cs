@@ -414,7 +414,7 @@ namespace Zantetsu.Core.Tests
                 // A ready marker minted for a different Run initialization: the
                 // first two steps succeed and the third refuses.
                 CaptureRunInitializationDocumentSet foreign =
-                    CaptureRunInitializationDocumentSetFactory.Create(sandbox.Layout, ForeignInitId);
+                    new CaptureRunInitializationDocumentSet(sandbox.Layout, ForeignInitId);
                 File.WriteAllBytes(sandbox.StagingReadyPath, foreign.GetStagingReadyBytes());
 
                 RecordingFileSystem fileSystem = new RecordingFileSystem(CaptureIndexCommitFileSystem.Create());
@@ -459,7 +459,7 @@ namespace Zantetsu.Core.Tests
                 // marker's peer binding no longer holds, so step 3 refuses
                 // before the ready marker is deleted.
                 CaptureRunInitializationDocumentSet foreign =
-                    CaptureRunInitializationDocumentSetFactory.Create(sandbox.Layout, ForeignInitId);
+                    new CaptureRunInitializationDocumentSet(sandbox.Layout, ForeignInitId);
                 File.WriteAllBytes(sandbox.StagingInitPath, foreign.GetStagingInitializationBytes());
 
                 RecordingFileSystem fileSystem = new RecordingFileSystem(CaptureIndexCommitFileSystem.Create());
@@ -806,7 +806,7 @@ namespace Zantetsu.Core.Tests
             internal void Populate(NvencRunCaptureCompleteCleanupOperation operation)
             {
                 CaptureRunInitializationDocumentSet documents =
-                    CaptureRunInitializationDocumentSetFactory.Create(Layout, InitId);
+                    new CaptureRunInitializationDocumentSet(Layout, InitId);
 
                 File.WriteAllBytes(StagingInitPath, documents.GetStagingInitializationBytes());
                 File.WriteAllBytes(StagingReadyPath, documents.GetStagingReadyBytes());
@@ -1017,7 +1017,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
             CaptureRunInitializationDocumentSet documents =
-                CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+                new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
             CaptureRunInitializationExecutionCoordinator executionCoordinator =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeMarkerWriter());

@@ -23,7 +23,7 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunInitializationWriteBatch MakeBatch(long testRunId = 1)
         {
             CaptureRunRootLayout layout = new CaptureRunRootLayout(StagingBase(), FinalBase(), testRunId);
-            CaptureRunInitializationDocumentSet documents = CaptureRunInitializationDocumentSetFactory.Create(layout, InitId);
+            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             return new CaptureRunInitializationWriteBatch(documents);
         }
 
@@ -326,7 +326,7 @@ namespace Zantetsu.Core.Tests
             FakeProvisioner provisioner = new FakeProvisioner(log);
             FakeWriter writer = new FakeWriter(log);
             CaptureRunInitializationWriteBatch batch = MakeBatch();
-            CaptureRunRootLayout layout = batch.Documents.Plan.MarkerPaths.RootLayout;
+            CaptureRunRootLayout layout = batch.Documents.MarkerPaths.RootLayout;
             CaptureRunRootProvisionOperation finalOperation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Final);
             provisioner.ReceiptFactory = op => new CaptureRunRootProvisionReceipt(provisioner, finalOperation);
 
@@ -624,10 +624,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunInitializationWriteBatch));
             CaptureRunInitializationDocumentSet documents = (CaptureRunInitializationDocumentSet)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationDocumentSet));
-            CaptureRunInitializationPlan plan = (CaptureRunInitializationPlan)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationPlan));
             SetField(batch, "_documents", documents);
-            SetField(documents, "_plan", plan);
 
             Assert.Throws<ArgumentException>(() => MakeCoordinator(provisioner, writer).Execute(batch));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
@@ -644,13 +641,10 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunInitializationWriteBatch));
             CaptureRunInitializationDocumentSet documents = (CaptureRunInitializationDocumentSet)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunInitializationDocumentSet));
-            CaptureRunInitializationPlan plan = (CaptureRunInitializationPlan)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationPlan));
             CaptureRunMarkerPathSet markerPaths = (CaptureRunMarkerPathSet)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunMarkerPathSet));
             SetField(batch, "_documents", documents);
-            SetField(documents, "_plan", plan);
-            SetField(plan, "_markerPaths", markerPaths);
+            SetField(documents, "_markerPaths", markerPaths);
 
             Assert.Throws<ArgumentException>(() => MakeCoordinator(provisioner, writer).Execute(batch));
             Assert.That(provisioner.CallCount, Is.EqualTo(0));
@@ -711,9 +705,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.StagingReadyWrite.Operation, Is.SameAs(batch.StagingReady));
             Assert.That(result.FinalReadyWrite.Operation, Is.SameAs(batch.FinalReady));
 
-            Assert.That(result.RootLayout, Is.SameAs(batch.Documents.Plan.MarkerPaths.RootLayout));
-            Assert.That(result.TestRunId, Is.EqualTo(batch.Documents.Plan.TestRunId));
-            Assert.That(result.RunInitializationId, Is.EqualTo(batch.Documents.Plan.RunInitializationId));
+            Assert.That(result.RootLayout, Is.SameAs(batch.Documents.MarkerPaths.RootLayout));
+            Assert.That(result.TestRunId, Is.EqualTo(batch.Documents.TestRunId));
+            Assert.That(result.RunInitializationId, Is.EqualTo(batch.Documents.RunInitializationId));
         }
 
         [Test]
@@ -802,17 +796,17 @@ namespace Zantetsu.Core.Tests
         public void Result_BatchAndGraph_Unchanged()
         {
             CaptureRunInitializationWriteBatch batch = MakeBatch();
-            string initIdBefore = batch.Documents.Plan.RunInitializationId;
+            string initIdBefore = batch.Documents.RunInitializationId;
             string stagingPathBefore = batch.StagingInitialization.FinalPath;
-            string rootBefore = batch.Documents.Plan.StagingRunRoot;
+            string rootBefore = batch.Documents.RootLayout.StagingRunRoot;
 
             List<string> log = new List<string>();
             CaptureRunInitializationExecutionReceipt result = MakeCoordinator(
                 new FakeProvisioner(log), new FakeWriter(log)).Execute(batch);
 
-            Assert.That(batch.Documents.Plan.RunInitializationId, Is.EqualTo(initIdBefore));
+            Assert.That(batch.Documents.RunInitializationId, Is.EqualTo(initIdBefore));
             Assert.That(batch.StagingInitialization.FinalPath, Is.EqualTo(stagingPathBefore));
-            Assert.That(batch.Documents.Plan.StagingRunRoot, Is.EqualTo(rootBefore));
+            Assert.That(batch.Documents.RootLayout.StagingRunRoot, Is.EqualTo(rootBefore));
             Assert.That(result.Batch, Is.SameAs(batch));
         }
 
