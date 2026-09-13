@@ -8,7 +8,7 @@
 | --- | --- |
 | 数値Kernel（Runtime） | `Assets/Zantetsu/Runtime/MeshCut/`（assembly `Zantetsu.MeshCut`：`MeshCutKernel`、`MeshCutCap`、`MeshCutScratch`、`MeshCutTypes`、`RenderVertex`） |
 | 検証（Editor専用、製品Runtime外） | `Assets/Zantetsu/Editor/MeshCut/Verification/`（assembly `Zantetsu.MeshCut.Verification`：managed Geometry view、論理Topology Validator、double参照、契約Verifier、guard付きArena、Harness、Synthetic生成器、最小Job wrapper） |
-| 標準回帰（EditMode、公開Syntheticのみ） | `Assets/Zantetsu/Tests/EditMode/MeshCut/`（`MeshCutKernelTests` 12件、`MeshCutPerformanceTests` 1件） |
+| 標準回帰（EditMode、公開Syntheticのみ） | `Assets/Zantetsu/Tests/EditMode/MeshCut/`（`MeshCutKernelTests` 12件、`MeshCutPerformanceTests` 1件：product単独の記録用） |
 | Phase 0.21 開発ツール | `Tools/ReferenceIntake/export_repaired_blend_to_fbx.py`、`Tools/ReferenceIntake/Register-ReferenceAsset.ps1`、`Assets/Zantetsu/Editor/MeshCut/ReferenceIntake/`（assembly `Zantetsu.MeshCut.ReferenceIntake`：FBX binary reader、FBX→Kernel入力、参考Run入口 `ReferenceCutRun`） |
 | 非公開実体・登録・参考Run記録 | `zantetsuken-assets-private` branch `phase0.21-reference-intake`、`Working/Phase0.21/`（`blobs/`、`registry/`、`runs/`） |
 
@@ -65,7 +65,7 @@
 
 ## 5. 性能（実Burst経路）
 
-条件：Editor batchmode、`BurstCompiler.Options.EnableBurstSafetyChecks = false`、`CompileSynchronously = true`、warm-up 200回、その後300サンプルを probe→product→product+seams の順に交互実行、中央値[µs]。測定区間はKernel呼出しのみ（Verifier・I/O・出力読み戻しを含まない）。移植元は同一プロセス内のテスト専用コピー（`Tests/EditMode/MeshCut/ProbeBaseline`、probe c77dd96 の `CutJob`／`BurstCapping`、seamなし・game_vertex 9 float）。同じ論理メッシュ・同じ平面・同じKで対比較。
+条件：Editor batchmode、`BurstCompiler.Options.EnableBurstSafetyChecks = false`、`CompileSynchronously = true`、warm-up 200回、その後300サンプルを probe→product→product+seams の順に交互実行、中央値[µs]。測定区間はKernel呼出しのみ（Verifier・I/O・出力読み戻しを含まない）。移植元は同一プロセス内のテスト専用コピー（probe c77dd96 の `CutJob`／`BurstCapping`、seamなし・game_vertex 9 float）で、同じ論理メッシュ・同じ平面・同じKで対比較した。このコピーは比較の記録後に削除し（commit「Add the mesh cut verification harness, EditMode tests and the temporary probe baseline」の `Tests/EditMode/MeshCut/ProbeBaseline` にGit履歴として残る）、恒久的な第二Kernelは置かない。残した `MeshCutPerformanceTests` はproduct単独（seamなし／あり）を同条件で記録する。
 
 | 入力 | T | K | probe | product | product+seams | product/probe | 新規V product / 出力V probe | 出力Index |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
@@ -118,7 +118,7 @@
 
 ## 8. 完了判定と残件
 
-**全EditMode suite。** `Tools/Run-UnityEditModeTests.ps1 -TimeoutSeconds 3000`、Run ID `20260913-151657-f6b95a`：7047／7047成功、skip・inconclusive 0、Git状態の変化なし（基底c430883は6,958件で、今回追加のMeshCut 13件を含む差は今回の追加分と基底側の増分）。
+**全EditMode suite。** `Tools/Run-UnityEditModeTests.ps1 -TimeoutSeconds 3000`。probe baselineコピーを含む状態で Run ID `20260913-151657-f6b95a`、コピー削除後の最終状態で Run ID `20260913-152207-61451a`：いずれも7047／7047成功、skip・inconclusive 0、Git状態の変化なし。基底c430883時点の総数は固定せず、今回の追加はMeshCut 13件。
 
 **Phase 2.9 の判定：完了。** 現行Unity環境でbuildと実Burst実行（managed fallback marker 0、Editor batchmode）、§6の共通契約（閉鎖・manifold・winding・OnPlane・退化・自己交差・別Topology重複・反転）、seam、Cap（固定負UV markerと再切断継承）、再切断、既存Vertex再利用、新規Vertex・正負Indexの直接配置、非zero base・疎参照、容量安全（予約不足の非公開失敗と正確な必要量、scratch再利用の決定性）、共有入力の並行Jobを代表入力で確認し、性能を実Burst経路で移植元と同一runで対比較した（0.59〜0.76倍）。製品アロケータ・Job wrapper・GPU・Renderer・Geometry Commitへは未接続。
 

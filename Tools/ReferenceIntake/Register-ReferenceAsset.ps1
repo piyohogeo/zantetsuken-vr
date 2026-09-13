@@ -19,9 +19,9 @@
     adoption nor sharing permission; the licence boundary of DESIGN 10.8 applies to everything stored.
 
 .EXAMPLE
-    .\Register-ReferenceAsset.ps1 -Root C:\...\zantetsuken-assets-private-x register -Name table_001 `
-        -Fbx ...\table_001.fbx -Textures ...\Textures1.png -References ...\table_001.export.json,...\x.blend -Note "..."
-    .\Register-ReferenceAsset.ps1 -Root ... dataset -Name phase2_9-reference -Assets table_001,water_007
+    .\Register-ReferenceAsset.ps1 -Root C:\...\zantetsuken-assets-private-x register -Name asset_a `
+        -Fbx ...\asset_a.fbx -Textures ...\texture.png -References ...\asset_a.export.json,...\source.blend -Note "..."
+    .\Register-ReferenceAsset.ps1 -Root ... dataset -Name phase2_9-reference -Assets asset_a,asset_b
     .\Register-ReferenceAsset.ps1 -Root ... resolve -Dataset phase2_9-reference
     .\Register-ReferenceAsset.ps1 -Root ... resolve -AssetSha <sha>
 #>
