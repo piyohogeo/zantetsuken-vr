@@ -12,10 +12,15 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The receipt is not an OS certificate or a filesystem snapshot; it only
-    /// records that one synchronous call succeeded. <see cref="IsValid"/> and
+    /// records that one synchronous call succeeded. It holds exactly three
+    /// readonly references — the committer, the operation, and the token it was
+    /// issued under. What was committed is read from <see cref="Operation"/>:
+    /// the receipt restates none of it and keeps no path, byte count, mode, or
+    /// Run identity of its own. The canonical bytes are checked at issuance and
+    /// neither retained nor returned. <see cref="IsValid"/> and
     /// <see cref="IsIssuedFor"/> recompute without throwing, so a receipt whose
     /// operation, token, or owner has been corrupted or released becomes
-    /// invalid. The held canonical byte array is never retained or returned.
+    /// invalid.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -75,26 +80,6 @@ namespace Zantetsu.Observability
         internal IPngJsonCaptureRunCaptureIndexCommitter IssuedBy => _issuedBy;
 
         internal PngJsonCaptureRunCaptureIndexCommitOperation Operation => _operation;
-
-        internal PngJsonCapturePublicationArtifactRecoveryActionPlan ActionPlan => _operation.ActionPlan;
-
-        internal int StepIndex => _operation.StepIndex;
-
-        internal CaptureRunCaptureIndexCommitMode Mode => _operation.Mode;
-
-        internal string TemporaryPath => _operation.TemporaryPath;
-
-        internal string FinalPath => _operation.FinalPath;
-
-        internal long ByteCount => _operation.ByteCount;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.ActionPlan.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         /// <summary>
         /// Exception-safe validity: the three references are present and the

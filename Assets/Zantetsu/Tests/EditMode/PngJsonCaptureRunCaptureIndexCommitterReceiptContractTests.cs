@@ -815,13 +815,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(typeof(PngJsonCapturePublicationArtifactPublishReceipt), Is.Not.SameAs(typeof(PngJsonCaptureRunCaptureIndexCommitReceipt)));
         }
 
-        // ---- Issuance / forwarding ----
+        // ---- Issuance ----
 
         [Test]
-        public void Receipt_ForwardsAllValuesAndReferences()
+        public void Receipt_HoldsCommitterOperationAndTokenBinding()
         {
             PngJsonCapturePublicationArtifactRecoveryActionPlan plan = BuildRecoveryCommitPlan(out _);
-            CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
             PngJsonCapturePublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
             PngJsonCaptureRunCaptureIndexCommitOperation commit =
                 PngJsonCaptureRunCaptureIndexCommitOperation.CreateIndexLocal(plan, token, 0);
@@ -831,17 +830,6 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt.IssuedBy, Is.SameAs(committer));
             Assert.That(receipt.Operation, Is.SameAs(commit));
-            Assert.That(receipt.ActionPlan, Is.SameAs(plan));
-            Assert.That(receipt.StepIndex, Is.EqualTo(0));
-            Assert.That(receipt.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
-            Assert.That(receipt.TemporaryPath, Is.EqualTo(paths.CaptureIndexTemporaryPath));
-            Assert.That(receipt.FinalPath, Is.EqualTo(paths.CaptureIndexPath));
-            Assert.That(receipt.ByteCount, Is.EqualTo(commit.ByteCount));
-            Assert.That(receipt.RootLayout, Is.SameAs(plan.RootLayout));
-            Assert.That(receipt.LockIdentityEvidence, Is.SameAs(plan.LockIdentityEvidence));
-            Assert.That(receipt.TestRunId, Is.EqualTo(plan.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(plan.RunInitializationId));
-
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(receipt.IsIssuedFor(committer, commit, token), Is.True);
         }
