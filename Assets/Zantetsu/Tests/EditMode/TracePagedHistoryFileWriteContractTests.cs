@@ -408,9 +408,16 @@ namespace Zantetsu.Core.Tests
 
         private static void AssertMagicAndVersion(byte[] saved)
         {
-            Assert.That(
-                Bytes(saved, 0, TracePagedHistoryFileFormat.MagicByteLength),
-                Is.EqualTo(TracePagedHistoryFileFormat.Magic));
+            // Written out here rather than read from the product, so a change
+            // to what a file starts with cannot agree with itself.
+            byte[] expectedMagic =
+            {
+                (byte)'Z', (byte)'T', (byte)'R', (byte)'C',
+                (byte)'H', (byte)'I', (byte)'S', (byte)'T',
+            };
+
+            Assert.That(Bytes(saved, 0, 8), Is.EqualTo(expectedMagic));
+            Assert.That(TracePagedHistoryFileFormat.MagicByteLength, Is.EqualTo(8));
             Assert.That(
                 ReadInt32(saved, TracePagedHistoryFileFormat.VersionOffset),
                 Is.EqualTo(TracePagedHistoryFileFormat.Version));

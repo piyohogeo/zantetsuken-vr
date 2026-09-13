@@ -20,13 +20,18 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal static class TracePagedHistoryFileFormat
     {
-        /// <summary>What a version 1 file starts with: "ZTRCHIST" in ASCII.</summary>
-        internal static readonly byte[] Magic =
-        {
-            (byte)'Z', (byte)'T', (byte)'R', (byte)'C',
-            (byte)'H', (byte)'I', (byte)'S', (byte)'T',
-        };
-
+        /// <summary>
+        /// How long the mark at the start of a file is: "ZTRCHIST" in ASCII.
+        /// </summary>
+        /// <remarks>
+        /// The bytes themselves are not handed out as an array. An array would
+        /// be readonly only in its reference, so anything in this assembly
+        /// could quietly change what a saved file is said to start with - and
+        /// a reader built on the same array would then accept it. They are
+        /// written out one at a time by <see cref="WriteMagic"/> instead, and a
+        /// reader will compare against the same fixed bytes rather than a
+        /// variable.
+        /// </remarks>
         internal const int MagicByteLength = 8;
 
         /// <summary>The only version this format has so far.</summary>
@@ -61,6 +66,19 @@ namespace Zantetsu.Observability
 
         /// <summary>What stands in front of one page's bytes.</summary>
         internal const int PageMetadataBytes = PageByteLengthOffset + sizeof(int);
+
+        /// <summary>Writes the mark a version 1 file starts with.</summary>
+        internal static void WriteMagic(byte[] buffer, int offset)
+        {
+            buffer[offset] = (byte)'Z';
+            buffer[offset + 1] = (byte)'T';
+            buffer[offset + 2] = (byte)'R';
+            buffer[offset + 3] = (byte)'C';
+            buffer[offset + 4] = (byte)'H';
+            buffer[offset + 5] = (byte)'I';
+            buffer[offset + 6] = (byte)'S';
+            buffer[offset + 7] = (byte)'T';
+        }
 
         /// <summary>Writes one 32-bit value, least significant byte first.</summary>
         internal static void WriteInt32(byte[] buffer, int offset, int value)

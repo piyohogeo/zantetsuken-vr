@@ -80,12 +80,7 @@ namespace Zantetsu.Observability
             long committedByteTotal)
         {
             Array.Clear(scratch, 0, TracePagedHistoryFileFormat.HeaderBytes);
-            Array.Copy(
-                TracePagedHistoryFileFormat.Magic,
-                0,
-                scratch,
-                0,
-                TracePagedHistoryFileFormat.MagicByteLength);
+            TracePagedHistoryFileFormat.WriteMagic(scratch, 0);
 
             TracePagedHistoryFileFormat.WriteInt32(
                 scratch, TracePagedHistoryFileFormat.VersionOffset, TracePagedHistoryFileFormat.Version);
