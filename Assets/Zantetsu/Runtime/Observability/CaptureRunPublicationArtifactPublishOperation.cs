@@ -82,16 +82,16 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactEntryObservation observation = snapshot.GetEntry(entryIndex);
             if (observation == null)
             {
-                throw new ArgumentException("Target entry must have an observation.", nameof(stepIndex));
+                throw new ArgumentException("Target entry must have an observation.", nameof(actionPlan));
             }
 
             CaptureRunPublicationArtifactPathSet artifactPaths = observation.ArtifactPaths;
             if (artifactPaths == null || !artifactPaths.IsValidIndexLocal())
             {
-                throw new ArgumentException("Observed artifact path set must be valid.", nameof(stepIndex));
+                throw new ArgumentException("Observed artifact path set must be valid.", nameof(actionPlan));
             }
 
-            RequirePublishable(observation, kind, artifactPaths, nameof(stepIndex));
+            RequirePublishable(observation, kind, artifactPaths, nameof(actionPlan));
 
             _actionPlan = actionPlan;
             _stepIndex = stepIndex;
@@ -120,7 +120,7 @@ namespace Zantetsu.Observability
             CaptureRunPublicationArtifactEntryObservation observation,
             CaptureRunPublicationArtifactKind kind,
             CaptureRunPublicationArtifactPathSet artifactPaths,
-            string stepIndexParamName)
+            string actionPlanParamName)
         {
             PngJsonCapturePublicationPlanEntry entry = artifactPaths.Entry;
 
@@ -129,17 +129,17 @@ namespace Zantetsu.Observability
                 if (observation.StagingPngStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
                     || observation.FinalPngStatus != CaptureRunPublicationEvidenceStatus.Absent)
                 {
-                    throw new ArgumentException("PNG must have a matching staging source and an absent final artifact.", stepIndexParamName);
+                    throw new ArgumentException("PNG must have a matching staging source and an absent final artifact.", actionPlanParamName);
                 }
 
                 if (string.Equals(artifactPaths.StagingPngPath, artifactPaths.FinalPngPath, StringComparison.Ordinal))
                 {
-                    throw new ArgumentException("PNG source and destination paths must differ.", stepIndexParamName);
+                    throw new ArgumentException("PNG source and destination paths must differ.", actionPlanParamName);
                 }
 
                 if (entry.PngByteLength <= 0 || entry.PngContentSha256 == null)
                 {
-                    throw new ArgumentException("PNG expected byte count and hash must be present.", stepIndexParamName);
+                    throw new ArgumentException("PNG expected byte count and hash must be present.", actionPlanParamName);
                 }
 
                 return;
@@ -148,17 +148,17 @@ namespace Zantetsu.Observability
             if (observation.StagingSidecarStatus != CaptureRunPublicationEvidenceStatus.MatchesExpected
                 || observation.FinalSidecarStatus != CaptureRunPublicationEvidenceStatus.Absent)
             {
-                throw new ArgumentException("Sidecar must have a matching staging source and an absent final artifact.", stepIndexParamName);
+                throw new ArgumentException("Sidecar must have a matching staging source and an absent final artifact.", actionPlanParamName);
             }
 
             if (string.Equals(artifactPaths.StagingSidecarPath, artifactPaths.FinalSidecarPath, StringComparison.Ordinal))
             {
-                throw new ArgumentException("Sidecar source and destination paths must differ.", stepIndexParamName);
+                throw new ArgumentException("Sidecar source and destination paths must differ.", actionPlanParamName);
             }
 
             if (entry.SidecarByteLength <= 0 || entry.SidecarContentSha256 == null)
             {
-                throw new ArgumentException("Sidecar expected byte count and hash must be present.", stepIndexParamName);
+                throw new ArgumentException("Sidecar expected byte count and hash must be present.", actionPlanParamName);
             }
         }
 
