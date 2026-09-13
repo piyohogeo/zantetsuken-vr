@@ -147,8 +147,8 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 | SlashWave Hit Detector／VFX | Hitは現在採用Convexへの閉Segment Sweepと系譜消費、VFXは19.1.8の表示専用平面表現。Hitの詳細は19.1 |
 | Slash Candidate／Prediction | Phase 4.53以降に投機候補範囲を列挙し、基本Waveと実Hit検索を変更しない |
 | Future Evaluation Scheduler | 4.4の有限容量・フレーム予算と意味上の優先順位でReady WorkをScheduleし、非blocking完了回収を既存DAG／Commitへ接続する |
-| Mob Future Planner | 副作用のない固定ステップ移動Kernelと`AnimationPlannerV1`からMobPlanのRoot軌道と`ExplicitAnimationStateV1`を生成し、Nearのライブ更新、Mid／Farの軌道再生、粗い無効化を同じ世代契約で接続 |
-| Animation Pose Evaluator | immutableな明示Animation Stateと対象`FixedStepId`からcanonical Bone順のRig Poseを生成する。controllerなしPlayable／Mixer、Pose Table等を交換可能Backendとし、AnimatorController内部状態をCurrent／Futureの正本にしない |
+| Mob Future Planner | 20章のRoot姿勢とAnimation入力を整合した未来計画、更新・失効を担当する。具体的な生成・保持・負荷制御方式は研究後に決める |
+| Animation Pose Evaluator | 19.3の明示入力と対象時刻から、リターゲット済み骨Pose Tableを使ってCurrent／Future共通のRig Poseを生成する |
 | Observability／Trace | Profiler計測、状態イベント、Work Item／Job相関、boundedな履歴、診断保存、Editorタイムラインを提供 |
 | Visual Capture | Unity側の選択的片眼録画と異常時静止画をTraceへ関連付け、後期にはOpenXR API LayerによるProjection Swapchain Captureを提供 |
 | Asset Preprocessor | Blenderをヘッドレス実行し、ライセンスAssetから表示／Stencil共用Geometry、幾何Topology、点Anchor、Compound Physics Proxy、検証レポートをローカル生成。Phase 5.5で建物由来Metadataと初期Depthを生成する。製品用Strict Solidは生成しない |
@@ -183,7 +183,7 @@ Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、
 
 - Job向き：候補交差、三角形分類、表示／Stencil共用VP Geometry切断、Convex平面クリップ、断面・質量特性生成、未来軌道／MobPlanのBatch評価、未来Rig Poseからの頂点スキニング・VP形式への変換（4.5.2）、対応APIによるCollider Bake、7.9の任意分割時のIndex振り分けコピー。
 
-- メインスレッド向き：通常命中の同期SkinnedMeshRenderer.BakeMesh・CPUデータ取得／VP変換、Backendに応じたPose評価（19.3）、JobのSchedule・完了回収、`JobHandle`依存関係、世代／命中検証、表示VPの範囲管理・GPU更新・Geometry参照公開、7.2の物理用MeshDataのMesh適用、Rigidbody／Collider生成、描画フレーム／物理ステップ境界のCommit。
+- メインスレッド向き：通常命中の同期SkinnedMeshRenderer.BakeMesh・CPUデータ取得／VP変換、現在Bone TransformへのPose適用（19.3）、JobのSchedule・完了回収、`JobHandle`依存関係、世代／命中検証、表示VPの範囲管理・GPU更新・Geometry参照公開、7.2の物理用MeshDataのMesh適用、Rigidbody／Collider生成、描画フレーム／物理ステップ境界のCommit。
 
 - `Task`／Unity `Awaitable`向き：ファイルI/O、Trace／録画保存、Editorツール、外部プロセス待機、Unity非同期APIの進行制御。CPU幾何計算の標準実行基盤にはしない。
 
@@ -235,7 +235,7 @@ Phase 4.65は限定実装・品質と負荷の比較・人間による採否決�
 
 未来用Jobは元Mesh由来の不変な頂点属性・weight・bindpose・骨対応を読み込み・登録時などに準備して共有し、候補ごとの取出し・再構築を避ける。共通VP用AoSへ直接出力するか、一時Native出力からJob側で同じ形式へ変換する。ベイク済みUnity Meshの生成・再読取りを挟む義務はなく、頂点数に比例する変換・コピーをMain Threadへ戻さない。Job分割、並列度、入力layout、型・field列、初期対応Asset・変形機能は実装と代表入力の比較で選ぶ。
 
-Pose評価と頂点スキニングを分け、現在Sceneを未来Poseへ変更しない。Pose EvaluatorのBackend選択とMain Threadに残る評価費用は19.3に従い、ProbeのTransform収集方式を必須にしない。同じRig Poseから表示側Jobベイクと骨Physics Proxyの姿勢化へ分岐し、必要なCell・frame等の入力依存は維持するが、描画頂点ベイクだけを理由に物理を待たせない。
+Pose評価と頂点スキニングを分け、現在Sceneを未来Poseへ変更しない。Table数値評価と現在骨への適用は19.3に従い、ProbeのTransform収集方式を必須にしない。同じRig Poseから表示側Jobベイクと骨Physics Proxyの姿勢化へ分岐し、必要なCell・frame等の入力依存は維持するが、描画頂点ベイクだけを理由に物理を待たせない。
 
 VP入力準備と実切断出力を区別し、後者の正負直接配置・転送は4.5.6に従う。入力Pose・sourceデータは読者の寿命まで不変とし、Job出力は4.5.3の範囲所有権と既存の世代・回収規則へ接続する。未完了Jobを翌フレーム固定で強制Completeせず、完了した仕事を回収する。ベイク完了をGPU転送・表示Commitの自動トリガーにせず、準備中は現在表示を維持する。
 
@@ -1067,9 +1067,9 @@ Synty POLYGON City Packの購入原本は、公開Unityリポジトリと分離�
 
 ## 11. モーション方針
 
-モーションは原則として既製HumanoidクリップをUnityでリターゲットする。NPCはIdle、Walk、Run、Turn、Startled、Run Awayを初期最小セットとする。Phase 4.70のV1予測対象NPCでは頭・胸の視線、腕IK、Foot IK等のプロシージャルPose Layerと左右反転を現在表示と未来評価の双方で無効化し、Catalog登録済みClip Poseだけを正本とする。これらのLayerや反転は、入力、weight／mode、適用順、世代、Evaluator Identityをimmutableな共通Pose Evaluation Inputへ追加し、現在／未来Backendが同じ処理を行えるようになった後だけ再導入する。切断時は現在姿勢を固定して物理へ移行するため、切断方向ごとの専用死亡モーションは作らない。
+モーションは原則として既製HumanoidクリップをUnityでオフラインリターゲットし、19.3の骨Pose TableへBakeする。NPCはIdle、Walk、Run、Turn、Startled、Run Awayを初期最小セットとし、Pose Layer／MirrorとプレイヤーIKのscopeはD-136に従う。切断時は現在姿勢を固定して物理へ移行するため、切断方向ごとの専用死亡モーションは作らない。
 
-NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲーム側`AnimationPlannerV1`を正本とし、Animator／AnimatorControllerから読み戻さない。Unity Animatorは必要ならHumanoid RetargetingとPose出力先として残すが、controllerなしPlayableまたは他のPose Evaluatorへ交換してもMobPlanと切断Predictionを変更しない。命中時にはBackendが実際に表示したBone Poseをスナップショットし、予測との差を検証してから静的破壊世界へ移送する。
+NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入力の計画は20章に従う。命中時には実際に表示したBone Poseをスナップショットし、既存の予測・実Pose照合を維持して静的破壊世界へ移送する。
 
 - NPC：MixamoまたはQuaternius Universal Animation Library系の既製モーションを候補とする。
 
@@ -1120,10 +1120,10 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-039 | 追跡異常 | Pose無効時は未発射の振り候補とSample履歴を破棄し、再追跡直後の見かけ速度からSlashを生成しない | 確定 |
 | D-040 | Unity更新 | プロジェクトを作り直さず、Hubで新旧Editorを並存し、Gitアップグレードブランチ上で変換・回帰検証する | 確定 |
 | D-041 | Unityディレクトリ | Unity Project Rootは1つを正本とし、版別の恒久コピーは作らない。同時比較時だけ兄弟Git worktreeを使用する | 確定 |
-| D-042 | モブ未来計画 | Unityの通常AIとは別にMob Future Plannerを設け、遠距離モブほど長い未来区間を副作用なく計画する | 確定 |
+| D-042 | モブ未来計画 | 現在Sceneを未来へ進めず、RootとAnimation入力が整合する有効な計画を切断先行評価へ利用する。具体方式は20章に従う | 確定 |
 | D-043 | MobPlan世代 | MobPlanへPlanGenerationと前提条件を付け、介入や経路変更時は旧計画と依存する投機結果を無効化する | 確定 |
-| D-044 | AI LOD | プレイヤーが介入可能になるまでの最短時間を基準にNear／Mid／Far／Dormantの計画精度と更新頻度を切り替える | 確定 |
-| D-045 | 遠距離モブ | Far／Dormantモブはキネマティックな経路と`ExplicitAnimationStateV1`全体を先行確定し、切断計算の猶予へ利用する。粗い時空間予約は初期成立条件に含めない任意の後段拡張とし、D-134の段階導入に従う | 技術検証付き確定 |
+| D-044 | AI LOD | 介入しやすい対象の応答を優先し、猶予のある対象では計画再利用で費用を抑える。Tier・判定指標・更新頻度は20章に従う | 確定 |
+| D-045 | 遠距離モブ | 介入までの猶予を有効なRoot・Animation計画と切断先行準備へ利用する。特定の経路生成・予約方式は要求しない | 確定 |
 | D-046 | MobPlan Commit | 未来モブ姿勢に基づく切断成果物は、実命中、ObjectGeneration、PlanGeneration、姿勢許容誤差の一致時だけCommitする | 確定 |
 | D-052 | 候補範囲 | 候補範囲は投機専用で、実HitはSlashWave Segment Sweepだけで確定する。有限包絡がなければ全Hitを含まない先行準備範囲を使い、範囲外は現在状態経路へ進む | 確定。19.1.10／Phase 4.53 |
 | D-059 | 映像キャプチャ段階導入 | PoC初期はUnity側の選択的キャプチャを使用し、切断PoC成立後にOpenXR API Layer方式を追加検証する | 確定 |
@@ -1167,9 +1167,9 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | D-131 | Player非接触の限定保証 | Player Body／Handとプロップ／破片はPhysX非接触とし、刀と斬撃波は論理SweepでInteractionする。人工移動はD-166の固定Occupancyへの候補次姿勢Overlap Rejectだけで扱い、実空間HMDはClampしない。Camera近傍視界保護（Fade／Vignette／Mask等）とその専用検出・状態・設定をPoC・初期製品から撤去し、代替機構を追加しない。Camera被り、未登録物体を含む内部視点、Near Planeでの内部面、5.2の仮Cap品質例外が隠されずに見えることを許容する。Camera overlapを切断・物理・Geometry Commit失敗へ昇格せず、そのためのCamera／物体の強制移動、完全Mesh検査、Stencil修復、Job取消・再発行、同期Fallbackを行わない | T-088付き確定。2026-09-10、人間承認により視界保護を撤去。通常視点のCap品質とStable Geometry契約は維持する |
 | D-132 | Provisional Rigidbody／Collision Proxy | 7.1の短寿命Transaction内で旧Cooked Convexを再cookせず共有し、必要な2 Actorをall-or-none公開する。7.2の質量近似・初回速度継承・Actor優先Final handoffを使う | T-091で確認。成功・Abort・退役は7.1を正本とする |
 | D-133 | Final質量正本とProvisional近似 | Final質量正本は受付時の親Rigidbody質量。7.2の採用Convex集合による近似と親質量保存を使い、重複控除・Boolean Union・Convex別配分系譜を要求しない。Provisional一時massはFinal正本にしない | 人間承認済み。T-085／T-091で確認 |
-| D-134 | Mob軌道Cacheの段階導入 | `MobPlan.RootTrajectory`の初期生成方式を、副作用のない固定ステップ二相更新、Waypoint／Lane Desired Motion、固定長未来Sample Queue、再生補間、移動距離由来`ExplicitAnimationStateV1`、`PlanGeneration`による粗い全Plan／Group無効化とする。Nearは同じKernelをライブ実行し、Mid／Farは有効なQueueを主に再生する。初期成立条件へORCA、依存Graph、部分再計算、Flow Field、軌道圧縮、時空間予約を含めず、実測後の後段最適化とする | T-092付き段階導入 |
-| D-135 | 明示Animation State正本 | Current／Future AnimationのState、Clock、Transition、Blendの意味上の正本をゲーム側`ExplicitAnimationState`とGlobal FixedStepIdとする。Animator／AnimatorController／AnimatorControllerPlayableは任意のPose出力／Preview／Legacy Backendへ降格し、内部状態の読戻しやController逐次rolloutを標準MobPlan経路にしない。現在表示、未来切断、CPU Skinningは同じ対象Stepへ解決済みStateから交換可能なPose Evaluatorへ分岐する。ClipのLoop／Clamp、canonical duration、Source Time写像は`AnimationAssetSetVersion`へ結合したCatalogを正本とし、V1予測対象ではプロシージャルIKを無効化する。全骨Poseの全Mob／全Sample先行保存は行わない | T-018／T-044／T-046付き確定 |
-| D-136 | IK／Pose Layer scope | Phase 4.70のV1予測対象NPCはCatalog登録済みのリターゲット済みClip Poseだけを使い、Look、腕IK、Foot IK、左右反転等を現在表示と未来評価の双方で無効化する。補正や反転はLayer入力Snapshot、weight／mode、適用順、Generation、Identityをimmutableな共通Pose Evaluation Inputへ追加して全Backendで同じ処理を行える後段だけに許可する。VR Controller実測姿勢から表示するプレイヤー腕のTwo Bone IK等、Mob Predictionへ入力されないIKは別scopeとしてこの制限の対象外とする | D-009を置換。T-018付き確定 |
+| D-134 | Mob計画方式の研究後採用 | 移動・Animation計画、保持・更新・AI LODの具体方式は先行独立研究後に人間が選定し、Phase 4.70で20章の意味契約へ接続する。方式未決の間は固定計画による接続検証を進められるが、製品計画機能の完了とはしない | 人間承認済み、2026-09-13。同じSeedからの計画再生成・経路hash一致とMob計画固有の無割当保証を外す |
+| D-135 | NPC Pose Table一本化 | 製品RuntimeのCurrent／Futureを19.3のリターゲット済み骨Pose Tableと共通評価へ統一する。対象時刻と明示入力を正本とし、オンライン代替Backend・方式再比較を要求しない。品質・容量・費用は本体で確認する | 人間承認済み、2026-09-13。方式統一のため追加費用を引き受け、高速化を保証しない |
+| D-136 | IK／Pose Layer scope | 初期予測対象NPCのLook、腕／Foot IK、左右反転等のオンラインPose補正はCurrent／Future双方で対象外とする。導入は別の設計変更とし、将来入力Schemaを先行させない。実測Controller姿勢によるプレイヤー腕IKは別scopeとする | D-009を置換。T-018付き確定 |
 | D-137 | 後期OpenXR Capture構成 | Phase 4.8は21.7.4のWindows PCVR／D3D11固定構成を使う | 確定。Phase 0.11の短時間NVENC確認とは分離する |
 | D-138 | 短時間NVENC確認 | Phase 0.11は21.15の実際に使用するCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離で完了する | 人間承認済み。固定録画条件・内部方式・試験階層を維持する義務を外し、進行中実装はそのまま完了できる |
 | D-148 | Phase 0.2の凍結 | 採用する少数Geometryと用途対応だけを引き継ぎ、10.2.2に従いmergeして利用できる時点で完了する | 人間承認済み。旧quota・網羅性・形式互換・同一手順の再生成を維持する義務を外す |
@@ -1212,9 +1212,8 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | O-017 | Slash調整 | 19.1の実装済みLatch／Frame／Span Candidate／Close方式、Begin選択、Emitter、epsilon／q許容、必要時だけの候補上限、速度・寿命と実装済みVFXの主要な調整値を開発UIで調整する。生存Wave固定容量は0.55の観測から4.50開始前に決める | 応答・操作感・Span形状 | Phase 0.55以降。同じ出力契約内の交換で本書改訂・Phase再開を要求しない |
 | O-019 | Edge Gate閾値 | Edge Lead Score、CutSample速度・位置、次の振りの再準備条件、異常速度上限。Phase 0.52は機能確認用の暫定値とし、最終値を固定しない | 復路誤発射、取りこぼし、連続斬り感 | Phase 0.55で実機調整、4.50で製品回帰（T-038～T-041） |
 | O-020 | Grip校正 | 左右持ちの暫定固定OffsetはPhase 0.5で使用する。ユーザー校正機能の提供は0.5のGateにしない | 刀表示の一致、刃方向判定、導入工数 | Phase 0.55または後続UX判断 |
-| O-021 | AI LOD境界 | Near／Mid／Far／Dormantを分ける最短介入時間、距離、更新周期 | CPU予算、見た目、予測再利用率 | T-045後 |
-| O-022 | MobPlan Horizon | Tier別の`HorizonSampleCount`と`CommittedThroughFixedStepId`の長さ | 切断計算猶予、無効化率、メモリ | T-044～T-046後 |
-| O-023 | モブ予約 | 粗い時空間予約のセル寸法、競合解決、群衆密度上限 | 交差回避、自然さ、計画費用 | T-047後 |
+| O-021 | AI LOD | 介入への応答と計画再利用を両立する負荷制御方式・判定指標・更新頻度 | CPU予算、見た目、予測再利用率 | 研究とT-045の本体実測で決める |
+| O-022 | MobPlan有効期間 | 採用方式で扱う計画期間と更新時期 | 切断計算猶予、無効化率、メモリ | 研究とT-044～T-046の本体実測で決める |
 | O-024 | Unity更新頻度 | 6000.3.22f1から同一LTSパッチへ更新する条件と回帰基準 | 修正取込み、再インポート時間、安定性 | 更新候補発生時 |
 | O-026 | 後期連続録画 | Phase 4.8で採用の要否と容量・停止時間を判断する。Phase 0.11の固定値を引き継がない | Gameplay負荷と調査用途 | Phase 4.8 |
 | O-027 | API Layer対象 | Phase 4.8はD-137のD3D11構成から開始する。Phase 0.11にOpenXR API Layerを前倒ししない | API互換性・GPU所有権 | Phase 4.8 |
@@ -1228,8 +1227,7 @@ NPCのCurrent／Future Animation State、Clock、Clip選択、Transitionはゲ�
 | O-040 | Player壁境界応答 | 解決済み：D-166の固定Occupancyと候補次姿勢Overlap Rejectを採用し、退出系を撤去する | 通行境界と表示／物理の不一致、全体Reject・自動復旧なしを許容 | 2026-09-10 |
 | O-043 | Hybrid Clip予算校正 | Raster 8面を固定したままPixel fallbackを0～4面のどこへ置くか、Stable専用Shader分離 | GPU時間、MSAA edge品質、Shader register／varying | T-089後 |
 | O-044 | Provisional Physics設定 | Actor／ShapeInstance／Constraint容量、Pending警告時間 | 生成／破棄CPU、Broadphase、Solver時間、Ghost Contact、接触Impulse、handoff品質 | T-091後。新しい監視・復旧契約は作らない |
-| O-045 | Mob軌道Cache Profile | Crowd StepのFixedStep倍率、Tier別Horizon／Refill閾値、最大Mob／Sample数、同時再計画Group数、Live Fallback予算、Hold許容時間、将来のGrid Cell／MaxNeighbors／ORCA Horizon | CPU、Nativeメモリ、Queue枯渇率、停止時間、重なり、先行切断Commit率 | T-092の計画単体結果で初期設定を決め、先行切断Commit率による判断はJobベイク採用時のPhase 4.72の統合結果へ遅延し、不採用時は要求しない。4.70の完了を塞がず、ORCA値は追加導入時だけ確定 |
-| O-046 | Animation Pose Evaluator | controllerなしPlayable／MixerとRetarget済みPose Tableの採用、Rig Pose Buffer形式・Bone順、Source Timeの数値精度、Main Thread／Job Batch予算、2 Source BlendおよびimmutableなLook／IK Layer入力の導入時期 | Pose誤差、Main Thread時間、Job Throughput、Pose Tableメモリ、Humanoid Retarget品質、先行切断採用率 | T-018後。人形の先行切断採用率による評価はJobベイク採用時のPhase 4.72とし、不採用時は要求せず、4.61の完了を塞がない。Loop／ClampとSource Timeの意味契約は未決にしない |
+| O-045 | Mob計画方式と予算 | 研究結果を踏まえた方式選定と、必要な処理・メモリ・計画再利用の予算 | 介入応答、計画費用、停止・重なり、再利用状況 | 方式は人間判断で採用し、T-092で本体確認する。先行切断採用状況による調整は条件付き4.72へ遅延する |
 | O-047 | 剛体リベース許容値 | RigidCutRebaseProfileV1の法線角度、Bounds内plane field差、左右眼ProxyPoint pixel差の閾値を少数の距離／サイズ／斬撃例で校正する。8点近似を真の切断線最大誤差としない | 投機再利用率、切断縁とVFXのズレ、VR知覚、命中時CPU | T-093／任意Phase 4.55。未校正でも有効な試験Profileを明示し、製品値の未設定を無制限許容にしない |
 | O-048 | Building World D6設定 | L1、A1、共通減衰率rと、建物D6を含む既存Constraint容量の製品値 | 拘束挙動、Joint数、生成・退役・Physics Step費用。倒壊防止率・最大変位・性能SLAは追加しない | Phase 4.3／T-094の少数FixtureとProfilerで判断 |
 
@@ -1252,7 +1250,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-005 | Convex切断 | 7.2の上限内の有効な閉凸出力と内接性を確認する | 小さいオフラインFixtureでL境界、超過出力の内接削減、削減後B-repの再切断可能性を確認する。削減不能は既存失敗終端へ接続し、成功例をAbortだけで代替しない。頂点由来・削除順別のmatrixは要求しない |
 | T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表Fixtureを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
 | T-007 | 受付制限と対象authority | 4.2／8章のSource単位の受付・失効と4.5.6の祖先順Geometryを確認する | AがActive中の同じSourceへの要求を見送り、保存・再実行しない。他のLogicalFragmentは同じObject内でも並行でき、他枝のObjectGeneration更新でAをRejectしない。AのFinal Physics／Logical公開後はGeometry未完了でも子のBを受付・公開できるが、B KernelはA Geometry Commitを待つ。同じTransactionのProvisional置換・pose／速度／Sleep変化は自己失効せず、外部authority変更はStale回収して現在Sourceを退役させない |
-| T-008 | Skinned切断 | 姿勢固定から静的破片への切替が見えない | Phase 4.52。歩行・走行・腕振り中に各部位を切断 |
+| T-008 | Skinned切断 | Tableで動作するNPCの実Pose Snapshotから同期ベイク・静的破片への移行が成立する | Phase 4.52で限定再生中の各部位を切断する。移動計画・未来評価全体・Jobベイクの完成を要求しない |
 | T-009 | 入力モデル耐性 | 契約内モデルは自動前処理で切断可能になる | 変換検査とエラーレポートを確認 |
 | T-010 | 破片予算 | 連続プレイでCPU／メモリが上限内へ収束 | 10分間の連続切断ストレス試験 |
 | T-011 | XR描画 | Single Pass環境で両眼のclip／Stencilが一致 | Phase 1.50～1.52の基本VP／Hybrid Clip／Stencilの低レベル確認を再利用し、Phase 2で製品状態を含むclip／Stencilの左右眼スクリーンショットと実機確認 |
@@ -1262,7 +1260,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-015 | 斬撃波先行切断 | 接触前の完了率が即時レンダラ負荷を有意に減らす | Phase 4.53。距離、速度、対象数別に事前完了率とPending時間を測定 |
 | T-016 | 未来評価器統合 | DAGで依存が解消した投機Workが共有Dispatchへ入り、取消・完了後採否・実Hit時Commitが競合なく成立する | Phase 4.53。遅延、進路変更、再切断で未Schedule取消、Schedule済み成果物の世代・前提不一致による不採用、有効成果物の実Hit時Commitを確認し、T-090の優先順と統合する。投機同士の厳密なDeadline順は合格条件にしない |
 | T-017 | 自由飛行剛体の直接予測 | 19.3の直接予測が本体状態と統合され、対象外・前提不一致は現在状態経路へ進む | Phase 4.54で開始Snapshot、重心／Actor原点、回転、WorldPhysicsProfile、FixedStep境界、予測Horizon、Gate対象外を確認する。点Anchor、接触／転動、既知Constraint付き対象を直接予測へ入れない。面リベースはT-093で確認し、外部Probeの測定値を製品保証にしない |
-| T-018 | 明示Animation State／未来姿勢 | AnimatorController内部Stateを正本にせず、同じ対象Stepへ解決済みの明示Stateから現在／未来Rig Poseを任意順で再生成し、接触姿勢を十分な精度で予測できる | Phase 4.61で独立Pose評価を完了し、MobPlan固有の統合は4.70、切断成果物Commitは条件付き4.72で確認する。単一Clip、Loop境界`0.98 -> 1.02`、0／複数cycle Phase、Clamp Clipの`nextDown(1.0)`／`1.0`／`> 1.0`と終端Hold、負Phase Reject、Clip hard switch、Hold、Near表示、Mid／Far未来Sampleを使う。同一Planから`tick 140 -> 103 -> 172 -> 121`と時系列順に評価し、同一Backendのcanonical Bone順Poseが要求順や直前のEvaluator呼出しに依存しないこと、Evaluatorが`PlaybackRateCyclesPerSecond`で追加進行しないことを確認する。AnimatorController State／Trigger／Clock／Transitionの読戻しと目的tickまでの逐次rolloutが標準経路で実行されないこと、現在表示Backendも明示Stateへ従属し独自Phase進行しないことを計測・検査する。controllerなしPlayable／MixerとRetarget済みPose Tableを同じState／Rig Identityで比較し、代表骨位置・回転誤差、実接触Pose誤差、Main Thread時間、Job Batch Throughput、固定Cacheメモリを記録する。V1予測対象では現在／未来の双方でLook／腕／Foot IK、視線多様化、左右反転が無効であり、Backend固有設定から暗黙にMirrorされないことも検査する。Clip ID／Mode／durationまたはAsset／Evaluation Profile Identity不一致、PlanGeneration更新、非finite Phase／Rate、未知Clipでは旧Pose／依存切断をCommitせず実姿勢Fallbackへ移る。最大finite値付近のRate／FixedDeltaによるstep duration乗算Infinity、phase delta乗算Infinity、Phase加算Infinityを各段階でRejectして旧StateをHoldし、最小subnormal付近のRateが乗算underflowで0になった場合はfiniteな0進捗として受理することを確認する |
+| T-018 | Pose Table評価 | 19.3の同じ有効入力からCurrent／Future共通のPoseを要求順に依存せず生成する | Phase 4.61で任意時刻評価・追加時刻進行なし、Loop／Clamp・終端・明示Clip切替、入力不一致拒否、D-136のscopeを少数例で確認する。採用Rig／ClipのBake・サンプル間補間品質と現在骨への適用を確認し、費用・容量は21.2に従う。計画統合は4.70、切断成果物Commitは条件付き4.72へ残す |
 | T-019 | Trace相関と完全性 | 21.3／21.4の因果関係と欠落の扱いを満たす | 代表的な処理の公開・完了・破棄を追跡し、不完全な記録を完全な再現根拠にしないことを確認する。保存形式や旧Readerを固定しない |
 | T-020 | Trace負荷 | 観測処理がGameplayを待たせず、競合や性能判断を歪めない | 代表負荷で観測有無の費用・メモリ・記録欠落を確認する |
 | T-022 | Blenderバッチ | GUIなしで代表Assetを変換し、失敗を終了コードとレポートで検出 | 家具、車、建物を連続処理して出力を検査 |
@@ -1286,12 +1284,11 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-040 | 刀の非接触と新Wave受付 | 発射条件・再準備条件の不成立時に刀自身から新Wave・物理応答・Gameplay Hit・刀由来Hapticsを生成せず、生存Waveはその後のGate状態から独立に継続する | Phase 4.50は新Waveを生成・公開しないことと刀Colliderによる物理応答がないことを確認し、実対象Hit・Hit Detector・対象Queryを要求しない。Phase 4.51は発射条件・再準備条件の不成立中も生存WaveのSweep／Hit評価が継続し、刀自身から対象Query・Hit・Hapticsを生成しないことを確認する。生存Waveの実Hit通知・Hapticsは禁止対象に含めない |
 | T-041 | Tracking復帰 | 追跡喪失と再取得で巨大速度や誤Slashを生成しない | Phase 0.51／0.52は履歴Resetと受付を少数固定Pose列で確認し、0.55で実機調整、4.50で製品回帰。Controller遮蔽、Pose無効化、位置飛びを記録・再生しSample Resetを確認 |
 | T-043 | Unity更新再現性 | Project再作成や版別コピーなしで新Editorへ更新でき、旧版へGitで復帰できる | 専用ブランチと一時worktreeでProjectVersion、Package Lock、固定テスト、XRスモークを検査 |
-| T-044 | MobPlan再現性 | 同じ入力、Seed、NavMesh、PlanGeneration、Animation Clip Catalogから同じRoot軌道と明示Animation State列を生成できる | 固定シーンの計画Hash、経路、RootTrajectory、Clip ID、非wrap累積Phase、PlaybackRateCyclesPerSecond、Catalog内容hash、Group epochを比較し、Animator内部State、評価Backend差、暗黙のMirror設定をPlan生成・Pose評価入力へ混入させない |
-| T-045 | AI LOD予算 | 遠距離モブ数を増やしても計画CPUとメモリが予算内に収まり、近距離反応を阻害しない | Tier別人数、更新周期、Horizonを変えてProfilerとTraceを比較 |
-| T-046 | MobPlan無効化 | プレイヤー介入、経路遮断、別切断で旧計画と依存Animation State／Rig Pose／切断成果物がCommitされない | PlanGenerationを意図的に更新し、旧Stateを表示・未来評価へ再利用しないこと、Task破棄と実姿勢Fallbackを自動照合する。通常Animation変更に別runtime Animation Generationを作らず、Rig／Asset／Evaluation Profile Identity変更だけを独立検証する |
-| T-047 | 時空間予約 | Farモブ同士が粗い予約下で目立って重ならず、予約計算が局所的に完了する | 密度別に競合数、再計画数、CPU時間、見た目を測定 |
-| T-048 | モブ先行切断 | 遠距離モブの計画済み明示Animation Stateから必要候補だけをPose評価し、命中前のMesh／Convex完了率を改善する | 距離、Tier、Horizon、Pose Evaluator Backend別にCommit率、破棄率、Pending時間、評価Bone数を比較し、全Mob／全Sampleの全骨Pose先行生成が実行されないことを確認する |
-| T-049 | Mob Trace完全性 | MobPlan生成から利用、無効化、再計画、切断Commitまで因果を追跡できる | MobId、PlanGeneration、SlashId、TaskIdで保存Traceを自動照合 |
+| T-044 | MobPlan参照の一貫性 | 公開済みの同じ計画を同じ時刻で参照した結果が一致し、Current／Futureが整合する | 20.2のRootとPose評価入力を確認する。同じSeedからの計画再生成・経路hash一致は要求しない |
+| T-045 | AI LOD予算 | 採用した負荷制御で有限な計画費用・メモリと介入への応答を両立する | 4.70で20.4の能力を既存Profiler／Traceで確認する。固定四Tierや全組合せmatrixを要求しない |
+| T-046 | MobPlan無効化 | 前提変更・切断・退役後に旧計画・Pose・依存成果物を適用しない | 20.3／20.6の失効と使用中入力の保持・回収を確認する。固定Group方式やVersion型ごとの独立試験は要求しない |
+| T-048 | モブ先行切断 | 有効計画から必要候補をPose評価して先行成果物を利用する | 4.65採用時の4.72で実切断統合と先行完成・採用状況を確認する。不採用時は要求しない |
+| T-049 | Mob Trace因果相関 | 計画・Work・Slashと採否の因果を既存IDで追える | MobId／PlanGeneration／SlashId／TaskIdで確認する。計画単体は4.70、未来VP準備は条件付き4.71、切断Commitは条件付き4.72で扱い、後段不採用を計画Traceの未完了にしない |
 | T-050 | 断面表示一貫性 | 通常表示で仮断面と実断面が同じグレー・同じトゥーン応答となり、差し替えで陰影や輪郭が目立って変化しない | 共通トゥーン設定下で箱、凹形、人物を多方向に切断し、両眼映像とフレーム差分を確認する。既存FixtureでBase Texture／Material UV Transformを変更しても実断面色が変わらないことを確認する |
 | T-051 | 断面デバッグ表示 | 5.3の通常グレー／仮断面赤／実断面緑が描画対象に対応し、デバッグ切替でGeometryを書き換えない | Final／Logical公開前、公開後Geometry未Commit、Geometry Commit後を一連で確認し、再切断では既存実Capの緑と新しい仮Capの赤を維持する。色変更だけを目的とするVertex／Index書換え・VB／IB転送・Geometry複製がないことを確認する。処理経路別の色行列、色覚補助、専用パネル、独立性能SLAを要求しない |
 | T-054 | Unity選択的録画 | Frameと画像が対応し、21.15の非待機・容量・寿命・故障分離を満たす | Phase 0.11では21.15のCapture経路での複数Frame処理・出力確定・decode対応と資源寿命を確認する。Phase 4.8の連続録画採否・負荷確認を前倒しせず、旧固定fps・Frame数・試験階層を要求しない |
@@ -1337,13 +1334,13 @@ Phase 2.9の性能確認は実Burst経路の数値処理・割当・出力量を
 | T-089 | Hybrid Clip Plane予算 | D3D11／Quest LinkのColor、Depth、Shadow、Stencil Volumeで同一のstable Plane選択を使い、Raster 8面とPixel fallback最大4面でGPU時間とMSAA edge品質を保ちながら、容量超過面を5.2に従いPlane選択とclip制約から除外し、対応Stencil Volumeをsubmitしない | Phase 1.51の固定Clip確認を再利用し、Phase 2で製品状態・候補選択との統合を確認する。0、1、7、8、9、12、13、32候補面を持つ単一／複数RenderFragmentを用意し、先頭8面が`SV_ClipDistance`、9～12面がPS `clip()`、残りがIgnoredになることをShader captureとProfiler Counterで確認する。Operation公開前後で受付済みの未Commit面・Sideを引き継ぎ、固定による候補除外がないこと、RenderFragment対応変更時に同じ描画更新境界で候補を再構築することを確認する。Pending Cut列とLogicalCutOperation公開列を通した受付の古い順、左右眼、Color／Depth／Shadow／Stencil各Pass、カメラ移動、画面外復帰で選択が一致し点滅しないこと、Operation公開時に同じ面と受付位置を保って重複しないことを検査する。同一枝へ13回以上連続切断し、選択列が未Commit祖先についてdependency-closedで、Ignoredな後発面により祖先外Geometry復活やSibling重複を生じないことを確認する。順序違反した復元Fixtureは違反以降をIgnoredとして背景完成へ委ねる。Ignored Pending Cut／境界でもPending CutまたはCutBoundaryRecord、世代、支持、背景共用Geometry／Convex Jobが残り、同期待機やJob cancel／再発行を生じずStable Commitで正しい形状へ収束することを確認する。Ignored VolumeのCap板をBatchへ残し、通常Colorで別ResidualがないsampleはStencil 128のためColor／Depthを書かないこと、通常Colorの非互換Residualは分離されること、最後の統合Colorでは板の可視化と誤Depthを5.2の例外として扱うことを確認する。Ignored専用フラグ、compaction、代替VFXを要求しない。MSAA 1x／2x／4x／8x、pixel-bound／vertex-bound Sceneで全PS clip、Hybrid、Raster 8のみを比較し、Pixel fallback数とStable専用Shader分離をO-043へ記録する |
 | T-090 | 共有Dispatchと切断受付 | 4.4の優先順、有限容量・予算、物理仕事の投入余地、取消・完了後採否、同一フレーム内の後続Dispatchが成立する | Phase 1の合成Workで、現在状態の必須仕事が投機・Maintenanceより先、命中済みPhysicsが命中済みGeometryより先になること、低優先投入で物理仕事の待機Queueへの余地を使い切らないこと、未Schedule取消、古い成果物の不採用、二重適用なしを確認する。代表的なA→B→Cで、同一フレームの後の機会に完成済み結果を回収して後続をScheduleでき、呼出しごとに予算が増えず、未完了時は待たずに戻ることを確認する。Queue満杯でも通常経路は待機・追出し・無制限再試行をしない。受付済み切断の必須仕事だけは4.4の同期進行と一度の再投入を確認し、進捗不能・Physics Step待ちは既存Pendingへ戻る。全対象合計の`MaxIncompleteCutOperationCount`直前／一致、同一Frameの複数対象、同一Slashの部分受付を試し、見送りが状態・世代・新規仕事を変えず再実行されないこと、件数が受付時に増え、7.7のGeometry Commitまたは終端時に一度だけ減ることを確認する。Final／Logical公開や内部CPU完了だけでは減らない。内部型・Queue方式・固定Counter・無割当・厳密なDeadline順を合格条件にしない |
 | T-091 | PhysicsSplitTransactionとProvisional | 7.1／7.2のall-or-none構築、一体Publication、Abort、退役、Lease寿命を確認する | 少数の単一／Compound・Anchorあり／なし入力で、Provisional再cook 0、旧Geometry共有、Siblingのみ衝突抑止、外界Collision、Provisionalでの親質量保存、初回速度継承、Actor優先Final handoffと自前B-repの包含・frame条件を確認する。Final先着では直接Final、Provisional構築不能・片側Final不成立では部分公開せずSource退役となる。Geometry未完成で正負2子を公開し、PendingのPhysics責務が終了することを確認する。7.1のD6設定と内向き境界、代表的な内向き抑止・外向き上限挙動を確認し、正常Limit到達は異常にしない。既存境界からの継続不能通知はActive中ならAbort、成功後なら該当LogicalFragmentだけの退役へ送る。Timeoutのみでは退役しない。Solverの数値SLA、異常監視の網羅、方式比較・Pool必須化は要求しない |
-| T-092 | Mob固定ステップ軌道Cache | Phase 4.70で同じSnapshot、Intent、Path、Seed、PlanGeneration、Animation Clip Catalogから同じRoot軌道と`ExplicitAnimationStateV1`列を生成し、Nearのライブ更新とMid／FarのQueue再生が同じ移動Kernel／Animation Plannerを共有し、計画単体で成立する | 固定MobId順、Current／Next二相更新、FixedStep倍率、Waypoint／Lane、Queue wrap、Horizon補充、Render補間、移動距離由来PhaseとPlaybackRateCyclesPerSecondを再生し、V1ではMirror入力もBackend固有Mirrorも生成しない。Render補間では`HorizonSampleCount = 1`、`2`、開始直前、開始ちょうど、終端ちょうど、終端超過、最後のSample直前1 FixedStepでoff-by-oneやHold条件の逆転がなく、`stepId < StartFixedStepId`では先頭Sample全体でHoldし、`stepId < CommittedThroughFixedStepId`のときだけ同一Clip Stateを補間することを確認する。Group公開は全Mob descriptor検証後の単一Group epoch atomic storeだけが読取可能点で、Commit途中の一部Mobだけ新HorizonまたはClip／Phase／Rateになる観測がないこと、旧Job完了、入力末尾Sample slotのpin／Snapshot、wrap時の未再生上書き禁止、Reader完了境界後の旧slot回収、epochのwrap／ABA対策を検査する。`HorizonSampleCount * CrowdStepScale`、`StartFixedStepId`加算、`stepId`減算のchecked overflowではPlan／補充を公開せず既存区間維持のHoldとなり、`FixedStepId`のwrap／再利用で古いSampleが未来区間として再利用されないことを確認する。NavMeshAgent／Root MotionがRoot位置を二重更新しないこと、全Plan／Group無効化でGenerationが進み旧軌道・未来姿勢と、Jobベイク導入時のVP入力準備結果が採用されないことを確認する。人形の切断成果物の実Commit拒否はJobベイク採用時のPhase 4.72で統合確認する。固定容量の最大Mob／Sample数、Background Queue満杯、Mid／Farのunderflow、Near Live Fallback予算超過では再確保・Main Thread待機・無制限再試行を起こさず、規定のState全体Holdと固定Profiler Counterへ低下し、既存MobPlan lifecycle Traceが矛盾しないことを確認する。ORCA、依存Graph、Flow Fieldを無効のままでもPlayableで、多少のMob重なりを許容してCPU、Nativeメモリ、Queue枯渇率、計画再利用率を測定し、Jobベイク採用時だけPhase 4.71で候補からの未来Pose／VP準備要求・結果取得・失効を確認する。先行切断完了率・Commit率はその後のPhase 4.72で測定し、不採用時は両確認を要求しない |
+| T-092 | Mob計画の本体導入 | Phase 4.70で採用方式による計画生成・現在適用・未来参照・更新を20章へ接続する | T-044～T-046／T-049を再利用し、失効・非公開結果の回収・資源保護・既存予算との接続を確認する。境界例は採用方式に応じて選び、固定計画だけで製品計画機能を完了扱いしない。条件付きの未来VP準備と実切断統合は4.71／4.72へ残す |
 | T-093 | 剛体切断Local Planeリベース | 実姿勢を維持し、面採否と切断受付判定をGeometry Job完成から独立させ、受付済みの全表示・物理処理が同じ操作面へ収束する | 任意Phase 4.55。未実装・延期・不採用を基本ゲームの不合格にしない。19.5.1の対象、接線／法線並進、回転、重心と原点不一致、左右眼差、閾値直前／一致／超過、Near Plane／非finite／Profile欠落、Scope外を小さい固定Fixtureで確認する。同じDescriptor／実SnapshotでMesh完成済み・遅延中・Job失敗を切り替えても採用面と7.6の片側空判定が同一で、Ready前にNo-opならCutOperationId／Pending Cut／操作／世代／表示／物理／仕事を作らず、受付済みならCutOperationIdとPending CutがLogicalCutOperationより先に公開され、Operation未公開のTemporary表示と後のOperation／Provisionalが同じ採用面を使うことを確認する。Operation公開時はPending Cut由来の描画位置と面を維持して重複Recordを作らず、同面Job継続／後追い、後着不採用Job回収、世代更新前Snapshotと受付後世代の対応を検査する。処理中は同一Sourceへの再切断を拒否し、Final／Logical公開成功後は子への切断を受付可能とし、Final不成立時は7.1に従ってSourceを退役する。FinalまでActorが動いても巻戻しなし、面変更なし、自前B-repの由来Convex包含、実速度継承、Impulse一回をT-091の代表caseで確認する。SourceSlashPlane／有限Sweep不変、別対象の面差とCap Group分離、LogicalCutOperation作成Traceに先行できるPending Cut面の記録・復元と欠落／重複／混在拒否、後着Operation Traceとの相関を検査する。少数の動画像で近似誤差とVFX差を目視し、既存Captureを使用する。全距離・視野角・閾値の直積、全Contour最大誤差証明、新しい長時間性能SLAを要求しない |
 | T-094 | Building World D6 lifecycle | 7.2.2の予定Depthと正式公開、D6構成・寿命を確認する | 少数Syntheticで建物true／非建物false・初期Depth 0、建物だけの予定Depth更新、Provisionalと正式子への同値継承、直接Final、Abort時非公開、Anchorあり／なし、有限・非負なLimit、生成時相対位置・回転0とFree／Limited設定を確認する。Final handoffで再加算・D6再生成・基準リセットせず、所有Actorと同じ寿命で一度だけ回収する。整数上限・underflow境界、Solverの変位・jitter等を合格閾値にしない。7.9の任意処理は各後続Phaseで確認する |
 
 未来用Jobベイクの確認は少数のSkinned Fixtureと既存の共用Geometry検証を使う。Phase 4.65は固定Rig Poseの限定実装で、4.5.2の条件を揃えたSkinnedMeshRenderer.BakeMeshとの必要属性・頂点／Topology対応、非同期回収、21.2の負荷比較を行い、導入の採否を決定する。対応入力の少数比較にRendererとRoot Boneのframeが異なる例および非単位scaleを含め、入力をWorldへ写した形状も比較してscaleの二重適用・適用漏れがないことを確認する。効果がなければ不採用で完了し、本体DAG／VPプール接続、MobPlan、実命中、Ragdoll、人形切断の完成を要求しない。Phase 4.52の基本切断はT-008で確認し、T-018のPose／前提検証とT-092の計画単体確認を後段統合待ちにしない。
 
-Jobベイクを採用した場合のPhase 4.72では、T-008／T-018／T-092の人形先行切断への接続として、準備済み結果の採用、未完成・Pose不一致時の現在Pose同期経路、世代失効後の後着結果回収を少数ケースで確認する。既存Geometry／Physics Commitへ接続し、4.5.6の直接Index出力・独立転送・現在frameでの公開条件と、実Actor／Animator内部Stateを予測へ巻き戻さない規則を維持する。21.2の同時候補負荷と先行完成・採用状況を測定する。新しい試験ID、専用Framework、全Asset・全変形機能の網羅試験は要求しない。
+Jobベイクを採用した場合のPhase 4.72では、T-008／T-018／T-092の人形先行切断への接続として、準備済み結果の採用、未完成・Pose不一致時の現在Pose同期経路、世代失効後の後着結果回収を少数ケースで確認する。既存Geometry／Physics Commitへ接続し、4.5.6の直接Index出力・独立転送・現在frameでの公開条件と、実Actor／現在Sceneを予測へ巻き戻さない規則を維持する。21.2の同時候補負荷と先行完成・採用状況を測定する。新しい試験ID、専用Framework、全Asset・全変形機能の網羅試験は要求しない。
 
 T-093の再切断・世代照合は8章に従う。子孫切断の受付だけで祖先GeometryをRejectせず、外部authority喪失と区別する。Operation公開前の受付見送りと非再生はT-007で確認する。
 
@@ -1408,13 +1405,13 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | Phase 4.3 | 建物由来子のWorld D6と一般外部Joint撤去 | 7.2.2のIsBuildingDerived／BuildingSplitDepth、通常1→2公開でのWorld D6生成、指数Limit、Actor寿命と既存失敗境界への接続、既知Constraint識別、T-094 | 手書きSyntheticで生成・建物由来だけの予定Depthと正式公開・Abort・Final handoff時の維持・構築不能を確認する。一般外部Jointの継承・付け替え・保護・予測を要求せず、4.54が既知Constraintを識別できる。拘束効果を保証せず、製品Recipe・5.6分割・5.7 GC・未来予測本体を待たず完了する |
 | Phase 4.50 | 製品SlashWave Core | 製品のGesture入口、交換可能Latch／Frame／Span Candidate／Span Close Estimator、Latch済みFrame、0.53のCoreと0.55で採用した構成、Raw／Accepted Span accumulator、単一Segment、WaveLifetime、SlashWave VFX、複数生存Wave用の有限固定容量、追跡異常と再準備 | 発射時の面・軸・初期形状と評価設定が19.1.4に従って保たれ、Raw候補が減少・InvalidでもAccepted Spanが縮まない。完了済み過去更新区間を再評価せず、現在更新区間内のSpan増加領域は後続Hit Phaseの共通Sweepへ渡せる。Span Close後は採用方式の候補評価を使い、WaveはWaveLifetimeで有限終了する。Latch／Frameの切替は未Latch評価へ、Span Candidate／Closeの切替は後続Slashへ反映し、生存WaveはLatch時方式・設定と必要な一時状態を維持する。19.1.6とT-035に従い、公開前の容量確認と満杯時の新Latch見送り・同じStrokeの非再試行を確認する。実対象Hit、Cut、候補範囲、Predictionを要求しない |
 | Phase 4.51 | Segment HitとProp現在状態切断 | 生成時の退化Segmentを含む共通閉Segment Sweep、現在採用Physics Convex集合とのNarrowphase、`LogicalFragmentRef`系譜単位消費、`SlashHitConfirmed`、既存7.6受付、現在状態からの通常Prop切断 | Predictionを全て無効にしても、Slash生成→飛翔→実Hit→即時表示→Geometry／Physics処理の基本Propループが成立する。消費済み系譜と祖先関係を持たない別Fragmentへ個別Hitでき、消費済みFragmentの子孫は同Slashで再切断しない |
-| Phase 4.52 | Humanoid現在Pose切断 | 命中時Bone Pose Snapshot、同期SkinnedMeshRenderer.BakeMesh→VP、共用切断、骨Physics Proxy分類、物理移行、T-008 | Jobベイク、未来Pose、MobPlan、先行成果物なしで動作中NPCを現在Poseから切断できる。ここでProp＋NPCを含む基本垂直スライスを完成とみなせる |
+| Phase 4.52 | Humanoid現在Pose切断 | 少数Tableの準備・Current再生、実Bone Pose Snapshot、同期SkinnedMeshRenderer.BakeMesh→VP、共用切断、骨Physics Proxy分類、物理移行、T-008 | 必要なTable評価の最小部分を接続し、動作中NPCを現在Poseから切断できる。限定再生・固定入力でよく、移動研究・未来評価全体・Jobベイク・製品Preprocessorを待たない。Prop＋NPCの基本Playableを完成とみなせる |
 | Phase 4.53 | 静止／姿勢固定対象の先行切断 | 導出可能な場合の保守的Candidate Flight Bounds、導出不能時の有限な先行準備範囲、候補列挙、DAG、Ready Workの共有Dispatch投入、静止姿勢の投機Geometry／Convex、実Segment HitだけのCommit Gate、空振り回収、Phase 4.1性能曲線のSlash Deadlineへの当てはめ | 静止対象で先行成果物を再利用でき、有限包絡を保証できない構成では先行準備範囲外を未準備のまま許容する。範囲外を含む実Hitは4.51の候補検索・現在状態切断へ戻り、Gameplay Clamp、範囲拡張、再探索を要求しない。基本ゲームの成立条件にしない |
 | Phase 4.54 | 自由飛行剛体の直接予測 | O(1)固定刻み予測、`DirectRigidPredictionEligibilityGate`、WorldPhysicsProfile／FixedStep統合、T-017 | 対象内だけ先行成果物を作り、対象外または検証不一致は4.51へ戻る。Local Planeリベースは必須にしない |
 | Phase 4.55（任意） | 剛体Local Planeリベース | 現行19.5.1／D-149／T-093の限定実装・比較・採否 | 基本ゲームまたは4.54の必須条件にしない。未実装・延期・不採用でも後続Phaseへ進める |
-| Phase 4.61 | 未来Animation Pose評価 | `ExplicitAnimationStateV1`、Clip Catalog、`ResolvedAnimationPoseInput`、交換可能Pose Evaluator、Playable／Pose Table比較、T-018 | VPベイク、切断、MobPlanなしで任意対象StepのRig Poseを評価できる。Backend選択は後から交換可能 |
+| Phase 4.61 | Pose Table評価の本体確認 | 19.3の共通評価とT-018 | 4.52の最小評価を継続利用し、Current適用とFuture任意順評価、Clip・時刻・骨対応・再生規則を確認する。方式再選定、MobPlan生成、頂点ベイク、人形先行切断は要求しない |
 | Phase 4.65 | 未来予測用Jobベイクの比較・採否 | 4.5.2の不変Rig Pose＋共有source skinning入力から共通CPU側VP入力を生成する限定実装と同期経路の比較 | 少数の対応済みSkinned入力と固定Poseで品質・非同期回収・Main Thread負荷を14章／21.2に従って比較し、人間が導入の採否を決める。効果がなければ不採用も正常完了。本体DAG／VPプール接続と人形切断の完成は不要 |
-| Phase 4.70 | Mob未来計画 | RootTrajectory、`ExplicitAnimationStateV1`、PlanGeneration、Queue、T-092 | Jobベイク不採用でも計画単体で閉じる。未来VP入力、人形先行切断を要求しない |
+| Phase 4.70 | Mob未来計画の本体導入 | 研究後に人間が採用した移動・Animation計画方式と20章への接続、T-092 | 現在／未来整合、更新・失効・寿命・予算を確認する。固定計画による先行接続検証だけでは完了しない。Jobベイク不採用でも計画単体で閉じ、未来VP入力・人形先行切断は要求しない |
 | Phase 4.71（条件付き） | 未来VP入力準備統合 | 4.61＋4.65採用結果＋4.70を4.53の投機DAGと既存VPプールへ接続し、候補Pose／VP入力準備・失効・回収を行う | 4.65不採用ならPhase自体を省略し、未完了負債にしない。人形の実切断Commitをまだ要求しない |
 | Phase 4.72（条件付き） | Humanoid先行切断統合 | 4.52の現在Pose経路、4.53の投機経路、4.71の未来VP入力を接続 | 有効成果物採用、未完成／Pose不一致時の4.52同期経路、世代失効回収を確認する。4.65不採用なら省略可能 |
 | Phase 4.8 | OpenXR Projection Capture＋正式録画判断（4.70と有効化した4.71／4.72の後） | 21.7.4の固定構成、Release前GPU Copy、Trace相関と負荷確認 | 切断PoCの異常を提出画像とTraceで調査でき、想定外構成ではCaptureだけを停止する。連続録画が必要ならT-054の実測から容量・停止時間を満たす方式を選び、0.11の短時間確認方式を自動採用しない。API Layerまたは連続録画を個別に見送れる |
@@ -1430,7 +1427,7 @@ Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も
 
 Phase 2.9の直接出力をPhase 3で既存VPプール・転送・現在frameでの公開へ接続する。切断Kernelの意味・Topology・Cap品質・世代の有効性・表示／Stencil同時公開は維持し、Final物理所属の確定をIndex配置・転送の前提にしない。詳細layoutやKernel内部の書込み方式は必要な段階まで未決とし、物理用の処理は7.2の実行分担に従う。Phase 4.53の剛体先行計算と、4.5.2の人形経路分離も同じ出力と準備済み範囲再利用へ接続する。0.92へAnimation／Pose Evaluatorを前倒ししない。Stage 3とGPU並行ベイクは実測に応じた後段最適化に残す。
 
-Phase 4.61はT-018の独立未来Rig Pose評価で閉じ、Jobベイク、MobPlan、人形切断を要求しない。4.65は限定実装・比較・人間採否までを行う。4.70はJobベイクの採否にかかわらず計画単体で閉じ、採用時だけ4.71で未来VP準備、4.72で先行切断を統合する。不採用なら両Phaseを省略する。4.52は同期経路で独立完了し、少数Fixtureのために5.5の製品Preprocessorを前倒ししない。
+Phase 4.52で少数TableのCurrent評価を接続し、4.61は同じ評価処理のT-018確認で閉じる。4.65は固定Rig Poseによる限定Jobベイク・比較・人間採否を維持し、Pose Table採用をJobベイク採用へ読み替えない。4.52／4.61／4.65は移動研究の完成を待たない。4.70は研究結果から人間が製品方式と必要な要求・完了条件を決めて本体へ導入し、研究側の全仕様・Dataset・UIを自動採用しない。内部構造は実装詳細に留める。Jobベイク採用時だけ4.71で未来VP準備、4.72で先行切断を統合し、不採用なら両Phaseを省略する。4.70自体と4.8以降への依存は維持し、少数Fixtureのために5.5や0.21の全Consumer対応を前倒ししない。
 
 Phase 1～3はHarness内の合成Final Physics成功／失敗入力により7.1のLogical Publication／Abortと4.5.6のGeometry順序を検証する。製品Runtime用の代替Physics Modeや公開schemaは作らない。SourceがActive中は受付を見送り、別LogicalFragmentは並行可能とする。Final／Logical公開後はGeometry未完了でも子を受付け、後続Kernelだけ祖先Commitを待つ。実Actor／cook／D6との一体公開はPhase 4で確認する。
 
@@ -1468,7 +1465,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Geometryは4.5.6の祖先順にCommitし、実体化したTemporaryだけを回収する。Final Physics／Logical Publicationを先に成立させ、Geometry CommitはDraw List構築・GPU完了・実表示を待たない。一つの描画Snapshot内の全Passで同じGeometryとTemporary集合を使い、GPU更新が対応Drawに先行する順序はRenderer側で保つ。
 
-- 表示／Stencil共用VP Geometry切断はJob＋Burst主体、物理ConvexのCut/Cookは7.2の実行分担で処理する。Main Threadには通常命中の同期入力準備とBackendに応じたPose評価、表示VPの範囲管理・GPU更新・参照公開、物理Mesh公開とCollider／Rigidbodyの境界Commitが残り、導入採用時の未来の頂点スキニング・VP形式変換は4.5.2のJob経路で処理する。通常更新では未完了Jobへの強制`Complete`によるフレーム停止がない。
+- 表示／Stencil共用VP Geometry切断はJob＋Burst主体、物理ConvexのCut/Cookは7.2の実行分担で処理する。Main Threadには通常命中の同期入力準備と現在骨へのPose適用、表示VPの範囲管理・GPU更新・参照公開、物理Mesh公開とCollider／Rigidbodyの境界Commitが残り、導入採用時の未来の頂点スキニング・VP形式変換は4.5.2のJob経路で処理する。通常更新では未完了Jobへの強制`Complete`によるフレーム停止がない。
 
 - 7.1のTransactionがProvisionalまたは直接Finalから正負2 Final OwnerとLogicalFragmentを一体公開し、Geometry未完成でも子を受付けられる。Provisional・Final構築不能はSource退役とし、部分公開や旧物理の恒久採用で救済しない。質量・速度・自前B-repの包含・D6・Leaseは7.1／7.2の条件を満たす。
 
@@ -1518,7 +1515,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 任意の`SlashId`から候補検索、予測、各切断Task、検証、Commitまたは破棄までをEditorタイムライン上で追跡できる。
 
-- Nearのライブ更新とMid／Farの計画済み軌道が同じ固定ステップ移動Kernelを共有し、Current／Future表示は同じゲーム側明示Animation Stateを交換可能なPose Evaluatorへ渡す。AnimatorController rolloutへ依存せず、Jobベイク採用時は遠距離モブのRoot軌道とAnimation Stateを人形の切断先行計算へ利用できる。プレイヤー介入時は旧`PlanGeneration`の軌道・Rig Pose・切断成果物が適用されず、Queue枯渇時も古い軌道を無期限に再生しない。
+- NPCのCurrent／Future Poseは19.3の共通Table評価に従い、RootとAnimation入力は同じ対象時刻・有効計画へ整合する。4.70では採用した計画方式で介入への応答・費用・失効・資源寿命を確認する。有効区間外を確定予測として使用せず、現在状態の切断を妨げない。人形先行切断との接続は条件付き4.71／4.72に従う。
 
 - Unity Editor更新時にプロジェクトを作り直さず、専用ブランチで固定テストとXRスモークテストを実行し、不合格なら旧固定版へ復帰できる。
 
@@ -1563,6 +1560,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 - Phase 2.9／3.9の追加と7.2の局所退化許容で置換する旧記述は直接削除・短縮し、経緯はGitへ委ねる。旧仕様の付録や互換表現を追加しない。
 
 - 7.3のcook品質許容により外す形状忠実性Gate・修復要求と曖昧な包含保証は、旧仕様の付録・廃止台帳・互換表現を残さず直接削除・短縮し、経緯はGitへ委ねる。Probeの観測結果や診断基準は遡って書き換えない。
+
+- 今回撤去するオンラインPose Backendと方式比較、移動計画の具体手法・内部構造・将来方式の先行契約、および専用Decision・Open Item・用語・試験・Phase記述は直接削除・置換し、経緯をGitへ委ねる。同じ責務のIDは継続し、不要なIDは欠番とする。旧詳細・互換層を残さず、無関係な公開・資源寿命・切断・観測契約や研究原資料を変更しない。
 
 - 未決事項は結論、根拠、決定日を追記して決定事項へ移す。
 
@@ -1637,15 +1636,10 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 | Edge Lead Score | 刀身軸方向を除いた運動と刃方向の内積。正なら刃が先行し、負なら峰が先行する |
 | Future Event DAG | 未来の候補接触、姿勢予測、切断、Commitを依存関係で表した評価グラフ |
 | Work Item／TaskId | Job、I/O、GPU処理等を横断して追跡する論理作業単位と相関ID。C# `Task`型に限定しない |
-| MobTrajectoryKernelV1 | Global FixedStepの整数倍で、固定MobId順のCurrent StateからNext Stateを二相更新する副作用のない初期群衆移動Kernel。Waypoint／Lane Desired Motionだけを扱い、Nearのライブ更新とMobPlan未来生成で共有する。NavMeshAgent、Root Motion、RigidbodyによるRoot位置更新と併用しない |
-| AnimationPlannerV1 | Behavior Intent、Locomotion、Root速度／向き、累積移動距離から副作用なく`ExplicitAnimationStateV1`を生成するゲーム側Planner。現在表示BackendやAnimator内部Stateを入力正本にしない |
-| Animation Clip Catalog | 正のAnimationClipIdごとに`Loop`／`Clamp`、finiteかつ正のcanonical DurationSeconds、Clip content identityを固定するcanonical表。固定property順とClip ID昇順から算出する内容hashを`AnimationAssetSetVersion`へ結合し、Mode／duration変更を同一Asset版として扱わない |
-| ExplicitAnimationState | Current／Future双方のAnimation Source、Source Time／Phase、Playback、Blend／Transition等を表現するゲーム側の副作用のない値状態。標準経路ではAnimator／Controller内部Stateから復元せず、必要な履歴を明示する |
-| ExplicitAnimationStateV1 | 正のint範囲の単一AnimationClipId、finiteかつ0以上のbinary64非wrap累積Phase、finiteかつ0以上のbinary64 PlaybackRateCyclesPerSecondからなる、所属SampleのFixedStepIdへ解決済みの初期表現。同一Clip間だけPhase補間し、異Clip境界はhard switchする。将来の2 Source Blend等は互換意味境界を保ったschema拡張とする |
-| ResolvedAnimationPoseInput | 対象`FixedStepId`、そのStepへ解決済みの`ExplicitAnimationState`、Rig／Animation Asset Set／Evaluation Profile Identityを一体で保持するimmutable入力。裸のStateや別StepのStateをEvaluatorへ渡さない |
-| FutureAnimationPoseEvaluator | `ResolvedAnimationPoseInput`からcanonical Bone順Rig Poseを生成する交換可能境界。controllerなしPlayable、Pose Table、将来SamplerをBackendにでき、評価要求順や暗黙Controller rolloutへ依存せず、PlaybackRateによる追加の時刻進行を行わない |
-| MobTrajectorySample | 1つの`MobId + PlanGeneration + FixedStepId`に属する固定間隔Sample。position、velocity、heading、Locomotion、ExplicitAnimationState、経路カーソルを持ち、固定長Ring Buffer内でMid／Far再生と未来姿勢生成に利用する |
-| MobTrajectory Hold | 有効Sample不足または固定容量／Live Fallback予算超過時に、最後の有限なRoot姿勢と`ExplicitAnimationStateV1`全体を維持するbounded degradation。古い軌道の無期限外挿、Clip／Rateの独自変更、同期全群衆再計算、Buffer再確保を行わない |
+| Animation Clip Catalog | 使用Clip、duration、Loop／Clamp等の再生規則と内容を識別する情報。19.3のTable評価で現在／未来の意味を揃える。保存形式・hash構成は実装詳細 |
+| ExplicitAnimationState | ゲーム側が所有するClipと解決済みSource Time／Phase等の明示Animation入力。19.3に従い、Animator内部Stateから復元しない |
+| ResolvedAnimationPoseInput | 対象時刻へ解決した明示Animation入力とTable・Rig骨対応・評価規則を識別できる不変入力。型・保持形状は実装詳細 |
+| FutureAnimationPoseEvaluator | 19.3の骨Pose Tableを使うCurrent／Future共通評価。対象時刻を再進行せず、入力と現在Sceneを変更しない |
 | Cut/Cook Profiling | 7.5の代表Fixtureによる軽量測定。結果を実行枠・scratchメモリ・同時未完了切断数の調整に使う |
 | Unity Built-in 3D Physics | GameObject／Rigidbody系で使用するUnity内蔵NVIDIA PhysX統合。DOTSの`Unity Physics`パッケージとは別物 |
 | Native採用Gate | D-086に定める、Native物理経路の部分置換を再検討する条件 |
@@ -1997,7 +1991,7 @@ Unity現在世界
 | 信頼度 | 主な対象 | コミット条件 |
 | --- | --- | --- |
 | Deterministic | 静止物、確定済み切断面から作る幾何成果物 | `SlashHitConfirmed`、Slash／SlashFrame、BaseObjectGenerationの一致 |
-| Conditional | 既知Animation、単純運動、確定済みMobPlan | Deterministic条件に加え、Animation／PlanGeneration／予測前提の一致 |
+| Conditional | 既知Animation、単純運動、確定済みMobPlan | Deterministic条件に加え、Animation入力・Identity／PlanGeneration／予測前提の一致 |
 | Speculative | 直接予測Gateを通った自由飛行剛体で、命中までに前提が崩れ得るもの | Deterministic条件に加え、実接触時の姿勢・Physics状態照合に合格 |
 
 メインスレッドはUnity状態を数値データへスナップショットし、Job SystemとBurstは予測、頂点分類、交差、断面生成を行う。UnityのGameObject、Transform、Animatorをワーカージョブから直接操作しない。VP出力・転送・Geometry Commitは4.5.6に従う。物理適用は表示Geometryの完成を待たず7.1に従って進める。
@@ -2010,22 +2004,26 @@ Unity現在世界
 | --- | --- |
 | 静止／姿勢固定 | 4.53で現在姿勢を使って先行計算 |
 | 自由飛行・単純重力 | 4.54で`DirectRigidPredictionEligibilityGate`を満たす剛体だけ固定Unity／PhysX版の固定刻みに準拠したO(1)直接予測を使用する。Gate対象外・前提不一致は4.51へ進む。任意4.55のLocal Planeリベースは19.5.1の独立した採用Gateを使う |
-| 既知またはMobPlanで確定したAnimation | 対象`FixedStepId`の副作用のない`ExplicitAnimationState`を解決し、交換可能なPose Evaluatorで任意時刻Poseを生成 |
+| 既知またはMobPlanで確定したAnimation | 対象時刻へ解決した明示Animation入力から、Current／Future共通の骨Pose Table評価でRig Poseを生成 |
 | 接触・転動 | 接触・転動の未来運動を先読みせず、4.51の現在状態経路で処理する |
 
 `DirectRigidPredictionEligibilityGate`は開始Snapshotだけから判定する内部boolean受付条件とする。動的かつSleep中でなく、`useGravity=true`、damping 0、Rigidbody Constraintsなし、既知のシステム所有Constraintなし、Fixed Step境界、`WorldPhysicsProfile`一致、既知Contactなし、予約済みForce／Torque・スクリプト駆動・Animation駆動・ユーザー介入なしであり、予測区間に速度Clampが適用されず、既存候補情報から衝突可能性が判明していない場合だけ受理する。未来区間の完全な無衝突証明は要求せず、受付後に衝突または介入が判明した成果物は既存の実命中検証で破棄する。Gate結果用の状態、enum、Profile、Proof、永続ArtifactまたはTrace Eventは追加しない。
 
 一般外部Jointは7.2.2の製品入力契約で除外するため、Gateで任意Jointを列挙しない。点Anchorで固定された対象、接触・転動中の対象と、既知のBuildingWorldD6Constraint／ProvisionalSeparationConstraint付き対象は直接予測から外す。未来運動の予測が必要なGate対象外の剛体は4.51へ進む。静止／姿勢固定として先行計算できる対象は、点Anchorの有無によらず4.53に従う。
 
-Current／Future Animationの意味上の正本は、ゲーム側が保持する副作用のない`ExplicitAnimationState`とGlobal `FixedStepId`である。`Animator`、`AnimatorController`、`AnimatorControllerPlayable`の内部State、Clock、Trigger、Transition、BlendをAnimation Planへ読み戻さず、稼働中Controllerを未来へ進めたり巻き戻したりしない。Future Pose `T+n`を得るためにControllerを`T+1 ... T+n-1`へ逐次rolloutする方式を標準経路にしない。
+製品RuntimeのNPC Current／Future Pose評価は、対象Rigへリターゲット済みの骨Pose Tableを用いる。ゲーム側が対象時刻へ解決した明示Animation入力から共通の評価処理でRig Poseを生成し、現在表示ではBone Transformへ適用し、未来評価では数値Poseとして利用する。オンラインPlayable／Animatorを代替のPose生成経路にしない。
 
-`FutureAnimationPoseEvaluator`は対象`FixedStepId`、そのStepへ解決済みのimmutableな`ExplicitAnimationState`、対象Rig／Animation Asset Set／Evaluation ProfileのIdentityを一体化した`ResolvedAnimationPoseInput`を受け、canonical Bone順のRig Pose Bufferを出力する。裸のState、別Stepへ属するState、Catalog Identity不一致を受理せず、Evaluator自身は`PlaybackRate`や現在時刻からPhaseを追加進行しない。入力Stateと現在Sceneを変更せず、同じ入力とBackendでは要求順に依存しない同じPoseを生成する。内部Cacheや前処理は許可するが、任意時刻評価に必要な履歴をEvaluatorの隠れた可変状態へだけ保持しない。履歴依存方式を後から導入する場合は、Transition元、Source Time、Blend、Foot／Inertialization履歴要約等を明示StateまたはPlanへ含める。
+入力は、Global FixedStepIdに対応する対象時刻、使用Clipと解決済みのSource TimeまたはPhase、Table・Rigの骨対応と評価規則を識別できるものとする。同じ有効入力・Table・評価規則からは要求順によらず同じPoseを生成し、評価器自身はPlaybackRateや現在時刻から再び時刻を進めず、Clipを選び直さず、入力と現在Sceneを変更しない。型名・field配置・Buffer形式は実装詳細とする。
 
-共通Pose Evaluatorは意味境界であり、全BackendをBurst Jobから呼べるとは仮定しない。Pose Table／custom samplerは固定長Bufferを使うJob Batch候補、Unity Playable／Animator出力はpool済みGraphを使うMain Thread予算対象としてSchedulerがBackend別にRoutingする。Playable評価をWorkerへ偽装したり、候補ごとのGameObject／Graph生成、Main Threadの無制限Evaluateを行わない。
+Clipのduration、Loop／Clamp、終端とサンプル間補間の意味をTable評価側で一意にし、現在と未来で共有する。Loop境界を逆向きに解釈せず、Clamp終端は最終Poseを保持する。初期は単一Clip・無ブレンドとし、明示されたClip切替を現在／未来へ同じ時刻で反映する。切替先・切替時刻の計画方法を本節では決めない。未知Clip、非finiteな入力、不正な参照・骨対応・入力Identity不一致からPoseを公開しない。
 
-AnimatorコンポーネントはHumanoid Retargeting、Avatar Binding、Playable出力先、現在表示のための任意Backendとして使用できるが、上位Stateのauthorityではない。標準V1はゲーム側Stateからcontrollerなしの`AnimationClipPlayable`／Mixer、または事前Bake済みPose Tableへ明示Source Time／Weightを渡す。AnimatorController／AnimatorControllerPlayableはLegacy Bridge、Editor Preview、比較Probeへ隔離し、削除してもMobPlan、未来評価、切断Predictionの公開契約を変更しない。
+HumanoidリターゲットとTable生成・検証には、Editor／オフラインのPlayable・Animatorを利用できる。Tableのサンプル設定・圧縮・保存形式・対象骨は、必要な品質と骨階層・skinning・骨Physics Proxyの対応を保つ範囲で実装時に決める。通常描画はSkinnedMeshRendererに残し、姿勢のTable化を頂点の事前ベイクやRuntime頂点スキニング方式の採用と同一視しない。
 
-現在表示と未来評価は同じ対象Stepへ解決済みの`ExplicitAnimationState`から分岐する。Near Mobの表示Backendも独自にClip遷移やPhase進行を決めず、ゲーム側Stateを消費する。V1予測対象NPCではLook、腕IK、Foot IK等のプロシージャルPose Layerと左右反転を双方で無効化し、現在表示だけに適用しない。後段で再導入する場合は、Layer入力Snapshot、weight／MirrorMode、適用順、Generation、Identityを`ResolvedAnimationPoseInput`へ加え、全Backendで同じ意味を適用する。命中時に実際のBone Poseをスナップショットして最終証拠とする既存規則は維持し、予測State、Root Pose、代表骨Pose、Plan／Asset Identityが許容範囲外なら成果物を破棄して実姿勢から通常の後追い切断へ戻す。
+初期予測対象NPCではLook、腕／Foot IK、左右反転等のオンラインPose補正を現在／未来の双方で使わない。導入は別の設計変更とし、将来用Schemaを先行実装しない。プレイヤーの実測Controller姿勢・腕IKはこの制限の対象外とする。
+
+命中時の実Bone Pose Snapshotと、Root姿勢・計画世代・入力Identity・実命中の採用検証を維持する。計画不在・失効・予測不一致・先行準備未完成の場合は、§4.5.2の現在Pose同期経路へ接続する。Table採用を理由に実Pose照合を省略したり、未来Poseのために現在Sceneを書き換えたりしない。未来用Jobベイクの採否と接続条件は§4.5.2に従う。
+
+Table欠落・不正や入力不成立時は不正Poseを公開せず、既存の有効な現在表示を保持する。オンライン代替Backendへ戻さず、現在Poseの保持を失効した未来計画の有効性と同一視しない。数値評価の同期／Batch／Job化は4.3の実行境界内で選び、現在骨への適用と区別する。初期の全面Job化は要求しない。
 
 自由飛行のO(1)固定刻み直接予測は外部Probeで技術成立を確認済みとする。T-017では本体のSnapshot、WorldPhysicsProfile、FixedStep、重心／Actor原点および回転処理との統合回帰を確認する。Probeのケース数、誤差値、性能倍率、暫定許容値は本体の製品保証へ転記しない。
 
@@ -2035,7 +2033,7 @@ AnimatorコンポーネントはHumanoid Retargeting、Avatar Binding、Playable
 
 優先順・容量・フレーム予算は4.4に従い、未完了依存は既存DAGでReady投入前に解決する。命中確率は受付前Filterに使い、一時描画費用は既存Profilerで観測する。投機Deadlineは優先判断に利用でき、遠距離候補は低優先の余裕があるときに進める。
 
-投機ジョブは`SlashId`、対象`LogicalFragmentRef`、確定した`SlashFrame`、`ObjectId`、`BaseObjectGeneration`、共用Geometry・物理・Animation・MobPlanの各Generation、予測到達時刻を保持する。Commitには対応するSlashWave Segment Sweepの`SlashHitConfirmed`を必須とし、識別子、SourceSlashPlane、世代、予測前提のいずれかが一致しない結果は適用せず回収する。19.5.1の対象剛体だけはWorld姿勢一致をLocal Plane採用Gateへ置き換え、その操作に確定した面・基底frameと一致するGeometryだけを使用する。これにより、Candidate Flight Boundsへ入っただけの空振り候補や、古い非同期結果が新しい切断状態を上書きすることを防ぐ。
+投機ジョブは`SlashId`、対象`LogicalFragmentRef`、確定した`SlashFrame`、`ObjectId`、`BaseObjectGeneration`、共用Geometry・物理・MobPlanの必要なGeneration、Animation入力Identity、予測到達時刻へ既存入力Snapshotで相関する。各成果物への重複field保持は要求しない。Commitには対応するSlashWave Segment Sweepの`SlashHitConfirmed`を必須とし、識別子、SourceSlashPlane、世代、予測前提のいずれかが一致しない結果は適用せず回収する。19.5.1の対象剛体だけはWorld姿勢一致をLocal Plane採用Gateへ置き換え、その操作に確定した面・基底frameと一致するGeometryだけを使用する。これにより、Candidate Flight Boundsへ入っただけの空振り候補や、古い非同期結果が新しい切断状態を上書きすることを防ぐ。
 
 上記は通常の命中切断成果物のCommit条件である。7.9の確定後の任意分割・退役は非命中公開条件に従い、公開後は旧所有構成向けの予測成果物を拒否する。任意候補の準備・見送りだけでは通常予測を失効させない。
 
@@ -2079,99 +2077,47 @@ Mesh Jobとは独立した基底Geometryの保守的local Boundsの8 cornerを�
 
 ## 20. モブ未来計画とAI LOD
 
-### 20.1 責務分離
+### 20.1 方針と採用判断
 
-UnityのNavMesh、Animation、Behavior系機能から高水準Intent、歩行可能領域、Path Cornerを取得してよいが、それらをそのまま未来へ進めたり巻き戻したりしない。ゲーム側に副作用のない`Mob Future Planner`を設け、高水準Intent、経路、速度プロファイル、Root軌道、`ExplicitAnimationStateV1`全体を数値データとして一定期間先まで焼き込む。Future Evaluation Schedulerはこの計画を読み取り、斬撃波の到達予定時刻におけるモブ姿勢と切断候補を先行評価する。
+モブの軌道生成、Animation選択・時刻進行、計画の保持・更新、AI LODの具体方式は、先行独立研究の今後の結果を踏まえて本体導入時に決定する。現在のDESIGNは特定の移動Kernel、計画アルゴリズム、データ構造、補充方式を既定方式にしない。未採用方式の仮の製品実装や交換基盤を要求しない。
 
-初期`MobTrajectoryKernelV1`を歩行Root位置・速度・向きの正本とする。`NavMeshAgent`の内部回避／移動積分、Animator Root Motion、Rigidbody、Behavior側Transform書換えを同時に位置の正本としない。NavMeshは経路／Corridorの取得、AnimatorはKernelが確定した明示Animation StateからPoseを生成・表示する任意Backendに限定する。同じKernelをNearの現在Tick更新と未来Trajectory生成の両方から呼び、Tier切替で別の運動モデルへ飛ばないようにする。
+移動とAnimationのどちらを先に決めるか、共同計画にするか、実装をいくつの処理へ分けるかは未決とする。ゲーム側がRoot姿勢とAnimation入力の正本を所有し、同じ対象時刻の両者を整合させる。オンラインAnimator内部Stateの読戻しとRootの二重更新を行わない。オフライン取得したRoot Motionを計画データに利用することは禁止せず、その採用も本改訂では決めない。
 
-Crowd Stepは独立したwall-clockを持たず、Global `FixedStepId`の正の整数倍として進める。Kernelは固定MobId順のReadOnly `CurrentState`からWriteOnly `NextState`を作る二相更新とし、同一Step内で先に更新したMobの結果を別Mobが読まない。初期Desired Motionは副作用のないWaypoint／歩道Lane追従だけとし、位置、速度、向き、経路カーソル、累積移動距離、Locomotion状態を固定長SoAへ保持する。共有PRNGの消費順には依存せず、速度差等は`MobId + PlanGeneration + purpose`由来のstateless Seedで決める。
+Mob計画固有の起動時全量Native確保・Runtime成長禁止・無割当保証は要求せず、Managed allocationとそれに伴うGC停止を許容する。有限容量・フレーム予算は4.4に従い、他SubsystemのNative制約、Trace Writer、VP資源契約は変更しない。
 
-Animation PlanningとPose Evaluationを分離する。ゲーム側`AnimationPlannerV1`はBehavior Intent、Locomotion State、Root速度／向き、累積移動距離から`ExplicitAnimationStateV1`を生成し、`MobTrajectorySample`へRoot Stateと同じGroup epochで格納する。現在表示、未来切断、CPU Skinning／Bone ProxyはそのStateを共通の意味境界から読む。Pose Evaluator BackendはClip／Blend選択を逆向きにPlannerへ通知せず、現在表示用Animatorの内部状態からMobPlanを復元しない。
+### 20.2 計画の公開契約
 
-### 20.2 MobPlanデータ
+有効なMobPlanから、Global FixedStepIdに対応する対象時刻のRoot姿勢と§19.3のPose Table評価入力を取得できるものとする。計画の対象、世代・前提、有効区間を識別し、異なる時刻・世代のRootとAnimation入力を混用しない。現在の適用と未来の参照は同じ有効な計画内容・時刻の意味に従う。未来評価のために現在Sceneを進めたり巻き戻したりしない。
 
-`MobPlan`は最低限、次を保持する。
+公開済みの同じ計画を同じ時刻で参照した結果の一貫性は要求するが、計画を同じSeedから作り直した際の経路・探索順・hashの完全一致は共通要件にしない。計画の格納形式、Sample間隔、Clip列・区間の表現、時刻解決と補間の内部処理は、上記の意味を満たす採用方式で決める。共有ClipのPose Tableと、全Mobの未来全時刻の骨Pose保存は区別し、未来骨Poseは必要な候補・時刻について評価する。
 
-```text
-MobId / PlanGeneration / RandomSeed
-CreatedAt / StartFixedStepId / CommittedThroughFixedStepId / HorizonSampleCount
-Intent / Preconditions / InvalidationReasons
-NavMeshPathCorners / SpeedProfile / RootTrajectory
-ExplicitAnimationStateV1(AnimationClipId / Phase / PlaybackRateCyclesPerSecond)
-SpaceTimeReservations
-```
+### 20.3 更新・公開・資源寿命
 
-V1では`SpaceTimeReservations`を空集合にでき、予約生成をMobPlan成立条件にしない。`NavMeshPathCorners`にはWaypoint／Laneから導出した固定経路列を格納でき、Unity NavMeshを使用しないSceneでも同じMobPlan schemaを使う。
+計画更新は必要な整合単位で完成内容を公開し、読者へ未完成な内容や新旧が矛盾したRoot／Animation入力を見せない。使用中入力を保持し、失効した計画の結果を現在の計画へ適用せず、読者・Workの寿命後に安全に回収する。具体的な公開単位、Buffer、同期手段は固定せず、既存の非同期制御へ接続する。
 
-時刻はwall-clockやFrame番号ではなくGlobal `FixedStepId`を正本とする。`StartFixedStepId`は`RootTrajectory`先頭SampleのFixedStepId、`CommittedThroughFixedStepId`は**最後にCommitされたSampleのFixedStepId（inclusive）**を表す。`HorizonSampleCount`は計画する全Sample数`N`で、Sample i（`0 <= i < N`）は`StartFixedStepId + i * CrowdStepScale`（`CrowdStepScale`はCrowd StepのFixedStep倍率）へ置き、計画Horizon終端は`StartFixedStepId + (N - 1) * CrowdStepScale`とする。Render時刻やSlash到達時刻から姿勢を選ぶときは、wall-clockやFrame時刻をGlobal `FixedStepId`へ変換する。`stepId < StartFixedStepId`では先頭Sample（Sample 0）でHoldし、除算を行わない。`StartFixedStepId <= stepId`では`i = (stepId - StartFixedStepId) / CrowdStepScale`（非負差の整数除算であり、C#の0方向切り捨てはこの範囲では数学的なfloorと一致する）をSample index、剰余を`CrowdStepScale`で割った値を補間係数とし、`stepId < CommittedThroughFixedStepId`のときだけSample iとi+1（i+1番目のSampleが存在する）を補間する。`stepId >= CommittedThroughFixedStepId`では補間せず最後のCommit済みSampleでHoldする。FixedDelta変更、pause、1表示Frame内の複数Physics Stepでも同じ式を使う。`CreatedAt`は観測時刻としてTraceへ残すが、軌道index計算や補間には使わない。
+計画の未準備・失効・有効区間外を確定した未来姿勢として扱わない。通常経路で計画完成をMain Threadから待たず、無制限再試行・全群衆の強制同期再計算で補わない。こうした場合の現在の移動継続・停止等は採用方式で定め、不正な姿勢・参照を公開せず、現在状態からの切断を妨げない。
 
-`FixedStepId`系の整数は符号付き64bit（`long`）とし、`CrowdStepScale > 0`、`1 <= HorizonSampleCount <= MaxSampleCount`を不変条件とする。`HorizonSampleCount * CrowdStepScale`、`StartFixedStepId + ...`、`stepId - StartFixedStepId`はchecked演算とし、overflow／underflowではPlanと補充を公開せず既存公開区間を維持してHoldする。`FixedStepId`はRun中にwrapや再利用をせず、枯渇（符号付き64bit上限到達）では新規計画と補充を停止して既存区間を維持する。
+### 20.4 負荷と介入への応答
 
-`RootTrajectory`のV1実体は固定間隔の`MobTrajectorySample`を保持する固定長Ring Bufferとし、各Sampleは`FixedStepId`、position、velocity、heading、LocomotionState、`ExplicitAnimationStateV1`、経路カーソルを持つ。全Sampleは対応する`MobId + PlanGeneration`へ属し、異なる世代のSampleを同じ有効区間として連結しない。別のFuture Animation Ringやruntime Animation Generationを追加せず、RootとAnimation Stateを20.3の同一Group epochでall-or-none公開する。骨行列は全Mob・全Sampleへ保存せず、斬撃候補になったモブについてだけ該当Sampleから未来Skeleton Poseを評価する。
+プレイヤーが介入しやすい対象の応答を優先し、猶予のある対象では計画の再利用により費用を抑える。具体的なTier構成、判定指標、計画期間、更新頻度、枯渇時の動作は研究と本体実測から決定する。品質・更新頻度の切替だけでRootとAnimationの意味を変更しない。
 
-`ExplicitAnimationStateV1`は正のint範囲の`AnimationClipId`、finiteかつ0以上のbinary64非wrap累積`Phase`（単位はcycle）、finiteかつ0以上のbinary64 `PlaybackRateCyclesPerSecond`を持つ。各Stateは、それを含む`MobTrajectorySample.FixedStepId`におけるPhaseへ解決済みである。任意の対象Stepでは20.2のSample選択と補間を先に行って単一の`ResolvedAnimationPoseInput`を作り、Pose EvaluatorはそのPhaseをsampleするだけで`PlaybackRateCyclesPerSecond`による追加進行を行わない。RateはPlannerが後続Sampleを作るための明示的なPhase速度と診断値である。時間駆動では、まず`stepDurationSeconds = (binary64)CrowdStepScale * FixedDeltaSeconds`、次に`phaseDelta = PlaybackRateCyclesPerSecond * stepDurationSeconds`、最後に`phaseNext = Phase + phaseDelta`の順でbinary64演算する。各乗算・加算の直後に`double.IsFinite`相当を検査し、いずれかが非finiteなら新しいGroup epochを公開せず最後の有効State全体をHoldする。finiteな正値がunderflowまたは丸めで0となること、および`phaseNext == Phase`となることは0進捗として許容し、異常扱いにしない。`checked`を使うのは`FixedStepId`、count、index等の整数演算だけで、浮動小数点安全性の根拠にしない。歩行の距離駆動時は`PlaybackRateCyclesPerSecond = speedMetersPerSecond / StrideLengthMetersPerCycle`として同じ単位へ正規化し、累積移動距離から求めたPhaseをSampleへ保存する。`FixedDeltaSeconds`、Stride Length、Rateまたは除算結果が非finite、`FixedDeltaSeconds <= 0`、`StrideLengthMetersPerCycle <= 0`なら新しいGroup epochを公開しない。
+計画Workは§4.3／§4.4の実行境界、有限容量、フレーム予算、優先順位へ接続し、現在状態の必須Physics／Geometry仕事を優先する。専用Schedulerや独自の同期回復を追加しない。具体的な計画負荷・メモリ・再利用状況は既存Profiler／Traceで確認する。
 
-`AnimationClipId`はcanonicalな`Animation Clip Catalog`を参照する。各EntryはClip ID、`PlaybackMode = Loop | Clamp`、finiteかつ正のbinary64 `DurationSeconds`、Clip content identityを持ち、Clip ID昇順のCatalog bytes／hashを`AnimationAssetSetVersion`へ結合する。Loopでは`localPhase = Phase - floor(Phase)`、`sourceTimeSeconds = localPhase * DurationSeconds`とする。Clampでは`localPhase = min(Phase, 1.0)`、`sourceTimeSeconds = localPhase * DurationSeconds`とし、`Phase == 1.0`および1超過は最終Poseを保持する。隣接SampleのClip IDが同じ場合だけ累積Phaseをbinary64で線形補間するため、Loopの`0.98 -> 1.02`を逆方向へ補間しない。隣接SampleのClip IDが異なる場合、V1は次Sampleの`FixedStepId`まで前Sample Clipを保持し、境界でhard switchしてPose popを許容する。AnimatorControllerへ暗黙Crossfadeを委ねない。
-
-2 Source Blend、Transition State、Look／腕／Foot IK、左右反転、Inertialization Stateは後段schema拡張とし、V1予測対象NPCでは現在表示と未来評価の双方で無効化する。導入時はSource ID／各Source Time／Weight、Pose Layer入力Snapshot／MirrorMode／適用順、必要な履歴、Generation／Identityを明示入力へ追加する。未知Clip ID、CatalogのMode／duration／content identity不一致、非finite／負Phase、非finite／負Rate、補間またはSource Time変換中の非finite化ではGroup補充を公開せず既存epochを維持し、現在表示は最後の有効な`ExplicitAnimationStateV1`全体でHoldする。
-
-通常のClip／Phase／PlaybackRate変更は`PlanGeneration`へ従わせ、第二のruntime Animation Generationを設けない。Pose評価と依存切断成果物は`MobId`、`PlanGeneration`、`ObjectGeneration`、対象`FixedStepId`に加え、`RigDefinitionVersion`、Catalog内容hashを含む`AnimationAssetSetVersion`、`AnimationEvaluationProfileVersion`等のimmutable Asset／Evaluator Identityを必要な範囲で保持する。不一致時は旧PoseをCommitせず、同じPlan内でBackendだけを差し替えた結果として扱わない。
-
-Buffer、Mob State、計画Group、Sampleは起動時またはScene load時の固定長Native領域から割り当て、Runtime成長とManaged allocationを行わない。Tier別Horizon、Refill閾値、最大Mob数、最大Sample数、同時再計画Group数は`MobTrajectoryProfile`に置く。容量不足時に既存Bufferを追い出したりMain Threadで待機せず、新規延長を拒否して既存の有効区間を維持する。
-
-`CommittedThroughFixedStepId`までは、計画を変更するとプレイヤーから不自然に見える範囲として原則維持する。ただしプレイヤー接近・攻撃、経路遮断、モブ自身の切断など安全性やゲーム応答を優先すべき事象では即座に無効化できる。予約機能を導入した後は、予約競合も同じ即時無効化理由へ加える。再計画時は`PlanGeneration`を進め、旧計画へ依存する未来姿勢と切断成果物をStaleにする。
-
-### 20.3 公開Ring Bufferと補充の所有権契約
-
-`RootTrajectory`の固定長Ring Bufferは、再生側が読む公開区間とWorkerが書く非公開区間を分離する。Workerは公開Ringへ直接書かず、補充Work Itemごとに予約済みの非公開staging sliceへSample列を書く。旧`PlanGeneration`のJobは非公開staging以外へ一切書けない。
-
-補充Work Itemの結果は`MobId`または`GroupId`、`PlanGeneration`、開始`FixedStepId`、`SampleCount`、入力末尾Sampleの値Snapshot（`FixedStepId`、位置、速度、向き、経路カーソル）を保持し、Worker完了時点では公開しない。値Snapshotを持たない実装では、Commitまたは回収まで入力末尾SampleのslotをpinするLeaseを保持し、Job完了前に元slotが再利用されて入力証拠が変わらないようにする。
-
-公開は次のCrowd Step境界でMain Threadが行う。各Mobの補充結果をimmutableな公開descriptorへ構築し、staging内の全Sampleについて、finite性、連続Step、`PlanGeneration`一致、経路カーソル連続性、固定容量内を検証する。Group内の全対象Mobの検証が成功した後にだけ、単一のGroup publication slot index／epochを1回のatomic storeでCommitし、Readerは同じGroup epochに属するdescriptorだけを読む。Mobごとのhead／countを個別に公開せず、Group epoch切替の中間状態を読取側が観測しない。検証失敗、旧`PlanGeneration`、容量不足ではstaging sliceとdescriptorだけを回収し、既存の公開epoch・公開区間を変更しない。
-
-Group補充はGroup内の全対象Mobをall-or-noneで公開し、Mob単位の部分Commitを許さない。一部Mobのstaging検証が失敗した場合はGroup全体を回収して既存公開epochを維持し、Group内の一部Mobだけが新しいHorizonへ進む状態を作らない。
-
-公開はrelease-store、読取りはacquire-loadのメモリ順序とし、Readerは各Crowd Stepの開始時にGroup epochを1回だけacquire-loadし、そのepochに属するdescriptorだけを参照する。旧epochのdescriptorとSample slotは、全Readerがそのepochの読取りを完了したことをReader完了境界で確認できた後にだけ再利用する。世代別の固定slot（2個のGroup publication slotを交互に使い、3世代目を書く前に前々世代を回収する等）で、読取り中の旧slotを新しい補充が追い越して上書きしない。epochは符号付き64bitの単調増加値とし、Run中にwrapや再利用をしない。Readerはepoch値とdescriptorの`PlanGeneration`を組で照合してABAを防ぎ、同じepoch値が別内容へ再利用されないことを保証する。
-
-wrap時は未再生Sampleの上書きを禁止する。補充によりRingの書込位置が未再生Sampleを追い越すか、同一Groupに未確定の補充Work Itemが既に存在する場合は新規補充を要求せず、既存の有効区間とepochを維持してHoldへ低下する。同一Groupの補充Work Itemは同時に1件だけとし、Commitまたは回収まで次の補充を要求しない。
-
-### 20.4 プレイヤー介入時間によるAI LOD
-
-距離だけでなく、プレイヤーが移動・斬撃波・その他の操作でモブへ影響できる最短時間を`MinInterventionTime`として推定し、計画Tierを切り替える。
-
-| Tier | 状態 | 計画方針 |
-| --- | --- | --- |
-| Near | 介入が目前 | `MobTrajectoryKernelV1`を現在Crowd Stepでライブ実行し、同じSnapshotから短いHorizonも生成する。プレイヤー反応を優先 |
-| Mid | 数秒の猶予 | 有効な固定長RootTrajectoryを主に再生し、短区間をBackground補充する |
-| Far | 十分な猶予 | 同じKernelとPlannerでキネマティックなRoot軌道と`ExplicitAnimationStateV1`全体を長めに焼き込み、粗い経路だけを使用 |
-| Dormant | 介入困難・非表示 | 低頻度のIntent／経路計画だけを保持し、必要時まで詳細姿勢を遅延生成 |
-
-Far／Dormantでは個々のRigidbodyや完全な群衆衝突を先読みせず、NavMesh上の経路区間だけを確定する。粗い時空間予約はV1の成立条件に含めず、O-023で寸法と競合解決を確定した後段拡張とする。Nearへ近づいてもNavMeshAgent等の別Integrationへ切り替えず、同じKernelをQueue再生からライブ実行へ切り替える。Tier切替時にRoot姿勢、速度、経路カーソル、累積移動距離、`ExplicitAnimationStateV1`のClip ID／累積Phase／PlaybackRate全体とCatalog Identityを引き継ぎ、Backend側に独自Stateを再生成させない。
-
-Mid／FarはQueueの隣接Sampleを時刻補間してTransformと`ExplicitAnimationStateV1`へ反映する。Clip IDが同じ区間だけ累積PhaseとRateを補間し、Clip IDが異なる区間は前Stateを保持して境界でState全体をhard switchする。歩行Phaseは累積移動距離／Stride Lengthから求め、再生Frame rateへ依存させない。Queue残量がRefill閾値を下回るとGroup単位の延長Work Itemを1件だけ要求する。Generationが変わった旧延長Jobは中断せず、完了後に不採用として回収する。
-
-有効Sampleが現在Crowd Stepまで存在しない場合は古い軌道を外挿し続けない。Nearは固定されたLive Fallback予算内で同じKernelを1 Step進め、Mid／Farは最後の有限なRoot姿勢と`ExplicitAnimationStateV1`全体を保持する。Hold中にPhase、Clip ID、PlaybackRateを独自更新しない。Live Fallback予算または固定容量を超えたNearも同じHoldへ低下し、同期的な全群衆再計算、Buffer再確保、同一Frameの無制限再試行を行わない。Hold時間、Underflow数、Fallback数は固定Profiler Counterで観測し、上限値はO-045で実測後に決める。Traceは既存のMobPlan作成・延長・無効化・再計画・Prediction採否を正本とし、V1成立前にFallback専用Eventを必須追加しない。
+多少のMob重なり、遠方Mobの短時間停止、単一Clip切替のPose popという既存の品質許容は維持する。現在／未来の整合を、完全な衝突回避や速度連続性の新しい保証へ読み替えず、特定の縮退アルゴリズムも固定しない。
 
 ### 20.5 切断投機との統合
 
-Jobベイクの導入採用時は、斬撃波候補がモブへ到達する時刻を`MobPlan`上でサンプルし、未来Rig Poseから4.5.2のJobベイクによるVP入力準備と骨Physics Proxyの姿勢化へ分岐する。Phase 4.71は候補の準備要求・結果取得・失効まで、Phase 4.72は共用Geometryへの切断面適用、骨Physics Proxy分類、4.5.6の正負Index直接出力・転送および実命中での再利用までを接続する。成果物は既存TaskId等の相関情報／入力Snapshot／世代・Identity契約に結び付け、実命中時に既存の採用条件を再確認する。保持形状は固定せず、既存入力Snapshotを共有参照でき、各成果物への相関情報の重複保持を要求しない。計画が維持されていれば遠距離ほど完成済み成果物を再利用でき、未完成・不採用時は4.5.2の現在Pose同期経路と既存の後追い・回収へ接続する。
+Phase 4.65で未来用Jobベイクを採用した場合だけ、MobPlanの有効な対象時刻を§19.3のRig Poseへ解決し、§4.5.2の未来VP入力準備と骨Physics Proxy姿勢化へ接続する。Phase 4.71は準備要求・結果取得・失効・回収、Phase 4.72は切断成果物と実命中の統合を担当する。既存TaskId、入力Snapshot、世代・Identityへ相関し、実命中時に既存のPose・面・前提・authorityを検証する。
 
-Mob Future Plannerも4.4の共有Dispatchとフレーム予算を使う。近距離で命中Deadlineを持つ未来Pose準備は遠距離MobPlan延長より先に扱い、どちらも現在状態の必須Physics／Geometry仕事より先にScheduleしない。
+未準備・失効・不採用時は§4.5.2の現在Pose同期経路へ進み、未来準備のために実命中切断を止めない。4.65不採用時は4.71／4.72を省略でき、4.52の現在Pose切断と4.70の計画単体は維持する。具体的な計画方式を、この条件付き接続のために先取りしない。
 
 ### 20.6 無効化と観測
 
-主な無効化要因は、プレイヤーの介入可能領域への侵入、NavMesh変更、経路上の新障害、Behaviorの高優先Intent、Animation遷移、外力、対象の切断である。予約機能を導入した後は別モブとの予約競合も無効化要因へ加える。`MobPlanCreated`、`MobPlanExtended`、`MobTierChanged`、`MobPlanInvalidated`、`MobReplanned`、`MobPredictionUsed`、`MobPredictionRejected`をTraceへ記録し、`ReservationCreated`は予約機能導入後にだけ記録する。`MobId`と`PlanGeneration`から依存Taskを辿れるようにする。
+プレイヤー介入、経路・Intent等の前提変更、対象切断・退役によって計画が無効になった場合は、PlanGeneration等の既存識別で旧計画と依存Pose・切断成果物を失効させる。計画済み内容の時間進行と、計画そのものの変更を区別する。無効化・再計画の粒度と検出方法は採用方式で決定し、特定のNavMeshや予約機構を必須にしない。
 
-V1の無効化粒度は単一Mob Planまたは固定Mob Group全体だけとし、影響依存を厳密に解析しない。無効化は`PlanGeneration`を進め、未再生Sample、未来Skeleton Pose、依存する投機的切断成果物を同じ世代検証でStaleにする。Player Bodyはプロップ等と非接触であるため、単なるPlayer Physics Contactを無効化要因に要求せず、攻撃、介入領域、Script Intent、Path変更、対象切断などゲーム側で観測可能なEventを正本とする。
+MobId、PlanGeneration、Work・Slashとの因果相関を既存Traceへ残す。未Schedule仕事の取消、Schedule済み仕事の完了後不採用・回収と使用中資源の保護は§4.4／§8に従う。研究方式固有のEvent・Counter・保存Schemaを先行追加しない。
 
-### 20.7 段階導入とFuture Works
-
-Phase 4.70の最初のPlayable実装は、固定ステップ二相更新、Waypoint／Lane Desired Motion、固定長未来Queue、Rootと`ExplicitAnimationStateV1`全体の再生補間、Loop／Clamp Clip Catalog、移動距離由来Phase、粗い世代無効化、既存Dispatcherへの補充投入までとする。4.65でJobベイクを採用した場合だけ、4.71で候補の未来Pose／VP準備要求・結果取得・失効を接続し、4.72で人形の実命中・先行切断完成・Commitを統合する。これらを4.70の完了条件にしない。不採用時は計画単体で完了し、先行切断の統合を要求しない。V1予測対象NPCではプロシージャルLook／腕／Foot IKと左右反転を現在／未来の双方で無効化する。この段階ではモブ同士の多少の重なり、遠方Mobの短時間停止、全Plan／Group再計算、Clip hard switchのPose popを許容し、ORCA、細粒度依存解析、Pose Layer／Mirror再導入を正しさの条件にしない。
-
-重なりがプレイ上またはT-092の実測で問題になった場合だけ、次段として固定容量Uniform Grid、固定Cell走査順、`MaxNeighbors`、固定順Constraintを持つbounded ORCAを同じ`MobTrajectoryKernel`のDesired Motion後段へ追加する。ORCA追加後もFar／Dormantへ完全な群衆衝突を必須にせず、Tierごとに無効化できる。Grid／Neighbor／作業領域の容量超過ではMobを黙って省略せず、その計画GroupをORCAなしのLane追従またはHoldへ固定的に低下させる。
-
-空間／Mob Group Chunk、Active／Candidate Interaction記録、Reverse Dependency DAG、Tick単位の部分再計算、新規Interaction用Guard Band、Flow Field、軌道圧縮はFuture Worksとする。これらは再計算量を減らす最適化であり、欠落しても全Plan／Group単位の再生成で正しく動作する。Flow Fieldを追加する場合も`DesiredMotionProvider -> MobTrajectoryKernel`境界だけへ接続し、ORCAや未来QueueがPath実装を直接参照しない。
+計画済みAnimationの時間進行だけではPlanGenerationを更新せず、計画内容の変更は既存PlanGenerationで扱う。第二のruntime Animation Generationを追加しない。単なるPlayer Physics Contactを必須の無効化要因にせず、ゲーム側で観測できる介入を扱う。
 
 ## 21. 観測・トレース設計
 
@@ -2186,6 +2132,8 @@ Phase 0／0.1は完了済みの観測・非同期Capture能力として扱う。
 ### 21.2 Unity Profiler計測
 
 処理種類ごとの軽量なProfiler計測を使い、IDをMarker名やホットパスの文字列へ埋め込まない。Work ItemのSchedule、Job開始、完了、CommitをFlowで関連付け、スレッドをまたぐ依存と各処理の費用を確認できるようにする。具体的なMarker名、集計・保存方法は実装詳細とする。
+
+Pose Tableは少数の採用Rig／Clipについて、Table総容量・初期化・数値評価・現在骨への適用費用を本体の対象条件で既存Profilerにより確認する。Bake・補間品質はT-018で扱い、Probeの固定サンプル設定・全Clip・比較Backend・試験matrixを製品保証へ転記しない。
 
 未来用JobベイクはPhase 4.65の限定実装で代表的な複数候補の同時要求を同期経路と比較し、Pose準備、Schedule／完了回収、AoS処理を含むMain Thread負荷と、Worker費用・結果到着時間を分けて確認する。既存Profilerと小さい比較記録を使い、4.5.2の品質とMain Thread負荷削減の結果から人間が導入の採否を決める。効果がなければ同期SkinnedMeshRenderer.BakeMesh維持を正常な完了結果とし、本体接続を要求しない。採用時は対応範囲・実装構成を決めて本体へ接続し、4.72で転送等の残る費用と先行切断完了率・採用状況を確認する。比較と採否決定を省いて4.65完了とせず、Phase 4.52の基本動作はその結果待ちにしない。固定高速化率、全候補の翌フレーム完成、大規模試験matrix、新しい計測schemaは要求しない。7.5のCollider用Physics.BakeMeshの測定とは分ける。
 
@@ -2341,7 +2289,7 @@ seal済みHistoryのcommitted prefixを、全recordの別配列を作らずbound
 
 現行Runtimeの相関にFrontEdgeIdや動的Front専用Eventを使わない。SlashLatchedはWave公開、SlashExpiredは寿命終了、SlashHitConfirmedは現在採用Convexへの実Hitを表す。Task、Prediction、世代、Commitの相関を維持し、不要なGesture内部Eventは省略できる。
 
-投機成果物はLatch済みSlashFrame、LogicalFragmentRef、BaseObjectGeneration、必要なGeometry／Physics／Animation／MobPlan世代、到達Step／時刻へ既存Snapshotで相関し、Commitには対応するSlashHitConfirmedを要求する。Estimator identityやSegmentIdを追加しない。相関の意味を全Recordの共通field列へ固定せず、保存形式・旧Reader・Goldenは17章に従う。
+投機成果物はLatch済みSlashFrame、LogicalFragmentRef、BaseObjectGeneration、必要なGeometry／Physics／MobPlan世代とAnimation入力Identity、到達Step／時刻へ既存Snapshotで相関し、Commitには対応するSlashHitConfirmedを要求する。Estimator identityやSegmentIdを追加しない。相関の意味を全Recordの共通field列へ固定せず、保存形式・旧Reader・Goldenは17章に従う。
 
 Slashの調整・再評価用入力と開発情報の扱いは19.1.12に従う。
 
