@@ -116,8 +116,7 @@ namespace Zantetsu.Core.Tests
         public void Execute_CommittedIndex_CompletesOnceWithCorrelatedReceipt()
         {
             FakeCompleter completer = new FakeCompleter();
-            NvencRunCaptureCompleteRecoveryOperation operation = MakeCommittedOperation(
-                out NvencRunCaptureIndexRecoveryCommitReceipt commitReceipt);
+            NvencRunCaptureCompleteRecoveryOperation operation = MakeCommittedOperation(out _);
 
             NvencRunCaptureCompleteRecoveryReceipt receipt =
                 new NvencRunCaptureCompleteRecoveryExecutionCoordinator(completer)
