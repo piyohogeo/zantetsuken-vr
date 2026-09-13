@@ -110,35 +110,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_ForwardsTheExactOperationGraph()
-        {
-            FakeCommitter committer = new FakeCommitter();
-            NvencRunCaptureIndexRecoveryCommitOperation operation = MakeOperation();
-
-            NvencRunCaptureIndexRecoveryCommitReceipt receipt =
-                new NvencRunCaptureIndexRecoveryCommitExecutionCoordinator(committer)
-                    .Execute(operation);
-
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryDecision, operation.CaptureIndexRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoverySnapshot, operation.CaptureIndexRecoverySnapshot),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.PublicationRecoveryDecision, operation.PublicationRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.AuthoritativePlan, operation.AuthoritativePlan),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-            Assert.That(receipt.CommitMode, Is.EqualTo(operation.CommitMode));
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId),
-                Is.True);
-        }
-
-        [Test]
         public void Receipt_IsIssuedForOnlyItsOwnCommitterAndOperation()
         {
             FakeCommitter committer = new FakeCommitter();

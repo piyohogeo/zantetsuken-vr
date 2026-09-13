@@ -132,7 +132,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(ReferenceEquals(operation.CaptureIndexRecoveryDecision, decision), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
             Assert.That(receipt.IsIssuedFor(committer, operation), Is.True);
-            Assert.That(ReferenceEquals(receipt.CaptureIndexRecoveryDecision, decision), Is.True);
+            Assert.That(
+                ReferenceEquals(receipt.Operation.CaptureIndexRecoveryDecision, decision),
+                Is.True);
             Assert.That(ReferenceEquals(receipt.Committer, execution.Committer), Is.True);
             Assert.That(receipt.IsValid, Is.True);
         }
@@ -158,7 +160,7 @@ namespace Zantetsu.Core.Tests
 
                 Assert.That(decision.CommitMode, Is.EqualTo(expected.Mode));
                 Assert.That(committer.LastOperation.CommitMode, Is.EqualTo(expected.Mode));
-                Assert.That(receipt.CommitMode, Is.EqualTo(expected.Mode));
+                Assert.That(receipt.Operation.CommitMode, Is.EqualTo(expected.Mode));
             }
         }
 

@@ -12,8 +12,8 @@ namespace Zantetsu.Observability
     /// <para>
     /// The two authorities are held as what they are, exclusively: the
     /// existing-final path holds only the classification, and the committed
-    /// path holds only the commit receipt and reaches the classification
-    /// through it. An existing final index is never dressed up as a commit
+    /// path holds only the commit receipt and reads the classification from
+    /// that receipt's own commit operation. An existing final index is never dressed up as a commit
     /// receipt, and the same decision is never stored twice. No enum, proof,
     /// token, nonce, generation, or issuer authority is introduced.
     /// </para>
@@ -21,10 +21,10 @@ namespace Zantetsu.Observability
     /// Each path is issued through its own factory so a caller cannot reach one
     /// while meaning the other, and each factory requires only what its own
     /// authority must show: a CaptureComplete classification with no commit
-    /// mode, or a valid receipt of a commit whose operation carries the exact
+    /// mode, or a valid receipt of a commit whose own operation carries the
     /// CommitRequired classification. The receipt's own correlation is reused
-    /// rather than re-derived, so the plan, snapshot, root layout, and Run
-    /// identity are not re-validated here.
+    /// rather than re-derived, so neither that classification nor the plan,
+    /// snapshot, root layout, and Run identity are re-validated here.
     /// </para>
     /// <para>
     /// This type reads no file, serializes and hashes nothing, commits nothing,
@@ -108,11 +108,11 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// The exact classification behind this operation, held directly on the
-        /// existing-final path and forwarded from the receipt on the committed
-        /// path.
+        /// existing-final path and read from the receipt's own commit operation
+        /// on the committed path.
         /// </summary>
         internal NvencRunCaptureIndexRecoveryDecision CaptureIndexRecoveryDecision =>
-            _captureCompleteDecision ?? _commitReceipt?.CaptureIndexRecoveryDecision;
+            _captureCompleteDecision ?? _commitReceipt?.Operation.CaptureIndexRecoveryDecision;
 
         internal NvencRunCaptureIndexRecoveryInspectionSnapshot CaptureIndexRecoverySnapshot =>
             CaptureIndexRecoveryDecision?.Snapshot;
@@ -165,25 +165,17 @@ namespace Zantetsu.Observability
 
         /// <summary>
         /// The receipt must still be the valid evidence of its own committer
-        /// and commit operation, and that operation must carry the exact
-        /// CommitRequired classification the commit was authorized by.
+        /// and commit operation. That one question carries the classification
+        /// with it: a commit operation is valid only while it holds a valid
+        /// CommitRequired decision with a defined commit mode, so the
+        /// authorization is not re-derived here.
         /// </summary>
         private static bool IsCommittedIndex(NvencRunCaptureIndexRecoveryCommitReceipt receipt)
         {
             NvencRunCaptureIndexRecoveryCommitOperation commitOperation = receipt.Operation;
-            if (commitOperation == null
-                || !receipt.IsIssuedFor(receipt.Committer, commitOperation))
-            {
-                return false;
-            }
 
-            NvencRunCaptureIndexRecoveryDecision decision = receipt.CaptureIndexRecoveryDecision;
-
-            return decision != null
-                && ReferenceEquals(commitOperation.CaptureIndexRecoveryDecision, decision)
-                && decision.IsValid
-                && decision.Disposition
-                    == NvencRunCaptureIndexRecoveryDisposition.CommitRequired;
+            return commitOperation != null
+                && receipt.IsIssuedFor(receipt.Committer, commitOperation);
         }
     }
 }

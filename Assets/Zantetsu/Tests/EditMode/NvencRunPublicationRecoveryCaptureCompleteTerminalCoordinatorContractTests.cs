@@ -227,7 +227,7 @@ namespace Zantetsu.Core.Tests
             // already ended, so identity is what is pinned here.
             Assert.That(ReferenceEquals(commit.Committer, h.Committer), Is.True);
             Assert.That(
-                ReferenceEquals(commit.PublicationRecoveryDecision, h.Decision), Is.True);
+                ReferenceEquals(commit.Operation.PublicationRecoveryDecision, h.Decision), Is.True);
 
             // The same commit receipt is still the one the release operation's
             // graph carries.
