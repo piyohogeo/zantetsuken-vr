@@ -163,14 +163,16 @@ namespace Zantetsu.Core.Tests
                 Assert.That(terminal.IncompleteRelease, Is.Null, because);
 
                 // The stopping disposition stays where it already is.
-                Assert.That(receipt.Disposition, Is.EqualTo(
+                Assert.That(receipt.Operation.Disposition, Is.EqualTo(
                     deferred
                         ? NvencRunPublicationRecoveryDisposition.Deferred
                         : NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision));
 
-                AssertForwardsSharedGraph(terminal, run, receipt.RunInitializationId);
+                AssertForwardsSharedGraph(
+                    terminal, run, receipt.Operation.RunInitializationId);
                 Assert.That(
-                    ReferenceEquals(terminal.PublicationRecoveryDecision, receipt.Decision),
+                    ReferenceEquals(
+                        terminal.PublicationRecoveryDecision, receipt.Operation.Decision),
                     Is.True, because);
             }
         }

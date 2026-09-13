@@ -9,11 +9,14 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those two references are the whole state; the decision, its snapshot,
-    /// the lease, the open outcome, the lock identity evidence, the stopping
-    /// disposition, the root layout, and the Run identity are forwarded from
-    /// the operation's graph. The plan and the observation details stay where
-    /// they are, reachable through that graph.
+    /// The receipt holds exactly two readonly references, the exact releaser
+    /// and the exact operation, and they are the whole state. What was released
+    /// is read from <see cref="Operation"/>: the decision, its snapshot, the
+    /// lease, the open outcome, the lock identity evidence, the stopping
+    /// disposition, the root layout, and the Run identity are none of them
+    /// restated as a field or property of the receipt's own. The plan and the
+    /// observation details likewise stay where they are, reachable through that
+    /// graph.
     /// </para>
     /// <para>
     /// A completed release makes the operation's admission validity - and the
@@ -25,8 +28,8 @@ namespace Zantetsu.Observability
     /// <para>
     /// This type releases nothing, owns and disposes nothing, touches no file,
     /// and is not an <see cref="IDisposable"/>, MonoBehaviour, or
-    /// ScriptableObject. It is minted only after a successful release, through
-    /// the success-only factory.
+    /// ScriptableObject. Only <see cref="Released"/> issues one, and only after
+    /// a successful release.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryStopOwnershipReleaseReceipt
@@ -79,26 +82,6 @@ namespace Zantetsu.Observability
         internal INvencRunPublicationRecoveryStopOwnershipReleaser Releaser => _releaser;
 
         internal NvencRunPublicationRecoveryStopOwnershipReleaseOperation Operation => _operation;
-
-        internal NvencRunPublicationRecoveryDecision Decision => _operation.Decision;
-
-        internal NvencRunPublicationRecoveryInspectionSnapshot Snapshot => _operation.Snapshot;
-
-        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease =>
-            _operation.OwnershipLease;
-
-        internal CaptureRunInitializationOpenOutcome OpenOutcome => _operation.OpenOutcome;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence =>
-            _operation.LockIdentityEvidence;
-
-        internal NvencRunPublicationRecoveryDisposition Disposition => _operation.Disposition;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {

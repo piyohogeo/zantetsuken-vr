@@ -228,7 +228,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.IsStopped, Is.True);
             Assert.That(terminal.IsCaptureCompleted, Is.False);
             Assert.That(terminal.IsIncompleteReleased, Is.False);
-            Assert.That(terminal.StopRelease.Disposition, Is.EqualTo(expected));
+            Assert.That(terminal.StopRelease.Operation.Disposition, Is.EqualTo(expected));
 
             Assert.That(coordinator.IsComplete, Is.True);
             Assert.That(

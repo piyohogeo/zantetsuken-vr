@@ -33,8 +33,9 @@ namespace Zantetsu.Observability
     /// receipt is never valid.
     /// </para>
     /// <para>
-    /// The graph the three paths share is forwarded from the held receipt
-    /// rather than copied into fields of its own. What is specific to one path
+    /// The graph the three paths share is read from the held receipt - for the
+    /// stopping path, from that receipt's own operation - rather than copied
+    /// into fields of its own. What is specific to one path
     /// - the cleanup result and its status, the Capture Index commit receipt,
     /// the stopping disposition - stays reachable through that receipt and is
     /// deliberately not re-exposed here.
@@ -160,7 +161,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.Decision;
                 }
 
-                return _stopRelease?.Decision;
+                return _stopRelease?.Operation.Decision;
             }
         }
 
@@ -181,7 +182,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.OpenOutcome;
                 }
 
-                return _stopRelease?.OpenOutcome;
+                return _stopRelease?.Operation.OpenOutcome;
             }
         }
 
@@ -199,7 +200,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.OwnershipLease;
                 }
 
-                return _stopRelease?.OwnershipLease;
+                return _stopRelease?.Operation.OwnershipLease;
             }
         }
 
@@ -217,7 +218,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.RootLayout;
                 }
 
-                return _stopRelease?.RootLayout;
+                return _stopRelease?.Operation.RootLayout;
             }
         }
 
@@ -235,7 +236,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.TestRunId;
                 }
 
-                return _stopRelease != null ? _stopRelease.TestRunId : 0L;
+                return _stopRelease != null ? _stopRelease.Operation.TestRunId : 0L;
             }
         }
 
@@ -253,7 +254,7 @@ namespace Zantetsu.Observability
                     return _incompleteRelease.RunInitializationId;
                 }
 
-                return _stopRelease?.RunInitializationId;
+                return _stopRelease?.Operation.RunInitializationId;
             }
         }
 

@@ -306,7 +306,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.IsIncompleteReleased, Is.False);
 
             // The stopping disposition is carried, never converted.
-            Assert.That(terminal.StopRelease.Disposition, Is.EqualTo(expected));
+            Assert.That(terminal.StopRelease.Operation.Disposition, Is.EqualTo(expected));
 
             Assert.That(h.StopReleaser.CallCount, Is.EqualTo(1));
             Assert.That(h.FirstHandle.DisposeCallCount, Is.EqualTo(1));

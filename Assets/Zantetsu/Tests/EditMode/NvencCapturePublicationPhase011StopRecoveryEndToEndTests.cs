@@ -148,7 +148,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(File.Exists(sandbox.PlanPath), Is.True);
             Assert.That(File.Exists(sandbox.PrecommitTemporaryPath), Is.True);
             Assert.That(File.Exists(sandbox.FinalChunkPath), Is.True);
-            Assert.That(receipt.Disposition, Is.EqualTo(
+            Assert.That(receipt.Operation.Disposition, Is.EqualTo(
                 NvencRunPublicationRecoveryDisposition.PublicationRecoveryCollision));
         }
 
@@ -209,7 +209,7 @@ namespace Zantetsu.Core.Tests
                         before,
                         NvencRunPublicationRecoveryDisposition.Deferred);
 
-                Assert.That(receipt.Disposition,
+                Assert.That(receipt.Operation.Disposition,
                     Is.EqualTo(NvencRunPublicationRecoveryDisposition.Deferred));
 
                 // The release is no owner of the buffer either: the lease this
