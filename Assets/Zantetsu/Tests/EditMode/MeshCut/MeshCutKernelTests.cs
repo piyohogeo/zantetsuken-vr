@@ -41,7 +41,7 @@ namespace Zantetsu.MeshCut.Tests
 
         static VerificationReport VerifyOk(MeshCutHarness h, CutRun run, string what, VerifyOptions o = null)
         {
-            Assert.That(run.Result.status, Is.EqualTo(MeshCutStatus.Ok), what + ": status (required v/i/s=" + run.Result.requiredVertexCapacity + "/" + run.Result.requiredIndexCapacity + "/" + run.Result.requiredScratchBytes + ")");
+            Assert.That(run.Result.status, Is.EqualTo(MeshCutStatus.Ok), what + ": status (required v/i/s=" + run.Result.requiredVertexCapacity + "/" + run.Result.requiredIndexCapacity + "/" + run.Result.recommendedScratchBytes + ")");
             Assert.That(run.Result.executedManaged, Is.EqualTo(0), what + ": ran managed instead of Burst");
             AssertClean(h, what);
             var report = MeshCutVerifier.Verify(run, o);
@@ -49,7 +49,7 @@ namespace Zantetsu.MeshCut.Tests
             {
                 // the independent contour reconstruction explains which loop misbehaved
                 var contours = ReferenceContours.Build(run.Input, run.Plane, ReferenceCut.Compute(run.Input, run.Plane));
-                Assert.Fail(what + ":\n" + report + "\nfan fallbacks " + run.Result.capFanFallbacks + "\nreference contours:\n" + contours.Describe(run.Plane));
+                Assert.Fail(what + ":\n" + report + "\ncap cycles split/combinatorial=" + run.Result.capSplitCycles + "/" + run.Result.capCombinatorialCycles + " reversed triangles=" + run.Result.capReversedTriangles + "\nreference contours:\n" + contours.Describe(run.Plane));
             }
             return report;
         }
@@ -282,6 +282,7 @@ namespace Zantetsu.MeshCut.Tests
                 var mesh = builder.Finish(attributes);
                 CutGeometry current = h.Place(mesh, name, 523, 1201);
                 var rng = new Unity.Mathematics.Random(seed);
+                int splitCycles = 0, combinatorialCycles = 0;
                 for (int gen = 1; gen <= 4; gen++)
                 {
                     var (mn, mx) = current.Bounds();
@@ -297,8 +298,13 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(appended, Is.GreaterThan(0), name + " gen " + gen + " appends");
                     Assert.That(run.Positive.Topology.Count, Is.EqualTo(gen + 1), name + " gen " + gen + ": one topology block per generation");
                     log.Append(name).Append(" gen ").Append(gen).Append(": ").Append(string.Join("; ", report.Notes)).Append(" blocks=").Append(run.Positive.Topology.Count).Append('\n');
+                    splitCycles += run.Result.capSplitCycles; combinatorialCycles += run.Result.capCombinatorialCycles;
                     current = run.Positive.TriangleCount >= run.Negative.TriangleCount ? run.Positive : run.Negative;
                 }
+                // the construction is decided from the cycle: proper crossings are split, touching / retraced contours
+                // (coincident nodes of earlier cuts) are ear clipped combinatorially; neither is a repair of a failed cap
+                if (name == "lemniscate-self-intersecting") Assert.That(splitCycles, Is.GreaterThan(0), name + ": self-crossing contours are split at their crossings");
+                if (name == "coincident-pairs") Assert.That(combinatorialCycles, Is.GreaterThan(0), name + ": retraced contours are capped combinatorially");
             }
             TestContext.Out.WriteLine(log.ToString());
         }
@@ -364,17 +370,17 @@ namespace Zantetsu.MeshCut.Tests
                     AssertClean(h, "index deficit");
                     run = h.Cut(g, plane, new RunOptions { ScratchOverride = 64, ViaJob = viaJob });
                     Assert.That(run.Result.status, Is.EqualTo(MeshCutStatus.CapacityScratch), "scratch far too small");
-                    Assert.That(run.Result.requiredScratchBytes, Is.GreaterThan(64));
+                    Assert.That(run.Result.recommendedScratchBytes, Is.GreaterThan(64));
                     AssertClean(h, "scratch deficit");
                     // the reported requirement is enough on the next attempt (re-reserve and re-run, DESIGN 4.5.3)
-                    int required = run.Result.requiredScratchBytes;
+                    int required = run.Result.recommendedScratchBytes;
                     for (int attempt = 0; attempt < 8; attempt++)
                     {
                         run = h.Cut(g, plane, new RunOptions { ScratchOverride = required, ViaJob = viaJob });
                         if (run.Result.status == MeshCutStatus.Ok) break;
                         Assert.That(run.Result.status, Is.EqualTo(MeshCutStatus.CapacityScratch), "attempt " + attempt);
-                        Assert.That(run.Result.requiredScratchBytes, Is.GreaterThan(required), "the requirement grows on every retry");
-                        required = run.Result.requiredScratchBytes;
+                        Assert.That(run.Result.recommendedScratchBytes, Is.GreaterThan(required), "the requirement grows on every retry");
+                        required = run.Result.recommendedScratchBytes;
                     }
                     VerifyOk(h, run, "re-reserved scratch");
                     TestContext.Out.WriteLine("scratch: estimate " + h.LastCapacity.scratchBytes + ", used " + run.Result.usedScratchBytes + ", converged at " + required + " (job=" + viaJob + ")");

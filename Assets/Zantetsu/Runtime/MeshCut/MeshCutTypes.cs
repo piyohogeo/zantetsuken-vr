@@ -11,8 +11,10 @@ namespace Zantetsu.MeshCut
         CapacityVertex = 2,
         /// <summary>The new-index reservation is too small; <see cref="MeshCutResult.requiredIndexCapacity"/> holds the exact need.</summary>
         CapacityIndex = 3,
-        /// <summary>The scratch block is too small; <see cref="MeshCutResult.requiredScratchBytes"/> holds the need (exact for the fixed part, doubled for the cap arena).</summary>
+        /// <summary>The scratch block is too small; <see cref="MeshCutResult.recommendedScratchBytes"/> holds a recommended next size (exact for the fixed part; the cap arena part is the larger of twice the arena given and the estimate).</summary>
         CapacityScratch = 4,
+        /// <summary>The kernel's own construction invariant failed (a split cap's triangle count is not the disk's). No output; nothing is regenerated. Report the input and plane.</summary>
+        InternalError = 5,
     }
 
     /// <summary>
@@ -119,14 +121,20 @@ namespace Zantetsu.MeshCut
         /// <summary>Topology vertex id space after the cut (input count plus the ids created for intersection nodes and cap auxiliary vertices).</summary>
         public int newTopologyVertexCount;
 
+        /// <summary>capRenderVertices: cap render vertices of nodes (per node, side and winding sign); the render vertices of cap auxiliary vertices are counted in newVertexCount only.</summary>
         public int triangleCount, crossingTriangles, nodeCount, interpolatedVertices, capRenderVertices;
+        /// <summary>capAuxVertices: auxiliary cap vertices by topology id (one per split crossing or interleaved revisit).</summary>
         public int loopCount, openContourCount, capTriangles, capCyclesClosedBySurface, capAuxVertices;
         public int capDegenerateTriangles, capStalledEars, capCrossings, capContacts;
-        /// <summary>Cycles the split decomposition could not close and that were capped by the fan instead (doubled regions).</summary>
-        public int capFanFallbacks;
+        /// <summary>Cycles capped by the split at proper crossings (auxiliary vertices) and cycles capped by combinatorial ear clipping (touching or retraced contours, no auxiliary vertex); the rest were simple.</summary>
+        public int capSplitCycles, capCombinatorialCycles;
+        /// <summary>Cap triangles whose projected winding opposes their cycle's and that therefore use render vertices of the opposite normal sign.</summary>
+        public int capReversedTriangles;
 
-        /// <summary>On a capacity status: the reservation that would have sufficed (0 when not determinable).</summary>
-        public int requiredVertexCapacity, requiredIndexCapacity, requiredScratchBytes;
+        /// <summary>On CapacityVertex / CapacityIndex: the exact new-vertex and new-index counts of this cut (0 when not determinable).</summary>
+        public int requiredVertexCapacity, requiredIndexCapacity;
+        /// <summary>On CapacityScratch: a recommended next scratch size, not the exact need: the fixed part is exact, the cap arena part is the larger of twice what was given and the estimate, so a retry converges in few steps.</summary>
+        public int recommendedScratchBytes;
         public int usedScratchBytes;
         /// <summary>1 when the optional node correspondence arrays were written (nodeCapacity covered nodeCount).</summary>
         public byte nodeCorrespondenceWritten;
@@ -135,9 +143,13 @@ namespace Zantetsu.MeshCut
     }
 
     /// <summary>
-    /// Reservation estimate for one cut, owned by the kernel side (DESIGN 6.1). The index and vertex figures are upper
-    /// bounds for everything except cap auxiliary vertices, which depend on the boundary loops' self-contacts; a run that
-    /// exceeds them fails before writing outside the reservation and reports the exact need.
+    /// Reservation figures for one cut, owned by the kernel side (DESIGN 6.1), of three kinds. Exact: triangleCount,
+    /// crossingTriangles, wholeMeshSide. Upper bounds over the crossing count: newVertices (12 per crossing triangle:
+    /// 2 interpolated slots and up to 4 cap render vertices per node, 2 nodes per triangle) and newIndices (3 (T + 6 K)),
+    /// each plus an estimate for the cap auxiliary vertices (max(32, K / 4)), which depend on the boundary loops'
+    /// self-crossings. Estimate: scratchBytes (exact classification and crossing parts plus an estimated cap arena).
+    /// A run that exceeds a figure fails before writing outside the reservation and reports the exact vertex / index
+    /// need or a recommended scratch size (<see cref="MeshCutResult"/>).
     /// </summary>
     public struct MeshCutCapacity
     {

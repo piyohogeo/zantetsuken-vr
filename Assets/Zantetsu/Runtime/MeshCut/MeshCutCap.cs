@@ -30,7 +30,9 @@ namespace Zantetsu.MeshCut
         public float* auxU, auxV;
         public int auxCount;
         public int degenerate, reflex, artifacts, stalled, crossings, contacts;
-        /// <summary>0 ok, 1 ear clipping stalled with every remaining diagonal forbidden, 2 the split did not close as a disk, 3 capacity.</summary>
+        /// <summary>How the cycle was capped: 0 ear clipped as a simple cycle, 1 split at proper crossings, 2 combinatorial ear clipping of a touching / retraced cycle.</summary>
+        public int method;
+        /// <summary>0 ok, 1 a split piece stalled with every remaining diagonal forbidden, 2 the split's triangle count is not the disk's (both internal errors, never repaired), 3 capacity.</summary>
         public int failure;
 
         public void AddTriangle(int a, int b, int c)
@@ -43,9 +45,11 @@ namespace Zantetsu.MeshCut
     /// <summary>
     /// The cap of the display cut (DESIGN 6.4): the probe's adopted split cap over reflex ear clipping with z-order
     /// hashing, ported from the probe's BurstCapping onto the caller's scratch arena. A simple cycle is ear clipped
-    /// directly; a self-crossing or self-touching cycle is split at its crossings and contacts into simple pieces which
-    /// are ear clipped and glued back to the surface with zero-area slivers, so every boundary edge keeps exactly one
-    /// surface and one cap face and every fan closes. Same predicates, same precision, same tie-breaking as the probe.
+    /// directly; a cycle whose only relations are proper crossings is split at them into simple pieces which are ear
+    /// clipped and glued back to the cycle with zero-area slivers; a cycle that touches itself (distinct nodes at one
+    /// position, edges along one line) is ear clipped combinatorially without auxiliary vertices. Each construction
+    /// closes the cycle as a disk by itself; nothing is checked after the fact. Same predicates, same precision, same
+    /// tie-breaking as the probe where the probe's construction is used.
     /// </summary>
     public static unsafe class MeshCutCap
     {
@@ -112,25 +116,6 @@ namespace Zantetsu.MeshCut
             double t = len2 > 0 ? Math.Max(0.0, Math.Min(1.0, (wx * vx + wy * vy) / len2)) : 0.0;
             double dx = sx + t * vx - c.U[p], dy = sy + t * vy - c.V[p];
             return dx * dx + dy * dy;
-        }
-
-        static double PointSegment(in CapContext c, int p, int s0, int s1, out double t)
-        {
-            double sx = c.U[s0], sy = c.V[s0];
-            double vx = (double)c.U[s1] - sx, vy = (double)c.V[s1] - sy;
-            double wx = (double)c.U[p] - sx, wy = (double)c.V[p] - sy;
-            double len2 = vx * vx + vy * vy;
-            t = len2 > 0 ? Math.Max(0.0, Math.Min(1.0, (wx * vx + wy * vy) / len2)) : 0.0;
-            double dx = sx + t * vx - c.U[p], dy = sy + t * vy - c.V[p];
-            return Math.Sqrt(dx * dx + dy * dy);
-        }
-
-        static bool SegmentsCollinear(in CapContext c, int a0, int a1, int b0, int b1, float eps)
-        {
-            double lenA = Math.Sqrt(Dist2(c, a0, a1)), lenB = Math.Sqrt(Dist2(c, b0, b1));
-            if (lenA == 0 || lenB == 0) return true;
-            return Math.Abs(Cross(c, b0, b1, a0)) <= eps * lenB && Math.Abs(Cross(c, b0, b1, a1)) <= eps * lenB &&
-                   Math.Abs(Cross(c, a0, a1, b0)) <= eps * lenA && Math.Abs(Cross(c, a0, a1, b1)) <= eps * lenA;
         }
 
         static long DiagonalKey(int a, int b) => ((long)Math.Min(a, b) << 32) | (uint)Math.Max(a, b);
@@ -465,10 +450,22 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Caps one boundary cycle. `nodes` are context ids in cap traversal order (the surface contour reversed). A simple
-        /// cycle is ear clipped directly; otherwise it is split at its crossings and contacts exactly as the probe's
-        /// SplitCap does. The arena is the per-cycle scratch; its peak is reported to the caller, its overflow flag ends
-        /// the run as CapacityScratch.
+        /// Caps one boundary cycle. `nodes` are context ids in cap traversal order (the surface contour reversed). The
+        /// construction is chosen from the cycle's own edge relations before any triangle exists, never by checking a
+        /// generated cap:
+        ///  - no crossing and no contact: the cycle is ear clipped as it is;
+        ///  - proper crossings only, each strictly inside both of its segments (farther than eps from every endpoint):
+        ///    the cycle is split at the crossings into simple pieces around one auxiliary vertex per crossing, the pieces
+        ///    are ear clipped and glued back to the cycle edges with zero-area slivers (the probe's split cap);
+        ///  - any touch, near contact or crossing at an endpoint (several distinct nodes at one position, an edge running
+        ///    along another: the retraced contours of doubled regions and of re-cut caps): the port matching of the split
+        ///    is not defined on such a cycle, so it is triangulated combinatorially by the same ear clipper without any
+        ///    auxiliary vertex. Every diagonal joins two distinct nodes of the cycle, so its n - 2 triangles close the
+        ///    cycle as a disk by construction whatever the projected shape (each cycle edge once, each diagonal twice in
+        ///    opposite directions, one fan around every node). A triangle whose projected winding opposes the cycle's
+        ///    receives render vertices of its own sign from the caller; the logical topology stays one vertex per node.
+        /// The split's disk relation (n + 2 aux - 2 triangles) is its invariant, reported as failure 2 and never repaired.
+        /// The arena is the per-cycle scratch; its overflow flag ends the run as CapacityScratch.
         /// </summary>
         public static void SplitCap(in CapContext context, int* nodes, int n, ref CapOut result, ref ScratchArena arena)
         {
@@ -482,8 +479,25 @@ namespace Zantetsu.MeshCut
             result.crossings += crossings;
             result.contacts += contacts;
             result.auxCount = 0;
-            if (crossings == 0 && contacts == 0)
+            float eps = context.Eps;
+
+            // ---- the decision: split only when every relation is a proper crossing strictly inside both segments.
+            bool split = contacts == 0 && crossings > 0;
+            for (int pi = 0; pi < pairCount && split; pi++)
             {
+                int e = pairs[pi].E, f = pairs[pi].F;
+                int a0 = nodes[e], a1 = nodes[(e + 1) % n];
+                int b0 = nodes[f], b1 = nodes[(f + 1) % n];
+                double d1 = Cross(context, b0, b1, a0), d2 = Cross(context, b0, b1, a1);
+                double d3 = Cross(context, a0, a1, b0), d4 = Cross(context, a0, a1, b1);
+                double ta = d1 / (d1 - d2), tb = d3 / (d3 - d4);
+                double lenA = Math.Sqrt(Dist2(context, a0, a1)), lenB = Math.Sqrt(Dist2(context, b0, b1));
+                // a crossing within eps of an endpoint is that endpoint touching the other segment, not a split point
+                if (ta * lenA <= eps || (1 - ta) * lenA <= eps || tb * lenB <= eps || (1 - tb) * lenB <= eps) split = false;
+            }
+            if (!split)
+            {
+                result.method = crossings == 0 && contacts == 0 ? 0 : 2;
                 result.triangleCap = 3 * (n - 2);
                 result.triangles = arena.Take<int>(result.triangleCap);
                 if (arena.overflow != 0) return;
@@ -491,11 +505,11 @@ namespace Zantetsu.MeshCut
                 ReflexEarClip(context, nodes, n, in none, ref result, ref arena);
                 return;
             }
+            result.method = 1;
 
-            float eps = context.Eps;
-            int eventCap = 4 * pairCount + 4;
+            int eventCap = 2 * pairCount + 4;
             var events = new Events { items = arena.Take<Ev>(eventCap), count = 0, cap = eventCap, seen = LongSet.Create(ref arena, eventCap), order = 0 };
-            // Auxiliary vertices: one per proper crossing plus at most one duplicate per refined position.
+            // Auxiliary vertices: one per crossing plus at most one duplicate per refined position (interleaved revisits).
             int auxLocalCap = pairCount + n + eventCap;
             float3* auxPos = arena.Take<float3>(auxLocalCap);
             float* auxU = arena.Take<float>(auxLocalCap);
@@ -512,81 +526,40 @@ namespace Zantetsu.MeshCut
                 int b0 = nodes[f], b1 = nodes[(f + 1) % n];
                 double d1 = Cross(context, b0, b1, a0), d2 = Cross(context, b0, b1, a1);
                 double d3 = Cross(context, a0, a1, b0), d4 = Cross(context, a0, a1, b1);
-                bool proper = ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
-                if (proper)
-                {
-                    double ta = d1 / (d1 - d2);
-                    double tb = d3 / (d3 - d4);
-                    double lenA = Math.Sqrt(Dist2(context, a0, a1)), lenB = Math.Sqrt(Dist2(context, b0, b1));
-                    bool nearA0 = ta * lenA <= eps, nearA1 = (1 - ta) * lenA <= eps;
-                    bool nearB0 = tb * lenB <= eps, nearB1 = (1 - tb) * lenB <= eps;
-                    if (nearA0 || nearA1 || nearB0 || nearB1)
-                    {
-                        // A crossing within eps of an endpoint is a contact of that endpoint, not a new vertex.
-                        if (nearA0) events.Add(f, tb, e, ref arena);
-                        if (nearA1) events.Add(f, tb, (e + 1) % n, ref arena);
-                        if (nearB0) events.Add(e, ta, f, ref arena);
-                        if (nearB1) events.Add(e, ta, (f + 1) % n, ref arena);
-                        continue;
-                    }
-                    float3 pa = context.Pos[a0], pb = context.Pos[a1];
-                    float fta = (float)ta;
-                    var p = new float3(pa.x + fta * (pb.x - pa.x), pa.y + fta * (pb.y - pa.y), pa.z + fta * (pb.z - pa.z));
-                    int aux = n + auxCount;
-                    if (auxCount >= auxLocalCap) { arena.overflow = 1; return; }
-                    auxPos[auxCount] = p;
-                    auxU[auxCount] = (float)(context.U[a0] + ta * ((double)context.U[a1] - context.U[a0]));
-                    auxV[auxCount] = (float)(context.V[a0] + ta * ((double)context.V[a1] - context.V[a0]));
-                    auxCount++;
-                    events.Add(e, ta, aux, ref arena);
-                    events.Add(f, tb, aux, ref arena);
-                    continue;
-                }
-                // Two collinear overlapping segments (a fold over a coplanar sheet) are left for the sub-cycle's ear clipper.
-                if (SegmentsCollinear(context, a0, a1, b0, b1, eps)) continue;
-                Contact(context, nodes, n, ref events, e, f, (f + 1) % n, eps, ref arena);
-                Contact(context, nodes, n, ref events, f, e, (e + 1) % n, eps, ref arena);
+                double ta = d1 / (d1 - d2);
+                double tb = d3 / (d3 - d4);
+                float3 pa = context.Pos[a0], pb = context.Pos[a1];
+                float fta = (float)ta;
+                var p = new float3(pa.x + fta * (pb.x - pa.x), pa.y + fta * (pb.y - pa.y), pa.z + fta * (pb.z - pa.z));
+                int aux = n + auxCount;
+                if (auxCount >= auxLocalCap) { arena.overflow = 1; return; }
+                auxPos[auxCount] = p;
+                auxU[auxCount] = (float)(context.U[a0] + ta * ((double)context.U[a1] - context.U[a0]));
+                auxV[auxCount] = (float)(context.V[a0] + ta * ((double)context.V[a1] - context.V[a0]));
+                auxCount++;
+                events.Add(e, ta, aux, ref arena);
+                events.Add(f, tb, aux, ref arena);
             }
             if (arena.overflow != 0) return;
-
-            // Sort events by (segment, t, arrival); then drop t ~ 1 reports of a node that the next segment also reports
-            // (a node coinciding with a cycle vertex would otherwise be inserted twice around that vertex).
             NativeSortExtension.Sort(events.items, events.count, new EvOrder());
-            byte* keep = arena.Take<byte>(events.count);
-            if (arena.overflow != 0) return;
-            for (int i = 0; i < events.count; i++) keep[i] = 1;
-            for (int i = 0; i < events.count; i++)
-            {
-                int seg = events.items[i].Segment;
-                double len = Math.Sqrt(Dist2(context, nodes[seg], nodes[(seg + 1) % n]));
-                if ((1 - events.items[i].T) * len > eps) continue;
-                int nextSeg = (seg + 1) % n;
-                for (int j = 0; j < events.count; j++)
-                    if (events.items[j].Segment == nextSeg && events.items[j].Node == events.items[i].Node) { keep[i] = 0; break; }
-            }
 
-            // ---- refined cycle: chain per segment, without endpoints and immediate repeats.
+            // ---- refined cycle: each segment followed by its crossings in parameter order.
             int refinedCap = n + events.count + 4;
             int* refined = arena.Take<int>(refinedCap);
             int refinedCount = 0;
             int* chainStart = arena.Take<int>(n + 1);
             int* chainPosList = arena.Take<int>(events.count + 1);
             int chainPosCount = 0;
-            int* originalPos = arena.Take<int>(n);
             if (arena.overflow != 0) return;
             int evCursor = 0;
             for (int i = 0; i < n; i++)
             {
-                originalPos[i] = refinedCount;
                 refined[refinedCount++] = i;
                 chainStart[i] = chainPosCount;
-                int nextNode = (i + 1) % n;
                 int chainCount = 0;
                 while (evCursor < events.count && events.items[evCursor].Segment == i)
                 {
                     Ev x = events.items[evCursor++];
-                    if (keep[evCursor - 1] == 0) continue;
-                    if (x.Node == i || x.Node == nextNode) continue;
                     if (chainCount > 0 && refined[chainPosList[chainPosCount - 1]] == x.Node) continue;
                     chainPosList[chainPosCount++] = refinedCount;
                     refined[refinedCount++] = x.Node;
@@ -595,18 +568,18 @@ namespace Zantetsu.MeshCut
             }
             chainStart[n] = chainPosCount;
             int m = refinedCount;
-            // Ids in play: 0..n-1 cycle nodes, n.. auxiliary (crossings so far plus later duplicates).
+            // Ids in play: 0..n-1 cycle nodes (each visited once), n.. auxiliary (each crossing visited twice, plus duplicates).
             int idCap = n + auxLocalCap;
             int* finalId = arena.Take<int>(m);
             int* lastVisit = arena.Take<int>(idCap);
-            int* at = arena.Take<int>(idCap);          // node id -> index in path, -1 when not open
-            byte* renameNext = arena.Take<byte>(idCap);
+            int* at = arena.Take<int>(idCap);          // id -> index in the open path, -1 when not open
             if (arena.overflow != 0) return;
             for (int i = 0; i < m; i++) finalId[i] = refined[i];
-            for (int i = 0; i < idCap; i++) { lastVisit[i] = -1; at[i] = -1; renameNext[i] = 0; }
+            for (int i = 0; i < idCap; i++) { lastVisit[i] = -1; at[i] = -1; }
             for (int pos = 0; pos < m; pos++) lastVisit[refined[pos]] = pos;
 
-            // ---- split at repeated visits with duplication of interleaved ones.
+            // ---- split at the second visit of each crossing; an inner crossing still open afterwards is duplicated
+            //      for the piece being closed so that its later visit keeps the original id (interleaved crossings).
             int* subStart = arena.Take<int>(m + 2);
             int subCount = 0;
             int* subNodes = arena.Take<int>(2 * m + 2);
@@ -617,13 +590,6 @@ namespace Zantetsu.MeshCut
             for (int pos = 0; pos < m; pos++)
             {
                 int r = refined[pos];
-                if (renameNext[r] != 0)
-                {
-                    renameNext[r] = 0;
-                    finalId[pos] = Duplicate(context, nodes, n, auxPos, auxU, auxV, ref auxCount, auxLocalCap, r, ref arena);
-                    path[pathCount++] = pos;
-                    continue;
-                }
                 int k = at[r];
                 if (k >= 0)
                 {
@@ -636,8 +602,7 @@ namespace Zantetsu.MeshCut
                         at[q] = -1;
                         if (finalId[p] != q) continue;
                         if (lastVisit[q] <= pos) continue;
-                        if (q < n && p == originalPos[q]) renameNext[q] = 1;
-                        else finalId[p] = Duplicate(context, nodes, n, auxPos, auxU, auxV, ref auxCount, auxLocalCap, q, ref arena);
+                        finalId[p] = Duplicate(context, nodes, n, auxPos, auxU, auxV, ref auxCount, auxLocalCap, q, ref arena);
                     }
                     pathCount = k + 1;
                 }
@@ -652,7 +617,7 @@ namespace Zantetsu.MeshCut
             for (int idx = 0; idx < pathCount; idx++) subNodes[subNodeCount++] = path[idx];
             subStart[subCount] = subNodeCount;
 
-            // ---- slivers and forbidden diagonals.
+            // ---- slivers glue each refined chain back to its cycle edge; the pieces may not reuse those edges.
             var forbidden = LongSet.Create(ref arena, n + chainPosCount + 4);
             if (arena.overflow != 0) return;
             for (int i = 0; i < n; i++) forbidden.Add(DiagonalKey(i, (i + 1) % n));
@@ -707,85 +672,8 @@ namespace Zantetsu.MeshCut
             }
             result.auxPos = auxPos; result.auxU = auxU; result.auxV = auxV; result.auxCount = auxCount;
 
-            int expected = n + 2 * auxCount - 2;
-            if (result.triangleCount / 3 != expected) { result.failure = 2; return; }
-            if (!CapClosesTheCycle(result.triangles, result.triangleCount, n, ref arena)) result.failure = 2;
-        }
-
-        /// <summary>
-        /// The disk relation is necessary but not sufficient: with several distinct nodes at one position (duplicates from
-        /// earlier cuts, cut ports at an on-plane vertex) the split can keep the triangle count while a piece's diagonal
-        /// doubles an edge. This is the cap algorithm's own closure condition on its output: every cycle edge exactly
-        /// once in the cap direction, every other edge exactly twice in opposite directions. Not an output validator -
-        /// it decides whether the split's triangulation is emitted or the fan is.
-        /// </summary>
-        static bool CapClosesTheCycle(int* triangles, int triangleCount, int n, ref ScratchArena arena)
-        {
-            int edges = triangleCount;   // 3 per triangle
-            int cap = 16;
-            while (cap < 2 * edges + 8) cap <<= 1;
-            long* keys = arena.Take<long>(cap);
-            int* count = arena.Take<int>(cap);
-            int* direction = arena.Take<int>(cap);
-            if (arena.overflow != 0) return false;
-            int mask = cap - 1;
-            for (int i = 0; i < cap; i++) { keys[i] = long.MinValue; count[i] = 0; direction[i] = 0; }
-            for (int t = 0; t < triangleCount; t += 3)
-            {
-                for (int e = 0; e < 3; e++)
-                {
-                    int a = triangles[t + e], b = triangles[t + (e + 1) % 3];
-                    if (a == b) return false;
-                    long key = DiagonalKey(a, b);
-                    int slot = LongSet.Hash(key) & mask;
-                    while (keys[slot] != long.MinValue && keys[slot] != key) slot = (slot + 1) & mask;
-                    keys[slot] = key;
-                    count[slot]++;
-                    direction[slot] += a < b ? 1 : -1;
-                }
-            }
-            for (int i = 0; i < cap; i++)
-            {
-                if (keys[i] == long.MinValue) continue;
-                int lo = (int)(keys[i] >> 32), hi = (int)(keys[i] & 0xFFFFFFFF);
-                bool cycleEdge = hi < n && lo < n && ((hi == lo + 1) || (lo == 0 && hi == n - 1));
-                if (cycleEdge)
-                {
-                    // the cap walks i -> i+1 (lo -> hi), except the closing edge n-1 -> 0 (hi -> lo)
-                    int expectedDirection = (lo == 0 && hi == n - 1 && n > 2) ? -1 : 1;
-                    if (count[i] != 1 || direction[i] != expectedDirection) return false;
-                }
-                else if (count[i] != 2 || direction[i] != 0) return false;
-            }
-            return true;
-        }
-
-        /// <summary>
-        /// Fan over the whole cycle from its first node: always a combinatorial disk (n - 2 triangles, no auxiliary vertex,
-        /// every cycle edge once, every fan diagonal twice in opposite directions), so it closes the surface whatever the
-        /// projected shape. Used only when the split decomposition cannot close a cycle: that happens on doubled regions
-        /// (a two-sided zero-volume sheet whose contour runs out along the cut line and back, with near-coincident
-        /// nodes from earlier cuts), where the fan is exactly the right cap - two opposite zero-area layers.
-        /// </summary>
-        public static void FanCap(in CapContext c, int* nodes, int n, ref CapOut result, ref ScratchArena arena)
-        {
-            result = new CapOut { triangleCap = 3 * (n - 2), auxCount = 0 };
-            result.triangles = arena.Take<int>(result.triangleCap);
-            if (arena.overflow != 0) return;
-            for (int i = 1; i + 1 < n; i++) Emit(c, nodes, 0, i, i + 1, ref result);
-        }
-
-        static void Contact(in CapContext c, int* nodes, int n, ref Events events, int other, int p0, int p1, float eps, ref ScratchArena arena)
-        {
-            int o0 = nodes[other], o1 = nodes[(other + 1) % n];
-            for (int which = 0; which < 2; which++)
-            {
-                int p = which == 0 ? p0 : p1;
-                // A node adjacent to the segment's endpoint that lies on the segment is a spike: a zero-area ear, not a cut.
-                if (p == (other + n - 1) % n || p == (other + 2) % n) continue;
-                double d = PointSegment(c, nodes[p], o0, o1, out double t);
-                if (d <= Math.Max(eps, 0f)) events.Add(other, t, p, ref arena);
-            }
+            // The split's invariant: the pieces and slivers form one disk over n + 2 aux vertices.
+            if (result.triangleCount / 3 != n + 2 * auxCount - 2) result.failure = 2;
         }
 
         static int Duplicate(in CapContext c, int* nodes, int n, float3* auxPos, float* auxU, float* auxV, ref int auxCount, int auxCap, int q, ref ScratchArena arena)

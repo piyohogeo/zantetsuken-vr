@@ -21,8 +21,9 @@ namespace Zantetsu.MeshCut
     /// share one node, one parameter and one canonical position. Attributes are interpolated per face side from the
     /// face's own render vertices, keyed by (node, render pair): a smooth edge yields one new render vertex, a seam
     /// edge one per side, and no seam side is ever mixed. Caps get their own render vertices (hard edge to the
-    /// surface) with the plane normal signed by the cap's own winding, the fixed cap UV marker of 5.3 and the plane
-    /// U axis as tangent.
+    /// surface) with the plane normal signed by the winding of the cap triangle that uses them (one per node, side
+    /// and sign; the logical topology stays one vertex per node), the fixed cap UV marker of 5.3 and the plane U
+    /// axis as tangent.
     ///
     /// Output (DESIGN 4.5.3 / 4.5.6). Existing vertices are referenced by their global numbers; only new render
     /// vertices are appended from the head of the one new-vertex reservation, shared by both sides. New indices are
@@ -48,7 +49,7 @@ namespace Zantetsu.MeshCut
             public uint rLo, rHi;
             public int slot0, slot1;
             public long pair0, pair1;
-            public int capVertexPos, capVertexNeg;
+            public int capPosPlus, capPosMinus, capNegPlus, capNegMinus;   // cap render vertex per side and winding sign
         }
 
         struct Crossing
@@ -125,7 +126,7 @@ namespace Zantetsu.MeshCut
             bytes += 2 * Align16(nodeCap * 4) + Align16(nodeCap);
             bytes += Align16(nodeCap * 4) + Align16((nodeCap + 1) * 4) + Align16(nodeCap);
             bytes += 2 * Align16(nodeCap * 4) + Align16(nodeCap * 12);
-            bytes += Align16(4 * nodeCap * sizeof(NewVertex));   // interpolated slots and cap render vertices (2 per node each)
+            bytes += Align16(6 * nodeCap * sizeof(NewVertex));   // 2 interpolated slots and up to 2 cap render vertices per side per node
             return bytes;
         }
 
@@ -166,7 +167,7 @@ namespace Zantetsu.MeshCut
             l.V = (float*)(scratch + off); off += Align16(nodeCap * 4);
             l.nodePos = (float3*)(scratch + off); off += Align16(nodeCap * 12);
             l.records = (NewVertex*)(scratch + off);
-            int fixedRecords = 4 * nodeCap;
+            int fixedRecords = 6 * nodeCap;
             off += Align16(fixedRecords * sizeof(NewVertex));
             l.fixedBytes = off;
             // Whatever is left: a quarter for auxiliary vertex records, the rest for the per-cycle cap arena. Both scale
@@ -300,9 +301,13 @@ namespace Zantetsu.MeshCut
         // ------------------------------------------------------------------ capacity
 
         /// <summary>
-        /// Reservation estimate for <paramref name="input"/> (DESIGN 6.1 "容量照会"). Runs the classification pass
-        /// without scratch: the triangle and crossing counts are exact; nodes, slots and cap render vertices are bounded
-        /// by them; cap auxiliary vertices are estimated and reported exactly by a run that exceeds the estimate.
+        /// Reservation figures for <paramref name="input"/> (DESIGN 6.1 "容量照会"). Runs the classification pass
+        /// without scratch (every corner's distance evaluated, no memo). Three kinds of figure, see <see cref="MeshCutCapacity"/>:
+        /// triangleCount and crossingTriangles are exact; newVertices and newIndices are upper bounds over the crossing
+        /// count (12 render vertices per crossing triangle, 3 (T + 6 K) indices) plus an estimate of the cap auxiliary
+        /// vertices (2 render vertices and 12 indices each); scratchBytes is exact for the classification and crossing
+        /// parts plus an estimate of the per-cycle cap arena. A run that exceeds a figure fails before writing outside
+        /// the reservation and reports the exact vertex / index need or a recommended scratch size.
         /// </summary>
         [BurstCompile]
         public static void QueryCapacity(in MeshCutInput input, ref MeshCutCapacity cap)
@@ -338,7 +343,7 @@ namespace Zantetsu.MeshCut
                 return;
             }
             int aux = AuxEstimate(K);
-            cap.newVertices = 8 * K + aux;
+            cap.newVertices = 12 * K + 2 * aux;
             cap.newIndices = 3 * (T + 6 * K + 4 * aux);
             int phaseB = PhaseBBytes(K, out _, out _);
             int leftover = 4 * aux * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3;
@@ -373,7 +378,7 @@ namespace Zantetsu.MeshCut
             if (output.scratch == null || output.scratchBytes < phaseA)
             {
                 result.status = MeshCutStatus.CapacityScratch;
-                result.requiredScratchBytes = phaseA + ArenaEstimate(0);
+                result.recommendedScratchBytes = phaseA + ArenaEstimate(0);
                 return;
             }
             var l = new Layout();
@@ -418,7 +423,7 @@ namespace Zantetsu.MeshCut
                 if (output.scratchBytes < phaseA + phaseB + minLeftover)
                 {
                     result.status = MeshCutStatus.CapacityScratch;
-                    result.requiredScratchBytes = phaseA + phaseB + Align16(4 * AuxEstimate(K) * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3);
+                    result.recommendedScratchBytes = phaseA + phaseB + Align16(4 * AuxEstimate(K) * sizeof(NewVertex) + ArenaEstimate(K) * 4 / 3);
                     return;
                 }
                 LayoutPhaseB(output.scratch, output.scratchBytes, K, ref l);
@@ -483,7 +488,7 @@ namespace Zantetsu.MeshCut
             // ---- index placement (DESIGN 4.5.6): surfaces are counted, caps follow each side's surface.
             int posSurf = 0, negSurf = 0;
             for (int r = 0; r < input.rangeCount; r++) { posSurf += l.posCount[r]; negSurf += l.negCount[r]; }
-            int posCapTris = 0, negCapTris = 0, auxTotal = 0;
+            int posCapTris = 0, negCapTris = 0, auxTotal = 0, auxRenderRecords = 0;
             byte indexOverflow = 0;
 
             if (K > 0)
@@ -527,47 +532,40 @@ namespace Zantetsu.MeshCut
                         for (int i = 1; i < k; i++) cycle[i] = l.contourNodes[start + k - i];
 
                         var cap = new CapOut();
-                        int splitMark = l.arena.used;
                         MeshCutCap.SplitCap(in context, cycle, k, ref cap, ref l.arena);
                         if (l.arena.overflow != 0 || cap.failure == 3) { scratchOverflow = 1; break; }
                         if (cap.failure != 0)
                         {
-                            // The split could not close this cycle as a disk (a doubled region whose near-coincident nodes defeat
-                            // the contact arithmetic): the fan is the combinatorially exact cap of such a cycle, so the output
-                            // stays closed and manifold. Counted, never silent.
-                            int crossings = cap.crossings, contacts = cap.contacts;
-                            l.arena.used = splitMark;
-                            MeshCutCap.FanCap(in context, cycle, k, ref cap, ref l.arena);
-                            if (l.arena.overflow != 0) { scratchOverflow = 1; break; }
-                            cap.crossings = crossings; cap.contacts = contacts;
-                            result.capFanFallbacks++;
+                            // The split's disk relation is the construction's own invariant, not a validator of the output:
+                            // violated, the run stops here and nothing is regenerated.
+                            result.status = MeshCutStatus.InternalError;
+                            return;
                         }
+                        if (cap.method == 1) result.capSplitCycles++;
+                        else if (cap.method == 2) result.capCombinatorialCycles++;
 
-                        // The cap normal is the plane normal signed by the cap's own winding (area-weighted over its
-                        // triangles in the plane basis), never by the plane side: a reversed input gets a reversed cap.
-                        double signedArea = 0.0;
-                        for (int i = 0; i < cap.triangleCount; i += 3)
-                        {
-                            CapUv(in context, cycle, k, in cap, cap.triangles[i], out double u0, out double v0);
-                            CapUv(in context, cycle, k, in cap, cap.triangles[i + 1], out double u1, out double v1);
-                            CapUv(in context, cycle, k, in cap, cap.triangles[i + 2], out double u2, out double v2);
-                            signedArea += (u1 - u0) * (v2 - v0) - (v1 - v0) * (u2 - u0);
-                        }
-                        sbyte sign = (sbyte)(signedArea >= 0 ? 1 : -1);
-
-                        int* auxRecord = l.arena.Take<int>(math.max(1, cap.auxCount));
+                        // The cap faces the cycle's own winding in the plane basis (the surface's directed boundary, reversed),
+                        // never the plane side: a reversed input gets a reversed cap. A triangle whose projected winding opposes
+                        // the cycle's (a fold of a combinatorial cap over a retraced contour) takes render vertices of its own
+                        // sign, so its normal and tangent frame follow its winding (DESIGN 6.4) while the logical topology keeps
+                        // one vertex per node; a degenerate triangle takes the cycle's sign.
+                        sbyte cycleSign = (sbyte)(MeshCutCap.SignedArea2(in context, cycle, k) >= 0 ? 1 : -1);
+                        int* auxRecord = l.arena.Take<int>(math.max(1, 2 * cap.auxCount));
                         if (l.arena.overflow != 0) { scratchOverflow = 1; break; }
-                        for (int i = 0; i < cap.auxCount; i++)
-                        {
-                            auxRecord[i] = AddRecord(ref l, new NewVertex { kind = 2, sign = sign, node = auxTotal + i, position = cap.auxPos[i] }, ref recordCount, ref scratchOverflow);
-                        }
-                        auxTotal += cap.auxCount;
+                        for (int i = 0; i < 2 * cap.auxCount; i++) auxRecord[i] = -1;
 
                         for (int i = 0; i < cap.triangleCount; i += 3)
                         {
-                            uint g0 = CapVertex(ref l, cycle, k, in cap, cap.triangles[i], auxRecord, positive, sign, output.newVertexBase, ref recordCount, ref scratchOverflow);
-                            uint g1 = CapVertex(ref l, cycle, k, in cap, cap.triangles[i + 1], auxRecord, positive, sign, output.newVertexBase, ref recordCount, ref scratchOverflow);
-                            uint g2 = CapVertex(ref l, cycle, k, in cap, cap.triangles[i + 2], auxRecord, positive, sign, output.newVertexBase, ref recordCount, ref scratchOverflow);
+                            int c0 = cap.triangles[i], c1 = cap.triangles[i + 1], c2 = cap.triangles[i + 2];
+                            CapUv(in context, cycle, k, in cap, c0, out double u0, out double v0);
+                            CapUv(in context, cycle, k, in cap, c1, out double u1, out double v1);
+                            CapUv(in context, cycle, k, in cap, c2, out double u2, out double v2);
+                            double area2 = (u1 - u0) * (v2 - v0) - (v1 - v0) * (u2 - u0);
+                            sbyte sign = area2 > 0 ? (sbyte)1 : area2 < 0 ? (sbyte)-1 : cycleSign;
+                            if (sign != cycleSign) result.capReversedTriangles++;
+                            uint g0 = CapVertex(ref l, cycle, k, in cap, c0, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
+                            uint g1 = CapVertex(ref l, cycle, k, in cap, c1, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
+                            uint g2 = CapVertex(ref l, cycle, k, in cap, c2, auxRecord, auxTotal, positive, sign, output.newVertexBase, ref recordCount, ref auxRenderRecords, ref scratchOverflow);
                             int at = capBase + capCursor;
                             if (at + 3 <= output.newIndexCapacity && output.newIndices != null)
                             {
@@ -576,6 +574,7 @@ namespace Zantetsu.MeshCut
                             else indexOverflow = 1;
                             capCursor += 3;
                         }
+                        auxTotal += cap.auxCount;
                         result.capTriangles += cap.triangleCount / 3;
                         result.capDegenerateTriangles += cap.degenerate;
                         result.capStalledEars += cap.stalled;
@@ -588,7 +587,7 @@ namespace Zantetsu.MeshCut
                     if (positive) posCapTris = capCursor / 3; else negCapTris = capCursor / 3;
                 }
                 result.usedScratchBytes = l.fixedBytes + l.arena.peak;
-                result.capRenderVertices = recordCount - result.interpolatedVertices - result.capAuxVertices;
+                result.capRenderVertices = recordCount - result.interpolatedVertices - auxRenderRecords;
             }
 
             // ---- capacity verdicts, before any vertex is materialized (nothing outside a reservation was written)
@@ -599,7 +598,7 @@ namespace Zantetsu.MeshCut
             if (scratchOverflow != 0)
             {
                 result.status = MeshCutStatus.CapacityScratch;
-                result.requiredScratchBytes = l.fixedBytes + 2 * math.max(output.scratchBytes - l.fixedBytes, ArenaEstimate(K));
+                result.recommendedScratchBytes = l.fixedBytes + 2 * math.max(output.scratchBytes - l.fixedBytes, ArenaEstimate(K));
                 return;
             }
             if (newVertexCount > output.newVertexCapacity || (newVertexCount > 0 && (output.newVertices == null || output.newVertexTopology == null)))
@@ -643,6 +642,9 @@ namespace Zantetsu.MeshCut
                     }
                     else
                     {
+                        // normal along the winding of the triangles that use this vertex; tangent = the plane U axis with
+                        // w = +1 on both signs, so the bitangent w * (N x T) follows the normal and the frame is right-handed
+                        // on the face of each triangle's own winding
                         v.position = rec.kind == 1 ? l.nodes[rec.node].position : rec.position;
                         v.normal = rec.sign >= 0 ? nrm : -nrm;
                         v.uv0 = RenderCutMarker.CapUv;
@@ -763,7 +765,7 @@ namespace Zantetsu.MeshCut
             {
                 key = key, f = f, rLo = rLo, rHi = rHi,
                 position = (1f - f) * pLo + f * pHi,
-                slot0 = -1, slot1 = -1, capVertexPos = -1, capVertexNeg = -1,
+                slot0 = -1, slot1 = -1, capPosPlus = -1, capPosMinus = -1, capNegPlus = -1, capNegMinus = -1,
             };
             return id;
         }
@@ -792,18 +794,33 @@ namespace Zantetsu.MeshCut
             return slot;
         }
 
-        /// <summary>Global vertex number of a cap triangle corner: the node's cap render vertex for this side, or an auxiliary vertex.</summary>
-        static uint CapVertex(ref Layout l, int* cycle, int k, in CapOut cap, int local, int* auxRecord, bool positive, sbyte sign, uint vbase,
-                              ref int recordCount, ref byte overflow)
+        /// <summary>
+        /// Global vertex number of a cap triangle corner: the node's cap render vertex for this side and winding sign, or
+        /// the auxiliary vertex's render vertex for the sign. Created on first use; both signs of one node or auxiliary
+        /// vertex share its topology id.
+        /// </summary>
+        static uint CapVertex(ref Layout l, int* cycle, int k, in CapOut cap, int local, int* auxRecord, int auxTotal, bool positive, sbyte sign, uint vbase,
+                              ref int recordCount, ref int auxRenderRecords, ref byte overflow)
         {
-            if (local >= k) return vbase + (uint)auxRecord[local - k];
+            if (local >= k)
+            {
+                int a = local - k;
+                int slot = 2 * a + (sign > 0 ? 0 : 1);
+                if (auxRecord[slot] < 0)
+                {
+                    auxRecord[slot] = AddRecord(ref l, new NewVertex { kind = 2, sign = sign, node = auxTotal + a, position = cap.auxPos[a] }, ref recordCount, ref overflow);
+                    auxRenderRecords++;
+                }
+                return vbase + (uint)auxRecord[slot];
+            }
             int node = cycle[local];
             ref Node n = ref l.nodes[node];
-            int id = positive ? n.capVertexPos : n.capVertexNeg;
+            int id = positive ? (sign > 0 ? n.capPosPlus : n.capPosMinus) : (sign > 0 ? n.capNegPlus : n.capNegMinus);
             if (id < 0)
             {
                 id = AddRecord(ref l, new NewVertex { kind = 1, node = node, sign = sign }, ref recordCount, ref overflow);
-                if (positive) n.capVertexPos = id; else n.capVertexNeg = id;
+                if (positive) { if (sign > 0) n.capPosPlus = id; else n.capPosMinus = id; }
+                else { if (sign > 0) n.capNegPlus = id; else n.capNegMinus = id; }
             }
             return vbase + (uint)id;
         }

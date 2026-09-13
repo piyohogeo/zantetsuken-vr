@@ -94,7 +94,9 @@ switch ($Command) {
             assetSha = $assetSha; canonical = $canonical; fbx = $fbxEntry; textures = $textureEntries
             references = $referenceEntries; registeredUtc = $now; name = $Name; note = $Note
         }
-        Write-Json $manifest (Join-Path $manifests ($assetSha + '.json'))
+        $manifestPath = Join-Path $manifests ($assetSha + '.json')
+        # the manifest of one content is immutable: a later registration of the same content (any name, any note) keeps it
+        if (-not (Test-Path -LiteralPath $manifestPath)) { Write-Json $manifest $manifestPath }
         $assetPath = Join-Path $assetsDir ($Name + '.json')
         $history = @()
         if (Test-Path -LiteralPath $assetPath) {

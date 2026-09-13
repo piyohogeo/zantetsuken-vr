@@ -122,7 +122,7 @@ namespace Zantetsu.MeshCut.Verification
             var newTopo = run.NewVertexTopology;
             var nodeSlotVertex = new int[nodeCount];   // one interpolated vertex per node (for its position)
             for (int n = 0; n < nodeCount; n++) nodeSlotVertex[n] = -1;
-            int auxSeen = 0;
+            var auxIds = new HashSet<int>();   // an auxiliary vertex has one topology id and up to two render vertices (one per winding sign)
             for (int i = 0; i < newCount; i++)
             {
                 RenderVertex v = input.Vertices[run.NewVertexBase + (uint)i];
@@ -131,11 +131,11 @@ namespace Zantetsu.MeshCut.Verification
                 if (Math.Abs(d) > planeTol) r.Fail("new vertex " + i + " is off the plane by " + Num(Math.Abs(d)));
                 int t = newTopo[i] - topoBase;
                 if (t < 0) r.Fail("new vertex " + i + " has topology id " + newTopo[i] + " below the new id space");
-                else if (t >= nodeCount) auxSeen++;
+                else if (t >= nodeCount) auxIds.Add(t);
             }
             if (res.newTopologyVertexCount != topoBase + nodeCount + res.capAuxVertices)
                 r.Fail("newTopologyVertexCount " + res.newTopologyVertexCount + " != base + nodes + aux = " + (topoBase + nodeCount + res.capAuxVertices));
-            if (auxSeen != res.capAuxVertices) r.Fail("aux vertex count " + auxSeen + " (by topology id) != reported " + res.capAuxVertices);
+            if (auxIds.Count != res.capAuxVertices) r.Fail("aux vertex count " + auxIds.Count + " (by topology id) != reported " + res.capAuxVertices);
 
             // ---- per side
             var sideSegments = new HashSet<long>[2];
@@ -259,7 +259,7 @@ namespace Zantetsu.MeshCut.Verification
                 // attribute provenance of every surface triangle
                 CheckSurfaceAttributes(r, run, g, label, reference, topo, o.AttributeAbsolute);
 
-                // caps: marker, normal, hard edge, winding on simple loops
+                // caps: marker, normal, hard edge, winding of every non-degenerate triangle
                 CheckCaps(r, run, g, label, plane, capTriangles, loops, nodeSlotVertex, o.AttributeAbsolute, ref capAreaSimple, ref allLoopsSimple);
             }
 
@@ -309,7 +309,7 @@ namespace Zantetsu.MeshCut.Verification
                     r.Fail("surface area not accounted for: expected " + Num(expected) + " (input " + Num(inputArea) + " + caps " + Num(capAreaSimple) + "), got " + Num(outputArea));
             }
             else r.Notes.Add("non-simple loop(s): area identity skipped");
-            r.Notes.Add("K=" + reference.CrossingTriangles + " nodes=" + nodeCount + " loops=" + (sideLoops[0]?.Count ?? 0) + " caps=" + res.capTriangles + " aux=" + res.capAuxVertices + " fan=" + res.capFanFallbacks + " newV=" + newCount);
+            r.Notes.Add("K=" + reference.CrossingTriangles + " nodes=" + nodeCount + " loops=" + (sideLoops[0]?.Count ?? 0) + " caps=" + res.capTriangles + " aux=" + res.capAuxVertices + " split=" + res.capSplitCycles + " comb=" + res.capCombinatorialCycles + " rev=" + res.capReversedTriangles + " newV=" + newCount);
             return r;
         }
 
@@ -454,13 +454,12 @@ namespace Zantetsu.MeshCut.Verification
             float3 axisV = math.cross(n, axisU);
 
             double extent = run.Input.MaxExtent();
-            // loop simplicity (projected), and the loop of each node
-            var loopOfNode = new Dictionary<int, int>();
-            var loopSimple = new List<bool>();
+            // Loop simplicity (projected) as the kernel decides it: no proper crossing, no touch and no near contact within
+            // its epsilon (a few float ulps of the input extent). Reported only; every cap triangle owes its winding.
+            double eps = MeshCutKernel.NearContactEpsilonRelative * extent;
             for (int li = 0; li < loops.Count; li++)
             {
                 var loop = loops[li];
-                foreach (int node in loop) loopOfNode[node] = li;
                 var pts = new List<double2>();
                 foreach (int node in loop)
                 {
@@ -468,11 +467,7 @@ namespace Zantetsu.MeshCut.Verification
                     float3 p = sv >= 0 ? g.Vertices[run.NewVertexBase + (uint)sv].position : float3.zero;
                     pts.Add(new double2(math.dot(p, axisU), math.dot(p, axisV)));
                 }
-                // "simple" as the kernel decides it: no proper crossing, no touch and no near contact within its epsilon
-                // (a few float ulps of the input extent); only such loops are ear clipped exactly and owe geometric winding
-                double eps = MeshCutKernel.NearContactEpsilonRelative * extent;
                 bool simple = loop.Count >= 3 && IsSimplePolygon(pts, eps);
-                loopSimple.Add(simple);
                 if (simple) { r.SimpleLoops++; capAreaSimple += Math.Abs(SignedArea(pts)); }
                 else { r.NonSimpleLoops++; if (loop.Count >= 3) allLoopsSimple = false; }
             }
@@ -481,7 +476,6 @@ namespace Zantetsu.MeshCut.Verification
             foreach (var (a, b, c) in capTriangles)
             {
                 int expectedSign = 0;
-                int loopIndex = -1;
                 foreach (uint v in new[] { a, b, c })
                 {
                     RenderVertex rv = g.Vertices[v];
@@ -494,31 +488,29 @@ namespace Zantetsu.MeshCut.Verification
                     else if (sign != expectedSign && failures++ < 8) r.Fail(label + ": cap triangle mixes normal signs");
                     double tl = math.length(rv.tangent.xyz);
                     if (Math.Abs(tl - 1.0) > tol || Math.Abs(math.dot(rv.tangent.xyz, rv.normal)) > 1e-3) { if (failures++ < 8) r.Fail(label + ": cap vertex " + v + " tangent is not a unit vector in the plane"); }
+                    if (rv.tangent.w != 1f && failures++ < 8) r.Fail(label + ": cap vertex " + v + " tangent.w is " + rv.tangent.w + " (the cap frame keeps w = +1; the bitangent follows the normal)");
                     int t = run.NewVertexTopology[v - run.NewVertexBase] - run.TopologyBase;
                     if (t >= 0 && t < nodeSlotVertex.Length)
                     {
-                        if (loopIndex < 0 && loopOfNode.TryGetValue(t, out int li)) loopIndex = li;
                         // a cap render vertex of a node shares the node's canonical position
                         int sv = nodeSlotVertex[t];
                         if (sv >= 0 && !g.Vertices[run.NewVertexBase + (uint)sv].position.Equals(rv.position) && failures++ < 8)
                             r.Fail(label + ": cap vertex " + v + " of node " + t + " does not share the node's canonical position");
                     }
                 }
-                if (loopIndex >= 0 && loopSimple[loopIndex])
-                {
-                    // A simple loop is ear clipped exactly: every cap triangle's orientation in the plane basis (the same
-                    // float projection the kernel triangulates in, evaluated in double) must agree with the cap's normal
-                    // sign or be exactly zero. The 3D cross product is not used: for slivers it is float noise.
-                    double2 pa = Project(g.Vertices[a].position, axisU, axisV), pb = Project(g.Vertices[b].position, axisU, axisV), pc = Project(g.Vertices[c].position, axisU, axisV);
-                    double area2 = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
-                    // a sliver (sine of its corner angle at or below 1e-5, the probe's degenerate-ear scale) has no winding to follow
-                    double e0 = math.length(pb - pa), e1 = math.length(pc - pa);
-                    double sine = e0 > 0 && e1 > 0 ? Math.Abs(area2) / (e0 * e1) : 0.0;
-                    // float projection noise on an edge of length e is about 8e-7 * extent * e in area2 (three tiny nodes 2e-4 apart on a torus sit there)
-                    double noise = 8e-7 * extent * Math.Max(e0, Math.Max(e1, math.length(pc - pb)));
-                    if (sine > 1e-5 && Math.Abs(area2) > noise && area2 * expectedSign < 0 && failures++ < 8)
-                        r.Fail(label + ": cap triangle (" + a + "," + b + "," + c + ") render normal sign does not follow its winding (projected area2 " + Num(area2) + ", sin " + Num(sine) + ")");
-                }
+                // Every cap triangle's orientation in the plane basis (the same float projection the kernel triangulates in,
+                // evaluated in double) must agree with its render normal sign unless the triangle is degenerate: the normal
+                // and tangent frame of a non-degenerate cap triangle follow that triangle's own winding (DESIGN 6.4), on simple
+                // and on touching / retraced loops alike. The 3D cross product is not used: for slivers it is float noise.
+                double2 pa = Project(g.Vertices[a].position, axisU, axisV), pb = Project(g.Vertices[b].position, axisU, axisV), pc = Project(g.Vertices[c].position, axisU, axisV);
+                double area2 = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+                // a sliver (sine of its corner angle at or below 1e-5, the probe's degenerate-ear scale) has no winding to follow
+                double e0 = math.length(pb - pa), e1 = math.length(pc - pa);
+                double sine = e0 > 0 && e1 > 0 ? Math.Abs(area2) / (e0 * e1) : 0.0;
+                // float projection noise on an edge of length e is about 8e-7 * extent * e in area2 (three tiny nodes 2e-4 apart on a torus sit there)
+                double noise = 8e-7 * extent * Math.Max(e0, Math.Max(e1, math.length(pc - pb)));
+                if (sine > 1e-5 && Math.Abs(area2) > noise && area2 * expectedSign < 0 && failures++ < 8)
+                    r.Fail(label + ": cap triangle (" + a + "," + b + "," + c + ") render normal sign does not follow its winding (projected area2 " + Num(area2) + ", sin " + Num(sine) + ")");
             }
         }
 

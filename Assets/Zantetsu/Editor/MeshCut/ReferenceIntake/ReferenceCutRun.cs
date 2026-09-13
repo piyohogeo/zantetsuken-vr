@@ -21,9 +21,9 @@ namespace Zantetsu.MeshCut.ReferenceIntake
     [Serializable] public class RunCut
     {
         public string plane; public float nx, ny, nz, w;
-        public string status; public int K, nodes, newVertices, newIndices, capTriangles, capAux, loops, capFanFallbacks;
+        public string status; public int K, nodes, newVertices, newIndices, capTriangles, capAux, loops, capSplitCycles, capCombinatorialCycles, capReversedTriangles;
         public double kernelMicrosecondsMedian; public bool verified; public string verifierNotes; public string failures;
-        public string recutStatus; public bool recutVerified; public int recutK, recutFanFallbacks; public string recutFailures;
+        public string recutStatus; public bool recutVerified; public int recutK, recutSplitCycles, recutCombinatorialCycles, recutReversedTriangles; public string recutFailures;
     }
     [Serializable] public class RunGeometry
     {
@@ -187,7 +187,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                             run = r;
                             cut.status = r.Result.status.ToString();
                             cut.K = r.Result.crossingTriangles; cut.nodes = r.Result.nodeCount; cut.newVertices = r.Result.newVertexCount; cut.newIndices = r.Result.newIndexCount;
-                            cut.capTriangles = r.Result.capTriangles; cut.capAux = r.Result.capAuxVertices; cut.loops = r.Result.loopCount; cut.capFanFallbacks = r.Result.capFanFallbacks;
+                            cut.capTriangles = r.Result.capTriangles; cut.capAux = r.Result.capAuxVertices; cut.loops = r.Result.loopCount; cut.capSplitCycles = r.Result.capSplitCycles; cut.capCombinatorialCycles = r.Result.capCombinatorialCycles; cut.capReversedTriangles = r.Result.capReversedTriangles;
                             if (r.Result.status == MeshCutStatus.Ok)
                             {
                                 record.cutsOk++;
@@ -205,7 +205,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                                     var recutPlane = SyntheticGeometry.Plane(new float3(-0.61f, 0.37f, 0.7f), (float3)(0.5 * (bmn + bmx)) + new float3(0.0031f, 0.0023f, -0.0019f) * (float)math.cmax(bmx - bmn));
                                     var rr = scratchHarness.Cut(larger, recutPlane);
                                     cut.recutStatus = rr.Result.status.ToString();
-                                    cut.recutK = rr.Result.crossingTriangles; cut.recutFanFallbacks = rr.Result.capFanFallbacks;
+                                    cut.recutK = rr.Result.crossingTriangles; cut.recutSplitCycles = rr.Result.capSplitCycles; cut.recutCombinatorialCycles = rr.Result.capCombinatorialCycles; cut.recutReversedTriangles = rr.Result.capReversedTriangles;
                                     if (rr.Result.status == MeshCutStatus.Ok)
                                     {
                                         var rep2 = MeshCutVerifier.Verify(rr);
@@ -214,7 +214,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                                     }
                                 }
                             }
-                            else cut.failures = "status " + r.Result.status + " required v/i/s=" + r.Result.requiredVertexCapacity + "/" + r.Result.requiredIndexCapacity + "/" + r.Result.requiredScratchBytes;
+                            else cut.failures = "status " + r.Result.status + " required v/i/s=" + r.Result.requiredVertexCapacity + "/" + r.Result.requiredIndexCapacity + "/" + r.Result.recommendedScratchBytes;
                         }
                     }
                 }
@@ -233,7 +233,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             sb.AppendLine("- created: " + r.createdUtc + ", Unity " + r.unityVersion + ", Burst safety checks " + r.burstSafetyChecks);
             sb.AppendLine("- assets " + r.assets + ", geometries " + r.geometries + ", cuts attempted " + r.cutsAttempted + ", ok " + r.cutsOk + ", verified " + r.cutsVerified + ", inputs unfit " + r.inputsUnfit);
             sb.AppendLine();
-            sb.AppendLine("| asset | model | T | renderV/controlPoints | input | plane | K | newV | newI | caps | aux | fan | kernel us (median of repeats) | verified | recut | notes |");
+            sb.AppendLine("| asset | model | T | renderV/controlPoints | input | plane | K | newV | newI | caps | aux | cap cycles split/comb/rev (cut ; recut) | kernel us (median of repeats) | verified | recut | notes |");
             sb.AppendLine("| --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |");
             foreach (var a in r.results)
             {
@@ -246,7 +246,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                             a.name, g.model, g.triangles, g.renderVertices, g.controlPoints, g.inputContract, c.plane, c.K, c.newVertices, c.newIndices, c.capTriangles, c.capAux, c.kernelMicrosecondsMedian,
                             c.status == "Ok" ? (c.verified ? "yes" : "NO: " + c.failures) : c.status + " " + c.failures,
                             c.recutStatus == null ? "-" : c.recutStatus + (c.recutStatus == "Ok" ? (c.recutVerified ? " verified" : " NOT verified: " + c.recutFailures) : "") + " K=" + c.recutK,
-                            (c.verifierNotes ?? "") + (string.IsNullOrEmpty(g.importNotes) ? "" : " import: " + g.importNotes), c.capFanFallbacks + "/" + c.recutFanFallbacks));
+                            (c.verifierNotes ?? "") + (string.IsNullOrEmpty(g.importNotes) ? "" : " import: " + g.importNotes), c.capSplitCycles + "/" + c.capCombinatorialCycles + "/" + c.capReversedTriangles + " ; " + c.recutSplitCycles + "/" + c.recutCombinatorialCycles + "/" + c.recutReversedTriangles));
                 }
             }
             sb.AppendLine();
