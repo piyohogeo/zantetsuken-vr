@@ -452,7 +452,7 @@ namespace Zantetsu.Observability
             }
 
             if (!ReferenceEquals(rootLayout, binding.RootLayout)
-                || !ReferenceEquals(rootLayout, frozen.RootLayout))
+                || !ReferenceEquals(rootLayout, frozen.FreezeReceipt.RootLayout))
             {
                 return false;
             }
@@ -476,7 +476,7 @@ namespace Zantetsu.Observability
             }
 
             if (freshSeed.TestRunId != binding.TestRunId
-                || freshSeed.TestRunId != frozen.TestRunId
+                || freshSeed.TestRunId != frozen.FreezeReceipt.TestRunId
                 || freshSeed.TestRunId != genericPlan.TestRunId
                 || freshSeed.TestRunId != plan.TestRunId
                 || freshSeed.TestRunId != rootLayout.TestRunId)
@@ -485,7 +485,7 @@ namespace Zantetsu.Observability
             }
 
             if (!string.Equals(freshSeed.RunInitializationId, binding.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(freshSeed.RunInitializationId, frozen.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(freshSeed.RunInitializationId, frozen.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(freshSeed.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(freshSeed.RunInitializationId, plan.RunInitializationId, StringComparison.Ordinal))
             {
@@ -493,7 +493,7 @@ namespace Zantetsu.Observability
             }
 
             if (!string.Equals(freshSeed.RunManifestContentSha256, binding.RunManifestContentHash, StringComparison.Ordinal)
-                || !string.Equals(freshSeed.RunManifestContentSha256, frozen.RunManifestContentHash, StringComparison.Ordinal)
+                || !string.Equals(freshSeed.RunManifestContentSha256, frozen.PlanWriteReceipt.Plan.RunManifestContentHash, StringComparison.Ordinal)
                 || !string.Equals(freshSeed.RunManifestContentSha256, genericPlan.RunManifestContentHash, StringComparison.Ordinal)
                 || !string.Equals(freshSeed.RunManifestContentSha256, plan.RunManifestContentSha256, StringComparison.Ordinal))
             {

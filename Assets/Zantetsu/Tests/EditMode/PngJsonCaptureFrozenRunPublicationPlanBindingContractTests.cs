@@ -448,16 +448,28 @@ namespace Zantetsu.Core.Tests
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(1, 2);
             CaptureEvidenceFrozenRunPublicationResult frozen = binding.FrozenPublicationResult;
 
-            Assert.That(ReferenceEquals(binding.GenericPlan, frozen.Plan), Is.True);
+            Assert.That(
+                ReferenceEquals(binding.GenericPlan, frozen.PlanWriteReceipt.Plan), Is.True);
             Assert.That(ReferenceEquals(binding.FreezeReceipt, frozen.FreezeReceipt), Is.True);
-            Assert.That(ReferenceEquals(binding.Drafts, frozen.Drafts), Is.True);
-            Assert.That(ReferenceEquals(binding.Artifacts, frozen.Artifacts), Is.True);
-            Assert.That(ReferenceEquals(binding.RunSession, frozen.RunSession), Is.True);
-            Assert.That(ReferenceEquals(binding.RootLayout, frozen.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(binding.LockIdentityEvidence, frozen.LockIdentityEvidence), Is.True);
-            Assert.That(binding.TestRunId, Is.EqualTo(frozen.TestRunId));
-            Assert.That(binding.RunInitializationId, Is.EqualTo(frozen.RunInitializationId));
-            Assert.That(binding.RunManifestContentHash, Is.EqualTo(frozen.RunManifestContentHash));
+            Assert.That(
+                ReferenceEquals(binding.Drafts, frozen.FreezeReceipt.Drafts), Is.True);
+            Assert.That(
+                ReferenceEquals(binding.Artifacts, frozen.FreezeReceipt.Artifacts), Is.True);
+            Assert.That(
+                ReferenceEquals(binding.RunSession, frozen.FreezeReceipt.RunSession), Is.True);
+            Assert.That(
+                ReferenceEquals(binding.RootLayout, frozen.FreezeReceipt.RootLayout), Is.True);
+            Assert.That(
+                ReferenceEquals(
+                    binding.LockIdentityEvidence, frozen.FreezeReceipt.LockIdentityEvidence),
+                Is.True);
+            Assert.That(binding.TestRunId, Is.EqualTo(frozen.FreezeReceipt.TestRunId));
+            Assert.That(
+                binding.RunInitializationId,
+                Is.EqualTo(frozen.FreezeReceipt.RunInitializationId));
+            Assert.That(
+                binding.RunManifestContentHash,
+                Is.EqualTo(frozen.PlanWriteReceipt.Plan.RunManifestContentHash));
         }
 
         [Test]

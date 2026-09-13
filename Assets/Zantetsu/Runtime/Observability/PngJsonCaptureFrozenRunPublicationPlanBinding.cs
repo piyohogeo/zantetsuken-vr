@@ -65,15 +65,15 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Frozen publication result must remain valid.", nameof(frozenPublicationResult));
             }
 
-            CapturePublicationPlan genericPlan = frozenPublicationResult.Plan;
+            CapturePublicationPlan genericPlan = frozenPublicationResult.PlanWriteReceipt.Plan;
             if (genericPlan == null)
             {
                 throw new ArgumentException("Frozen publication result must hold a generic plan.", nameof(frozenPublicationResult));
             }
 
-            if (genericPlan.TestRunId != frozenPublicationResult.TestRunId
-                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.RunManifestContentHash, StringComparison.Ordinal))
+            if (genericPlan.TestRunId != frozenPublicationResult.FreezeReceipt.TestRunId
+                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.PlanWriteReceipt.Plan.RunManifestContentHash, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Generic plan must correlate with the frozen publication result.", nameof(frozenPublicationResult));
             }
@@ -109,27 +109,31 @@ namespace Zantetsu.Observability
 
         internal CaptureEvidenceFrozenRunPublicationResult FrozenPublicationResult => _frozenPublicationResult;
 
-        internal CapturePublicationPlan GenericPlan => _frozenPublicationResult.Plan;
+        internal CapturePublicationPlan GenericPlan => _frozenPublicationResult.PlanWriteReceipt.Plan;
 
         internal PngJsonCapturePublicationPlan LegacyPlan => _legacyPlan;
 
         internal CaptureEvidenceRunFreezeReceipt FreezeReceipt => _frozenPublicationResult.FreezeReceipt;
 
-        internal CaptureFrameDraftRegistry Drafts => _frozenPublicationResult.Drafts;
+        internal CaptureFrameDraftRegistry Drafts => _frozenPublicationResult.FreezeReceipt.Drafts;
 
-        internal CaptureArtifactRegistry Artifacts => _frozenPublicationResult.Artifacts;
+        internal CaptureArtifactRegistry Artifacts => _frozenPublicationResult.FreezeReceipt.Artifacts;
 
-        internal CaptureRunInitializationSession RunSession => _frozenPublicationResult.RunSession;
+        internal CaptureRunInitializationSession RunSession =>
+            _frozenPublicationResult.FreezeReceipt.RunSession;
 
-        internal CaptureRunRootLayout RootLayout => _frozenPublicationResult.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _frozenPublicationResult.FreezeReceipt.RootLayout;
 
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _frozenPublicationResult.LockIdentityEvidence;
+        internal CaptureRunLockIdentityEvidence LockIdentityEvidence =>
+            _frozenPublicationResult.FreezeReceipt.LockIdentityEvidence;
 
-        internal long TestRunId => _frozenPublicationResult.TestRunId;
+        internal long TestRunId => _frozenPublicationResult.FreezeReceipt.TestRunId;
 
-        internal string RunInitializationId => _frozenPublicationResult.RunInitializationId;
+        internal string RunInitializationId =>
+            _frozenPublicationResult.FreezeReceipt.RunInitializationId;
 
-        internal string RunManifestContentHash => _frozenPublicationResult.RunManifestContentHash;
+        internal string RunManifestContentHash =>
+            _frozenPublicationResult.PlanWriteReceipt.Plan.RunManifestContentHash;
 
         internal bool IsValid => IsCorrelated(_frozenPublicationResult, _legacyPlan);
 
@@ -147,7 +151,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            CapturePublicationPlan genericPlan = frozenPublicationResult.Plan;
+            CapturePublicationPlan genericPlan = frozenPublicationResult.PlanWriteReceipt.Plan;
             if (genericPlan == null)
             {
                 return false;
@@ -160,11 +164,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (genericPlan.TestRunId != frozenPublicationResult.TestRunId
+            if (genericPlan.TestRunId != frozenPublicationResult.FreezeReceipt.TestRunId
                 || genericPlan.TestRunId != legacyPlan.TestRunId
-                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(genericPlan.RunInitializationId, frozenPublicationResult.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(genericPlan.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.RunManifestContentHash, StringComparison.Ordinal)
+                || !string.Equals(genericPlan.RunManifestContentHash, frozenPublicationResult.PlanWriteReceipt.Plan.RunManifestContentHash, StringComparison.Ordinal)
                 || !string.Equals(genericPlan.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal))
             {
                 return false;

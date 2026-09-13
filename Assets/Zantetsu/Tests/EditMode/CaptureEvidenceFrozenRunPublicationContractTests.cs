@@ -496,20 +496,14 @@ namespace Zantetsu.Core.Tests
                 Assert.That(result, Is.Not.Null);
                 Assert.That(result.IsValid, Is.True);
                 Assert.That(ReferenceEquals(result.IssuedBy, temp.Coordinator), Is.True);
-                Assert.That(ReferenceEquals(result.Store, temp.Store), Is.True);
                 Assert.That(ReferenceEquals(result.FreezeReceipt, freezeReceipt), Is.True);
                 Assert.That(ReferenceEquals(result.PlanWriteReceipt.IssuedBy, temp.Store), Is.True);
-                Assert.That(ReferenceEquals(result.Plan, result.PlanWriteReceipt.Plan), Is.True);
-                Assert.That(ReferenceEquals(result.Drafts, freezeReceipt.Drafts), Is.True);
-                Assert.That(ReferenceEquals(result.Artifacts, freezeReceipt.Artifacts), Is.True);
-                Assert.That(ReferenceEquals(result.RunSession, freezeReceipt.RunSession), Is.True);
-                Assert.That(ReferenceEquals(result.RootLayout, temp.Layout), Is.True);
-                Assert.That(ReferenceEquals(result.LockIdentityEvidence, freezeReceipt.LockIdentityEvidence), Is.True);
-                Assert.That(result.TestRunId, Is.EqualTo(temp.Layout.TestRunId));
-                Assert.That(result.RunInitializationId, Is.EqualTo(freezeReceipt.RunInitializationId));
-                Assert.That(result.RunManifestContentHash, Is.EqualTo(HashA));
-                Assert.That(result.PublicationPlanPath, Is.EqualTo(temp.Store.PublicationPlanPath));
-                Assert.That(result.CanonicalByteCount, Is.GreaterThan(0));
+                Assert.That(
+                    result.PlanWriteReceipt.Plan.RunManifestContentHash, Is.EqualTo(HashA));
+                Assert.That(
+                    result.PlanWriteReceipt.AbsolutePath,
+                    Is.EqualTo(temp.Store.PublicationPlanPath));
+                Assert.That(result.PlanWriteReceipt.ByteCount, Is.GreaterThan(0));
             }
         }
 
@@ -521,12 +515,13 @@ namespace Zantetsu.Core.Tests
                 CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(temp.Layout);
                 CaptureEvidenceFrozenRunPublicationResult result = temp.Coordinator.PersistFrozenRun(freezeReceipt, HashA);
 
-                Assert.That(result.Plan.TestRunId, Is.EqualTo(freezeReceipt.TestRunId));
-                Assert.That(result.Plan.TestRunId, Is.EqualTo(freezeReceipt.Drafts.Run.TestRunId));
-                Assert.That(result.Plan.RunInitializationId, Is.EqualTo(freezeReceipt.RunInitializationId));
-                Assert.That(result.Plan.RunManifestContentHash, Is.EqualTo(HashA));
-                Assert.That(result.Plan.ArtifactCount, Is.EqualTo(0));
-                Assert.That(result.Plan.CaptureFrameEvidenceCount, Is.EqualTo(0));
+                CapturePublicationPlan plan = result.PlanWriteReceipt.Plan;
+                Assert.That(plan.TestRunId, Is.EqualTo(freezeReceipt.TestRunId));
+                Assert.That(plan.TestRunId, Is.EqualTo(freezeReceipt.Drafts.Run.TestRunId));
+                Assert.That(plan.RunInitializationId, Is.EqualTo(freezeReceipt.RunInitializationId));
+                Assert.That(plan.RunManifestContentHash, Is.EqualTo(HashA));
+                Assert.That(plan.ArtifactCount, Is.EqualTo(0));
+                Assert.That(plan.CaptureFrameEvidenceCount, Is.EqualTo(0));
             }
         }
 
@@ -614,23 +609,14 @@ namespace Zantetsu.Core.Tests
         // ---- Result ----
 
         [Test]
-        public void Result_NormalForwardsAllValues()
+        public void Result_HoldsCoordinatorFreezeAndWriteReceipts()
         {
             CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
 
             Assert.That(result.IsValid, Is.True);
-            Assert.That(ReferenceEquals(result.Store, result.IssuedBy.Store), Is.True);
-            Assert.That(ReferenceEquals(result.Plan, result.PlanWriteReceipt.Plan), Is.True);
-            Assert.That(ReferenceEquals(result.Drafts, result.FreezeReceipt.Drafts), Is.True);
-            Assert.That(ReferenceEquals(result.Artifacts, result.FreezeReceipt.Artifacts), Is.True);
-            Assert.That(ReferenceEquals(result.RunSession, result.FreezeReceipt.RunSession), Is.True);
-            Assert.That(ReferenceEquals(result.RootLayout, result.FreezeReceipt.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(result.LockIdentityEvidence, result.FreezeReceipt.LockIdentityEvidence), Is.True);
-            Assert.That(result.TestRunId, Is.EqualTo(result.FreezeReceipt.TestRunId));
-            Assert.That(result.RunInitializationId, Is.EqualTo(result.FreezeReceipt.RunInitializationId));
-            Assert.That(result.RunManifestContentHash, Is.EqualTo(HashA));
-            Assert.That(result.PublicationPlanPath, Is.EqualTo(result.Store.PublicationPlanPath));
-            Assert.That(result.CanonicalByteCount, Is.GreaterThan(0));
+            Assert.That(result.IssuedBy, Is.Not.Null);
+            Assert.That(result.FreezeReceipt, Is.Not.Null);
+            Assert.That(result.PlanWriteReceipt, Is.Not.Null);
         }
 
         [Test]
@@ -643,7 +629,6 @@ namespace Zantetsu.Core.Tests
 
             CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
             SetField(result, "_issuedBy", second);
-            Assert.That(ReferenceEquals(result.Store, second.Store), Is.True);
             Assert.That(result.IsValid, Is.False);
             Assert.That(ReferenceEquals(first, second), Is.False);
         }
@@ -781,15 +766,15 @@ namespace Zantetsu.Core.Tests
         public void Result_PlanCorruption_False()
         {
             CaptureEvidenceFrozenRunPublicationResult testRunId = MakeResult();
-            SetField(testRunId.Plan, "_testRunId", 999L);
+            SetField(testRunId.PlanWriteReceipt.Plan, "_testRunId", 999L);
             Assert.That(testRunId.IsValid, Is.False);
 
             CaptureEvidenceFrozenRunPublicationResult initId = MakeResult();
-            SetField(initId.Plan, "_runInitializationId", "ffffffffffffffffffffffffffffffff");
+            SetField(initId.PlanWriteReceipt.Plan, "_runInitializationId", "ffffffffffffffffffffffffffffffff");
             Assert.That(initId.IsValid, Is.False);
 
             CaptureEvidenceFrozenRunPublicationResult manifestHash = MakeResult();
-            SetField(manifestHash.Plan, "_runManifestContentHash", "A".PadRight(64, 'a'));
+            SetField(manifestHash.PlanWriteReceipt.Plan, "_runManifestContentHash", "A".PadRight(64, 'a'));
             Assert.That(manifestHash.IsValid, Is.False);
         }
 
@@ -841,7 +826,7 @@ namespace Zantetsu.Core.Tests
         public void Result_ArtifactReservationReappears_False()
         {
             CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
-            SetField(result.Artifacts, "_reservedArtifactCount", 1);
+            SetField(result.FreezeReceipt.Artifacts, "_reservedArtifactCount", 1);
             Assert.That(result.IsValid, Is.False);
         }
 

@@ -74,7 +74,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Plan binding must hold both plans.", nameof(planBinding));
             }
 
-            if (!ReferenceEquals(frozen.Plan, genericPlan)
+            if (!ReferenceEquals(frozen.PlanWriteReceipt.Plan, genericPlan)
                 || !ReferenceEquals(planBinding.LegacyPlan, legacyPlan))
             {
                 throw new ArgumentException("Plan binding must hold the exact frozen and legacy plans.", nameof(planBinding));
@@ -101,7 +101,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Plan binding must hold a live session bound to the exact lock identity evidence.", nameof(planBinding));
             }
 
-            if (planBinding.TestRunId != frozen.TestRunId
+            if (planBinding.TestRunId != frozen.FreezeReceipt.TestRunId
                 || planBinding.TestRunId != genericPlan.TestRunId
                 || planBinding.TestRunId != legacyPlan.TestRunId
                 || planBinding.TestRunId != rootLayout.TestRunId)
@@ -109,7 +109,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Test run ID must match across the seed graph.", nameof(planBinding));
             }
 
-            if (!string.Equals(planBinding.RunInitializationId, frozen.RunInitializationId, StringComparison.Ordinal)
+            if (!string.Equals(planBinding.RunInitializationId, frozen.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(planBinding.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
                 || !string.Equals(planBinding.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
             {
@@ -118,7 +118,7 @@ namespace Zantetsu.Observability
 
             if (!string.Equals(planBinding.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal)
                 || !string.Equals(planBinding.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal)
-                || !string.Equals(frozen.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
+                || !string.Equals(frozen.PlanWriteReceipt.Plan.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Manifest hash must match across the seed graph.", nameof(planBinding));
             }
@@ -129,7 +129,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Publication paths must be valid for the root layout.", nameof(planBinding));
             }
 
-            if (!string.Equals(publicationPaths.PublicationPlanPath, frozen.PublicationPlanPath, StringComparison.Ordinal))
+            if (!string.Equals(publicationPaths.PublicationPlanPath, frozen.IssuedBy.Store.PublicationPlanPath, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Publication plan path must match the frozen result.", nameof(planBinding));
             }
@@ -192,7 +192,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!ReferenceEquals(frozen.Plan, genericPlan)
+                if (!ReferenceEquals(frozen.PlanWriteReceipt.Plan, genericPlan)
                     || !ReferenceEquals(planBinding.LegacyPlan, legacyPlan))
                 {
                     return false;
@@ -216,7 +216,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (planBinding.TestRunId != frozen.TestRunId
+                if (planBinding.TestRunId != frozen.FreezeReceipt.TestRunId
                     || planBinding.TestRunId != genericPlan.TestRunId
                     || planBinding.TestRunId != legacyPlan.TestRunId
                     || planBinding.TestRunId != rootLayout.TestRunId)
@@ -224,7 +224,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!string.Equals(planBinding.RunInitializationId, frozen.RunInitializationId, StringComparison.Ordinal)
+                if (!string.Equals(planBinding.RunInitializationId, frozen.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
                     || !string.Equals(planBinding.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
                     || !string.Equals(planBinding.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
                 {
@@ -233,7 +233,7 @@ namespace Zantetsu.Observability
 
                 if (!string.Equals(planBinding.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal)
                     || !string.Equals(planBinding.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal)
-                    || !string.Equals(frozen.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
+                    || !string.Equals(frozen.PlanWriteReceipt.Plan.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
                 {
                     return false;
                 }
@@ -243,7 +243,7 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                if (!string.Equals(publicationPaths.PublicationPlanPath, frozen.PublicationPlanPath, StringComparison.Ordinal))
+                if (!string.Equals(publicationPaths.PublicationPlanPath, frozen.IssuedBy.Store.PublicationPlanPath, StringComparison.Ordinal))
                 {
                     return false;
                 }

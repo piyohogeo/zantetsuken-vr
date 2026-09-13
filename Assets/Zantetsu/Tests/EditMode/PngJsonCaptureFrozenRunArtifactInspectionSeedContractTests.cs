@@ -498,7 +498,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(
                 seed.PublicationPaths.PublicationPlanPath,
-                Is.EqualTo(seed.FrozenPublicationResult.PublicationPlanPath));
+                Is.EqualTo(seed.FrozenPublicationResult.IssuedBy.Store.PublicationPlanPath));
             Assert.That(ReferenceEquals(seed.PublicationPaths.RootLayout, seed.RootLayout), Is.True);
         }
 
@@ -579,7 +579,7 @@ namespace Zantetsu.Core.Tests
         public void Seed_FrozenPublicationPlanPathCorruption_Rejected()
         {
             PngJsonCaptureFrozenRunPublicationPlanBinding binding = MakeBinding(1);
-            SetField(binding.FrozenPublicationResult.Store, "_publicationPlanPath", "C:\\wrong\\plan");
+            SetField(binding.FrozenPublicationResult.IssuedBy.Store, "_publicationPlanPath", "C:\\wrong\\plan");
 
             Assert.Throws<ArgumentException>(
                 () => PngJsonCaptureFrozenRunArtifactInspectionSeed.Create(binding));
@@ -796,7 +796,7 @@ namespace Zantetsu.Core.Tests
                 Is.EqualTo(CaptureRunPublicationRecoveryDisposition.PublicationPlanAuthoritative));
             Assert.That(
                 seed.PublicationPaths.PublicationPlanPath,
-                Is.EqualTo(seed.FrozenPublicationResult.PublicationPlanPath));
+                Is.EqualTo(seed.FrozenPublicationResult.IssuedBy.Store.PublicationPlanPath));
         }
     }
 }

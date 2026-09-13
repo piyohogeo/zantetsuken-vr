@@ -10,17 +10,19 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly four read-only reference fields — the issuing
+    /// The type holds exactly four readonly references — the issuing
     /// coordinator, the coordinator-minted issuance proof, the freeze receipt,
     /// and the publication-plan write receipt — and has no public constructor.
-    /// Every accessor forwards a value from the held graph: the store, plan,
-    /// draft registry, artifact registry, run session, root layout, lock
-    /// identity evidence, run identity, run initialization id, run manifest
-    /// content hash, publication plan path, and canonical byte count are all
-    /// forwarded rather than duplicated. The proof is never exposed.
+    /// What was published is read from <see cref="FreezeReceipt"/>,
+    /// <see cref="PlanWriteReceipt"/>, and <see cref="IssuedBy"/>: the store,
+    /// plan, draft registry, artifact registry, run session, root layout, lock
+    /// identity evidence, Run identity, run manifest content hash, publication
+    /// plan path, and canonical byte count are none of them restated as a field
+    /// or property of this type's own. The proof is never exposed.
     /// </para>
     /// <para>
-    /// <see cref="Create"/> performs a single O(1) exact-binding check that
+    /// The static creation boundary <see cref="Create"/> performs a single
+    /// O(1) exact-binding check that
     /// the proof was minted by this coordinator for the exact freeze receipt
     /// and write receipt, then assigns fields. The full freeze-graph validation
     /// happened once in the coordinator before persistence, and is re-run only
@@ -64,9 +66,10 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Atomic factory: performs the single O(1) exact-binding check that
-        /// the proof was minted by the issuing coordinator for the exact freeze
-        /// receipt and write receipt, then assigns fields exactly once. The full
+        /// The only creation boundary: it performs the single O(1)
+        /// exact-binding check that the proof was minted by the issuing
+        /// coordinator for the exact freeze receipt and write receipt, then
+        /// assigns fields exactly once. The full
         /// freeze-graph validation already happened once in the coordinator, and
         /// is re-run only by <see cref="IsValid"/>.
         /// </summary>
@@ -107,33 +110,9 @@ namespace Zantetsu.Observability
 
         internal CaptureEvidenceRunPublicationCoordinator IssuedBy => _issuedBy;
 
-        internal CaptureArtifactFileStore Store => _issuedBy.Store;
-
         internal CaptureEvidenceRunFreezeReceipt FreezeReceipt => _freezeReceipt;
 
         internal CapturePublicationPlanWriteReceipt PlanWriteReceipt => _writeReceipt;
-
-        internal CapturePublicationPlan Plan => _writeReceipt.Plan;
-
-        internal CaptureFrameDraftRegistry Drafts => _freezeReceipt.Drafts;
-
-        internal CaptureArtifactRegistry Artifacts => _freezeReceipt.Artifacts;
-
-        internal CaptureRunInitializationSession RunSession => _freezeReceipt.RunSession;
-
-        internal CaptureRunRootLayout RootLayout => _freezeReceipt.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _freezeReceipt.LockIdentityEvidence;
-
-        internal long TestRunId => _freezeReceipt.TestRunId;
-
-        internal string RunInitializationId => _freezeReceipt.RunInitializationId;
-
-        internal string RunManifestContentHash => _writeReceipt.Plan.RunManifestContentHash;
-
-        internal string PublicationPlanPath => _issuedBy.Store.PublicationPlanPath;
-
-        internal int CanonicalByteCount => _writeReceipt.ByteCount;
 
         /// <summary>
         /// Exception-safe recomputation of the full correlation from the
