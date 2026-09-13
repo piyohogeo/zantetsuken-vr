@@ -11,9 +11,11 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// A cleaner exception propagates unchanged and is never turned into a
     /// Failed result; the coordinator never repeats the call and never
-    /// fabricates a result or receipt. A default, invalid, or foreign result,
-    /// an undefined status, a Cleaned result without its receipt, and a Failed
-    /// result carrying one are all rejected with
+    /// fabricates a result or receipt. One question settles the returned
+    /// result: whether it was issued for this exact cleaner and operation. Its
+    /// validity is Cleaned or Failed, so a default, invalid, or foreign result,
+    /// an undefined status, a Cleaned result without its correlated receipt,
+    /// and a Failed result carrying one are all rejected there with
     /// <see cref="InvalidOperationException"/>. This layer touches no
     /// filesystem, lock, Registry, disposition, or Service, owns no thread,
     /// queue, or task, and is not an <see cref="IDisposable"/>.
@@ -49,21 +51,6 @@ namespace Zantetsu.Observability
             {
                 throw new InvalidOperationException(
                     "Cleaner returned a default, foreign, or invalid cleanup result.");
-            }
-
-            if (result.IsCleaned)
-            {
-                NvencRunCaptureCompleteRecoveryCleanupReceipt receipt = result.Receipt;
-                if (receipt == null || !receipt.IsIssuedFor(_cleaner, operation))
-                {
-                    throw new InvalidOperationException(
-                        "A cleaned result must carry the receipt of this exact cleanup.");
-                }
-            }
-            else if (result.Receipt != null)
-            {
-                throw new InvalidOperationException(
-                    "A failed cleanup must not carry a receipt.");
             }
 
             return result;

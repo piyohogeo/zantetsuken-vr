@@ -9,11 +9,13 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those two references are the whole state; the CaptureComplete receipt
-    /// and operation, the Capture Index classification and its snapshot, the
-    /// optional commit receipt, the publication recovery decision, the
-    /// authoritative plan, the root layout, and the Run identity are forwarded
-    /// from the operation's graph rather than copied.
+    /// The receipt holds exactly two readonly references, the exact cleaner
+    /// and the exact operation, and they are the whole state. What was cleaned
+    /// up — the CaptureComplete receipt and operation, the Capture Index
+    /// classification and its snapshot, the optional commit receipt, the
+    /// publication recovery decision, the authoritative plan, the root layout,
+    /// and the Run identity — is read from <see cref="Operation"/>: the receipt
+    /// restates none of it and duplicates none of it as a field of its own.
     /// </para>
     /// <para>
     /// This is process-local evidence of one successful synchronous call. It is
@@ -23,8 +25,9 @@ namespace Zantetsu.Observability
     /// operation, and that the operation is still valid.
     /// </para>
     /// <para>
-    /// This type owns, mutates, and disposes nothing, touches no file, releases
-    /// no lock, and is not an <see cref="IDisposable"/>, MonoBehaviour, or
+    /// This type does not own, change, or dispose the filesystem, the lock, or
+    /// the operation's lifetime, touches no file, releases no lock, and is not
+    /// an <see cref="IDisposable"/>, MonoBehaviour, or
     /// ScriptableObject. <see cref="IsValid"/> never throws, so once the OS
     /// lock is released the operation becomes invalid and this receipt follows
     /// it.
@@ -73,34 +76,6 @@ namespace Zantetsu.Observability
         internal INvencRunCaptureCompleteRecoveryCleaner Cleaner => _cleaner;
 
         internal NvencRunCaptureCompleteRecoveryCleanupOperation Operation => _operation;
-
-        internal NvencRunCaptureCompleteRecoveryReceipt CaptureCompleteReceipt =>
-            _operation.CaptureCompleteReceipt;
-
-        internal NvencRunCaptureCompleteRecoveryOperation CaptureCompleteOperation =>
-            _operation.CaptureCompleteOperation;
-
-        internal NvencRunCaptureIndexRecoveryDecision CaptureIndexRecoveryDecision =>
-            _operation.CaptureIndexRecoveryDecision;
-
-        internal NvencRunCaptureIndexRecoveryInspectionSnapshot CaptureIndexRecoverySnapshot =>
-            _operation.CaptureIndexRecoverySnapshot;
-
-        internal NvencRunCaptureIndexRecoveryCommitReceipt CaptureIndexRecoveryCommitReceipt =>
-            _operation.CaptureIndexRecoveryCommitReceipt;
-
-        internal bool HasCommitReceipt => _operation.HasCommitReceipt;
-
-        internal NvencRunPublicationRecoveryDecision PublicationRecoveryDecision =>
-            _operation.PublicationRecoveryDecision;
-
-        internal CapturePublicationPlan AuthoritativePlan => _operation.AuthoritativePlan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {

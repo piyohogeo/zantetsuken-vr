@@ -114,7 +114,6 @@ namespace Zantetsu.Core.Tests
             // Nothing was committed on this path, so no commit receipt exists.
             Assert.That(result.HasCommitReceipt, Is.False);
             Assert.That(result.CaptureIndexRecoveryCommitReceipt, Is.Null);
-            Assert.That(result.Receipt.CaptureIndexRecoveryCommitReceipt, Is.Null);
         }
 
         [Test]
@@ -135,9 +134,6 @@ namespace Zantetsu.Core.Tests
                 Is.True);
             Assert.That(ReferenceEquals(
                     result.CaptureIndexRecoveryCommitReceipt, commitReceipt),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    result.Receipt.CaptureIndexRecoveryCommitReceipt, commitReceipt),
                 Is.True);
         }
 

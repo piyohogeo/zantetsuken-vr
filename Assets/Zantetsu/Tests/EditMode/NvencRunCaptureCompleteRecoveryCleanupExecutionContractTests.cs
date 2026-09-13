@@ -277,7 +277,7 @@ namespace Zantetsu.Core.Tests
         // ---- Forwarding ----
 
         [Test]
-        public void ResultAndReceipt_ForwardTheGraph_OnTheAlreadyAuthoritativePath()
+        public void Result_ForwardsTheGraph_OnTheAlreadyAuthoritativePath()
         {
             FakeCleaner cleaner = new FakeCleaner();
             NvencRunCaptureCompleteRecoveryCleanupOperation operation = MakeOperation(Matches);
@@ -288,13 +288,11 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(result.HasCommitReceipt, Is.False);
             Assert.That(result.CaptureIndexRecoveryCommitReceipt, Is.Null);
-            Assert.That(result.Receipt.HasCommitReceipt, Is.False);
-            Assert.That(result.Receipt.CaptureIndexRecoveryCommitReceipt, Is.Null);
             AssertForwardsTheGraphOf(result, operation);
         }
 
         [Test]
-        public void ResultAndReceipt_ForwardTheGraph_OnTheCommittedPath()
+        public void Result_ForwardsTheGraph_OnTheCommittedPath()
         {
             FakeCleaner cleaner = new FakeCleaner();
             NvencRunCaptureCompleteRecoveryCleanupOperation operation = MakeCommittedOperation(
@@ -307,9 +305,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.HasCommitReceipt, Is.True);
             Assert.That(ReferenceEquals(
                     result.CaptureIndexRecoveryCommitReceipt, commitReceipt),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    result.Receipt.CaptureIndexRecoveryCommitReceipt, commitReceipt),
                 Is.True);
             AssertForwardsTheGraphOf(result, operation);
         }
@@ -454,34 +449,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.TestRunId, Is.EqualTo(operation.TestRunId));
             Assert.That(ReferenceEquals(
                     result.RunInitializationId, operation.RunInitializationId),
-                Is.True);
-
-            NvencRunCaptureCompleteRecoveryCleanupReceipt receipt = result.Receipt;
-            Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureCompleteReceipt, operation.CaptureCompleteReceipt),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureCompleteOperation, operation.CaptureCompleteOperation),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoveryDecision,
-                    operation.CaptureIndexRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexRecoverySnapshot,
-                    operation.CaptureIndexRecoverySnapshot),
-                Is.True);
-            Assert.That(ReferenceEquals(
-                    receipt.PublicationRecoveryDecision,
-                    operation.PublicationRecoveryDecision),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.AuthoritativePlan, operation.AuthoritativePlan),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId),
                 Is.True);
         }
 
