@@ -259,7 +259,7 @@ CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Jobへ
 
 VPプールへのJobアクセスは内部Published入力と自分のReserved出力に限る。同一Geometry Work内部の段階間所有権移管はJob完了回収後に行い、共有書込みを許可しない。実使用部分を内部Publishedにし、未使用予約を解除する。切断間の入力は直前祖先のCommitted Geometryに限り、未Commit成果物を後続切断へ公開しない。Publishedはアロケータ内部の読取り許可であり、Geometry Commit・GPU転送・Gameplay／Trace状態を表さない。安全属性の解除でJob完了や実データ依存を省略しない。
 
-概念上の切断Job入力は全体VB／IB view、入力Geometry参照、新規Vertex／Index書込み許可範囲、出力は結果と実書込み量とする。型・field列・enum数値は固定しない。表示切断に厳密Count→確保→Writeを必須にせず、出力予約不足では範囲外へ書く前に容量不足で終了し、部分成果物を公開せず再予約・再実行できる。7.9の新Index領域も同じ予約規則を使う。形状不正・世代不一致の救済や切断受付の再試行へ広げず、範囲外書込み後の例外回復を設けない。
+数値Kernelの入出力は6.1に従う。新規Vertexは一つの連続予約の先頭から実使用部分を詰めて出力し、継承Vertexは既存番号を参照する。新規Indexは4.5.6の一つの連続予約へ正側、負側の順で出力する。属性seamやCapのために必要な新規Render Vertexはこの新規Vertex出力へ含める。表示切断に厳密Count→確保→Writeを必須にせず、出力予約不足では範囲外へ書く前に容量不足で終了し、部分成果物を公開せず再予約・再実行できる。7.9の新Index領域も同じ予約規則を使う。形状不正・世代不一致の救済や切断受付の再試行へ広げず、範囲外書込み後の例外回復を設けない。
 
 Published Vertexは上書き・再利用せず、子から継承参照する。移動はInstance Transform／frame写像で扱い、継承のためだけに全頂点を複製・書換えしない。CPU Index rangeは旧GeometryのCPU正本参照とCPU／Job／転送元読者がなくなれば再利用できる。CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理する。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
 
@@ -480,13 +480,20 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
 
 | 区分 | 内容 |
 | --- | --- |
-| 入力 | posed頂点、法線、接線、UV、色、submesh、index、切断平面、`RenderCutTopologyMap`、論理破片ID、世代番号 |
-| 処理 | Topology Vertex単位の分類、Original Edge単位の交点共有、元surface順序を保つTriangle clip、Topology由来Contour接続、有向Cap生成 |
-| 出力 | 正負の共用Geometry、Bounds、幾何切断に必要なTopology Metadata、Commit Metadata |
+| 入力 | グローバルAoS VB／IBのview、posedな入力Geometryを表すIndex範囲等、必要なsubmesh・Topology／属性seam対応、同じ局所frameの採用面 |
+| 作業・出力領域 | caller提供scratch、新規Vertex／Indexの各連続書込み許可範囲、必要なTopology等の出力領域 |
+| 処理 | 6.2～6.4の分類・交点共有・元surface順序を保つTriangle clip・属性補間・Contour／有向Cap生成と、4.5.6の正負直接配置 |
+| 結果 | 正負Geometryの範囲・Bounds、新規Vertex／正負Indexの実使用量、再切断と既存Boundary構築に必要な数値上の対応情報、成否 |
+
+数値KernelはPhase 2.9で先行実装する。全域viewはアドレッシングのためのもので、処理対象は指定された入力Geometryとその参照先に限り、他物体を含む全VBの走査・初期化を前提にしない。呼出側は数値Workの投入から実行完了まで、指定入力とTopology・面を保持して不変とし、scratch／output範囲を有効かつ当該実行専有に保つ。他Workの別予約範囲への書込みは4.5.3に従う。Kernelは入力を変更せず、予約外へ書かず、完了後に参照を保持しない。成果物の保持・回収は4.5の既存資源寿命に従う。
+
+必要容量の照会・見積りはKernel実装と同じ側が所有し、呼出側が領域を用意して数値Workへ渡す。正確な出力Countを先行Jobで求める方式は要求しない。成否の扱いは6.5に従い、予約不足は4.5.3の非公開終了・再予約・再実行へ、表面化した予期しない内部エラーは4章の共通終了へ接続する。契約内入力の未対応を正常な失敗や偽の空出力で代替しない。Unity Object・Scene操作、論理ID・世代・authority、資源取得、Schedule、GPU転送、Geometry CommitとRenderer固有情報はKernelの外で扱う。型・field・layout・関数名は実装詳細とし、内部工程の別Job化や永続的な引渡しartifactを要求しない。
 
 元surfaceの既存submesh対応を保持し、実CapのIndexは本体の既存Draw rangeへ含める。実Capはその本体と同じMaterial・同じShader Pass・同じDraw callで描き、5.3のraw UV判定で通常Textureの取得と固定断面色の選択だけを分岐し、以後の陰影処理を共用する。複数の既存Draw rangeがある場合のCap配分は実装詳細とし、Cap用のsubmesh・Drawは追加しない。この同一Draw規則は実Capを対象とし、即時仮断面のStencil Volume／Cap描画は5章に従う。複数Renderer、submesh、閉Componentを一つの巨大Geometryへ結合する義務はない。幾何処理に必要なTopology対応を保ち、Geometry参照と描画集約、LogicalFragment、物理所有単位を分離する（4.5.1）。属性seamによるRender Vertex分裂、非同期Jobのための世代保持、CPU／GPU表現、物理Convexも別Geometryとは扱わない。
 
 ### 6.2 共通入力契約
+
+`RenderCutTopologyMap`は属性seamをまたぐ論理Topologyの対応と、別Topologyの区別に必要な情報を持つ。通常切断の初期実装ではpersistent adjacency、BVH、全Component一覧・恒久IDを前提にせず、必要なedge・局所隣接・ContourをIndexとTopology対応から切断中のscratchへ構築する。元surfaceと生成Capの属性分裂後も再切断に必要な対応を残す。対応の格納形式、配列数、識別方法は実装詳細とし、位置一致による推測weldで代替しない。
 
 `RenderCutTopologyMap`が表すTopologyについて、各Edgeへちょうど2面が接続し、その2面が共有Edgeを互いに逆方向へたどること、各Topology Vertexの周囲の面が一つの閉じたfanを作ることを要求する。使用するposition／属性はfinite、index／submesh／Topology参照は有効とし、同じTopology Vertexのposed positionと同じOriginal Edgeの交点positionは一度生成したcanonical値を共有する。
 
@@ -933,7 +940,7 @@ Kerfは0、固定側のOffset／Impulseは0とする。固定を理由に仮描�
 | 層 | 用途 | 品質契約 |
 | --- | --- | --- |
 | 共用Cut Geometry | 通常表示、最終破片、即時Stencil Volume | 6章の閉鎖・edge／vertex manifold・局所winding整合済みTopology。複数submesh、Disconnectedな閉Component、Component間のIntersection／Overlapを許容 |
-| 幾何Topology Metadata | 共用Geometryの切断・Cap生成 | 6章の局所隣接とContourを維持し、物体化のための全島列挙を要求しない |
+| 幾何Topology Metadata | 共用Geometryの切断・Cap生成 | 6.2のTopology／属性seam対応。切断中の作業構造と区別する |
 | Physics Proxy | 接触とConvex切断 | 少数の低頂点Convex／Compound。各Convexは有効な閉凸形状だが、Compound内の相互Overlapを許容 |
 | 固定Anchor入力 | 所有者全体の固定 | 固定を設定する入力だけが点Anchorの初期Logical Convex CellとfiniteなFrame内local位置を明示する |
 
@@ -1243,7 +1250,7 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-003 | 複数Pending | 2〜4切断で画質と性能が許容範囲 | 切断数別にCPU/GPU、Draw、overdrawを比較 |
 | T-004 | Stencil断面 | 正常な正向きの共用Geometryで、5.2の明示的品質例外を除き穴・はみ出し・片眼ずれがない | 箱、凹形、人形の共用Geometryを通常の外部視点で両眼確認する。符号・Color・Plane overflowの扱いはT-066／T-067／T-089に従い、この試験へ重複展開しない。Camera内部／Near Plane近傍は5.2／D-131の品質例外に従う |
 | T-005 | Convex切断 | 7.2の上限内の有効な閉凸出力と内接性を確認する | 小さいオフラインFixtureでL境界、超過出力の内接削減、削減後B-repの再切断可能性を確認する。削減不能は既存失敗終端へ接続し、成功例をAbortだけで代替しない。頂点由来・削除順別のmatrixは要求しない |
-| T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表10プロップを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
+| T-006 | 共用Geometry切断 | 断面が閉じ、元surfaceのUV／法線／submeshが保持され、同じ結果が表示／Stencilへ使われる。生成Capの固定負UV markerと再切断時の継承を維持する | 代表Fixtureを多方向に連続切断。断面専用submeshの存在は合格条件にしない |
 | T-007 | 受付制限と対象authority | 4.2／8章のSource単位の受付・失効と4.5.6の祖先順Geometryを確認する | AがActive中の同じSourceへの要求を見送り、保存・再実行しない。他のLogicalFragmentは同じObject内でも並行でき、他枝のObjectGeneration更新でAをRejectしない。AのFinal Physics／Logical公開後はGeometry未完了でも子のBを受付・公開できるが、B KernelはA Geometry Commitを待つ。同じTransactionのProvisional置換・pose／速度／Sleep変化は自己失効せず、外部authority変更はStale回収して現在Sourceを退役させない |
 | T-008 | Skinned切断 | 姿勢固定から静的破片への切替が見えない | Phase 4.52。歩行・走行・腕振り中に各部位を切断 |
 | T-009 | 入力モデル耐性 | 契約内モデルは自動前処理で切断可能になる | 変換検査とエラーレポートを確認 |
@@ -1309,7 +1316,11 @@ T-027～T-030は後続Phaseで採用した前処理に適用する。未採用�
 | T-085 | Convex質量特性と質量保存 | 7.2の親質量保存とFinal質量特性を確認する | 少数の単一・重複Compound・連続切断で、正負子のfiniteな正質量、親質量保存、finiteでSolverへ設定可能な重心・慣性、Provisional mass非流用を確認する。加算順・配分系譜・固定近似方式のGoldenを要求しない |
 | T-086 | robust supportと正負二集合 | 7.6の一つのepsilonによる受付・未切断継承と2所有者を確認する | 接線・Near-plane・等号で片側supportなしはNo-op、両robust supportがあるConvexはd = 0で分割する。非交差Compound全体が両supportを持てば受付け、全頂点Near-planeの別Convexは正側へ未切断継承する。U字・離れた島も同Sideの一所有者にまとめ、両Physics非空でGeometry片側／両側空ならRendererなしの子を残す。受付後の片側物理不成立はAbortであり、反対側所有者へのGeometry付属で救済しない。非UnionのStencil符号加算とSibling衝突抑止は維持する |
 
-4.5.6の表示出力は既存T-007／T-083／T-086／T-090／T-091の該当確認へ次を統合し、小さいFixtureと意図的な完了遅延で確認する。別Test ID、専用大規模Suite、Benchmark Schema、Trace Eventを追加しない。
+T-006／T-083の数値部分と4.5.6の直接配置はPhase 2.9で確認する。継承Vertex再利用・新規Vertex連続出力、非zero baseや疎な既存参照、共有入力と非重複出力、容量不足・入力不変・scratch再利用を確認できるものとする。GPU転送、世代・authority、Boundary公開、表示／Stencilへの同時反映、祖先順Geometry CommitはPhase 3で確認し、数値部分だけで統合確認を完了扱いにしない。Probe由来Fixture・生成器・Verifierは必要なものを選抜・改変でき、検証方法・ケース集合は17章に従う。製品Runtime出力Validatorは設けない。
+
+Phase 2.9の性能確認は実Burst経路の数値処理・割当・出力量を対象とし、比較可能な同一入力では先行実装との退行を調べる。seam・AoS・追記出力による処理範囲の差を区別し、大きな退行は原因と結果を記録する。比較不能・未測定を確認済みとせず、Probeの全測定再現・固定倍率・第二Kernelの恒久維持は要求しない。参考Assetは10.2.3を利用でき、全Asset移植や0.21完了を前提にしない。
+
+4.5.6の表示出力は既存T-007／T-083／T-086／T-090／T-091の該当確認へ次を統合する。数値配置はPhase 2.9、転送・公開はPhase 3、実物理との接続はPhase 4とし、小さいFixtureと統合時の意図的な完了遅延で確認する。別Test ID、専用大規模Suite、Benchmark Schema、Trace Eventを追加しない。
 
 | 確認する順序・条件 | 既存試験へ統合する期待動作 |
 | --- | --- |
@@ -1352,7 +1363,9 @@ Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視
 
 Phase 0.21は10.2.3の受入れ責務を定め、最初に必要とするPhaseが、その用途に必要な登録・内容識別・所在解決・Harness接続を具体化する。初回利用元と接続先は実施記録へ残し、特定のPhase番号や全Consumer共通API・汎用Runnerを先に固定しない。独立した先行作業でも利用Phaseとの並行実装でもよく、Phase 0.2の完了・再開や未実装Consumerの前倒しを要求しない。個別データの持込みや独立した他Phaseの進行を0.21完了待ちにせず、既存Harnessへの入力は先行できる。導入後の入力更新・参考実行と、後続用途に必要な拡張・変更は通常作業とし、同じ受入れ責務の範囲では0.21を再開しない。
 
-Phase 3.9は7.2の数値Kernelを先行実装する独立分岐とし、Phase 0.x～3の完了を着手・merge条件にしない。専用branchで開発し、ゲーム経路に未接続でもmainへ早期mergeできる。Phase 4はPhase 1～3と、その時点の3.9の数値Kernelを実物理へ接続する。先行mergeはAPI・layoutの凍結ではなく、残る形状・容量・所有権の意味契約を維持し、現行利用箇所と試験を追従させて破壊的変更・置換・削除できる。旧API維持・互換層・migrationを要求しない。Phase 1～3のHarness内合成Final Physics入力は維持し、3.9の利用や実物理統合を前倒ししない。
+Phase 2.9は6章の共用Geometry数値Kernel、Phase 3.9は7.2のPhysics Convex数値Kernelを先行実装する独立分岐とする。2.9はPhase 0.x～2、3.9はPhase 0.x～3の完了を着手・merge条件にせず、専用branchで開発し、ゲーム経路に未接続でもmainへ早期mergeできる。Phase 3はPhase 2までの基盤とその時点の2.9のKernelを表示／Stencilへ接続し、Phase 4はPhase 1～3と3.9のKernelを実物理へ接続する。先行mergeはAPI・layoutの凍結ではなく、残る意味契約と現行利用箇所・試験を維持して破壊的変更・置換・削除できる。旧API維持・互換層・migrationを要求しない。前段の基盤・合成入力をKernel利用待ちにせず、Phase 1～3のHarness内合成Final Physics入力も維持する。
+
+Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md`（2026-09-09）が選定したBurstのscan＋edge hash＋分割capとし、seam対応と本隊のAoS／追記出力／6章契約への適合を行う。これは初期実装選択であり方式の恒久固定ではない。Probe全体、不採用Backend、全測定の再現、Probe側の描画・転送設計の採用はmerge条件にしない。移植元の未対応を本隊入力の除外条件へせず、6章との差を実コードと選抜ケースで閉じる。
 
 3.9の初期移植元は独立Probe `zantetsuken-convex-cut-cook-probe` の `REPORT.md`（2026-09-13追補）のA-Walk、Burst R0→R1、double質量計算とする。これは初期実装選択であり方式の恒久固定ではない。Probe全体、比較Backend、旧managed prototype、全測定の再現はmerge条件にせず、公開SyntheticとLicensed入力の既存分離を維持する。
 
@@ -1386,7 +1399,8 @@ Phase 3.9は7.2の数値Kernelを先行実装する独立分岐とし、Phase 0.
 | Phase 1.51 | VP Hybrid Clip確認 | 少数の固定合成入力による面・Side・Offset、Raster 8＋Pixel 4。入力field構成と具体的なFixture列は実装詳細 | Color／Depth／ShadowCasterで同じ固定入力を使い、先頭8面のSV_ClipDistanceと続く4面のPS clip、左右眼の一致を確認する。Pending Cut、候補選択、13面以上、Cap／Stencil、Shadow画質・性能評価は含めない |
 | Phase 1.52 | VP Stencil基本確認 | 正向きの固定合成閉Geometry、既知Cap Polygon、固定Clip Descriptor、少数の固定割当てStencil Color | 全8bitを使い、Colorごとの128初期化、Wrap加減算、Ref 128 / Comp LessでS>128だけがColor／Depthを書くこと、全Volume後に全Cap、Color間の再初期化、左右眼一致を確認する。Cap生成・Cull・Compatibility・Residual Support・Color割当て・Pending Stateを前倒ししない |
 | Phase 2 | 仮断面・影強化 | 表示／Stencil共用基底Geometry、6.2の入力Gate、`RenderCutTopologyMap`、T-084、ゼロKerf、LogicalCutOperation、TemporaryRenderCapRecordSet、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、128初期化の正符号8bit IncrementWrap／DecrementWrap Stencil、Residual Stencil Supportの保守的投影競合、符号保存のCapCompatibility Group、`MaxStencilColors`と最後の統合Color、Color単位Volume／Cap Batch、`TemporaryClipConstraintCandidateSet`、`SV_ClipDistance` 8面＋PS `clip()` 4面＋5.2のPlane overflow処理、共通トゥーンの粘土色グレー、Temporary／Committed断面デバッグ色、ShadowCaster用同一Hybrid Clip／Offset、XR両眼対応、Pending Cut／Stable履歴管理、T-067／T-089 | 1.50～1.52の成立後、そのShader／Passへ製品状態・Cap生成・Batchを接続する。2～4連続切断と複数対象で、表示とStencil Volumeが同じ合格済み基底／Stable Geometry、Topology、windingを参照し、用途別Geometryや描画時のGeometry再検証を持たない。通常Colorは左右眼の非互換Residual Supportを分離し、Color数を固定上限内に保ち、同じColorでは全Volume後に全Capを描く。Self-intersection、別Topologyの重複／Coincident、Internal／Nested、全体反転を向き保存で受理し、共通入力Gate不合格は切断対象へ登録しない。符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupは作らない。`S=(128+W) mod 256`と`S>128`を使い、範囲外は5.2の品質例外とする。最後のColorでは混入、欠落、余計なCap、誤Depthを許容し、GPU時間は測定対象に留める。8bitを排他利用できない構成は4章の共通Player終了に従い、部分Bitや代替経路を持たない。候補面は古い未Commit祖先制約を優先するdependency-closedなstable順で全Pass／両眼へ共有し、8面をRaster、続く4面をPixelで処理する。超過した後発面は即時Stencil VolumeをsubmitせずCap板と論理／背景処理を残す。Cap pair／Coverage探索、Cap単位Buffer compaction、Mesh部分更新、多段Fallbackを行わない。Color割当ては5.6の実装自由度に従い、全Graph構築を必須としない。Camera内部／Near Plane近傍では5.2の品質例外を許容する。Shadow MapではStencil Capなしの影近似を使用する |
-| Phase 3 | 共用表示／Stencilジオメトリ | Job＋Burstの一つの三角形切断系列、4.5のVPプール入力・出力と範囲所有権、`RenderCutTopologyMap`、Topology系譜の交点共有、共通signed-distance分類、有向境界と整合するCap、閉鎖・edge／vertex manifold・局所winding整合の出力継承、Runtime面積0 Triangle許容、正負各最大1のGeometry範囲、単一予約内の正負Index直接出力、Final／Logical公開後の祖先順Geometry Commitと内部転送、GPU範囲更新とメインスレッドGeometry参照公開、両用途の原子的Geometry Commit、空出力の非生成、命中済みGeometryを投機・Maintenanceより先に扱う共有Dispatch接続、T-083 | 少数Fixtureで正負連続Indexと転送1回／再利用時0回を確認し、Harness内合成Final公開から現在追従先を使った表示と4.5.6のA→B Commit順序をPhase 4の実cookなしで成立させる。仮表示から共用VP Geometryへ置換し、切断Kernelの重い頂点処理がMain Threadへ戻らない。通常更新で全Job／GPUを待たず、容量拡張時の停止・容量限界での終了だけ4.5.4に従う。箱、凹形、複数閉Component、全体反転、Self-intersection、別Topologyの重複／Coincident／Nested、vertex／edge／face通過、同一点複数port、面積0を含む契約内Fixtureで、生成Capを含む各非空出力が入力と同じ共通契約を継承して再切断できる。表示とStencilが同じ世代・Triangle集合を使用し、用途別の切断、Cap生成、適否、修復、簡易表示Proxyを持たない。Triangle数0の側にはdummy Mesh／Cap／Rendererを作らない。製品Runtime出力Validatorを持たず、表面化した予期しない内部エラーは4章に従う。世代不一致は通常の不採用・回収とし、出力予約不足では部分出力を公開しない。出力予約不足だけは4.5.3の再予約・再実行を許容する。全Mesh self-intersection／inside-outside／shell分類をRuntimeへ追加しない |
+| Phase 2.9 | 表示／Stencil共用メッシュ切断Kernel先行実装 | 6章のTriangle切断・属性補間・Contour／Cap生成・Topology対応更新を行い、caller提供のグローバルVB／IB範囲へ出力するBurst数値Kernelと検証コード | 現行Unity環境でbuild・実際のBurst実行を確認し、6章の共通契約、seam、Cap、再切断、既存Vertex再利用、新規Vertex・正負Indexの直接配置と容量安全を代表入力で確認する。製品アロケータ・Job wrapper・GPU・Renderer・Geometry Commitへ未接続でも完了する。性能確認は14章、検証詳細は17章に従う |
+| Phase 3 | 共用表示／Stencilジオメトリ統合 | Phase 2.9の数値Kernelと、既存VPプール・範囲所有権・共有Dispatch・GPU転送・Renderer・4.5.6の祖先順Geometry Commitとの接続 | T-006／T-083の統合部分を確認し、数値確認は2.9を再利用する。合成Final Physics／Logical公開後の正負Geometry・Boundaryの後着、A→BのKernel／Commit順序、Temporary置換と全Passの共用を成立させる。新規Indexの転送1回／再利用時0回、空Geometryへのdummy非生成、Stale回収・予約不足の非公開を維持する。重い頂点処理をMainへ戻さず、通常の全Job／GPU待ちを追加しない。容量・内部エラーは4章／4.5、出力契約は6章に従い、実cookはPhase 4へ残す |
 | Phase 3.9（完了済み） | Physics Convex数値Kernel先行実装 | 7.2のB-rep clip、非交差継承、内接削減、質量特性、worst-case容量照会を行うBurst数値Kernelと最小Harness | 現行Unity環境でbuild・Burst実行でき、7.2／7.6の数値契約、削減成功、局所退化を含む採用B-repの再切断、予約範囲内の実行を代表入力で確認する。中心近傍の共通局所frameを使用し、Actor・Anchor・Cook Frameとの接続はPhase 4に残す。MeshData、製品アロケータ・Job wrapper、Mesh／Bake／Actor／Commitへ未接続でも完了し、Phase 4／4.1の完了とは扱わない。検証詳細は17章に従う |
 | Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、Phase 3.9の数値Kernelを使う7.2のOwner単位Cut/Cook統合・事前容量予約・P1 recenterの物理接続、単一Cooking Profile、初回速度継承・Final handoff、0.5G仮設定 | Phase 1～3のHarnessとPhase 3.9の数値Kernelを実物理へ接続し、T-005／T-059／T-069／T-074／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9のGC Policyは前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
 | Phase 4.1 | Cut/Cook Profiling | Phase 4の製品経路と代表Fixture、既存Profiler／Harness | T-076で7.5の費用を確認し、O-035／O-039の暫定実行枠・メモリ予算を調整する。保存形式、分位、反復数は実装詳細。Slashの到達Deadlineへの適用はPhase 4.53へ分ける |
@@ -1414,7 +1428,7 @@ Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も
 
 0.92はMeshデータ取得、AoS変換／CPUコピー、GPU転送発行を分けて軽量計測し、SetData呼出し時間を実GPU処理時間と混同しない。初回確保・容量拡張は通常変換と別に測り、新たなBenchmark Dataset／Schema／保存基盤を作らない。
 
-Phase 3では4.5.6の正負直接Index出力・転送・現在frameでの公開を実装する。切断Kernelの意味・Topology・Cap品質・世代の有効性・表示／Stencil同時公開は維持し、Final物理所属の確定をIndex配置・転送の前提にしない。詳細layoutやKernel内部の書込み方式は必要な段階まで未決とし、物理用の処理は7.2の実行分担に従う。Phase 4.53の剛体先行計算と、4.5.2の人形経路分離も同じ出力と準備済み範囲再利用へ接続する。0.92へAnimation／Pose Evaluatorを前倒ししない。Stage 3とGPU並行ベイクは実測に応じた後段最適化に残す。
+Phase 2.9の直接出力をPhase 3で既存VPプール・転送・現在frameでの公開へ接続する。切断Kernelの意味・Topology・Cap品質・世代の有効性・表示／Stencil同時公開は維持し、Final物理所属の確定をIndex配置・転送の前提にしない。詳細layoutやKernel内部の書込み方式は必要な段階まで未決とし、物理用の処理は7.2の実行分担に従う。Phase 4.53の剛体先行計算と、4.5.2の人形経路分離も同じ出力と準備済み範囲再利用へ接続する。0.92へAnimation／Pose Evaluatorを前倒ししない。Stage 3とGPU並行ベイクは実測に応じた後段最適化に残す。
 
 Phase 4.61はT-018の独立未来Rig Pose評価で閉じ、Jobベイク、MobPlan、人形切断を要求しない。4.65は限定実装・比較・人間採否までを行う。4.70はJobベイクの採否にかかわらず計画単体で閉じ、採用時だけ4.71で未来VP準備、4.72で先行切断を統合する。不採用なら両Phaseを省略する。4.52は同期経路で独立完了し、少数Fixtureのために5.5の製品Preprocessorを前倒ししない。
 
@@ -1546,7 +1560,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Phase 0.9～1と関連するGeometry仕様の旧工程・所属／Commit条件、不要な共通型・Profile・固定識別表現・Boundary件数上限は直接削除し、経緯をGitへ委ねる。同じ責務のDecision／Test IDは継続し、既存実装の一括改名・再生成や互換層を要求しない。Topology、公開・資源寿命、0.91／0.94の比較実験は維持する。
 
-- Phase 3.9の追加と7.2の局所退化許容で置換する旧記述は直接削除・短縮し、経緯はGitへ委ねる。旧仕様の付録や互換表現を追加しない。
+- Phase 2.9／3.9の追加と7.2の局所退化許容で置換する旧記述は直接削除・短縮し、経緯はGitへ委ねる。旧仕様の付録や互換表現を追加しない。
 
 - 7.3のcook品質許容により外す形状忠実性Gate・修復要求と曖昧な包含保証は、旧仕様の付録・廃止台帳・互換表現を残さず直接削除・短縮し、経緯はGitへ委ねる。Probeの観測結果や診断基準は遡って書き換えない。
 
@@ -1554,7 +1568,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 技術検証は測定環境、再現手順、数値結果、スクリーンショット／Profiler参照を残す。
 
-- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
+- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と2.9／3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
 
 - 新しい機能提案は『即時応答』『幾何精度』『物理整合』『性能予算』のどれへ影響するかを明記する。
 
