@@ -136,16 +136,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(operation.CanRelease, Is.False);
                 Assert.That(operation.IsValid, Is.False);
                 Assert.That(operation.IsBindingIntact, Is.True);
-
-                // The graph stays readable through the receipt.
-                Assert.That(ReferenceEquals(
-                    receipt.CleanupOperation, operation.CleanupOperation), Is.True);
-                Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-                Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId), Is.True);
-                Assert.That(receipt.CleanupResult.Status,
-                    Is.EqualTo(NvencRunCaptureCompleteCleanupStatus.Cleaned));
             }
         }
 

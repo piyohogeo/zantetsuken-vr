@@ -17,10 +17,16 @@ namespace Zantetsu.Observability
     /// Validity deliberately does not use the operation's admission validity,
     /// which a completed release necessarily makes false. It rests on the
     /// operation's reference correlation plus the exact lease's own completion:
-    /// the release is complete and no further attempt is possible. The cleanup
-    /// result, the root layout, and the run identity are forwarded from the
-    /// operation and never duplicated as fields. No raw lock handle is exposed
-    /// and no proof, token, or nonce is introduced.
+    /// the release is complete and no further attempt is possible.
+    /// </para>
+    /// <para>
+    /// The receipt holds exactly two references, the exact releaser and the
+    /// exact operation. What was released — the cleanup graph, the root layout,
+    /// and the Run identity — is read from <see cref="Operation"/>: the receipt
+    /// restates none of it and duplicates none of it as a field of its own. The
+    /// Session Ownership Lease and the raw lock handle are never exposed,
+    /// never held, and never disposed, and no proof, token, or nonce is
+    /// introduced.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunSessionOwnershipReleaseReceipt
@@ -72,16 +78,6 @@ namespace Zantetsu.Observability
         internal INvencRunSessionOwnershipReleaser Releaser => _releaser;
 
         internal NvencRunSessionOwnershipReleaseOperation Operation => _operation;
-
-        internal NvencRunCaptureCompleteCleanupAttemptResult CleanupResult => _operation.CleanupResult;
-
-        internal NvencRunCaptureCompleteCleanupOperation CleanupOperation => _operation.CleanupOperation;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid =>
             _releaser != null

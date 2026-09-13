@@ -113,18 +113,6 @@ namespace Zantetsu.Core.Tests
                 Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
                 Assert.That(ReferenceEquals(receipt.Releaser, releaser), Is.True);
                 Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-
-                // The forwarded values are the operation graph's own references.
-                Assert.That(ReferenceEquals(
-                    receipt.CleanupOperation, operation.CleanupOperation), Is.True);
-                Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-                Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId), Is.True);
-                Assert.That(ReferenceEquals(
-                    receipt.CleanupResult.Operation, operation.CleanupResult.Operation), Is.True);
-                Assert.That(receipt.CleanupResult.Status,
-                    Is.EqualTo(NvencRunCaptureCompleteCleanupStatus.Cleaned));
             }
         }
 

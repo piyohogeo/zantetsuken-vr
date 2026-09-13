@@ -3360,7 +3360,7 @@ namespace Zantetsu.Observability
                 if (_sessionOwnershipReleased)
                 {
                     NvencRunSessionOwnershipReleaseReceipt retained = _sessionOwnershipReleaseReceipt;
-                    if (!IsRetainedReleaseReceiptCorrelated(retained))
+                    if (!IsIssuedReleaseReceiptCorrelated(retained, _sessionOwnershipReleaseOperation))
                     {
                         _processState.TryPoison();
                         throw new InvalidOperationException(
@@ -3538,17 +3538,13 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// The retained release receipt must still be the exact receipt of this
-        /// Run's exact release operation, issued by the exact releaser this Run
-        /// is configured with, and still report a completed release.
+        /// The release receipt — whether just issued or retained from an
+        /// earlier release — must still be the exact receipt of this Run's
+        /// exact release operation, issued by the exact releaser this Run is
+        /// configured with, and still report a completed release. The receipt's
+        /// own <c>IsIssuedFor</c> settles all of that, so none of it is
+        /// re-derived here.
         /// </summary>
-        private bool IsRetainedReleaseReceiptCorrelated(
-            NvencRunSessionOwnershipReleaseReceipt retained)
-        {
-            return retained != null
-                && IsIssuedReleaseReceiptCorrelated(retained, _sessionOwnershipReleaseOperation);
-        }
-
         private bool IsIssuedReleaseReceiptCorrelated(
             NvencRunSessionOwnershipReleaseReceipt issued,
             NvencRunSessionOwnershipReleaseOperation operation)
@@ -3558,12 +3554,7 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            INvencRunSessionOwnershipReleaser releaser = _sessionOwnershipReleaseExecution.Releaser;
-
-            return ReferenceEquals(issued.Releaser, releaser)
-                && ReferenceEquals(issued.Operation, operation)
-                && issued.IsValid
-                && issued.IsIssuedFor(releaser, operation);
+            return issued.IsIssuedFor(_sessionOwnershipReleaseExecution.Releaser, operation);
         }
 
         /// <summary>

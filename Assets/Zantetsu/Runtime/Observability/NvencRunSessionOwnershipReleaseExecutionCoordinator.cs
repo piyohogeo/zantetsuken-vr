@@ -54,8 +54,6 @@ namespace Zantetsu.Observability
             NvencRunSessionOwnershipReleaseReceipt receipt = _releaser.Release(operation);
 
             if (receipt == null
-                || !ReferenceEquals(receipt.Releaser, _releaser)
-                || !ReferenceEquals(receipt.Operation, operation)
                 || !receipt.IsIssuedFor(_releaser, operation))
             {
                 throw new InvalidOperationException(
