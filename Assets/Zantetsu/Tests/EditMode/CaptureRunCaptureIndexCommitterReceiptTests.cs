@@ -668,25 +668,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_ForwardsAllValues()
-        {
-            CaptureRunCaptureIndexCommitOperation operation = MakeCommitOperation(out CaptureRunPublicationArtifactRecoveryActionPlan plan, out _);
-
-            CaptureRunCaptureIndexCommitReceipt receipt = new CaptureRunCaptureIndexCommitReceipt(new FakeCommitter(), operation);
-
-            Assert.That(receipt.Mode, Is.EqualTo(operation.Mode));
-            Assert.That(receipt.TemporaryPath, Is.EqualTo(operation.TemporaryPath));
-            Assert.That(receipt.FinalPath, Is.EqualTo(operation.FinalPath));
-            Assert.That(receipt.ByteCount, Is.EqualTo(operation.ByteCount));
-            Assert.That(receipt.ActionPlan, Is.SameAs(operation.ActionPlan));
-            Assert.That(receipt.RootLayout, Is.SameAs(operation.RootLayout));
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-            Assert.That(receipt.ActionPlan, Is.SameAs(plan));
-            Assert.That(receipt.IsValid, Is.True);
-        }
-
-        [Test]
         public void Receipt_IsValid_NormalTrue()
         {
             CaptureRunCaptureIndexCommitOperation operation = MakeCommitOperation(out _, out _);

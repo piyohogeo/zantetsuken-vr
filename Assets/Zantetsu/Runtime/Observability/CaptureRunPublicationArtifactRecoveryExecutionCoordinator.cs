@@ -32,9 +32,9 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// A contract-violating receipt — null, issued by a foreign backend, bound
-    /// to a different operation, or whose forwarded values disagree with the
-    /// operation — throws <see cref="InvalidOperationException"/> and also
-    /// skips the remaining steps.
+    /// to a different operation, or naming an operation that no longer passes
+    /// index-local validation — throws <see cref="InvalidOperationException"/>
+    /// and also skips the remaining steps.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunPublicationArtifactRecoveryExecutionCoordinator
@@ -146,18 +146,6 @@ namespace Zantetsu.Observability
                 || !operation.IsValidIndexLocal(token))
             {
                 throw new InvalidOperationException("Commit receipt must be issued by this committer for this commit operation.");
-            }
-
-            if (receipt.Mode != operation.Mode
-                || !string.Equals(receipt.TemporaryPath, operation.TemporaryPath, StringComparison.Ordinal)
-                || !string.Equals(receipt.FinalPath, operation.FinalPath, StringComparison.Ordinal)
-                || receipt.ByteCount != operation.ByteCount
-                || !ReferenceEquals(receipt.ActionPlan, operation.ActionPlan)
-                || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || receipt.TestRunId != operation.TestRunId
-                || !string.Equals(receipt.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException("Commit receipt must match the commit operation.");
             }
         }
     }

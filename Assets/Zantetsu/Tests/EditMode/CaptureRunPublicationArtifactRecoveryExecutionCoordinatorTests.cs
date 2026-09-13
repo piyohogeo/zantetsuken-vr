@@ -1719,7 +1719,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Source_ForwardingComparisons()
+        public void Source_PublishForwardingComparisons()
         {
             string coordinatorSource = File.ReadAllText(
                 LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationArtifactRecoveryExecutionCoordinator.cs"));
@@ -1734,12 +1734,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(coordinatorSource, Does.Contain("receipt.RootLayout"));
             Assert.That(coordinatorSource, Does.Contain("receipt.TestRunId"));
             Assert.That(coordinatorSource, Does.Contain("receipt.RunInitializationId"));
-
-            Assert.That(coordinatorSource, Does.Contain("receipt.Mode != operation.Mode"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.TemporaryPath"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.FinalPath"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ByteCount"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ActionPlan"));
         }
 
         [Test]

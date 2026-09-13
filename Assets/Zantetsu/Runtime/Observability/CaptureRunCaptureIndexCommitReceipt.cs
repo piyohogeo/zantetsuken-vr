@@ -10,7 +10,9 @@ namespace Zantetsu.Observability
     /// <remarks>
     /// <para>
     /// The receipt is not a filesystem snapshot; it only records that one
-    /// synchronous call succeeded. <see cref="IsValid"/> and
+    /// synchronous call succeeded. What was committed is read from
+    /// <see cref="Operation"/>: the receipt restates none of it and copies no
+    /// bytes, path, or hash. <see cref="IsValid"/> and
     /// <see cref="IsIssuedFor"/> recompute without throwing, so a receipt whose
     /// operation or lease has been corrupted or released becomes invalid.
     /// </para>
@@ -50,22 +52,6 @@ namespace Zantetsu.Observability
         internal ICaptureRunCaptureIndexCommitter IssuedBy => _issuedBy;
 
         internal CaptureRunCaptureIndexCommitOperation Operation => _operation;
-
-        internal CaptureRunCaptureIndexCommitMode Mode => _operation.Mode;
-
-        internal string TemporaryPath => _operation.TemporaryPath;
-
-        internal string FinalPath => _operation.FinalPath;
-
-        internal long ByteCount => _operation.ByteCount;
-
-        internal CaptureRunPublicationArtifactRecoveryActionPlan ActionPlan => _operation.ActionPlan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {
