@@ -8,7 +8,9 @@
         "Zantetsu.Observability",
         "Zantetsu.Observability.Editor",
         "Unity.Collections",
-        "Unity.Burst"
+        "Unity.Burst",
+        "Zantetsu.ConvexCut",
+        "Unity.Mathematics"
     ],
     "includePlatforms": [
         "Editor"
