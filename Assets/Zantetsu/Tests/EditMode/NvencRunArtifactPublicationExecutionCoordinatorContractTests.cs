@@ -292,10 +292,10 @@ namespace Zantetsu.Core.Tests
                 NvencRunArtifactPublicationAttemptResult result =
                     new NvencRunArtifactPublicationExecutionCoordinator(publisher).Execute(operation);
 
-                // The attempt result and the receipt hold only the exact
-                // publisher and the exact operation; descriptor, plan,
-                // finalization result, paths, hash, and run identity are read
-                // off that operation.
+                // The receipt holds only the exact publisher and the exact
+                // operation. The attempt result also holds the status and the
+                // receipt, but its descriptor, plan, finalization result,
+                // paths, hash, and run identity are read off the operation.
                 Assert.That(ReferenceEquals(result.Operation, operation), Is.True);
                 Assert.That(ReferenceEquals(result.Receipt.Operation, operation), Is.True);
 
