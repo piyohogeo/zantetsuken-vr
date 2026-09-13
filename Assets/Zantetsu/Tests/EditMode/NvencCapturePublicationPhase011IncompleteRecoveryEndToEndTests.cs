@@ -200,23 +200,25 @@ namespace Zantetsu.Core.Tests
             Assert.That(releaseCoordinator.IsReleased, Is.True);
 
             // Still the same graph, now carrying the cleanup's terminal status.
-            Assert.That(releaseReceipt.CleanupStatus,
+            Assert.That(releaseOperation.CleanupStatus,
                 Is.EqualTo(NvencRunPublicationRecoveryIncompleteCleanupStatus.Cleaned));
             Assert.That(
-                ReferenceEquals(releaseReceipt.CleanupOperation, cleanup.CleanupOperation),
+                ReferenceEquals(releaseOperation.CleanupOperation, cleanup.CleanupOperation),
                 Is.True);
             Assert.That(
-                ReferenceEquals(releaseReceipt.CleanupResult.Cleaner, cleaner), Is.True);
-            Assert.That(ReferenceEquals(releaseReceipt.Decision, publicationRecovery), Is.True);
-            Assert.That(ReferenceEquals(releaseReceipt.Snapshot, snapshot), Is.True);
-            Assert.That(ReferenceEquals(releaseReceipt.OpenOutcome, sandbox.OpenOutcome), Is.True);
+                ReferenceEquals(releaseOperation.CleanupResult.Cleaner, cleaner), Is.True);
+            Assert.That(ReferenceEquals(releaseOperation.Decision, publicationRecovery), Is.True);
+            Assert.That(ReferenceEquals(releaseOperation.Snapshot, snapshot), Is.True);
             Assert.That(
-                ReferenceEquals(releaseReceipt.LockIdentityEvidence, sandbox.LockIdentityEvidence),
+                ReferenceEquals(releaseOperation.OpenOutcome, sandbox.OpenOutcome), Is.True);
+            Assert.That(
+                ReferenceEquals(releaseOperation.LockIdentityEvidence, sandbox.LockIdentityEvidence),
                 Is.True);
-            Assert.That(ReferenceEquals(releaseReceipt.OwnershipLease, sandbox.Owner), Is.True);
-            Assert.That(ReferenceEquals(releaseReceipt.RootLayout, sandbox.Layout), Is.True);
-            Assert.That(releaseReceipt.TestRunId, Is.EqualTo(sandbox.Layout.TestRunId));
-            Assert.That(releaseReceipt.RunInitializationId, Is.EqualTo(InitId));
+            Assert.That(
+                ReferenceEquals(releaseOperation.OwnershipLease, sandbox.Owner), Is.True);
+            Assert.That(ReferenceEquals(releaseOperation.RootLayout, sandbox.Layout), Is.True);
+            Assert.That(releaseOperation.TestRunId, Is.EqualTo(sandbox.Layout.TestRunId));
+            Assert.That(releaseOperation.RunInitializationId, Is.EqualTo(InitId));
 
             // The lease and its handles, which is what this seam holds.
             Assert.That(sandbox.Owner.IsReleaseComplete, Is.True);

@@ -34,8 +34,8 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// The graph the three paths share is read from the held receipt - for the
-    /// stopping path, from that receipt's own operation - rather than copied
-    /// into fields of its own. What is specific to one path
+    /// incomplete and stopping paths, from that receipt's own operation -
+    /// rather than copied into fields of its own. What is specific to one path
     /// - the cleanup result and its status, the Capture Index commit receipt,
     /// the stopping disposition - stays reachable through that receipt and is
     /// deliberately not re-exposed here.
@@ -158,7 +158,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.Decision;
+                    return _incompleteRelease.Operation.Decision;
                 }
 
                 return _stopRelease?.Operation.Decision;
@@ -179,7 +179,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.OpenOutcome;
+                    return _incompleteRelease.Operation.OpenOutcome;
                 }
 
                 return _stopRelease?.Operation.OpenOutcome;
@@ -197,7 +197,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.OwnershipLease;
+                    return _incompleteRelease.Operation.OwnershipLease;
                 }
 
                 return _stopRelease?.Operation.OwnershipLease;
@@ -215,7 +215,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.RootLayout;
+                    return _incompleteRelease.Operation.RootLayout;
                 }
 
                 return _stopRelease?.Operation.RootLayout;
@@ -233,7 +233,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.TestRunId;
+                    return _incompleteRelease.Operation.TestRunId;
                 }
 
                 return _stopRelease != null ? _stopRelease.Operation.TestRunId : 0L;
@@ -251,7 +251,7 @@ namespace Zantetsu.Observability
 
                 if (_incompleteRelease != null)
                 {
-                    return _incompleteRelease.RunInitializationId;
+                    return _incompleteRelease.Operation.RunInitializationId;
                 }
 
                 return _stopRelease?.Operation.RunInitializationId;

@@ -294,7 +294,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.IsStopped, Is.False);
 
             // The cleanup's own status is carried, never converted.
-            Assert.That(terminal.IncompleteRelease.CleanupStatus, Is.EqualTo(expected));
+            Assert.That(terminal.IncompleteRelease.Operation.CleanupStatus, Is.EqualTo(expected));
             Assert.That(coordinator.CleanupResult.Status, Is.EqualTo(expected));
             Assert.That(
                 coordinator.CleanupResult.Receipt,

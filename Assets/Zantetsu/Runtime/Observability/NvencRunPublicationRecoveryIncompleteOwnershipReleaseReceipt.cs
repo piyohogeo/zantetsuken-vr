@@ -9,12 +9,15 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those two references are the whole state; the cleanup attempt result and
-    /// its operation, the publication recovery decision, its snapshot, the
-    /// lease, the open outcome, the lock identity evidence, the cleanup status,
-    /// the root layout, and the Run identity are forwarded from the operation's
-    /// graph. The plan and the observation details stay where they are,
-    /// reachable through that graph.
+    /// The receipt holds exactly two readonly references, the exact releaser
+    /// and the exact operation, and they are the whole state. What was cleaned
+    /// up and released is read from <see cref="Operation"/>: the cleanup
+    /// attempt result and its operation, the publication recovery decision, its
+    /// snapshot, the lease, the open outcome, the lock identity evidence, the
+    /// cleanup status, the root layout, and the Run identity are none of them
+    /// restated as a field or property of the receipt's own. The plan and the
+    /// observation details likewise stay where they are, reachable through that
+    /// graph.
     /// </para>
     /// <para>
     /// A completed release makes the operation's admission validity - and the
@@ -24,16 +27,16 @@ namespace Zantetsu.Observability
     /// is exactly what a finished release looks like.
     /// </para>
     /// <para>
-    /// A cleaned and a failed cleanup are attested the same way: the status is
-    /// carried, never branched on, and this receipt says nothing about what the
-    /// cleanup left on disk.
+    /// A cleaned and a failed cleanup are attested the same way: both are the
+    /// same release success, the status is never branched on, and this receipt
+    /// says nothing about what the cleanup left on disk.
     /// </para>
     /// <para>
     /// This type releases nothing, owns and disposes nothing, touches no file,
     /// and is not an <see cref="IDisposable"/>, MonoBehaviour, or
-    /// ScriptableObject. It is minted only after a successful release, through
-    /// the success-only factory, and adds no proof, token, nonce, generation,
-    /// or filesystem snapshot.
+    /// ScriptableObject. Only <see cref="Released"/> issues one, and only after
+    /// a successful release, and it adds no proof, token, nonce, generation, or
+    /// filesystem snapshot.
     /// </para>
     /// </remarks>
     internal sealed class NvencRunPublicationRecoveryIncompleteOwnershipReleaseReceipt
@@ -88,33 +91,6 @@ namespace Zantetsu.Observability
 
         internal NvencRunPublicationRecoveryIncompleteOwnershipReleaseOperation Operation =>
             _operation;
-
-        internal NvencRunPublicationRecoveryIncompleteCleanupAttemptResult CleanupResult =>
-            _operation.CleanupResult;
-
-        internal NvencRunPublicationRecoveryIncompleteCleanupOperation CleanupOperation =>
-            _operation.CleanupOperation;
-
-        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease =>
-            _operation.OwnershipLease;
-
-        internal NvencRunPublicationRecoveryDecision Decision => _operation.Decision;
-
-        internal NvencRunPublicationRecoveryInspectionSnapshot Snapshot => _operation.Snapshot;
-
-        internal CaptureRunInitializationOpenOutcome OpenOutcome => _operation.OpenOutcome;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence =>
-            _operation.LockIdentityEvidence;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
-        internal NvencRunPublicationRecoveryIncompleteCleanupStatus CleanupStatus =>
-            _operation.CleanupStatus;
 
         internal bool IsValid
         {

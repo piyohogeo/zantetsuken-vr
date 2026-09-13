@@ -135,8 +135,10 @@ namespace Zantetsu.Core.Tests
             Assert.That(terminal.CaptureCompleteRelease, Is.Null);
             Assert.That(terminal.StopRelease, Is.Null);
 
-            AssertForwardsSharedGraph(terminal, run, receipt.RunInitializationId);
-            Assert.That(ReferenceEquals(terminal.PublicationRecoveryDecision, receipt.Decision),
+            AssertForwardsSharedGraph(terminal, run, receipt.Operation.RunInitializationId);
+            Assert.That(
+                ReferenceEquals(
+                    terminal.PublicationRecoveryDecision, receipt.Operation.Decision),
                 Is.True);
         }
 
@@ -223,8 +225,8 @@ namespace Zantetsu.Core.Tests
             // admission has lapsed.
             Assert.That(run.Owner.IsReleaseComplete, Is.True);
             Assert.That(receipt.Operation.IsValid, Is.False);
-            Assert.That(receipt.CleanupResult.IsValid, Is.False);
-            Assert.That(receipt.Decision.IsValid, Is.False);
+            Assert.That(receipt.Operation.CleanupResult.IsValid, Is.False);
+            Assert.That(receipt.Operation.Decision.IsValid, Is.False);
 
             // The receipt attests the completed release, and the terminal
             // result carries it.
@@ -246,7 +248,7 @@ namespace Zantetsu.Core.Tests
             NvencRunPublicationRecoveryTerminalResult fromIncomplete =
                 NvencRunPublicationRecoveryTerminalResult.IncompleteReleased(incompleteReceipt);
 
-            Assert.That(incompleteReceipt.CleanupStatus,
+            Assert.That(incompleteReceipt.Operation.CleanupStatus,
                 Is.EqualTo(NvencRunPublicationRecoveryIncompleteCleanupStatus.Failed));
             Assert.That(fromIncomplete.IsValid, Is.True);
             Assert.That(fromIncomplete.IsIncompleteReleased, Is.True);

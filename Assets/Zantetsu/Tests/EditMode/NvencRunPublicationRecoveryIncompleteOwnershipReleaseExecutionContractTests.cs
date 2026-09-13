@@ -158,7 +158,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_ForwardsTheOperationGraph()
+        public void Receipt_HoldsReleaserAndOperation()
         {
             Harness h = MakeHarness();
             FakeReleaser releaser = new FakeReleaser();
@@ -168,29 +168,10 @@ namespace Zantetsu.Core.Tests
             NvencRunPublicationRecoveryIncompleteOwnershipReleaseReceipt receipt =
                 MakeCoordinator(releaser).Execute(operation);
 
+            Assert.That(ReferenceEquals(receipt.Releaser, releaser), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(ReferenceEquals(receipt.CleanupOperation, h.CleanupOperation), Is.True);
-            // The result's own references are forwarded rather than rebuilt,
-            // and its validity lapses with the released lock - which the
-            // receipt never rests on.
-            Assert.That(ReferenceEquals(receipt.CleanupResult.Cleaner, h.Cleaner), Is.True);
-            Assert.That(
-                ReferenceEquals(receipt.CleanupResult.CleanupOperation, h.CleanupOperation),
-                Is.True);
-            Assert.That(receipt.CleanupResult.IsValid, Is.False);
             Assert.That(receipt.IsValid, Is.True);
-            Assert.That(ReferenceEquals(receipt.OwnershipLease, h.Owner), Is.True);
-            Assert.That(ReferenceEquals(receipt.Decision, h.Decision), Is.True);
-            Assert.That(ReferenceEquals(receipt.Snapshot, h.Decision.Snapshot), Is.True);
-            Assert.That(ReferenceEquals(receipt.OpenOutcome, h.OpenOutcome), Is.True);
-            Assert.That(
-                ReferenceEquals(receipt.LockIdentityEvidence, h.LockIdentityEvidence), Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, h.Layout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(
-                ReferenceEquals(receipt.RunInitializationId, operation.RunInitializationId),
-                Is.True);
-            Assert.That(receipt.CleanupStatus, Is.EqualTo(operation.CleanupStatus));
+            Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
         }
 
         // ---- Partial release and retry ----
@@ -445,7 +426,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
-            Assert.That(receipt.CleanupStatus, Is.EqualTo(expected));
+            Assert.That(operation.CleanupStatus, Is.EqualTo(expected));
         }
 
         private static void AssertReadonlyFields(Type type, params Type[] expected)

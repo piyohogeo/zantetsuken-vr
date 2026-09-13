@@ -221,7 +221,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.IsIssuedFor(releaser, operation), Is.True);
             Assert.That(ReferenceEquals(receipt.Releaser, releaser), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(receipt.CleanupStatus, Is.EqualTo(expected));
+            Assert.That(operation.CleanupStatus, Is.EqualTo(expected));
         }
 
         private Harness MakeHarness(bool throwingFirstRelease = false)
