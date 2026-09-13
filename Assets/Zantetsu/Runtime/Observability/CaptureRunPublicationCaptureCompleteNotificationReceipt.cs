@@ -65,26 +65,6 @@ namespace Zantetsu.Observability
 
         internal CaptureRunPublicationCaptureCompleteNotificationOperation Operation => _operation;
 
-        internal CaptureRunPublicationCaptureCompleteCleanupOrchestrationResult CleanupResult => _operation.CleanupResult;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupExecutionResult ExecutionResult => _operation.ExecutionResult;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
-        internal string RunManifestContentSha256 => _operation.RunManifestContentSha256;
-
-        internal string CaptureIndexPath => _operation.CaptureIndexPath;
-
-        internal CaptureRunPublicationArtifactRecoveryDisposition Disposition => _operation.Disposition;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupExecutionStatus Status => _operation.Status;
-
         internal bool IsValid
         {
             get

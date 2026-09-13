@@ -11,23 +11,24 @@ namespace Zantetsu.Observability
     /// <para>
     /// The type owns exactly four read-only reference fields — the issuing
     /// coordinator, the coordinator-bound issuance proof, the notification
-    /// operation, and the notification receipt — and has no public constructor. Every accessor forwards a value from the
-    /// held operation graph: the cleanup orchestration result, cleanup
-    /// execution result, root layout, lock lease, test run id, run
-    /// initialization id, run manifest content SHA-256, capture index path,
-    /// disposition, and status are all forwarded rather than duplicated.
+    /// operation, and the notification receipt — and has no public
+    /// constructor. Every accessor forwards a value from the held operation
+    /// graph: the cleanup orchestration result, cleanup execution result, root
+    /// layout, lock lease, test run id, run initialization id, run manifest
+    /// content SHA-256, capture index path, disposition, and status are all
+    /// forwarded rather than duplicated.
     /// </para>
     /// <para>
     /// The constructor and <see cref="IsValid"/> share one exception-safe
-    /// correlation predicate. It re-checks that the coordinator, operation, and
-    /// receipt are non-null, that the receipt was issued by the coordinator's
-    /// notifier, that the receipt and operation reference the same operation,
-    /// that the receipt still proves that exact operation through the single
-    /// <c>IsIssuedFor</c> path (the one post-notification full validation),
-    /// that every forwarded value matches between operation and receipt, that
-    /// the status is <c>CaptureCompleteReady</c>, that the disposition is
-    /// accepted, and that the lease is still live. Any forged, replaced, or
-    /// released value converges to <c>false</c> without throwing.
+    /// correlation predicate: the coordinator, proof, operation, and receipt
+    /// are non-null, the proof was minted by this exact coordinator for this
+    /// exact operation and receipt, and the receipt is issued for the
+    /// coordinator's notifier and that exact operation. That last call is the
+    /// one post-notification full validation — it settles the notifier, the
+    /// operation identity, and the operation's whole current validity, so
+    /// nothing here re-derives the status, the disposition, or the lease. Any
+    /// forged, replaced, or released value converges to <c>false</c> without
+    /// throwing.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -140,66 +141,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            ICaptureRunPublicationCaptureCompleteNotifier notifier = issuedBy.Notifier;
-            if (notifier == null)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(receipt.IssuedBy, notifier)
-                || !ReferenceEquals(receipt.Operation, operation))
-            {
-                return false;
-            }
-
-            // The single post-notification full validation path: this re-checks
-            // the receipt issuer, the operation identity, and the operation's
-            // full validity in one call, so the operation is never fully
-            // validated a second time elsewhere in this predicate.
-            if (!receipt.IsIssuedFor(notifier, operation))
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(operation.RootLayout, receipt.RootLayout)
-                || !ReferenceEquals(operation.LockIdentityEvidence, receipt.LockIdentityEvidence))
-            {
-                return false;
-            }
-
-            if (operation.TestRunId != receipt.TestRunId
-                || !string.Equals(operation.RunInitializationId, receipt.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(operation.RunManifestContentSha256, receipt.RunManifestContentSha256, StringComparison.Ordinal)
-                || !string.Equals(operation.CaptureIndexPath, receipt.CaptureIndexPath, StringComparison.Ordinal)
-                || operation.Disposition != receipt.Disposition
-                || operation.Status != receipt.Status)
-            {
-                return false;
-            }
-
-            if (operation.Status != CaptureRunPublicationCaptureCompleteCleanupExecutionStatus.CaptureCompleteReady)
-            {
-                return false;
-            }
-
-            if (!IsAcceptedDisposition(operation.Disposition))
-            {
-                return false;
-            }
-
-            CaptureRunLockIdentityEvidence lockIdentityEvidence = operation.LockIdentityEvidence;
-            if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        private static bool IsAcceptedDisposition(CaptureRunPublicationArtifactRecoveryDisposition disposition)
-        {
-            return disposition == CaptureRunPublicationArtifactRecoveryDisposition.CommitCaptureIndex
-                || disposition == CaptureRunPublicationArtifactRecoveryDisposition.CaptureComplete;
+            // The single post-notification full validation path: one call
+            // settles the exact notifier, the exact operation, and that
+            // operation's whole current validity, so nothing here re-derives
+            // its status, disposition, or lease.
+            return receipt.IsIssuedFor(issuedBy.Notifier, operation);
         }
     }
 }
