@@ -30,8 +30,9 @@ namespace Zantetsu.Observability
     /// is the one post-release validation — it settles the exact releaser, the
     /// exact operation, the operation's issuance proof, and the release terminal
     /// state together, so nothing here re-derives the open outcome, the
-    /// ownership lease, or the release completion. Any forged, replaced, or
-    /// released value converges to <c>false</c> without throwing. The upstream
+    /// ownership lease, or the release completion. Any forged or replaced
+    /// binding, or any state that no longer satisfies the release terminal
+    /// correlation, converges to <c>false</c> without throwing. The upstream
     /// evidence, notification result, and operation are intentionally not
     /// re-validated here, because a completed release makes them invalid by
     /// design.
