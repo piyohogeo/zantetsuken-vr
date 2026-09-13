@@ -83,7 +83,7 @@ namespace Zantetsu.Core.Tests
         public void ProvisionNew_CreatesAnEmptyRunRoot_AndIssuesItsReceipt()
         {
             CaptureRunRootOsProvisioner provisioner = CaptureRunRootOsProvisioner.Create();
-            CaptureRunRootProvisionOperation operation = StagingProvision(MakeLayout());
+            CaptureRunRootProvisionOperation operation = Provision(MakeLayout());
 
             Assert.That(Directory.Exists(operation.RunRoot), Is.False);
 
@@ -103,7 +103,7 @@ namespace Zantetsu.Core.Tests
         public void ProvisionNew_RejectsAnExistingRunRoot_AndLeavesItAlone()
         {
             CaptureRunRootOsProvisioner provisioner = CaptureRunRootOsProvisioner.Create();
-            CaptureRunRootProvisionOperation operation = StagingProvision(MakeLayout());
+            CaptureRunRootProvisionOperation operation = Provision(MakeLayout());
 
             Directory.CreateDirectory(operation.RunRoot);
             string witness = Path.Combine(operation.RunRoot, "witness.txt");
@@ -131,9 +131,9 @@ namespace Zantetsu.Core.Tests
             // The base root is trusted by contract; the junction sits on the
             // path the Run root would be reached through.
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
-                link, Path.Combine(_root, "final"), 1);
-            CreateTrustedBase(layout.StagingRunRoot);
-            CaptureRunRootProvisionOperation operation = StagingProvision(layout);
+                link, 1);
+            CreateTrustedBase(layout.RunRoot);
+            CaptureRunRootProvisionOperation operation = Provision(layout);
 
             Assert.That(
                 () => CaptureRunRootOsProvisioner.Create().ProvisionNew(operation), Throws.Exception,
@@ -166,9 +166,9 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootOsProvisioner provisioner = CaptureRunRootOsProvisioner.Create();
             CaptureRunMarkerOsAtomicWriter writer = CaptureRunMarkerOsAtomicWriter.Create();
 
-            provisioner.ProvisionNew(StagingProvision(layout));
+            provisioner.ProvisionNew(Provision(layout));
 
-            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
+            CaptureRunMarkerWriteOperation operation = InitializationWrite(layout);
 
             CaptureRunMarkerWriteReceipt receipt = writer.WriteAtomic(operation);
 
@@ -187,10 +187,10 @@ namespace Zantetsu.Core.Tests
         public void WriteAtomic_NeverOverwritesAnExistingFinalMarker()
         {
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunRootOsProvisioner.Create().ProvisionNew(StagingProvision(layout));
+            CaptureRunRootOsProvisioner.Create().ProvisionNew(Provision(layout));
             CaptureRunMarkerOsAtomicWriter writer = CaptureRunMarkerOsAtomicWriter.Create();
 
-            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
+            CaptureRunMarkerWriteOperation operation = InitializationWrite(layout);
 
             File.WriteAllText(operation.FinalPath, "existing", Encoding.ASCII);
 
@@ -218,8 +218,8 @@ namespace Zantetsu.Core.Tests
             // junction by this test, not by the provisioner, so the writer is
             // the only thing under examination.
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
-                link, Path.Combine(_root, "final"), 1);
-            CaptureRunMarkerWriteOperation operation = StagingInitializationWrite(layout);
+                link, 1);
+            CaptureRunMarkerWriteOperation operation = InitializationWrite(layout);
             Directory.CreateDirectory(Path.Combine(real, "runs", "run-1"));
 
             Assert.That(
@@ -248,8 +248,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootOsProvisioner provisioner = CaptureRunRootOsProvisioner.Create();
             CaptureRunMarkerOsAtomicWriter writer = CaptureRunMarkerOsAtomicWriter.Create();
 
-            provisioner.ProvisionNew(StagingProvision(layout));
-            provisioner.ProvisionNew(FinalProvision(layout));
+            provisioner.ProvisionNew(Provision(layout));
 
             CaptureRunMarkerBinding markers = MakeMarkers(layout);
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
@@ -257,29 +256,15 @@ namespace Zantetsu.Core.Tests
             CaptureRunMarkerWriteOperation[] operations =
             {
                 new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging,
                     CaptureRunMarkerKind.Initialization,
-                    markerPaths.StagingInitializationTemporaryPath,
-                    markerPaths.StagingInitializationPath,
-                    CaptureRunInitializationMarkerCodec.SerializeCanonical(markers.StagingInitialization)),
+                    markerPaths.InitializationTemporaryPath,
+                    markerPaths.InitializationPath,
+                    CaptureRunInitializationMarkerCodec.SerializeCanonical(markers.Initialization)),
                 new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Final,
-                    CaptureRunMarkerKind.Initialization,
-                    markerPaths.FinalInitializationTemporaryPath,
-                    markerPaths.FinalInitializationPath,
-                    CaptureRunInitializationMarkerCodec.SerializeCanonical(markers.FinalInitialization)),
-                new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Staging,
                     CaptureRunMarkerKind.Ready,
-                    markerPaths.StagingReadyTemporaryPath,
-                    markerPaths.StagingReadyPath,
-                    CaptureRunReadyMarkerCodec.SerializeCanonical(markers.StagingReady)),
-                new CaptureRunMarkerWriteOperation(
-                    CaptureRunRootRole.Final,
-                    CaptureRunMarkerKind.Ready,
-                    markerPaths.FinalReadyTemporaryPath,
-                    markerPaths.FinalReadyPath,
-                    CaptureRunReadyMarkerCodec.SerializeCanonical(markers.StagingReady)),
+                    markerPaths.ReadyTemporaryPath,
+                    markerPaths.ReadyPath,
+                    CaptureRunReadyMarkerCodec.SerializeCanonical(markers.Ready)),
             };
 
             foreach (CaptureRunMarkerWriteOperation operation in operations)
@@ -310,24 +295,19 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(receipt, Is.Not.Null);
 
-            // Both roots exist and hold exactly their two markers - the
+            // The Run root exists and holds exactly its two markers - the
             // chunks directory is the chunk file session's to create, later.
-            foreach (string runRoot in new[] { layout.StagingRunRoot, layout.FinalRunRoot })
-            {
-                Assert.That(Directory.Exists(runRoot), Is.True);
-                Assert.That(
-                    Directory.GetDirectories(runRoot), Is.Empty,
-                    "no chunks directory exists yet");
-                Assert.That(
-                    Directory.GetFiles(runRoot).Length, Is.EqualTo(2),
-                    "an initialized Run root holds its initialization and ready markers");
-            }
+            Assert.That(Directory.Exists(layout.RunRoot), Is.True);
+            Assert.That(
+                Directory.GetDirectories(layout.RunRoot), Is.Empty,
+                "no chunks directory exists yet");
+            Assert.That(
+                Directory.GetFiles(layout.RunRoot).Length, Is.EqualTo(2),
+                "an initialized Run root holds its initialization and ready markers");
 
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
-            Assert.That(File.Exists(markerPaths.StagingInitializationPath), Is.True);
-            Assert.That(File.Exists(markerPaths.FinalInitializationPath), Is.True);
-            Assert.That(File.Exists(markerPaths.StagingReadyPath), Is.True);
-            Assert.That(File.Exists(markerPaths.FinalReadyPath), Is.True);
+            Assert.That(File.Exists(markerPaths.InitializationPath), Is.True);
+            Assert.That(File.Exists(markerPaths.ReadyPath), Is.True);
 
             // And the evidence a Run actually needs downstream.
             CaptureRunInitializationReadyEvidence evidence =
@@ -345,20 +325,18 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
-                layout.StagingRunRootSha256,
-                layout.FinalRunRootSha256);
+                layout.RunRootSha256);
         }
 
-        private static CaptureRunMarkerWriteOperation StagingInitializationWrite(CaptureRunRootLayout layout)
+        private static CaptureRunMarkerWriteOperation InitializationWrite(CaptureRunRootLayout layout)
         {
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
 
             return new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Staging,
                 CaptureRunMarkerKind.Initialization,
-                markerPaths.StagingInitializationTemporaryPath,
-                markerPaths.StagingInitializationPath,
-                CaptureRunInitializationMarkerCodec.SerializeCanonical(MakeMarkers(layout).StagingInitialization));
+                markerPaths.InitializationTemporaryPath,
+                markerPaths.InitializationPath,
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(MakeMarkers(layout).Initialization));
         }
 
         /// <summary>
@@ -369,10 +347,9 @@ namespace Zantetsu.Core.Tests
         private CaptureRunRootLayout MakeLayout()
         {
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
-                Path.Combine(_root, "staging"), Path.Combine(_root, "final"), 1);
+                Path.Combine(_root, "staging"), 1);
 
-            CreateTrustedBase(layout.StagingRunRoot);
-            CreateTrustedBase(layout.FinalRunRoot);
+            CreateTrustedBase(layout.RunRoot);
             return layout;
         }
 
@@ -381,14 +358,9 @@ namespace Zantetsu.Core.Tests
             Directory.CreateDirectory(Path.GetDirectoryName(runRoot));
         }
 
-        private static CaptureRunRootProvisionOperation StagingProvision(CaptureRunRootLayout layout)
+        private static CaptureRunRootProvisionOperation Provision(CaptureRunRootLayout layout)
         {
-            return new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Staging);
-        }
-
-        private static CaptureRunRootProvisionOperation FinalProvision(CaptureRunRootLayout layout)
-        {
-            return new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Final);
+            return new CaptureRunRootProvisionOperation(layout);
         }
 
         /// <summary>

@@ -452,7 +452,6 @@ namespace Zantetsu.Observability
                     CaptureArtifactKind.FrameImage,
                     "image/png",
                     1,
-                    "frames/" + id + ".png.stage",
                     "frames/" + id + ".png",
                     pngBytes.LongLength,
                     Hash(pngBytes));
@@ -462,7 +461,6 @@ namespace Zantetsu.Observability
                     CaptureArtifactKind.FrameMetadata,
                     "application/vnd.zantetsu.capture-frame+json",
                     2,
-                    "frames/" + id + ".json.stage",
                     "frames/" + id + ".json",
                     metadataBytes.LongLength,
                     Hash(metadataBytes));

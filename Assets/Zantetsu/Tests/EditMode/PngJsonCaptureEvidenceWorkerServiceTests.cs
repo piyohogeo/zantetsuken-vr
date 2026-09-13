@@ -138,31 +138,6 @@ namespace Zantetsu.Core.Tests
                 return new CaptureArtifactWriteReceipt(this, request.Descriptor, "C:\\staging\\" + request.Descriptor.ArtifactId);
             }
 
-            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
-            {
-                throw new NotSupportedException();
-            }
-
-            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.MatchesExpected,
-                    CaptureArtifactVerificationFailureReason.None,
-                    descriptor.ByteLength);
-            }
-
-            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.Absent,
-                    CaptureArtifactVerificationFailureReason.FileAbsent,
-                    0);
-            }
-
             public void Dispose()
             {
             }

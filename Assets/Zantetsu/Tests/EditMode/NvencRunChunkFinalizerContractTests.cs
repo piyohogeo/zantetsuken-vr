@@ -151,23 +151,21 @@ namespace Zantetsu.Core.Tests
             FakeFinalizer finalizer = new FakeFinalizer();
 
             CaptureArtifactDescriptor wrongId =
-                MakeChunkDescriptor("chunk/other", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, ChunkPath, ChunkPath, 64);
+                MakeChunkDescriptor("chunk/other", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, ChunkPath, 64);
             CaptureArtifactDescriptor wrongKind =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameImage, "NvencH264IdrChunk", 1, ChunkPath, ChunkPath, 64);
+                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameImage, "NvencH264IdrChunk", 1, ChunkPath, 64);
             CaptureArtifactDescriptor wrongFormat =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "other/format", 1, ChunkPath, ChunkPath, 64);
+                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "other/format", 1, ChunkPath, 64);
             CaptureArtifactDescriptor wrongVersion =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 2, ChunkPath, ChunkPath, 64);
+                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 2, ChunkPath, 64);
             CaptureArtifactDescriptor wrongStaging =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, "chunks/other.h264", ChunkPath, 64);
-            CaptureArtifactDescriptor wrongFinal =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, ChunkPath, "chunks/other.h264", 64);
+                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, "chunks/other.h264", 64);
             CaptureArtifactDescriptor wrongLength =
-                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, ChunkPath, ChunkPath, 65);
+                MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1, ChunkPath, 65);
 
             foreach (CaptureArtifactDescriptor descriptor in new[]
             {
-                wrongId, wrongKind, wrongFormat, wrongVersion, wrongStaging, wrongFinal, wrongLength,
+                wrongId, wrongKind, wrongFormat, wrongVersion, wrongStaging, wrongLength,
             })
             {
                 Assert.Throws<ArgumentException>(() =>
@@ -194,7 +192,7 @@ namespace Zantetsu.Core.Tests
 
             CaptureArtifactDescriptor partial =
                 MakeChunkDescriptor("chunk/0", CaptureArtifactKind.FrameSequence, "NvencH264IdrChunk", 1,
-                    ChunkPath + ".partial", ChunkPath, 64);
+                    ChunkPath + ".partial", 64);
             Assert.Throws<ArgumentException>(() =>
                 NvencRunChunkFinalizationReceipt.Create(finalizer, operation, partial));
         }
@@ -372,12 +370,11 @@ namespace Zantetsu.Core.Tests
             string formatId,
             int formatVersion,
             string stagingRelativePath,
-            string finalRelativePath,
             long byteLength)
         {
             return new CaptureArtifactDescriptor(
                 artifactId, kind, formatId, formatVersion,
-                stagingRelativePath, finalRelativePath, byteLength, Hash64);
+                stagingRelativePath, byteLength, Hash64);
         }
 
         private static void SetBackingField(object target, string propertyName, object value)

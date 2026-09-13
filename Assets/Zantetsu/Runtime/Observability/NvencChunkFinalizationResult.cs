@@ -18,36 +18,27 @@ namespace Zantetsu.Observability
     internal sealed class NvencChunkFinalizationResult
     {
         private readonly NvencRunChunkFinalizationCoordinator _coordinator;
-        private readonly NvencRunChunkFinalizationCoordinator.IssuanceProof _proof;
         private readonly NvencRunChunkFinalizationOperation _operation;
         private readonly NvencRunChunkFinalizationReceipt _receipt;
 
         private NvencChunkFinalizationResult(
             NvencRunChunkFinalizationCoordinator coordinator,
-            NvencRunChunkFinalizationCoordinator.IssuanceProof proof,
             NvencRunChunkFinalizationOperation operation,
             NvencRunChunkFinalizationReceipt receipt)
         {
             _coordinator = coordinator;
-            _proof = proof;
             _operation = operation;
             _receipt = receipt;
         }
 
         internal static NvencChunkFinalizationResult Create(
             NvencRunChunkFinalizationCoordinator coordinator,
-            NvencRunChunkFinalizationCoordinator.IssuanceProof proof,
             NvencRunChunkFinalizationOperation operation,
             NvencRunChunkFinalizationReceipt receipt)
         {
             if (coordinator == null)
             {
                 throw new ArgumentNullException(nameof(coordinator));
-            }
-
-            if (proof == null)
-            {
-                throw new ArgumentNullException(nameof(proof));
             }
 
             if (operation == null)
@@ -60,12 +51,6 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(receipt));
             }
 
-            if (!proof.IsMintedFor(coordinator, coordinator.Finalizer, operation, receipt))
-            {
-                throw new ArgumentException(
-                    "Proof must be minted for the coordinator, operation, and receipt.", nameof(proof));
-            }
-
             if (!ReferenceEquals(receipt.IssuedBy, coordinator.Finalizer) ||
                 !ReferenceEquals(receipt.Operation, operation))
             {
@@ -73,14 +58,12 @@ namespace Zantetsu.Observability
                     "Receipt must correlate to the coordinator and operation.", nameof(receipt));
             }
 
-            return new NvencChunkFinalizationResult(coordinator, proof, operation, receipt);
+            return new NvencChunkFinalizationResult(coordinator, operation, receipt);
         }
 
         internal NvencRunChunkFinalizationCoordinator Coordinator => _coordinator;
 
         internal INvencRunChunkFinalizer Finalizer => _coordinator.Finalizer;
-
-        internal NvencRunChunkFinalizationCoordinator.IssuanceProof Proof => _proof;
 
         internal NvencRunChunkFinalizationOperation Operation => _operation;
 
@@ -104,7 +87,6 @@ namespace Zantetsu.Observability
 
         internal string StagingRelativePath => _receipt.Descriptor.StagingRelativePath;
 
-        internal string FinalRelativePath => _receipt.Descriptor.FinalRelativePath;
 
         internal long ByteLength => _receipt.Descriptor.ByteLength;
 
@@ -121,10 +103,8 @@ namespace Zantetsu.Observability
                 try
                 {
                     return _coordinator != null
-                        && _proof != null
                         && _operation != null
                         && _receipt != null
-                        && _proof.IsMintedFor(_coordinator, _coordinator.Finalizer, _operation, _receipt)
                         && _receipt.IsIssuedFor(_coordinator.Finalizer, _operation);
                 }
                 catch (Exception ex) when (ex is ArgumentException

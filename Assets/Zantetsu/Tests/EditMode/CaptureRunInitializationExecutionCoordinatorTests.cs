@@ -18,11 +18,10 @@ namespace Zantetsu.Core.Tests
 
         private static string StagingBase() => IsWindows ? "C:\\staging" : "/staging";
 
-        private static string FinalBase() => IsWindows ? "D:\\final" : "/final";
 
         private static CaptureRunRootLayout MakeLayout(long testRunId = 1)
         {
-            return new CaptureRunRootLayout(StagingBase(), FinalBase(), testRunId);
+            return new CaptureRunRootLayout(StagingBase(), testRunId);
         }
 
         private static CaptureRunMarkerBinding MakeMarkers(CaptureRunRootLayout layout)
@@ -30,8 +29,7 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunMarkerBinding(
                 layout.TestRunId,
                 InitId,
-                layout.StagingRunRootSha256,
-                layout.FinalRunRootSha256);
+                layout.RunRootSha256);
         }
 
         private static void SetField(object target, string fieldName, object value)
@@ -64,7 +62,7 @@ namespace Zantetsu.Core.Tests
             public CaptureRunRootProvisionReceipt ProvisionNew(CaptureRunRootProvisionOperation operation)
             {
                 _callCount++;
-                _log.Add("Provision:" + operation.RootRole);
+                _log.Add("Provision");
 
                 if (_exceptions.TryGetValue(_callCount, out Exception exception))
                 {
@@ -103,7 +101,7 @@ namespace Zantetsu.Core.Tests
             public CaptureRunMarkerWriteReceipt WriteAtomic(CaptureRunMarkerWriteOperation operation)
             {
                 _callCount++;
-                _log.Add("Write:" + operation.RootRole + ":" + operation.MarkerKind);
+                _log.Add("Write:" + operation.MarkerKind);
 
                 if (_exceptions.TryGetValue(_callCount, out Exception exception))
                 {
@@ -238,15 +236,12 @@ namespace Zantetsu.Core.Tests
             Assert.That(result, Is.Not.Null);
             Assert.That(log, Is.EqualTo(new[]
             {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready",
-                "Write:Final:Ready"
+                "Provision",
+                "Write:Initialization",
+                "Write:Ready"
             }));
-            Assert.That(provisioner.CallCount, Is.EqualTo(2));
-            Assert.That(writer.CallCount, Is.EqualTo(4));
+            Assert.That(provisioner.CallCount, Is.EqualTo(1));
+            Assert.That(writer.CallCount, Is.EqualTo(2));
         }
 
         // ---- Receipt validation: staging provision ----
@@ -260,7 +255,7 @@ namespace Zantetsu.Core.Tests
             provisioner.ReceiptFactory = op => null;
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision" }));
         }
 
         [Test]
@@ -273,7 +268,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunRootProvisionReceipt));
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision" }));
         }
 
         [Test]
@@ -286,7 +281,7 @@ namespace Zantetsu.Core.Tests
             provisioner.ReceiptFactory = op => new CaptureRunRootProvisionReceipt(foreign, op);
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision" }));
         }
 
         [Test]
@@ -296,11 +291,11 @@ namespace Zantetsu.Core.Tests
             FakeProvisioner provisioner = new FakeProvisioner(log);
             FakeWriter writer = new FakeWriter(log);
             CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunRootProvisionOperation finalOperation = new CaptureRunRootProvisionOperation(layout, CaptureRunRootRole.Final);
-            provisioner.ReceiptFactory = op => new CaptureRunRootProvisionReceipt(provisioner, finalOperation);
+            CaptureRunRootProvisionOperation foreignOperation = new CaptureRunRootProvisionOperation(MakeLayout(2));
+            provisioner.ReceiptFactory = op => new CaptureRunRootProvisionReceipt(provisioner, foreignOperation);
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(layout, InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision" }));
         }
 
         // ---- Receipt validation: staging initialization write ----
@@ -314,7 +309,7 @@ namespace Zantetsu.Core.Tests
             writer.ReceiptFactory = op => null;
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision", "Write:Initialization" }));
         }
 
         [Test]
@@ -327,7 +322,7 @@ namespace Zantetsu.Core.Tests
                 typeof(CaptureRunMarkerWriteReceipt));
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision", "Write:Initialization" }));
         }
 
         [Test]
@@ -340,7 +335,7 @@ namespace Zantetsu.Core.Tests
             writer.ReceiptFactory = op => new CaptureRunMarkerWriteReceipt(foreign, op);
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision", "Write:Initialization" }));
         }
 
         [Test]
@@ -352,31 +347,17 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
             CaptureRunMarkerWriteOperation foreignOperation = new CaptureRunMarkerWriteOperation(
-                CaptureRunRootRole.Final,
-                CaptureRunMarkerKind.Initialization,
-                markerPaths.FinalInitializationTemporaryPath,
-                markerPaths.FinalInitializationPath,
-                CaptureRunInitializationMarkerCodec.SerializeCanonical(MakeMarkers(layout).FinalInitialization));
+                CaptureRunMarkerKind.Ready,
+                markerPaths.ReadyTemporaryPath,
+                markerPaths.ReadyPath,
+                CaptureRunReadyMarkerCodec.SerializeCanonical(MakeMarkers(layout).Ready));
             writer.ReceiptFactory = op => new CaptureRunMarkerWriteReceipt(writer, foreignOperation);
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(layout, InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision", "Write:Initialization" }));
         }
 
         // ---- Receipt validation: final provision and ready writes ----
-
-        [Test]
-        public void FinalProvision_NullReceipt_Stops()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            int call = 0;
-            provisioner.ReceiptFactory = op => ++call == 2 ? null : new CaptureRunRootProvisionReceipt(provisioner, op);
-
-            Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization", "Provision:Final" }));
-        }
 
         [Test]
         public void StagingReadyWrite_NullReceipt_Stops()
@@ -385,37 +366,14 @@ namespace Zantetsu.Core.Tests
             FakeProvisioner provisioner = new FakeProvisioner(log);
             FakeWriter writer = new FakeWriter(log);
             int call = 0;
-            writer.ReceiptFactory = op => ++call == 3 ? null : new CaptureRunMarkerWriteReceipt(writer, op);
+            writer.ReceiptFactory = op => ++call == 2 ? null : new CaptureRunMarkerWriteReceipt(writer, op);
 
             Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
             Assert.That(log, Is.EqualTo(new[]
             {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready"
-            }));
-        }
-
-        [Test]
-        public void FinalReadyWrite_NullReceipt_Stops()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            int call = 0;
-            writer.ReceiptFactory = op => ++call == 4 ? null : new CaptureRunMarkerWriteReceipt(writer, op);
-
-            Assert.Throws<InvalidOperationException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-            Assert.That(log, Is.EqualTo(new[]
-            {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready",
-                "Write:Final:Ready"
+                "Provision",
+                "Write:Initialization",
+                "Write:Ready"
             }));
         }
 
@@ -435,7 +393,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(provisioner.CallCount, Is.EqualTo(1));
             Assert.That(writer.CallCount, Is.EqualTo(0));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision" }));
         }
 
         [Test]
@@ -452,28 +410,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(ex, Is.SameAs(injected));
             Assert.That(provisioner.CallCount, Is.EqualTo(1));
             Assert.That(writer.CallCount, Is.EqualTo(1));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization" }));
+            Assert.That(log, Is.EqualTo(new[] { "Provision", "Write:Initialization" }));
         }
 
         [Test]
-        public void Exception_ProvisionFinal_Propagates_NoRetry_NoCleanup()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("boom");
-            provisioner.ThrowOnCall(2, injected);
-
-            IOException ex = Assert.Throws<IOException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-
-            Assert.That(ex, Is.SameAs(injected));
-            Assert.That(provisioner.CallCount, Is.EqualTo(2));
-            Assert.That(writer.CallCount, Is.EqualTo(1));
-            Assert.That(log, Is.EqualTo(new[] { "Provision:Staging", "Write:Staging:Initialization", "Provision:Final" }));
-        }
-
-        [Test]
-        public void Exception_WriteFinalInit_Propagates_NoRetry_NoCleanup()
+        public void Exception_WriteReady_Propagates_NoRetry_NoCleanup()
         {
             List<string> log = new List<string>();
             FakeProvisioner provisioner = new FakeProvisioner(log);
@@ -484,61 +425,12 @@ namespace Zantetsu.Core.Tests
             IOException ex = Assert.Throws<IOException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
 
             Assert.That(ex, Is.SameAs(injected));
-            Assert.That(provisioner.CallCount, Is.EqualTo(2));
             Assert.That(writer.CallCount, Is.EqualTo(2));
             Assert.That(log, Is.EqualTo(new[]
             {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization"
-            }));
-        }
-
-        [Test]
-        public void Exception_WriteStagingReady_Propagates_NoRetry_NoCleanup()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("boom");
-            writer.ThrowOnCall(3, injected);
-
-            IOException ex = Assert.Throws<IOException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-
-            Assert.That(ex, Is.SameAs(injected));
-            Assert.That(writer.CallCount, Is.EqualTo(3));
-            Assert.That(log, Is.EqualTo(new[]
-            {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready"
-            }));
-        }
-
-        [Test]
-        public void Exception_WriteFinalReady_Propagates_NoRetry_NoCleanup()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            IOException injected = new IOException("boom");
-            writer.ThrowOnCall(4, injected);
-
-            IOException ex = Assert.Throws<IOException>(() => MakeCoordinator(provisioner, writer).Execute(MakeLayout(), InitId));
-
-            Assert.That(ex, Is.SameAs(injected));
-            Assert.That(writer.CallCount, Is.EqualTo(4));
-            Assert.That(log, Is.EqualTo(new[]
-            {
-                "Provision:Staging",
-                "Write:Staging:Initialization",
-                "Provision:Final",
-                "Write:Final:Initialization",
-                "Write:Staging:Ready",
-                "Write:Final:Ready"
+                "Provision",
+                "Write:Initialization",
+                "Write:Ready"
             }));
         }
 
@@ -584,20 +476,14 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationExecutionReceipt result = MakeCoordinator(provisioner, writer).Execute(layout, InitId);
 
             Assert.That(result.MarkerPaths.RootLayout, Is.SameAs(layout));
-            Assert.That(result.StagingProvision, Is.Not.Null);
-            Assert.That(result.FinalProvision, Is.Not.Null);
-            Assert.That(result.StagingInitializationWrite, Is.Not.Null);
-            Assert.That(result.FinalInitializationWrite, Is.Not.Null);
-            Assert.That(result.StagingReadyWrite, Is.Not.Null);
-            Assert.That(result.FinalReadyWrite, Is.Not.Null);
+            Assert.That(result.Provision, Is.Not.Null);
+            Assert.That(result.InitializationWrite, Is.Not.Null);
+            Assert.That(result.ReadyWrite, Is.Not.Null);
 
-            Assert.That(result.StagingProvision.IssuedBy, Is.SameAs(provisioner));
-            Assert.That(result.FinalProvision.IssuedBy, Is.SameAs(provisioner));
+            Assert.That(result.Provision.IssuedBy, Is.SameAs(provisioner));
             CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
-            Assert.That(result.StagingInitializationWrite.Operation.FinalPath, Is.EqualTo(markerPaths.StagingInitializationPath));
-            Assert.That(result.FinalInitializationWrite.Operation.FinalPath, Is.EqualTo(markerPaths.FinalInitializationPath));
-            Assert.That(result.StagingReadyWrite.Operation.FinalPath, Is.EqualTo(markerPaths.StagingReadyPath));
-            Assert.That(result.FinalReadyWrite.Operation.FinalPath, Is.EqualTo(markerPaths.FinalReadyPath));
+            Assert.That(result.InitializationWrite.Operation.FinalPath, Is.EqualTo(markerPaths.InitializationPath));
+            Assert.That(result.ReadyWrite.Operation.FinalPath, Is.EqualTo(markerPaths.ReadyPath));
 
             Assert.That(result.RootLayout, Is.SameAs(markerPaths.RootLayout));
             Assert.That(result.TestRunId, Is.EqualTo(markerPaths.RootLayout.TestRunId));
@@ -624,29 +510,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_DirectConstructor_ForeignIssuer_Rejected()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationExecutionReceipt result = MakeCoordinator(provisioner, writer).Execute(layout, InitId);
-
-            FakeProvisioner foreign = new FakeProvisioner(new List<string>());
-            CaptureRunRootProvisionReceipt foreignProvision = new CaptureRunRootProvisionReceipt(foreign, result.StagingProvision.Operation);
-
-            Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
-                result.MarkerPaths,
-                result.RunInitializationId,
-                foreignProvision,
-                result.FinalProvision,
-                result.StagingInitializationWrite,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
-        }
-
-        [Test]
         public void Result_DirectConstructor_DifferentOperation_Rejected()
         {
             List<string> log = new List<string>();
@@ -656,37 +519,14 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationExecutionReceipt result = MakeCoordinator(provisioner, writer).Execute(layout, InitId);
 
             CaptureRunMarkerWriteReceipt wrongWrite = new CaptureRunMarkerWriteReceipt(
-                result.StagingInitializationWrite.IssuedBy, result.FinalInitializationWrite.Operation);
+                result.InitializationWrite.IssuedBy, result.ReadyWrite.Operation);
 
             Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
                 result.MarkerPaths,
                 result.RunInitializationId,
-                result.StagingProvision,
-                result.FinalProvision,
+                result.Provision,
                 wrongWrite,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
-        }
-
-        [Test]
-        public void Result_DirectConstructor_OrderMismatch_Rejected()
-        {
-            List<string> log = new List<string>();
-            FakeProvisioner provisioner = new FakeProvisioner(log);
-            FakeWriter writer = new FakeWriter(log);
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunInitializationExecutionReceipt result = MakeCoordinator(provisioner, writer).Execute(layout, InitId);
-
-            Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
-                result.MarkerPaths,
-                result.RunInitializationId,
-                result.StagingProvision,
-                result.FinalProvision,
-                result.StagingInitializationWrite,
-                result.FinalInitializationWrite,
-                result.FinalReadyWrite,
-                result.StagingReadyWrite));
+                result.ReadyWrite));
         }
 
         [Test]
@@ -694,16 +534,16 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunRootLayout layout = MakeLayout();
             string initIdBefore = InitId;
-            string stagingPathBefore = new CaptureRunMarkerPathSet(layout).StagingInitializationPath;
-            string rootBefore = layout.StagingRunRoot;
+            string stagingPathBefore = new CaptureRunMarkerPathSet(layout).InitializationPath;
+            string rootBefore = layout.RunRoot;
 
             List<string> log = new List<string>();
             CaptureRunInitializationExecutionReceipt result = MakeCoordinator(
                 new FakeProvisioner(log), new FakeWriter(log)).Execute(layout, InitId);
 
             Assert.That(result.RunInitializationId, Is.EqualTo(initIdBefore));
-            Assert.That(result.MarkerPaths.StagingInitializationPath, Is.EqualTo(stagingPathBefore));
-            Assert.That(layout.StagingRunRoot, Is.EqualTo(rootBefore));
+            Assert.That(result.MarkerPaths.InitializationPath, Is.EqualTo(stagingPathBefore));
+            Assert.That(layout.RunRoot, Is.EqualTo(rootBefore));
             Assert.That(result.MarkerPaths.RootLayout, Is.SameAs(layout));
         }
 
@@ -720,11 +560,8 @@ namespace Zantetsu.Core.Tests
                 result.MarkerPaths,
                 result.RunInitializationId,
                 uninitialized,
-                result.FinalProvision,
-                result.StagingInitializationWrite,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
+                result.InitializationWrite,
+                result.ReadyWrite));
         }
 
         [Test]
@@ -739,12 +576,9 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
                 result.MarkerPaths,
                 result.RunInitializationId,
-                result.StagingProvision,
-                result.FinalProvision,
+                result.Provision,
                 uninitialized,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
+                result.ReadyWrite));
         }
 
         [Test]
@@ -755,21 +589,14 @@ namespace Zantetsu.Core.Tests
 
             CaptureRunRootProvisionReceipt nullIssuerStaging = (CaptureRunRootProvisionReceipt)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunRootProvisionReceipt));
-            SetField(nullIssuerStaging, "_operation", result.StagingProvision.Operation);
-
-            CaptureRunRootProvisionReceipt nullIssuerFinal = (CaptureRunRootProvisionReceipt)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunRootProvisionReceipt));
-            SetField(nullIssuerFinal, "_operation", result.FinalProvision.Operation);
+            SetField(nullIssuerStaging, "_operation", result.Provision.Operation);
 
             Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
                 result.MarkerPaths,
                 result.RunInitializationId,
                 nullIssuerStaging,
-                nullIssuerFinal,
-                result.StagingInitializationWrite,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
+                result.InitializationWrite,
+                result.ReadyWrite));
         }
 
         [Test]
@@ -778,11 +605,9 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout;
             CaptureRunInitializationExecutionReceipt result = ExecuteValid(out layout);
 
-            byte[] finalInitBytesBefore = result.FinalInitializationWrite.Operation.GetCanonicalBytes();
-            string stagingReadyPathBefore = result.StagingReadyWrite.Operation.FinalPath;
-            string finalReadyPathBefore = result.FinalReadyWrite.Operation.FinalPath;
+            string stagingReadyPathBefore = result.ReadyWrite.Operation.FinalPath;
 
-            SetField(result.StagingInitializationWrite.Operation, "_canonicalBytes", null);
+            SetField(result.InitializationWrite.Operation, "_canonicalBytes", null);
 
             bool valid = result.IsValid;
             Assert.That(valid, Is.False);
@@ -790,16 +615,11 @@ namespace Zantetsu.Core.Tests
             Assert.Throws<ArgumentException>(() => new CaptureRunInitializationExecutionReceipt(
                 result.MarkerPaths,
                 result.RunInitializationId,
-                result.StagingProvision,
-                result.FinalProvision,
-                result.StagingInitializationWrite,
-                result.FinalInitializationWrite,
-                result.StagingReadyWrite,
-                result.FinalReadyWrite));
+                result.Provision,
+                result.InitializationWrite,
+                result.ReadyWrite));
 
-            Assert.That(result.FinalInitializationWrite.Operation.GetCanonicalBytes(), Is.EqualTo(finalInitBytesBefore));
-            Assert.That(result.StagingReadyWrite.Operation.FinalPath, Is.EqualTo(stagingReadyPathBefore));
-            Assert.That(result.FinalReadyWrite.Operation.FinalPath, Is.EqualTo(finalReadyPathBefore));
+            Assert.That(result.ReadyWrite.Operation.FinalPath, Is.EqualTo(stagingReadyPathBefore));
         }
     }
 }

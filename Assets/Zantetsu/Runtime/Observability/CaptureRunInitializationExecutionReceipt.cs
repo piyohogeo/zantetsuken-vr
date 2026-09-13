@@ -5,17 +5,16 @@ namespace Zantetsu.Observability
     /// <summary>
     /// Immutable token returned after a Capture Run initialization sequence has
     /// fully succeeded. It correlates the Run's marker paths and initialization
-    /// id with the two provision receipts and four write receipts produced
-    /// along the way.
+    /// id with the provision receipt and the two write receipts produced along
+    /// the way.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The constructor re-verifies the correlations it can see rather than
-    /// trusting the coordinator: all eight references must be non-null, the two
-    /// provision receipts must share one issuer, the four write receipts must
-    /// share one issuer, the provision operations must be the staging and final
-    /// operations of the marker paths' root layout, and the operation each
-    /// write receipt names must be one of the four the marker paths describe.
+    /// trusting the coordinator: all four references must be non-null, the two
+    /// write receipts must share one issuer, the provision operation must be
+    /// the marker paths' root layout, and the operation each write receipt
+    /// names must be one of the two the marker paths describe.
     /// <see cref="IsValid"/> recomputes the same checks from the stored values
     /// without an independent flag.
     /// </para>
@@ -26,30 +25,25 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// <see cref="RootLayout"/> and <see cref="TestRunId"/> are forwarded from
-    /// the marker paths and hold no copied value. This type performs no filesystem work and is not an
-    /// <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
+    /// the marker paths and hold no copied value. This type performs no
+    /// filesystem work and is not an <see cref="IDisposable"/>, MonoBehaviour,
+    /// or ScriptableObject.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunInitializationExecutionReceipt
     {
         private readonly CaptureRunMarkerPathSet _markerPaths;
         private readonly string _runInitializationId;
-        private readonly CaptureRunRootProvisionReceipt _stagingProvision;
-        private readonly CaptureRunRootProvisionReceipt _finalProvision;
-        private readonly CaptureRunMarkerWriteReceipt _stagingInitializationWrite;
-        private readonly CaptureRunMarkerWriteReceipt _finalInitializationWrite;
-        private readonly CaptureRunMarkerWriteReceipt _stagingReadyWrite;
-        private readonly CaptureRunMarkerWriteReceipt _finalReadyWrite;
+        private readonly CaptureRunRootProvisionReceipt _provision;
+        private readonly CaptureRunMarkerWriteReceipt _initializationWrite;
+        private readonly CaptureRunMarkerWriteReceipt _readyWrite;
 
         internal CaptureRunInitializationExecutionReceipt(
             CaptureRunMarkerPathSet markerPaths,
             string runInitializationId,
-            CaptureRunRootProvisionReceipt stagingProvision,
-            CaptureRunRootProvisionReceipt finalProvision,
-            CaptureRunMarkerWriteReceipt stagingInitializationWrite,
-            CaptureRunMarkerWriteReceipt finalInitializationWrite,
-            CaptureRunMarkerWriteReceipt stagingReadyWrite,
-            CaptureRunMarkerWriteReceipt finalReadyWrite)
+            CaptureRunRootProvisionReceipt provision,
+            CaptureRunMarkerWriteReceipt initializationWrite,
+            CaptureRunMarkerWriteReceipt readyWrite)
         {
             if (markerPaths == null)
             {
@@ -61,62 +55,38 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(runInitializationId));
             }
 
-            if (stagingProvision == null)
+            if (provision == null)
             {
-                throw new ArgumentNullException(nameof(stagingProvision));
+                throw new ArgumentNullException(nameof(provision));
             }
 
-            if (finalProvision == null)
+            if (initializationWrite == null)
             {
-                throw new ArgumentNullException(nameof(finalProvision));
+                throw new ArgumentNullException(nameof(initializationWrite));
             }
 
-            if (stagingInitializationWrite == null)
+            if (readyWrite == null)
             {
-                throw new ArgumentNullException(nameof(stagingInitializationWrite));
+                throw new ArgumentNullException(nameof(readyWrite));
             }
 
-            if (finalInitializationWrite == null)
-            {
-                throw new ArgumentNullException(nameof(finalInitializationWrite));
-            }
-
-            if (stagingReadyWrite == null)
-            {
-                throw new ArgumentNullException(nameof(stagingReadyWrite));
-            }
-
-            if (finalReadyWrite == null)
-            {
-                throw new ArgumentNullException(nameof(finalReadyWrite));
-            }
-
-            if (!CorrelationsHold(markerPaths, runInitializationId, stagingProvision, finalProvision, stagingInitializationWrite, finalInitializationWrite, stagingReadyWrite, finalReadyWrite))
+            if (!CorrelationsHold(markerPaths, runInitializationId, provision, initializationWrite, readyWrite))
             {
                 throw new ArgumentException("Execution receipt inputs are not mutually correlated.");
             }
 
             _markerPaths = markerPaths;
             _runInitializationId = runInitializationId;
-            _stagingProvision = stagingProvision;
-            _finalProvision = finalProvision;
-            _stagingInitializationWrite = stagingInitializationWrite;
-            _finalInitializationWrite = finalInitializationWrite;
-            _stagingReadyWrite = stagingReadyWrite;
-            _finalReadyWrite = finalReadyWrite;
+            _provision = provision;
+            _initializationWrite = initializationWrite;
+            _readyWrite = readyWrite;
         }
 
-        internal CaptureRunRootProvisionReceipt StagingProvision => _stagingProvision;
+        internal CaptureRunRootProvisionReceipt Provision => _provision;
 
-        internal CaptureRunRootProvisionReceipt FinalProvision => _finalProvision;
+        internal CaptureRunMarkerWriteReceipt InitializationWrite => _initializationWrite;
 
-        internal CaptureRunMarkerWriteReceipt StagingInitializationWrite => _stagingInitializationWrite;
-
-        internal CaptureRunMarkerWriteReceipt FinalInitializationWrite => _finalInitializationWrite;
-
-        internal CaptureRunMarkerWriteReceipt StagingReadyWrite => _stagingReadyWrite;
-
-        internal CaptureRunMarkerWriteReceipt FinalReadyWrite => _finalReadyWrite;
+        internal CaptureRunMarkerWriteReceipt ReadyWrite => _readyWrite;
 
         internal CaptureRunMarkerPathSet MarkerPaths => _markerPaths;
 
@@ -126,117 +96,78 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _runInitializationId;
 
-        internal bool IsValid => CorrelationsHold(_markerPaths, _runInitializationId, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
+        internal bool IsValid =>
+            CorrelationsHold(_markerPaths, _runInitializationId, _provision, _initializationWrite, _readyWrite);
 
         private static bool CorrelationsHold(
             CaptureRunMarkerPathSet markerPaths,
             string runInitializationId,
-            CaptureRunRootProvisionReceipt stagingProvision,
-            CaptureRunRootProvisionReceipt finalProvision,
-            CaptureRunMarkerWriteReceipt stagingInitializationWrite,
-            CaptureRunMarkerWriteReceipt finalInitializationWrite,
-            CaptureRunMarkerWriteReceipt stagingReadyWrite,
-            CaptureRunMarkerWriteReceipt finalReadyWrite)
+            CaptureRunRootProvisionReceipt provision,
+            CaptureRunMarkerWriteReceipt initializationWrite,
+            CaptureRunMarkerWriteReceipt readyWrite)
         {
             if (markerPaths == null
                 || runInitializationId == null
-                || stagingProvision == null
-                || finalProvision == null
-                || stagingInitializationWrite == null
-                || finalInitializationWrite == null
-                || stagingReadyWrite == null
-                || finalReadyWrite == null)
+                || provision == null
+                || initializationWrite == null
+                || readyWrite == null)
             {
                 return false;
             }
 
-            if (!stagingProvision.IsValid
-                || !finalProvision.IsValid
-                || !stagingInitializationWrite.IsValid
-                || !finalInitializationWrite.IsValid
-                || !stagingReadyWrite.IsValid
-                || !finalReadyWrite.IsValid)
+            if (!provision.IsValid || !initializationWrite.IsValid || !readyWrite.IsValid)
             {
                 return false;
             }
 
             CaptureRunRootLayout rootLayout = markerPaths.RootLayout;
-            if (rootLayout == null)
+            if (rootLayout == null || provision.IssuedBy == null)
             {
                 return false;
             }
 
-            ICaptureRunRootProvisioner stagingProvisionIssuer = stagingProvision.IssuedBy;
-            ICaptureRunRootProvisioner finalProvisionIssuer = finalProvision.IssuedBy;
-            if (stagingProvisionIssuer == null || !ReferenceEquals(stagingProvisionIssuer, finalProvisionIssuer))
+            ICaptureRunMarkerAtomicWriter writeIssuer = initializationWrite.IssuedBy;
+            if (writeIssuer == null || !ReferenceEquals(writeIssuer, readyWrite.IssuedBy))
             {
                 return false;
             }
 
-            ICaptureRunMarkerAtomicWriter stagingInitializationWriteIssuer = stagingInitializationWrite.IssuedBy;
-            ICaptureRunMarkerAtomicWriter finalInitializationWriteIssuer = finalInitializationWrite.IssuedBy;
-            ICaptureRunMarkerAtomicWriter stagingReadyWriteIssuer = stagingReadyWrite.IssuedBy;
-            ICaptureRunMarkerAtomicWriter finalReadyWriteIssuer = finalReadyWrite.IssuedBy;
-            if (stagingInitializationWriteIssuer == null
-                || !ReferenceEquals(stagingInitializationWriteIssuer, finalInitializationWriteIssuer)
-                || !ReferenceEquals(stagingInitializationWriteIssuer, stagingReadyWriteIssuer)
-                || !ReferenceEquals(stagingInitializationWriteIssuer, finalReadyWriteIssuer))
+            CaptureRunRootProvisionOperation provisionOperation = provision.Operation;
+            if (provisionOperation == null
+                || !ReferenceEquals(provisionOperation.RootLayout, rootLayout)
+                || !string.Equals(provisionOperation.TrustedBaseRoot, rootLayout.TrustedBaseRoot, StringComparison.Ordinal)
+                || !string.Equals(provisionOperation.RunRoot, rootLayout.RunRoot, StringComparison.Ordinal)
+                || provisionOperation.TestRunId != rootLayout.TestRunId)
             {
                 return false;
             }
 
-            CaptureRunRootProvisionOperation stagingProvisionOperation = stagingProvision.Operation;
-            CaptureRunRootProvisionOperation finalProvisionOperation = finalProvision.Operation;
+            CaptureRunMarkerWriteOperation initialization = initializationWrite.Operation;
+            CaptureRunMarkerWriteOperation ready = readyWrite.Operation;
 
-            if (stagingProvisionOperation == null
-                || finalProvisionOperation == null
-                || !ReferenceEquals(stagingProvisionOperation.RootLayout, rootLayout)
-                || !ReferenceEquals(finalProvisionOperation.RootLayout, rootLayout)
-                || stagingProvisionOperation.RootRole != CaptureRunRootRole.Staging
-                || finalProvisionOperation.RootRole != CaptureRunRootRole.Final
-                || !string.Equals(stagingProvisionOperation.TrustedBaseRoot, rootLayout.StagingTrustedBaseRoot, StringComparison.Ordinal)
-                || !string.Equals(stagingProvisionOperation.RunRoot, rootLayout.StagingRunRoot, StringComparison.Ordinal)
-                || stagingProvisionOperation.TestRunId != rootLayout.TestRunId
-                || !string.Equals(finalProvisionOperation.TrustedBaseRoot, rootLayout.FinalTrustedBaseRoot, StringComparison.Ordinal)
-                || !string.Equals(finalProvisionOperation.RunRoot, rootLayout.FinalRunRoot, StringComparison.Ordinal)
-                || finalProvisionOperation.TestRunId != rootLayout.TestRunId)
-            {
-                return false;
-            }
-
-            CaptureRunMarkerWriteOperation stagingInitialization = stagingInitializationWrite.Operation;
-            CaptureRunMarkerWriteOperation finalInitialization = finalInitializationWrite.Operation;
-            CaptureRunMarkerWriteOperation stagingReady = stagingReadyWrite.Operation;
-            CaptureRunMarkerWriteOperation finalReady = finalReadyWrite.Operation;
-
-            if (stagingInitialization == null
-                || finalInitialization == null
-                || stagingReady == null
-                || finalReady == null
-                || !stagingInitialization.IsValid
-                || !finalInitialization.IsValid
-                || !stagingReady.IsValid
-                || !finalReady.IsValid
-                || !WriteOperationMatches(stagingInitialization, CaptureRunRootRole.Staging, CaptureRunMarkerKind.Initialization, markerPaths.StagingInitializationTemporaryPath, markerPaths.StagingInitializationPath)
-                || !WriteOperationMatches(finalInitialization, CaptureRunRootRole.Final, CaptureRunMarkerKind.Initialization, markerPaths.FinalInitializationTemporaryPath, markerPaths.FinalInitializationPath)
-                || !WriteOperationMatches(stagingReady, CaptureRunRootRole.Staging, CaptureRunMarkerKind.Ready, markerPaths.StagingReadyTemporaryPath, markerPaths.StagingReadyPath)
-                || !WriteOperationMatches(finalReady, CaptureRunRootRole.Final, CaptureRunMarkerKind.Ready, markerPaths.FinalReadyTemporaryPath, markerPaths.FinalReadyPath))
-            {
-                return false;
-            }
-
-            return true;
+            return initialization != null
+                && ready != null
+                && initialization.IsValid
+                && ready.IsValid
+                && WriteOperationMatches(
+                    initialization,
+                    CaptureRunMarkerKind.Initialization,
+                    markerPaths.InitializationTemporaryPath,
+                    markerPaths.InitializationPath)
+                && WriteOperationMatches(
+                    ready,
+                    CaptureRunMarkerKind.Ready,
+                    markerPaths.ReadyTemporaryPath,
+                    markerPaths.ReadyPath);
         }
 
         private static bool WriteOperationMatches(
             CaptureRunMarkerWriteOperation operation,
-            CaptureRunRootRole expectedRole,
             CaptureRunMarkerKind expectedKind,
             string expectedTemporaryPath,
             string expectedFinalPath)
         {
-            return operation.RootRole == expectedRole
-                && operation.MarkerKind == expectedKind
+            return operation.MarkerKind == expectedKind
                 && string.Equals(operation.TemporaryPath, expectedTemporaryPath, StringComparison.Ordinal)
                 && string.Equals(operation.FinalPath, expectedFinalPath, StringComparison.Ordinal);
         }

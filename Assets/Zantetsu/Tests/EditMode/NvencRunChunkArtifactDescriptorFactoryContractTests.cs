@@ -44,14 +44,11 @@ namespace Zantetsu.Core.Tests
                 "NvencH264IdrChunk",
                 1,
                 ChunkPath,
-                ChunkPath,
                 64,
                 Hash64);
 
             Assert.That(descriptor.IsValid, Is.True);
             Assert.That(descriptor.StagingRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(descriptor.FinalRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(descriptor.StagingRelativePath, Is.EqualTo(descriptor.FinalRelativePath));
         }
 
         [Test]
@@ -75,10 +72,8 @@ namespace Zantetsu.Core.Tests
 
             foreach (string path in invalid)
             {
-                Assert.That(MakeDescriptorException(path, "frames/7.png"), Is.TypeOf<ArgumentException>(),
+                Assert.That(MakeDescriptorException(path), Is.TypeOf<ArgumentException>(),
                     "staging path must be rejected: " + (path ?? "<null>"));
-                Assert.That(MakeDescriptorException("frames/7.png", path), Is.TypeOf<ArgumentException>(),
-                    "final path must be rejected: " + (path ?? "<null>"));
             }
         }
 
@@ -94,7 +89,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(descriptor.FormatId, Is.EqualTo("NvencH264IdrChunk"));
             Assert.That(descriptor.FormatVersion, Is.EqualTo(1));
             Assert.That(descriptor.StagingRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(descriptor.FinalRelativePath, Is.EqualTo(ChunkPath));
             Assert.That(descriptor.ByteLength, Is.EqualTo(64));
             Assert.That(descriptor.ContentHash, Is.EqualTo(Hash64));
         }
@@ -106,7 +100,6 @@ namespace Zantetsu.Core.Tests
                 NvencRunChunkArtifactDescriptorFactory.Create("chunk/0", 64, Hash64);
 
             StringAssert.DoesNotContain(".partial", descriptor.StagingRelativePath);
-            StringAssert.DoesNotContain(".partial", descriptor.FinalRelativePath);
             StringAssert.EndsWith(".partial", NvencRunChunkArtifactDescriptorFactory.PendingRelativePath);
         }
 
@@ -175,16 +168,14 @@ namespace Zantetsu.Core.Tests
                 "image/png",
                 1,
                 "frames/7.png.stage",
-                "frames/7.png",
                 123,
                 Hash64);
 
             Assert.That(image.IsValid, Is.True);
             Assert.That(image.StagingRelativePath, Is.EqualTo("frames/7.png.stage"));
-            Assert.That(image.FinalRelativePath, Is.EqualTo("frames/7.png"));
         }
 
-        private static Exception MakeDescriptorException(string stagingRelativePath, string finalRelativePath)
+        private static Exception MakeDescriptorException(string stagingRelativePath)
         {
             try
             {
@@ -194,7 +185,6 @@ namespace Zantetsu.Core.Tests
                     "NvencH264IdrChunk",
                     1,
                     stagingRelativePath,
-                    finalRelativePath,
                     64,
                     Hash64);
                 return null;

@@ -22,7 +22,6 @@ namespace Zantetsu.Observability
     {
         internal const string StagingRelativePath = "chunks/chunk-0.nvenc-idr-chunk-v1.h264";
 
-        internal const string FinalRelativePath = "chunks/chunk-0.nvenc-idr-chunk-v1.h264";
 
         internal const string PendingRelativePath = "chunks/chunk-0.nvenc-idr-chunk-v1.h264.partial";
 
@@ -41,7 +40,6 @@ namespace Zantetsu.Observability
                 FormatId,
                 FormatVersion,
                 StagingRelativePath,
-                FinalRelativePath,
                 byteLength,
                 contentHash);
         }

@@ -27,9 +27,7 @@ namespace Zantetsu.Core.Tests
             return type;
         }
 
-        private static Type GetQueueType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntentQueue");
 
-        private static Type GetSnapshotType() => GetTypeFromAssembly("TerminalIntentOwnershipSnapshot");
 
         private static Type GetSetType() => GetTypeFromAssembly("ForcedDropFrameIdSet");
 
@@ -39,11 +37,8 @@ namespace Zantetsu.Core.Tests
 
         private static Type GetDraftType() => GetTypeFromAssembly("CaptureFrameDraft");
 
-        private static Type GetEntryType() => GetTypeFromAssembly("CaptureFramePngStagingEntry");
 
-        private static Type GetStoreType() => GetTypeFromAssembly("CaptureFramePngStagingStore");
 
-        private static Type GetIntentType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntent");
 
         private static object GetProperty(object target, string name)
         {
@@ -95,28 +90,6 @@ namespace Zantetsu.Core.Tests
             return ctor.Invoke(new object[] { run, profile });
         }
 
-        private static object CreateQueue(object registry, CaptureTraceProfile profile)
-        {
-            ConstructorInfo ctor = GetQueueType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRegistryType(), typeof(CaptureTraceProfile) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { registry, profile });
-        }
-
-        private static object CreateStore(object run, int maximumEntryCount, long maximumTotalByteCount)
-        {
-            ConstructorInfo ctor = GetStoreType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRunType(), typeof(int), typeof(long) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { run, maximumEntryCount, maximumTotalByteCount });
-        }
-
         private static CaptureFrameRequest MakeRequest(long captureFrameId, long testRunId = 1)
         {
             CaptureFrameTraceContext context = new CaptureFrameTraceContext(
@@ -152,43 +125,6 @@ namespace Zantetsu.Core.Tests
             });
         }
 
-        private static ConstructorInfo GetEntryCtor()
-        {
-            ConstructorInfo ctor = GetEntryType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { typeof(long), typeof(long), typeof(NativeArray<byte>), typeof(string) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor;
-        }
-
-        private static object MakeEntry(long captureFrameId, long testRunId, int pngLength)
-        {
-            ConstructorInfo ctor = GetEntryCtor();
-
-            byte[] data = new byte[pngLength];
-            for (int i = 0; i < pngLength; i++)
-            {
-                data[i] = (byte)i;
-            }
-
-            NativeArray<byte> png = new NativeArray<byte>(data, Allocator.Persistent);
-            try
-            {
-                return ctor.Invoke(new object[] { testRunId, captureFrameId, png, KnownPngSha256 });
-            }
-            catch
-            {
-                if (png.IsCreated)
-                {
-                    png.Dispose();
-                }
-
-                throw;
-            }
-        }
-
         // ---- Registry / queue / store operation helpers ----
 
         private static bool TryReserve(object registry, out object reservation, out object rejectKind)
@@ -216,14 +152,11 @@ namespace Zantetsu.Core.Tests
             return draft;
         }
 
-        private static void CommitAndRegister(object queue, object registry, object run, long captureFrameId)
+        private static void MarkEvidenceStaged(object registry, CaptureFrameRequest request)
         {
-            object reservation, rejectKind;
-            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
-            object draft = MakeDraft(run, MakeRequest(captureFrameId));
-            Commit(registry, reservation, draft);
-            MethodInfo register = GetQueueType().GetMethod("RegisterPendingDraft", BindingFlags.NonPublic | BindingFlags.Instance);
-            register.Invoke(queue, new object[] { draft });
+            MethodInfo method = GetRegistryType().GetMethod("MarkEvidenceStaged", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(method, Is.Not.Null);
+            method.Invoke(registry, new object[] { request });
         }
 
         private static void MarkDropped(object registry, CaptureFrameRequest request, CaptureFrameDropReason reason)
@@ -232,72 +165,18 @@ namespace Zantetsu.Core.Tests
             method.Invoke(registry, new object[] { request, reason });
         }
 
-        private static bool TryMarkStaged(object registry, CaptureFrameRequest request, object store, object entry)
-        {
-            MethodInfo method = GetRegistryType().GetMethod("TryMarkStaged", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-            return (bool)method.Invoke(registry, new object[] { request, store, entry });
-        }
-
-        private static int EnqueueTerminalIntent(object queue, object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("EnqueueTerminalIntent", BindingFlags.NonPublic | BindingFlags.Instance);
-            return (int)method.Invoke(queue, new object[] { intent });
-        }
-
-        private static object CreateDropIntent(CaptureFrameRequest request, CaptureFrameDropReason reason)
-        {
-            MethodInfo method = GetIntentType().GetMethod("CreateDrop", BindingFlags.NonPublic | BindingFlags.Static);
-            return method.Invoke(null, new object[] { request, reason });
-        }
-
-        private static bool TryDequeue(object queue, out object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("TryDequeue", BindingFlags.NonPublic | BindingFlags.Instance);
-            object[] args = new object[] { null };
-            bool ok = (bool)method.Invoke(queue, args);
-            intent = args[0];
-            return ok;
-        }
-
-        private static void BeginProducerDrain(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("BeginProducerDrain", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static void CloseAfterProducerJoin(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CloseAfterProducerJoin", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static object CreateOwnershipSnapshot(object queue, int producerRetainedPrivateBufferCount)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CreateOwnershipSnapshot", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-            return method.Invoke(queue, new object[] { producerRetainedPrivateBufferCount });
-        }
-
-        private static object GetIssuedSnapshot(object queue)
-        {
-            PropertyInfo prop = GetQueueType().GetProperty("IssuedOwnershipSnapshot", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(prop, Is.Not.Null);
-            return prop.GetValue(queue);
-        }
-
-        private static object ForceDrop(object registry, object queue, object snapshot)
+        private static object ForceDrop(object registry)
         {
             MethodInfo method = GetRegistryType().GetMethod("ForceDropPendingForFreeze", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(method, Is.Not.Null);
-            return method.Invoke(registry, new object[] { queue, snapshot });
+            return method.Invoke(registry, new object[0]);
         }
 
-        private static Exception ForceDropException(object registry, object queue, object snapshot)
+        private static Exception ForceDropException(object registry)
         {
             try
             {
-                ForceDrop(registry, queue, snapshot);
+                ForceDrop(registry);
                 return null;
             }
             catch (Exception ex)
@@ -349,12 +228,6 @@ namespace Zantetsu.Core.Tests
             entries.SetValue(entry, entryIndex);
         }
 
-        private static int GetSlotState(object registry, int slotIndex)
-        {
-            FieldInfo field = GetRegistryType().GetField("_slotState", BindingFlags.NonPublic | BindingFlags.Instance);
-            Array states = (Array)field.GetValue(registry);
-            return (int)states.GetValue(slotIndex);
-        }
 
         private static void SetSlotState(object registry, int slotIndex, int state)
         {
@@ -363,12 +236,6 @@ namespace Zantetsu.Core.Tests
             states.SetValue(Enum.ToObject(field.FieldType.GetElementType(), state), slotIndex);
         }
 
-        private static int GetSlotEntryIndex(object registry, int slotIndex)
-        {
-            FieldInfo field = GetRegistryType().GetField("_slotEntryIndex", BindingFlags.NonPublic | BindingFlags.Instance);
-            int[] indices = (int[])field.GetValue(registry);
-            return indices[slotIndex];
-        }
 
         private static void SetSlotEntryIndex(object registry, int slotIndex, int entryIndex)
         {
@@ -421,16 +288,6 @@ namespace Zantetsu.Core.Tests
 
         // ---- Snapshot / set construction helpers ----
 
-        private static object CreateSnapshotRaw(object queue, long testRunId, int queueCount, int accepted, int processed, int queueOwned, int producerRetained)
-        {
-            ConstructorInfo ctor = GetSnapshotType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetQueueType(), typeof(long), typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { queue, testRunId, queueCount, accepted, processed, queueOwned, producerRetained });
-        }
 
         private static object CreateSetRaw(object registry, long testRunId, long[] ids)
         {
@@ -551,8 +408,6 @@ namespace Zantetsu.Core.Tests
 
             public object Run;
             public object Registry;
-            public object Queue;
-            public object Store;
             public readonly List<object> AllEntries = new List<object>();
         }
 
@@ -568,24 +423,6 @@ namespace Zantetsu.Core.Tests
         {
             scope.Run = MakeRun(scope.TestRunId, captureProfileId: 5);
             scope.Registry = CreateRegistry(scope.Run, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Queue = CreateQueue(scope.Registry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Store = CreateStore(scope.Run, scope.MaxDraftPerRun, 4096);
-        }
-
-        private static object MakeEntryTracked(Scope scope, long captureFrameId, long testRunId, int pngLength)
-        {
-            object entry = MakeEntry(captureFrameId, testRunId, pngLength);
-            try
-            {
-                scope.AllEntries.Add(entry);
-            }
-            catch
-            {
-                ((IDisposable)entry).Dispose();
-                throw;
-            }
-
-            return entry;
         }
 
         private static Exception[] CleanupScope(Scope scope)
@@ -594,10 +431,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Queue != null && (bool)GetProperty(scope.Queue, "IsCreated"))
-                {
-                    ((IDisposable)scope.Queue).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -606,10 +439,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Store != null && (bool)GetProperty(scope.Store, "IsCreated"))
-                {
-                    ((IDisposable)scope.Store).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -651,34 +480,22 @@ namespace Zantetsu.Core.Tests
         }
 
         /// <summary>
-        /// Commits and registers each pending draft, drains one intent per draft,
-        /// closes the queue, and returns its issued ownership snapshot.
+        /// Commits one pending draft per capture frame ID, so the registry is
+        /// in the state a freeze finds it in.
         /// </summary>
-        private static object SetupForFreeze(Scope scope, long[] captureFrameIds)
+        private static void SetupForFreeze(Scope scope, long[] captureFrameIds)
         {
             for (int i = 0; i < captureFrameIds.Length; i++)
             {
-                CommitAndRegister(scope.Queue, scope.Registry, scope.Run, captureFrameIds[i]);
-                Assert.That(EnqueueTerminalIntent(scope.Queue, CreateDropIntent(MakeRequest(captureFrameIds[i]), CaptureFrameDropReason.PngEncodeFailed)), Is.EqualTo(0));
+                CommitDraft(scope.Registry, scope.Run, captureFrameIds[i]);
             }
-
-            BeginProducerDrain(scope.Queue);
-            CloseAfterProducerJoin(scope.Queue);
-
-            for (int i = 0; i < captureFrameIds.Length; i++)
-            {
-                object dequeued;
-                Assert.That(TryDequeue(scope.Queue, out dequeued), Is.True);
-            }
-
-            return CreateOwnershipSnapshot(scope.Queue, 0);
         }
 
-        private static void AssertFreezeRejectedUnchanged(Scope scope, object snapshot, Action corrupt)
+        private static void AssertFreezeRejectedUnchanged(Scope scope, Action corrupt)
         {
             corrupt();
             string before = DescribeRegistry(scope.Registry);
-            Exception ex = ForceDropException(scope.Registry, scope.Queue, snapshot);
+            Exception ex = ForceDropException(scope.Registry);
             Assert.That(ex, Is.TypeOf<InvalidOperationException>());
             Assert.That(GetIssuedForcedDropSet(scope.Registry), Is.Null);
             Assert.That(DescribeRegistry(scope.Registry), Is.EqualTo(before));
@@ -692,8 +509,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[0]);
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That(set, Is.Not.Null);
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(0));
@@ -709,8 +526,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 3, 5, 7 });
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 3, 5, 7 });
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(3));
                 Assert.That(SetGetCaptureFrameId(set, 0), Is.EqualTo(3));
@@ -731,8 +548,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 1 });
+                object set = ForceDrop(scope.Registry);
 
                 foreach (int index in new[] { -1, 1, 5 })
                 {
@@ -749,8 +566,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 1 });
+                object set = ForceDrop(scope.Registry);
 
                 foreach (long id in new[] { 0L, -1L })
                 {
@@ -849,95 +666,6 @@ namespace Zantetsu.Core.Tests
 
         // ---- ForceDrop dependency / snapshot validation ----
 
-        [Test]
-        public void ForceDrop_NullQueue_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                Exception ex = ForceDropException(scope.Registry, null, snapshot);
-                Assert.That(ex, Is.TypeOf<ArgumentNullException>());
-                Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("intentQueue"));
-            });
-        }
-
-        [Test]
-        public void ForceDrop_NullSnapshot_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                Exception ex = ForceDropException(scope.Registry, scope.Queue, null);
-                Assert.That(ex, Is.TypeOf<ArgumentNullException>());
-                Assert.That(((ArgumentNullException)ex).ParamName, Is.EqualTo("ownershipSnapshot"));
-            });
-        }
-
-        [Test]
-        public void ForceDrop_QueueBoundToOtherRegistry_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                object otherRegistry = CreateRegistry(scope.Run, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-                object otherQueue = CreateQueue(otherRegistry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-
-                object forged = CreateSnapshotRaw(scope.Queue, 1, 0, 0, 0, 0, 0); // non-null so step 3 is reached
-
-                Exception ex = ForceDropException(scope.Registry, otherQueue, forged);
-                Assert.That(ex, Is.TypeOf<ArgumentException>());
-                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("intentQueue"));
-            });
-        }
-
-        [Test]
-        public void ForceDrop_ForgedSnapshotWrongIssuer_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                object otherQueue = CreateQueue(scope.Registry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-                object forged = CreateSnapshotRaw(otherQueue, 1, 0, 0, 0, 0, 0);
-
-                Exception ex = ForceDropException(scope.Registry, scope.Queue, forged);
-                Assert.That(ex, Is.TypeOf<ArgumentException>());
-                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("ownershipSnapshot"));
-            });
-        }
-
-        [Test]
-        public void ForceDrop_ForgedSnapshotNotIssued_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                object forged = CreateSnapshotRaw(scope.Queue, 1, 0, 0, 0, 0, 0); // valid but never issued by the queue
-
-                Exception ex = ForceDropException(scope.Registry, scope.Queue, forged);
-                Assert.That(ex, Is.TypeOf<ArgumentException>());
-                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("ownershipSnapshot"));
-            });
-        }
-
-        [Test]
-        public void ForceDrop_SnapshotTestRunIdMismatch_Rejected()
-        {
-            Scope scope = NewScope();
-            RunBody(scope, () =>
-            {
-                object snapshot = SetupForFreeze(scope, new long[0]);
-
-                FieldInfo field = GetSnapshotType().GetField("_testRunId", BindingFlags.NonPublic | BindingFlags.Instance);
-                Assert.That(field, Is.Not.Null);
-                field.SetValue(snapshot, 99L);
-
-                Exception ex = ForceDropException(scope.Registry, scope.Queue, snapshot);
-                Assert.That(ex, Is.TypeOf<ArgumentException>());
-                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("ownershipSnapshot"));
-            });
-        }
-
         // ---- ForceDrop success ----
 
         [Test]
@@ -947,15 +675,14 @@ namespace Zantetsu.Core.Tests
             RunBody(scope, () =>
             {
                 // One staged and one normally dropped draft; no pending remain.
-                object entry = MakeEntryTracked(scope, 1, 1, 16);
                 CommitDraft(scope.Registry, scope.Run, 1);
-                Assert.That(TryMarkStaged(scope.Registry, MakeRequest(1), scope.Store, entry), Is.True);
+                MarkEvidenceStaged(scope.Registry, MakeRequest(1));
 
                 CommitDraft(scope.Registry, scope.Run, 2);
                 MarkDropped(scope.Registry, MakeRequest(2), CaptureFrameDropReason.PngEncodeFailed);
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[0]);
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(0));
                 Assert.That((bool)GetProperty(set, "IsValid"), Is.True);
@@ -969,8 +696,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 7 });
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 7 });
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(1));
                 Assert.That(SetGetCaptureFrameId(set, 0), Is.EqualTo(7));
@@ -991,8 +718,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope(maxDraftPerRun: 8);
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1, 2, 3, 4, 5, 6, 7, 8 });
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(8));
                 Assert.That(Count(scope.Registry, "PendingCount"), Is.EqualTo(0));
@@ -1014,17 +741,16 @@ namespace Zantetsu.Core.Tests
             RunBody(scope, () =>
             {
                 // Draft 1 staged, draft 2 normally dropped, draft 3 pending.
-                object entry = MakeEntryTracked(scope, 1, 1, 16);
                 CommitDraft(scope.Registry, scope.Run, 1);
-                Assert.That(TryMarkStaged(scope.Registry, MakeRequest(1), scope.Store, entry), Is.True);
+                MarkEvidenceStaged(scope.Registry, MakeRequest(1));
 
                 CommitDraft(scope.Registry, scope.Run, 2);
                 MarkDropped(scope.Registry, MakeRequest(2), CaptureFrameDropReason.PngEncodeFailed);
 
-                object snapshot = SetupForFreeze(scope, new long[] { 3 });
+                SetupForFreeze(scope, new long[] { 3 });
                 string beforeEntries = DescribeRegistry(scope.Registry);
 
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                object set = ForceDrop(scope.Registry);
 
                 // Staged entry stays staged (reason None, emission None).
                 Assert.That((int)GetEntryField(scope.Registry, 0, "Status"), Is.EqualTo(1)); // Staged
@@ -1049,9 +775,9 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1, 2 });
-                object first = ForceDrop(scope.Registry, scope.Queue, snapshot);
-                object second = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 1, 2 });
+                object first = ForceDrop(scope.Registry);
+                object second = ForceDrop(scope.Registry);
 
                 Assert.That(ReferenceEquals(first, second), Is.True);
                 Assert.That(ReferenceEquals(GetIssuedForcedDropSet(scope.Registry), first), Is.True);
@@ -1064,8 +790,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 5 });
-                ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, new long[] { 5 });
+                ForceDrop(scope.Registry);
 
                 MethodInfo method = GetRegistryType().GetMethod("TryConsumeDropTrace", BindingFlags.NonPublic | BindingFlags.Instance);
                 object[] args = new object[] { 5L, null };
@@ -1081,8 +807,8 @@ namespace Zantetsu.Core.Tests
             {
                 using (TraceLogger logger = new TraceLogger(16))
                 {
-                    object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                    ForceDrop(scope.Registry, scope.Queue, snapshot);
+                    SetupForFreeze(scope, new long[] { 1 });
+                    ForceDrop(scope.Registry);
 
                     Assert.That(logger.Drain(), Is.EqualTo(0));
                     Assert.That(logger.HistoryCount, Is.EqualTo(0));
@@ -1103,8 +829,8 @@ namespace Zantetsu.Core.Tests
                 object reservation, rejectKind;
                 Assert.That(TryReserve(scope.Registry, out reservation, out rejectKind), Is.True); // outstanding reservation
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => { });
+                SetupForFreeze(scope, new long[0]);
+                AssertFreezeRejectedUnchanged(scope, () => { });
             });
         }
 
@@ -1114,8 +840,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetCount(scope.Registry, "_pendingCount", 0));
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetCount(scope.Registry, "_pendingCount", 0));
             });
         }
 
@@ -1125,8 +851,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () =>
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () =>
                 {
                     SetSlotState(scope.Registry, 0, 0); // Free
                     SetSlotEntryIndex(scope.Registry, 0, -1);
@@ -1140,8 +866,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1, 2 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () =>
+                SetupForFreeze(scope, new long[] { 1, 2 });
+                AssertFreezeRejectedUnchanged(scope, () =>
                 {
                     // Slot 1 now also points at entry 0 (draft 1).
                     SetSlotState(scope.Registry, 1, 2); // Occupied
@@ -1156,8 +882,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetSlotEntryIndex(scope.Registry, 0, 999));
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetSlotEntryIndex(scope.Registry, 0, 999));
             });
         }
 
@@ -1167,8 +893,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetSlotState(scope.Registry, 1, 1)); // Reserved
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetSlotState(scope.Registry, 1, 1)); // Reserved
             });
         }
 
@@ -1178,8 +904,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetSlotState(scope.Registry, 1, 99)); // undefined state
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetSlotState(scope.Registry, 1, 99)); // undefined state
             });
         }
 
@@ -1189,8 +915,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetSlotEntryIndex(scope.Registry, 1, 5)); // Free slot with stale index
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetSlotEntryIndex(scope.Registry, 1, 5)); // Free slot with stale index
             });
         }
 
@@ -1200,8 +926,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 6));
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 6));
             });
         }
 
@@ -1211,8 +937,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 1));
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 1));
             });
         }
 
@@ -1222,12 +948,11 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object entry = MakeEntryTracked(scope, 1, 1, 16);
                 CommitDraft(scope.Registry, scope.Run, 1);
-                Assert.That(TryMarkStaged(scope.Registry, MakeRequest(1), scope.Store, entry), Is.True);
+                MarkEvidenceStaged(scope.Registry, MakeRequest(1));
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 6));
+                SetupForFreeze(scope, new long[0]);
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 6));
             });
         }
 
@@ -1237,12 +962,11 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object entry = MakeEntryTracked(scope, 1, 1, 16);
                 CommitDraft(scope.Registry, scope.Run, 1);
-                Assert.That(TryMarkStaged(scope.Registry, MakeRequest(1), scope.Store, entry), Is.True);
+                MarkEvidenceStaged(scope.Registry, MakeRequest(1));
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 1));
+                SetupForFreeze(scope, new long[0]);
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 1));
             });
         }
 
@@ -1255,8 +979,8 @@ namespace Zantetsu.Core.Tests
                 CommitDraft(scope.Registry, scope.Run, 1);
                 MarkDropped(scope.Registry, MakeRequest(1), CaptureFrameDropReason.PngEncodeFailed);
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 9));
+                SetupForFreeze(scope, new long[0]);
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "DropReason", 9));
             });
         }
 
@@ -1269,8 +993,8 @@ namespace Zantetsu.Core.Tests
                 CommitDraft(scope.Registry, scope.Run, 1);
                 MarkDropped(scope.Registry, MakeRequest(1), CaptureFrameDropReason.PngEncodeFailed);
 
-                object snapshot = SetupForFreeze(scope, new long[0]);
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 0));
+                SetupForFreeze(scope, new long[0]);
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "EmissionState", 0));
             });
         }
 
@@ -1280,8 +1004,8 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryEnumField(scope.Registry, 0, "Status", 99));
+                SetupForFreeze(scope, new long[] { 1 });
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryEnumField(scope.Registry, 0, "Status", 99));
             });
         }
 
@@ -1291,12 +1015,12 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
+                SetupForFreeze(scope, new long[] { 1 });
 
                 object otherRun = MakeRun(testRunId: 2, captureProfileId: 5);
                 object otherDraft = MakeDraft(otherRun, MakeRequest(5, testRunId: 2));
 
-                AssertFreezeRejectedUnchanged(scope, snapshot, () => SetEntryField(scope.Registry, 0, "Draft", otherDraft));
+                AssertFreezeRejectedUnchanged(scope, () => SetEntryField(scope.Registry, 0, "Draft", otherDraft));
             });
         }
 
@@ -1306,9 +1030,9 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1 });
+                SetupForFreeze(scope, new long[] { 1 });
 
-                AssertFreezeRejectedUnchanged(scope, snapshot, () =>
+                AssertFreezeRejectedUnchanged(scope, () =>
                 {
                     object forged = FormatterServices.GetUninitializedObject(GetDraftType());
                     FieldInfo requestField = GetDraftType().GetField("<Request>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1325,12 +1049,12 @@ namespace Zantetsu.Core.Tests
             Scope scope = NewScope();
             RunBody(scope, () =>
             {
-                object snapshot = SetupForFreeze(scope, new long[] { 1, 2 });
+                SetupForFreeze(scope, new long[] { 1, 2 });
 
                 object draft1 = GetEntryField(scope.Registry, 0, "Draft");
                 object draft2 = GetEntryField(scope.Registry, 1, "Draft");
 
-                AssertFreezeRejectedUnchanged(scope, snapshot, () =>
+                AssertFreezeRejectedUnchanged(scope, () =>
                 {
                     // Swap the drafts so IDs are [2, 1] instead of [1, 2].
                     SetEntryField(scope.Registry, 0, "Draft", draft2);
@@ -1342,15 +1066,13 @@ namespace Zantetsu.Core.Tests
         // ---- Type contracts ----
 
         [Test]
-        public void Registry_HoldsNoQueueSnapshotLoggerObserver_NotDisposable()
+        public void Registry_HoldsNoLoggerOrObserver_NotDisposable()
         {
             Type type = GetRegistryType();
             Assert.That(typeof(IDisposable).IsAssignableFrom(type), Is.False);
 
             foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
-                Assert.That(field.FieldType, Is.Not.EqualTo(GetQueueType()), field.Name);
-                Assert.That(field.FieldType, Is.Not.EqualTo(GetSnapshotType()), field.Name);
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(TraceLogger)), field.Name);
                 Assert.That(field.FieldType, Is.Not.EqualTo(typeof(CaptureFrameTraceObserver)), field.Name);
             }
@@ -1373,8 +1095,8 @@ namespace Zantetsu.Core.Tests
                     ids[i] = i + 1;
                 }
 
-                object snapshot = SetupForFreeze(scope, ids);
-                object set = ForceDrop(scope.Registry, scope.Queue, snapshot);
+                SetupForFreeze(scope, ids);
+                object set = ForceDrop(scope.Registry);
 
                 Assert.That((int)GetProperty(set, "Count"), Is.EqualTo(Capacity));
                 Assert.That(SetGetCaptureFrameId(set, 0), Is.EqualTo(1));

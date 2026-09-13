@@ -21,16 +21,12 @@ namespace Zantetsu.Observability
     {
         private readonly long _testRunId;
         private readonly string _runInitializationId;
-        private readonly CaptureRunRootRole _rootRole;
-        private readonly string _stagingRunRootSha256;
-        private readonly string _finalRunRootSha256;
+        private readonly string _runRootSha256;
 
         internal CaptureRunInitializationMarker(
             long testRunId,
             string runInitializationId,
-            CaptureRunRootRole rootRole,
-            string stagingRunRootSha256,
-            string finalRunRootSha256)
+            string runRootSha256)
         {
             if (testRunId <= 0)
             {
@@ -47,36 +43,19 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Run initialization ID must be 32 lowercase ASCII hex characters.", nameof(runInitializationId));
             }
 
-            if (rootRole != CaptureRunRootRole.Staging && rootRole != CaptureRunRootRole.Final)
+            if (runRootSha256 == null)
             {
-                throw new ArgumentOutOfRangeException(nameof(rootRole), rootRole, "Root role must be Staging or Final.");
+                throw new ArgumentNullException(nameof(runRootSha256));
             }
 
-            if (stagingRunRootSha256 == null)
+            if (!IsLowercaseHex(runRootSha256, 64))
             {
-                throw new ArgumentNullException(nameof(stagingRunRootSha256));
-            }
-
-            if (!IsLowercaseHex(stagingRunRootSha256, 64))
-            {
-                throw new ArgumentException("Staging run root SHA-256 must be 64 lowercase ASCII hex characters.", nameof(stagingRunRootSha256));
-            }
-
-            if (finalRunRootSha256 == null)
-            {
-                throw new ArgumentNullException(nameof(finalRunRootSha256));
-            }
-
-            if (!IsLowercaseHex(finalRunRootSha256, 64))
-            {
-                throw new ArgumentException("Final run root SHA-256 must be 64 lowercase ASCII hex characters.", nameof(finalRunRootSha256));
+                throw new ArgumentException("Run root SHA-256 must be 64 lowercase ASCII hex characters.", nameof(runRootSha256));
             }
 
             _testRunId = testRunId;
             _runInitializationId = runInitializationId;
-            _rootRole = rootRole;
-            _stagingRunRootSha256 = stagingRunRootSha256;
-            _finalRunRootSha256 = finalRunRootSha256;
+            _runRootSha256 = runRootSha256;
         }
 
         internal int SchemaVersion => 1;
@@ -85,11 +64,7 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _runInitializationId;
 
-        internal CaptureRunRootRole RootRole => _rootRole;
-
-        internal string StagingRunRootSha256 => _stagingRunRootSha256;
-
-        internal string FinalRunRootSha256 => _finalRunRootSha256;
+        internal string RunRootSha256 => _runRootSha256;
 
         private static bool IsLowercaseHex(string value, int length)
         {

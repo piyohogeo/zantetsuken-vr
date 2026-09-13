@@ -26,7 +26,6 @@ namespace Zantetsu.Core.Tests
             return type;
         }
 
-        private static Type GetQueueType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntentQueue");
 
         private static Type GetRegistryType() => GetTypeFromAssembly("CaptureFrameDraftRegistry");
 
@@ -34,11 +33,8 @@ namespace Zantetsu.Core.Tests
 
         private static Type GetDraftType() => GetTypeFromAssembly("CaptureFrameDraft");
 
-        private static Type GetEntryType() => GetTypeFromAssembly("CaptureFramePngStagingEntry");
 
-        private static Type GetStoreType() => GetTypeFromAssembly("CaptureFramePngStagingStore");
 
-        private static Type GetIntentType() => GetTypeFromAssembly("CaptureFrameDraftTerminalIntent");
 
         private static Type GetCheckpointType() => GetTypeFromAssembly("FreezeTerminalCheckpoint");
 
@@ -46,7 +42,7 @@ namespace Zantetsu.Core.Tests
 
         private static Type GetBuilderType() => GetTypeFromAssembly("FreezeTerminalTraceBufferBuilder");
 
-        private static Type GetSetType() => GetTypeFromAssembly("ForcedDropFrameIdSet");
+
 
         private static object GetProperty(object target, string name)
         {
@@ -65,7 +61,7 @@ namespace Zantetsu.Core.Tests
             return ex;
         }
 
-        private static bool IsPositiveZero(double value) => BitConverter.DoubleToInt64Bits(value) == 0L;
+
 
         // ---- Input factories ----
 
@@ -120,28 +116,6 @@ namespace Zantetsu.Core.Tests
                 null);
             Assert.That(ctor, Is.Not.Null);
             return ctor.Invoke(new object[] { run, profile });
-        }
-
-        private static object CreateQueue(object registry, CaptureTraceProfile profile)
-        {
-            ConstructorInfo ctor = GetQueueType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRegistryType(), typeof(CaptureTraceProfile) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { registry, profile });
-        }
-
-        private static object CreateStore(object run, int maximumEntryCount, long maximumTotalByteCount)
-        {
-            ConstructorInfo ctor = GetStoreType().GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                new[] { GetRunType(), typeof(int), typeof(long) },
-                null);
-            Assert.That(ctor, Is.Not.Null);
-            return ctor.Invoke(new object[] { run, maximumEntryCount, maximumTotalByteCount });
         }
 
         private static CaptureFrameRequest MakeRequest(long captureFrameId, long testRunId = 1)
@@ -208,61 +182,11 @@ namespace Zantetsu.Core.Tests
             method.Invoke(registry, new object[] { reservation, draft });
         }
 
-        private static void CommitAndRegister(object queue, object registry, object run, long captureFrameId)
-        {
-            object reservation, rejectKind;
-            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
-            object draft = MakeDraft(run, MakeRequest(captureFrameId));
-            Commit(registry, reservation, draft);
-            MethodInfo register = GetQueueType().GetMethod("RegisterPendingDraft", BindingFlags.NonPublic | BindingFlags.Instance);
-            register.Invoke(queue, new object[] { draft });
-        }
-
-        private static int EnqueueTerminalIntent(object queue, object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("EnqueueTerminalIntent", BindingFlags.NonPublic | BindingFlags.Instance);
-            return (int)method.Invoke(queue, new object[] { intent });
-        }
-
-        private static object CreateDropIntent(CaptureFrameRequest request, CaptureFrameDropReason reason)
-        {
-            MethodInfo method = GetIntentType().GetMethod("CreateDrop", BindingFlags.NonPublic | BindingFlags.Static);
-            return method.Invoke(null, new object[] { request, reason });
-        }
-
-        private static bool TryDequeue(object queue, out object intent)
-        {
-            MethodInfo method = GetQueueType().GetMethod("TryDequeue", BindingFlags.NonPublic | BindingFlags.Instance);
-            object[] args = new object[] { null };
-            bool ok = (bool)method.Invoke(queue, args);
-            intent = args[0];
-            return ok;
-        }
-
-        private static void BeginProducerDrain(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("BeginProducerDrain", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static void CloseAfterProducerJoin(object queue)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CloseAfterProducerJoin", BindingFlags.NonPublic | BindingFlags.Instance);
-            method.Invoke(queue, null);
-        }
-
-        private static object CreateOwnershipSnapshot(object queue, int producerRetained)
-        {
-            MethodInfo method = GetQueueType().GetMethod("CreateOwnershipSnapshot", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(method, Is.Not.Null);
-            return method.Invoke(queue, new object[] { producerRetained });
-        }
-
-        private static object ForceDrop(object registry, object queue, object snapshot)
+        private static object ForceDrop(object registry)
         {
             MethodInfo method = GetRegistryType().GetMethod("ForceDropPendingForFreeze", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.That(method, Is.Not.Null);
-            return method.Invoke(registry, new object[] { queue, snapshot });
+            return method.Invoke(registry, new object[0]);
         }
 
         private static object CreateBuilder(object registry)
@@ -422,8 +346,6 @@ namespace Zantetsu.Core.Tests
             public TraceFlightRecorder Recorder;
             public object Run;
             public object Registry;
-            public object Queue;
-            public object Store;
             public readonly List<object> AllEntries = new List<object>();
         }
 
@@ -444,8 +366,6 @@ namespace Zantetsu.Core.Tests
             scope.Recorder = CreateRecorder(scope.Logger, scope.PostRollCapacity, scope.FreezeTerminalTraceReserve);
             scope.Run = MakeRun(scope.TestRunId);
             scope.Registry = CreateRegistry(scope.Run, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Queue = CreateQueue(scope.Registry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-            scope.Store = CreateStore(scope.Run, scope.MaxDraftPerRun, 4096);
         }
 
         private static Exception[] CleanupScope(Scope scope)
@@ -454,10 +374,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Queue != null && (bool)GetProperty(scope.Queue, "IsCreated"))
-                {
-                    ((IDisposable)scope.Queue).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -466,10 +382,6 @@ namespace Zantetsu.Core.Tests
 
             try
             {
-                if (scope.Store != null && (bool)GetProperty(scope.Store, "IsCreated"))
-                {
-                    ((IDisposable)scope.Store).Dispose();
-                }
             }
             catch (Exception ex)
             {
@@ -536,21 +448,10 @@ namespace Zantetsu.Core.Tests
         {
             for (int i = 0; i < captureFrameIds.Length; i++)
             {
-                CommitAndRegister(scope.Queue, scope.Registry, scope.Run, captureFrameIds[i]);
-                Assert.That(EnqueueTerminalIntent(scope.Queue, CreateDropIntent(MakeRequest(captureFrameIds[i]), CaptureFrameDropReason.PngEncodeFailed)), Is.EqualTo(0));
+                CommitDraft(scope.Registry, scope.Run, captureFrameIds[i]);
             }
 
-            BeginProducerDrain(scope.Queue);
-            CloseAfterProducerJoin(scope.Queue);
-
-            for (int i = 0; i < captureFrameIds.Length; i++)
-            {
-                object dequeued;
-                Assert.That(TryDequeue(scope.Queue, out dequeued), Is.True);
-            }
-
-            object snapshot = CreateOwnershipSnapshot(scope.Queue, 0);
-            return ForceDrop(scope.Registry, scope.Queue, snapshot);
+            return ForceDrop(scope.Registry);
         }
 
         private static object BuildTerminalBuffer(Scope scope, long[] captureFrameIds)
@@ -568,6 +469,15 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Null / thread / state rejection ----
+
+        private static object CommitDraft(object registry, object run, long captureFrameId)
+        {
+            object reservation, rejectKind;
+            Assert.That(TryReserve(registry, out reservation, out rejectKind), Is.True);
+            object draft = MakeDraft(run, MakeRequest(captureFrameId));
+            Commit(registry, reservation, draft);
+            return draft;
+        }
 
         [Test]
         public void Append_NullBuffer_Rejected()
@@ -664,43 +574,6 @@ namespace Zantetsu.Core.Tests
                 EnqueueIntoLoggerQueue(scope.Logger, Event(777, scope.TestRunId));
 
                 Assert.That(AppendException(scope.Recorder, buffer), Is.TypeOf<InvalidOperationException>());
-            });
-        }
-
-        [Test]
-        public void Append_RunIdMismatch_Rejected()
-        {
-            Scope scope = NewScope(testRunId: 42);
-            RunBody(scope, () =>
-            {
-                SetupAwaitingFreezeTerminal(scope); // logger bound to 42
-
-                // Build a buffer bound to run 1.
-                object otherRun = MakeRun(testRunId: 1);
-                object otherRegistry = CreateRegistry(otherRun, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-                object otherQueue = CreateQueue(otherRegistry, MakeProfile(5, scope.MaxDraftPerRun, scope.MaxDraftPerRun));
-
-                object reservation, rejectKind;
-                Assert.That(TryReserve(otherRegistry, out reservation, out rejectKind), Is.True);
-                object draft = MakeDraft(otherRun, MakeRequest(100, testRunId: 1));
-                Commit(otherRegistry, reservation, draft);
-                MethodInfo register = GetQueueType().GetMethod("RegisterPendingDraft", BindingFlags.NonPublic | BindingFlags.Instance);
-                register.Invoke(otherQueue, new object[] { draft });
-
-                Assert.That(EnqueueTerminalIntent(otherQueue, CreateDropIntent(MakeRequest(100, 1), CaptureFrameDropReason.PngEncodeFailed)), Is.EqualTo(0));
-                BeginProducerDrain(otherQueue);
-                CloseAfterProducerJoin(otherQueue);
-                object dequeued;
-                Assert.That(TryDequeue(otherQueue, out dequeued), Is.True);
-                object snapshot = CreateOwnershipSnapshot(otherQueue, 0);
-                object otherSet = ForceDrop(otherRegistry, otherQueue, snapshot);
-
-                object otherBuilder = CreateBuilder(otherRegistry);
-                object buffer = BuildBuffer(otherBuilder, otherSet, MakeCheckpoint(200, 201, 202, 203, 1));
-
-                Exception ex = AppendException(scope.Recorder, buffer);
-                Assert.That(ex, Is.TypeOf<ArgumentException>());
-                Assert.That(((ArgumentException)ex).ParamName, Is.EqualTo("terminalBuffer"));
             });
         }
 

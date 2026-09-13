@@ -130,17 +130,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Ownership lease must be live.", nameof(issue));
             }
 
-            CaptureRunLockIdentityEvidence identityEvidence = issue.LockIdentityEvidence;
-            if (identityEvidence == null || !identityEvidence.IsIssuedFor(ownershipLease))
+            CaptureRunLockPathSet lockPathSet = issue.LockPathSet;
+            if (lockPathSet == null || !ReferenceEquals(issue.Session.RootLayout, lockPathSet.RootLayout))
             {
                 throw new ArgumentException(
-                    "Lock identity evidence must be issued for the exact ownership lease.", nameof(issue));
-            }
-
-            if (!ReferenceEquals(issue.Session.RootLayout, identityEvidence.RootLayout))
-            {
-                throw new ArgumentException(
-                    "Session and lock identity evidence must share the same root layout.", nameof(issue));
+                    "Session and held lock must share the same root layout.", nameof(issue));
             }
 
             SafeFileHandle runRootHandle = null;
@@ -150,7 +144,7 @@ namespace Zantetsu.Observability
             FileStream appendStream = null;
             try
             {
-                string stagingRunRoot = issue.Session.RootLayout.StagingRunRoot;
+                string stagingRunRoot = issue.Session.RootLayout.RunRoot;
 
                 runRootHandle = OpenRunRootDirectory(stagingRunRoot);
                 string runRootCanonical = GetCanonicalPathOrThrow(runRootHandle, "staging Run root");

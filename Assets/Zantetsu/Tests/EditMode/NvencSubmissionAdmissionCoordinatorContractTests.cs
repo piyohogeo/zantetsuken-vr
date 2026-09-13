@@ -1755,20 +1755,17 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = MakeLayout();
             CaptureRunInitializationExecutionReceipt receipt = MakeExecutionReceipt(layout);
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true) { Tag = "first" };
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true) { Tag = "second" };
-            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first, second);
+            FakeHandle first = new FakeHandle(pathSet.LockPath, true) { Tag = "first" };
+            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first);
             CaptureRunInitializationSessionOwnershipLease owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
-            CaptureRunLockIdentityEvidence identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
-            return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            return CaptureRunInitializationSessionIssue.Create(owner, evidence);
         }
 
         private static CaptureRunRootLayout MakeLayout()
         {
             return new CaptureRunRootLayout(
                 Path.DirectorySeparatorChar == '\\' ? "C:\\staging" : "/staging",
-                Path.DirectorySeparatorChar == '\\' ? "D:\\final" : "/final",
                 1);
         }
 

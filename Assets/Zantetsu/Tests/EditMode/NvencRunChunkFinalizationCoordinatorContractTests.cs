@@ -48,7 +48,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.FormatId, Is.EqualTo("NvencH264IdrChunk"));
             Assert.That(result.FormatVersion, Is.EqualTo(1));
             Assert.That(result.StagingRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(result.FinalRelativePath, Is.EqualTo(ChunkPath));
             Assert.That(result.ByteLength, Is.EqualTo(64));
             Assert.That(result.ContentHash, Is.EqualTo(Hash64));
             Assert.That(result.AppendedCount, Is.EqualTo(1));
@@ -138,79 +137,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_CannotBeIssuedFromDirectReceiptAlone()
-        {
-            Harness h = new Harness();
-            NvencRunChunkFinalizationOperation operation = MakeOperation(h, "chunk/0");
-            FakeFinalizer finalizer = new FakeFinalizer();
-            NvencRunChunkFinalizationCoordinator coordinator =
-                new NvencRunChunkFinalizationCoordinator(finalizer);
-            NvencRunChunkFinalizationReceipt receipt =
-                NvencRunChunkFinalizationReceipt.Create(finalizer, operation,
-                    NvencRunChunkArtifactDescriptorFactory.Create("chunk/0", 64, Hash64));
-
-            // The proof has no public or internal constructor; only the
-            // coordinator can mint it, so a direct receipt cannot produce a
-            // valid result.
-            Type proofType = typeof(NvencRunChunkFinalizationCoordinator.IssuanceProof);
-            ConstructorInfo[] constructors = proofType.GetConstructors(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.That(constructors.Length, Is.GreaterThan(0));
-            foreach (ConstructorInfo constructor in constructors)
-            {
-                Assert.That(constructor.IsPrivate, Is.True, "proof constructor must be private.");
-            }
-
-            ArgumentNullException proofEx = Assert.Throws<ArgumentNullException>(() =>
-                NvencChunkFinalizationResult.Create(coordinator, null, operation, receipt));
-            Assert.That(proofEx.ParamName, Is.EqualTo("proof"));
-
-            // Mint rejects a null or foreign gate, so no proof can be minted
-            // outside Execute; the finalizer is never called.
-            Assert.Throws<ArgumentException>(() =>
-                NvencRunChunkFinalizationCoordinator.IssuanceProof.Mint(
-                    null, coordinator, finalizer, operation, receipt));
-            Assert.Throws<ArgumentException>(() =>
-                NvencRunChunkFinalizationCoordinator.IssuanceProof.Mint(
-                    new object(), coordinator, finalizer, operation, receipt));
-            Assert.That(finalizer.CallCount, Is.EqualTo(0));
-        }
-
-        [Test]
-        public void IssuanceProof_ExactBinding_PrivateGateNotExposed()
-        {
-            Harness h = new Harness();
-            NvencRunChunkFinalizationOperation operation = MakeOperation(h, "chunk/0");
-            FakeFinalizer finalizer = new FakeFinalizer();
-            NvencRunChunkFinalizationCoordinator coordinator =
-                new NvencRunChunkFinalizationCoordinator(finalizer);
-            NvencChunkFinalizationResult result = coordinator.Execute(operation);
-
-            NvencRunChunkFinalizationCoordinator.IssuanceProof proof = result.Proof;
-            NvencRunChunkFinalizationReceipt receipt = result.Receipt;
-
-            Assert.That(proof.IsMintedFor(coordinator, finalizer, operation, receipt), Is.True);
-
-            NvencRunChunkFinalizationCoordinator otherCoordinator =
-                new NvencRunChunkFinalizationCoordinator(new FakeFinalizer());
-            Assert.That(proof.IsMintedFor(otherCoordinator, finalizer, operation, receipt), Is.False);
-            Assert.That(proof.IsMintedFor(coordinator, new FakeFinalizer(), operation, receipt), Is.False);
-            Assert.That(proof.IsMintedFor(coordinator, finalizer, MakeOperation(new Harness(), "chunk/x"), receipt), Is.False);
-
-            Harness h3 = new Harness();
-            NvencRunChunkFinalizationOperation op3 = MakeOperation(h3, "chunk/3");
-            NvencRunChunkFinalizationReceipt otherReceipt =
-                NvencRunChunkFinalizationReceipt.Create(finalizer, op3,
-                    NvencRunChunkArtifactDescriptorFactory.Create("chunk/3", 64, Hash64));
-            Assert.That(proof.IsMintedFor(coordinator, finalizer, operation, otherReceipt), Is.False);
-
-            Type proofType = typeof(NvencRunChunkFinalizationCoordinator.IssuanceProof);
-            Assert.That(proofType.GetFields(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
-            Assert.That(proofType.GetProperties(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
-            Assert.That(proofType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly), Is.Empty);
-        }
-
-        [Test]
         public void Result_AfterPoison_OperationFalseButReceiptResultTrue()
         {
             Harness h = new Harness();
@@ -269,7 +195,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Result_SealedFourReadonlyFields_NotDisposable_NoPublicCtor()
+        public void Result_SealedThreeReadonlyFields_NotDisposable_NoPublicCtor()
         {
             Type type = typeof(NvencChunkFinalizationResult);
 
@@ -278,12 +204,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
             FieldInfo[] fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            Assert.That(fields.Length, Is.EqualTo(4));
+            Assert.That(fields.Length, Is.EqualTo(3));
 
             Type[] expected =
             {
                 typeof(NvencRunChunkFinalizationCoordinator),
-                typeof(NvencRunChunkFinalizationCoordinator.IssuanceProof),
                 typeof(NvencRunChunkFinalizationOperation),
                 typeof(NvencRunChunkFinalizationReceipt),
             };

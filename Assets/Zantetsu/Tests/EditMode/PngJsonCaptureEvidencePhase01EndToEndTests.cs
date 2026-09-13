@@ -197,10 +197,8 @@ namespace Zantetsu.Core.Tests
             public PngJsonCaptureEvidenceBackend Backend;
             public CaptureEvidenceCoordinator Evidence;
             public CaptureEvidenceDraftCoordinator DraftCoordinator;
-            public CaptureFrameDraftTerminalIntentQueue Queue;
             public CaptureFrameDraftFactory Factory;
             public CaptureRunInitializationSession Session;
-            public CaptureRunLockIdentityEvidence Identity;
             public CaptureRunInitializationSessionOwnershipLease Owner;
 
             public void Dispose()
@@ -225,10 +223,6 @@ namespace Zantetsu.Core.Tests
                     try { Pool.Dispose(); } catch (Exception) { }
                 }
 
-                if (Queue != null && Queue.IsCreated)
-                {
-                    try { Queue.Dispose(); } catch (Exception) { }
-                }
 
                 if (Owner != null)
                 {
@@ -259,7 +253,7 @@ namespace Zantetsu.Core.Tests
             Scope scope = new Scope
             {
                 Sandbox = sandbox,
-                Layout = new CaptureRunRootLayout(staging, final, 3),
+                Layout = new CaptureRunRootLayout(staging, 3),
                 Logger = new TraceLogger(16, 3),
                 Encoder = encoder,
                 ArtifactRegistryCapacity = artifactRegistryCapacity,
@@ -291,7 +285,6 @@ namespace Zantetsu.Core.Tests
             scope.Evidence = new CaptureEvidenceCoordinator(scope.Backend);
             scope.DraftCoordinator = new CaptureEvidenceDraftCoordinator(
                 1, scope.Evidence, scope.Registry, scope.Artifacts, scope.Trace);
-            scope.Queue = new CaptureFrameDraftTerminalIntentQueue(scope.Registry, traceProfile);
 
             scope.Factory = new CaptureFrameDraftFactory(
                 scope.Run,
@@ -305,14 +298,13 @@ namespace Zantetsu.Core.Tests
             CaptureRunLockLease lease = MakeLease(scope.Layout);
             scope.Owner = CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
             _owners.Add(scope.Owner);
-            scope.Identity = CaptureRunLockIdentityEvidence.Create(scope.Owner, scope.Owner.LockPathSet);
 
             CaptureRunInitializationExecutionCoordinator execution =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeWriter());
             CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(scope.Layout, InitId);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt);
             CaptureRunInitializationSessionIssue issue =
-                CaptureRunInitializationSession.IssuanceProof.Mint(scope.Owner, scope.Identity, evidence);
+                CaptureRunInitializationSessionIssue.Create(scope.Owner, evidence);
             scope.Session = issue.Session;
 
             return scope;
@@ -321,9 +313,8 @@ namespace Zantetsu.Core.Tests
         private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            ICaptureRunLockHandle first = new FakeHandle(pathSet.FirstLockPath, true);
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true);
-            return new CaptureRunLockLease(pathSet, first, second);
+            ICaptureRunLockHandle first = new FakeHandle(pathSet.LockPath, true);
+            return new CaptureRunLockLease(pathSet, first);
         }
 
         // ---- Draft / submission helpers ----
@@ -476,10 +467,7 @@ namespace Zantetsu.Core.Tests
 
         private static ForcedDropFrameIdSet IssueEmptyForcedDropSet(Scope scope)
         {
-            scope.Queue.BeginProducerDrain();
-            scope.Queue.CloseAfterProducerJoin();
-            TerminalIntentOwnershipSnapshot snapshot = scope.Queue.CreateOwnershipSnapshot(0);
-            return scope.Registry.ForceDropPendingForFreeze(scope.Queue, snapshot);
+            return scope.Registry.ForceDropPendingForFreeze();
         }
 
         private static TraceRunSealReceipt Seal(Scope scope)
@@ -494,6 +482,33 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Tests ----
+
+        /// <summary>
+        /// Reads the staged file back and confirms it is byte-for-byte what
+        /// the descriptor promised: the same length, and the same SHA-256.
+        /// </summary>
+        private static void AssertStagedContentMatches(CaptureRunRootLayout layout, CaptureArtifactDescriptor descriptor)
+        {
+            string path = Path.Combine(layout.RunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Assert.That(File.Exists(path), Is.True, path);
+
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.That(bytes.LongLength, Is.EqualTo(descriptor.ByteLength));
+
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                const string hex = "0123456789abcdef";
+                char[] chars = new char[hash.Length * 2];
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    chars[i * 2] = hex[hash[i] >> 4];
+                    chars[i * 2 + 1] = hex[hash[i] & 15];
+                }
+
+                Assert.That(new string(chars), Is.EqualTo(descriptor.ContentHash));
+            }
+        }
 
         [Test]
         public void Phase01_FullPipeline_FreezeReceiptAndArtifactCompatibility()
@@ -551,7 +566,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -565,7 +580,7 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(receipt.Drafts, scope.Registry), Is.True);
                 Assert.That(ReferenceEquals(receipt.Artifacts, scope.Artifacts), Is.True);
                 Assert.That(ReferenceEquals(receipt.RunSession, scope.Session), Is.True);
-                Assert.That(ReferenceEquals(receipt.LockIdentityEvidence, scope.Identity), Is.True);
+                Assert.That(ReferenceEquals(receipt.OwnershipLease, scope.Owner), Is.True);
                 Assert.That(receipt.TestRunId, Is.EqualTo(scope.TestRunId));
                 Assert.That(receipt.RunInitializationId, Is.EqualTo(InitId));
                 Assert.That(receipt.TerminalBuffer.TestRunId, Is.EqualTo(scope.TestRunId));
@@ -610,13 +625,13 @@ namespace Zantetsu.Core.Tests
                 }
 
                 // Staging content is verified without transformation.
-                Assert.That(scope.Store.VerifyStaging(image).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                Assert.That(scope.Store.VerifyStaging(metadata).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                AssertStagedContentMatches(scope.Layout, image);
+                AssertStagedContentMatches(scope.Layout, metadata);
 
                 // PNG decode via the existing Unity decoder: dimensions and the
                 // asymmetric cell placement prove top/bottom and left/right
                 // orientation, and every RGBA byte round-trips losslessly.
-                byte[] pngBytes = File.ReadAllBytes(Path.Combine(scope.Layout.StagingRunRoot, image.StagingRelativePath));
+                byte[] pngBytes = File.ReadAllBytes(Path.Combine(scope.Layout.RunRoot, image.StagingRelativePath));
                 Assert.That(pngBytes.Length, Is.EqualTo(image.ByteLength));
                 Texture2D decoded = new Texture2D(scope.Width, scope.Height, TextureFormat.RGBA32, false);
                 try
@@ -647,7 +662,7 @@ namespace Zantetsu.Core.Tests
 
                 // Metadata canonical round-trip: re-serializing the exact
                 // envelope and image descriptor reproduces the stored bytes.
-                byte[] metadataBytes = File.ReadAllBytes(Path.Combine(scope.Layout.StagingRunRoot, metadata.StagingRelativePath));
+                byte[] metadataBytes = File.ReadAllBytes(Path.Combine(scope.Layout.RunRoot, metadata.StagingRelativePath));
                 Assert.That(metadataBytes.Length, Is.EqualTo(metadata.ByteLength));
                 byte[] canonical = PngJsonFrameMetadataCodec.SerializeCanonical(
                     CaptureFrameEnvelope.FromDraft(draft, CaptureColorSpace.Srgb),
@@ -809,7 +824,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -868,7 +883,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -888,7 +903,7 @@ namespace Zantetsu.Core.Tests
                     scope.Freeze.TryCompleteEvidenceRun(
                         scope.DraftCoordinator,
                         scope.Session,
-                        scope.Identity,
+                        scope.Owner,
                         sealReceipt,
                         set,
                         checkpoint,
@@ -916,7 +931,6 @@ namespace Zantetsu.Core.Tests
             // The formal Phase 0.1 backend delegates encode, hash, JSON, and
             // staging to the dedicated worker and has no main-thread fallback.
             Assert.That(source, Does.Contain("PngJsonCaptureEvidenceWorkerService"));
-            Assert.That(source, Does.Not.Contain("PngJsonSynchronousCaptureFrameEncodeService"));
             Assert.That(source, Does.Not.Contain("CaptureFramePngEncoder.Encode"));
             Assert.That(source, Does.Not.Contain("PngJsonFrameMetadataCodec"));
             Assert.That(source, Does.Not.Contain("SHA256"));

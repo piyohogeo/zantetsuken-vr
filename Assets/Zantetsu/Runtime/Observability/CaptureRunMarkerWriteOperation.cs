@@ -37,24 +37,17 @@ namespace Zantetsu.Observability
     /// </remarks>
     internal sealed class CaptureRunMarkerWriteOperation
     {
-        private readonly CaptureRunRootRole _rootRole;
         private readonly CaptureRunMarkerKind _markerKind;
         private readonly string _temporaryPath;
         private readonly string _finalPath;
         private readonly byte[] _canonicalBytes;
 
         internal CaptureRunMarkerWriteOperation(
-            CaptureRunRootRole rootRole,
             CaptureRunMarkerKind markerKind,
             string temporaryPath,
             string finalPath,
             byte[] canonicalBytes)
         {
-            if (rootRole != CaptureRunRootRole.Staging && rootRole != CaptureRunRootRole.Final)
-            {
-                throw new ArgumentOutOfRangeException(nameof(rootRole), rootRole, "Root role must be Staging or Final.");
-            }
-
             if (markerKind != CaptureRunMarkerKind.Initialization && markerKind != CaptureRunMarkerKind.Ready)
             {
                 throw new ArgumentOutOfRangeException(nameof(markerKind), markerKind, "Marker kind must be Initialization or Ready.");
@@ -121,14 +114,11 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Final marker path basename must be \"" + finalBasename + "\".", nameof(finalPath));
             }
 
-            _rootRole = rootRole;
             _markerKind = markerKind;
             _temporaryPath = temporaryPath;
             _finalPath = finalPath;
             _canonicalBytes = canonicalBytes;
         }
-
-        internal CaptureRunRootRole RootRole => _rootRole;
 
         internal CaptureRunMarkerKind MarkerKind => _markerKind;
 
@@ -142,11 +132,6 @@ namespace Zantetsu.Observability
         {
             get
             {
-                if (_rootRole != CaptureRunRootRole.Staging && _rootRole != CaptureRunRootRole.Final)
-                {
-                    return false;
-                }
-
                 if (_markerKind != CaptureRunMarkerKind.Initialization && _markerKind != CaptureRunMarkerKind.Ready)
                 {
                     return false;

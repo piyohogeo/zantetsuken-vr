@@ -7,10 +7,10 @@ using System.Text;
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Immutable Capture Run root layout: derives the fixed per-Run roots from
-    /// two trusted staging and final base roots and computes the root hashes
-    /// stored in <c>run.init</c>. This is a pure value contract over strings;
-    /// no directory or file is checked, created, or removed.
+    /// Immutable Capture Run root layout: derives the fixed per-Run root from
+    /// one trusted base root and computes the root hash stored in
+    /// <c>run.init</c>. This is a pure value contract over strings; no
+    /// directory or file is checked, created, or removed.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -18,7 +18,7 @@ namespace Zantetsu.Observability
     /// with the invariant shortest decimal <see cref="TestRunId"/>.
     /// </para>
     /// <para>
-    /// Each trusted base must be a fully qualified local absolute path.
+    /// The trusted base must be a fully qualified local absolute path.
     /// Relative paths, drive-relative paths, UNC, device, and extended paths
     /// are rejected. Canonicalization resolves <c>.</c> and <c>..</c> with
     /// <see cref="Path.GetFullPath"/>, unifies the alternate directory
@@ -31,7 +31,7 @@ namespace Zantetsu.Observability
     /// <c>foo</c>/<c>foobar</c> as an ancestor.
     /// </para>
     /// <para>
-    /// Each root hash is the lowercase hex SHA-256 of the strict UTF-8 bytes
+    /// The root hash is the lowercase hex SHA-256 of the strict UTF-8 bytes
     /// of the normalized absolute Run root. Filesystem aliases, reparse points,
     /// and existence checks are the responsibility of later lock and filesystem
     /// layers, not of this type.
@@ -47,27 +47,16 @@ namespace Zantetsu.Observability
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         private readonly long _testRunId;
-        private readonly string _stagingTrustedBaseRoot;
-        private readonly string _finalTrustedBaseRoot;
+        private readonly string _trustedBaseRoot;
         private readonly string _runRelativePath;
-        private readonly string _stagingRunRoot;
-        private readonly string _finalRunRoot;
-        private readonly string _stagingRunRootSha256;
-        private readonly string _finalRunRootSha256;
+        private readonly string _runRoot;
+        private readonly string _runRootSha256;
 
-        internal CaptureRunRootLayout(
-            string stagingTrustedBaseRoot,
-            string finalTrustedBaseRoot,
-            long testRunId)
+        internal CaptureRunRootLayout(string trustedBaseRoot, long testRunId)
         {
-            if (stagingTrustedBaseRoot == null)
+            if (trustedBaseRoot == null)
             {
-                throw new ArgumentNullException(nameof(stagingTrustedBaseRoot));
-            }
-
-            if (finalTrustedBaseRoot == null)
-            {
-                throw new ArgumentNullException(nameof(finalTrustedBaseRoot));
+                throw new ArgumentNullException(nameof(trustedBaseRoot));
             }
 
             if (testRunId <= 0)
@@ -75,74 +64,36 @@ namespace Zantetsu.Observability
                 throw new ArgumentOutOfRangeException(nameof(testRunId), testRunId, "Test run ID must be greater than zero.");
             }
 
-            if (string.IsNullOrWhiteSpace(stagingTrustedBaseRoot))
+            if (string.IsNullOrWhiteSpace(trustedBaseRoot))
             {
-                throw new ArgumentException("Staging trusted base root must not be empty or whitespace.", nameof(stagingTrustedBaseRoot));
+                throw new ArgumentException("Trusted base root must not be empty or whitespace.", nameof(trustedBaseRoot));
             }
 
-            if (string.IsNullOrWhiteSpace(finalTrustedBaseRoot))
-            {
-                throw new ArgumentException("Final trusted base root must not be empty or whitespace.", nameof(finalTrustedBaseRoot));
-            }
-
-            string stagingNormalized = NormalizeBaseRoot(stagingTrustedBaseRoot, nameof(stagingTrustedBaseRoot));
-            string finalNormalized = NormalizeBaseRoot(finalTrustedBaseRoot, nameof(finalTrustedBaseRoot));
-
-            if (string.Equals(stagingNormalized, finalNormalized, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Staging and final trusted base roots must differ.", nameof(finalTrustedBaseRoot));
-            }
-
-            if (IsAncestor(stagingNormalized, finalNormalized))
-            {
-                throw new ArgumentException("Staging trusted base root must not be an ancestor of the final trusted base root.", nameof(finalTrustedBaseRoot));
-            }
-
-            if (IsAncestor(finalNormalized, stagingNormalized))
-            {
-                throw new ArgumentException("Final trusted base root must not be an ancestor of the staging trusted base root.", nameof(finalTrustedBaseRoot));
-            }
-
+            string normalized = NormalizeBaseRoot(trustedBaseRoot, nameof(trustedBaseRoot));
             string runRelativePath = "runs/run-" + testRunId.ToString(CultureInfo.InvariantCulture);
+            string runRoot = CombineRoot(normalized, runRelativePath);
 
-            string stagingRunRoot = CombineRoot(stagingNormalized, runRelativePath);
-            string finalRunRoot = CombineRoot(finalNormalized, runRelativePath);
-
-            if (!IsAncestor(stagingNormalized, stagingRunRoot))
+            if (!IsAncestor(normalized, runRoot))
             {
-                throw new ArgumentException("Staging Run root must fall inside the staging trusted base root.", nameof(stagingTrustedBaseRoot));
-            }
-
-            if (!IsAncestor(finalNormalized, finalRunRoot))
-            {
-                throw new ArgumentException("Final Run root must fall inside the final trusted base root.", nameof(finalTrustedBaseRoot));
+                throw new ArgumentException("Run root must fall inside the trusted base root.", nameof(trustedBaseRoot));
             }
 
             _testRunId = testRunId;
-            _stagingTrustedBaseRoot = stagingNormalized;
-            _finalTrustedBaseRoot = finalNormalized;
+            _trustedBaseRoot = normalized;
             _runRelativePath = runRelativePath;
-            _stagingRunRoot = stagingRunRoot;
-            _finalRunRoot = finalRunRoot;
-            _stagingRunRootSha256 = ComputeRootSha256(stagingRunRoot);
-            _finalRunRootSha256 = ComputeRootSha256(finalRunRoot);
+            _runRoot = runRoot;
+            _runRootSha256 = ComputeRootSha256(runRoot);
         }
 
         internal long TestRunId => _testRunId;
 
-        internal string StagingTrustedBaseRoot => _stagingTrustedBaseRoot;
-
-        internal string FinalTrustedBaseRoot => _finalTrustedBaseRoot;
+        internal string TrustedBaseRoot => _trustedBaseRoot;
 
         internal string RunRelativePath => _runRelativePath;
 
-        internal string StagingRunRoot => _stagingRunRoot;
+        internal string RunRoot => _runRoot;
 
-        internal string FinalRunRoot => _finalRunRoot;
-
-        internal string StagingRunRootSha256 => _stagingRunRootSha256;
-
-        internal string FinalRunRootSha256 => _finalRunRootSha256;
+        internal string RunRootSha256 => _runRootSha256;
 
         /// <summary>
         /// Exception-safe recomputation of every invariant this layout
@@ -174,38 +125,23 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            string stagingBase = _stagingTrustedBaseRoot;
-            string finalBase = _finalTrustedBaseRoot;
+            string baseRoot = _trustedBaseRoot;
             string runRelativePath = _runRelativePath;
-            string stagingRunRoot = _stagingRunRoot;
-            string finalRunRoot = _finalRunRoot;
-            string stagingHash = _stagingRunRootSha256;
-            string finalHash = _finalRunRootSha256;
+            string runRoot = _runRoot;
+            string hash = _runRootSha256;
 
-            if (stagingBase == null || finalBase == null
-                || runRelativePath == null || stagingRunRoot == null || finalRunRoot == null
-                || stagingHash == null || finalHash == null)
+            if (baseRoot == null || runRelativePath == null || runRoot == null || hash == null)
             {
                 return false;
             }
 
-            if (!IsFullyQualifiedLocalAbsolutePath(stagingBase) || !IsFullyQualifiedLocalAbsolutePath(finalBase))
+            if (!IsFullyQualifiedLocalAbsolutePath(baseRoot))
             {
                 return false;
             }
 
-            string stagingNormalized = NormalizeBaseRoot(stagingBase, "stagingTrustedBaseRoot");
-            string finalNormalized = NormalizeBaseRoot(finalBase, "finalTrustedBaseRoot");
-
-            if (!string.Equals(stagingBase, stagingNormalized, StringComparison.Ordinal)
-                || !string.Equals(finalBase, finalNormalized, StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            if (string.Equals(stagingNormalized, finalNormalized, StringComparison.OrdinalIgnoreCase)
-                || IsAncestor(stagingNormalized, finalNormalized)
-                || IsAncestor(finalNormalized, stagingNormalized))
+            string normalized = NormalizeBaseRoot(baseRoot, "trustedBaseRoot");
+            if (!string.Equals(baseRoot, normalized, StringComparison.Ordinal))
             {
                 return false;
             }
@@ -216,27 +152,17 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            string expectedStagingRunRoot = CombineRoot(stagingNormalized, runRelativePath);
-            string expectedFinalRunRoot = CombineRoot(finalNormalized, runRelativePath);
-
-            if (!string.Equals(stagingRunRoot, expectedStagingRunRoot, StringComparison.Ordinal)
-                || !string.Equals(finalRunRoot, expectedFinalRunRoot, StringComparison.Ordinal))
+            if (!string.Equals(runRoot, CombineRoot(normalized, runRelativePath), StringComparison.Ordinal))
             {
                 return false;
             }
 
-            if (!IsAncestor(stagingNormalized, stagingRunRoot) || !IsAncestor(finalNormalized, finalRunRoot))
+            if (!IsAncestor(normalized, runRoot))
             {
                 return false;
             }
 
-            if (!string.Equals(stagingHash, ComputeRootSha256(stagingRunRoot), StringComparison.Ordinal)
-                || !string.Equals(finalHash, ComputeRootSha256(finalRunRoot), StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            return true;
+            return string.Equals(hash, ComputeRootSha256(runRoot), StringComparison.Ordinal);
         }
 
         private static string NormalizeBaseRoot(string baseRoot, string paramName)

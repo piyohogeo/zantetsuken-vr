@@ -119,10 +119,8 @@ namespace Zantetsu.Observability
                 && string.Equals(descriptor.FormatId, operation.FormatId, StringComparison.Ordinal)
                 && descriptor.FormatVersion == operation.FormatVersion
                 && string.Equals(descriptor.StagingRelativePath, operation.StagingRelativePath, StringComparison.Ordinal)
-                && string.Equals(descriptor.FinalRelativePath, operation.FinalRelativePath, StringComparison.Ordinal)
                 && descriptor.ByteLength == operation.AccumulatedByteLength
                 && !ContainsPendingPath(descriptor.StagingRelativePath)
-                && !ContainsPendingPath(descriptor.FinalRelativePath)
                 && IsLowerHex(descriptor.ContentHash, 64);
         }
 

@@ -18,6 +18,33 @@ namespace Zantetsu.Core.Tests
         private const string HashB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         private const string InitializationId = "0123456789abcdef0123456789abcdef";
 
+        /// <summary>
+        /// Reads the staged file back and confirms it is byte-for-byte what
+        /// the descriptor promised: the same length, and the same SHA-256.
+        /// </summary>
+        private static void AssertStagedContentMatches(CaptureRunRootLayout layout, CaptureArtifactDescriptor descriptor)
+        {
+            string path = Path.Combine(layout.RunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Assert.That(File.Exists(path), Is.True, path);
+
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.That(bytes.LongLength, Is.EqualTo(descriptor.ByteLength));
+
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                const string hex = "0123456789abcdef";
+                char[] chars = new char[hash.Length * 2];
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    chars[i * 2] = hex[hash[i] >> 4];
+                    chars[i * 2 + 1] = hex[hash[i] & 15];
+                }
+
+                Assert.That(new string(chars), Is.EqualTo(descriptor.ContentHash));
+            }
+        }
+
         [Test]
         public void CommonBoundary_IsBeforeReadbackAndFormatNeutral()
         {
@@ -40,17 +67,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(common, Does.Not.Contain("PNG"));
             Assert.That(common, Does.Not.Contain("Json"));
             Assert.That(common, Does.Not.Contain("JSON"));
-        }
-
-        [Test]
-        public void LegacyEncodeBoundary_IsolatedBehindPngJsonNames()
-        {
-            Assembly assembly = typeof(TraceRunContext).Assembly;
-            Assert.That(assembly.GetType("Zantetsu.Observability.ICaptureFrameEncodeService"), Is.Null);
-            Assert.That(assembly.GetType("Zantetsu.Observability.CaptureFrameEncodeSubmission"), Is.Null);
-            Assert.That(assembly.GetType("Zantetsu.Observability.CaptureFrameEncodeCompletion"), Is.Null);
-            Assert.That(assembly.GetType("Zantetsu.Observability.CaptureFrameEncodeCompletionCoordinator"), Is.Null);
-            Assert.That(assembly.GetType("Zantetsu.Observability.IPngJsonCaptureFrameEncodeService"), Is.Not.Null);
         }
 
         [Test]
@@ -126,7 +142,7 @@ namespace Zantetsu.Core.Tests
             using (PngJsonCaptureEvidenceBackend backend = new PngJsonCaptureEvidenceBackend(1, dispatcher, store))
             {
                 CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 7);
-                CaptureArtifactDescriptor descriptor = Descriptor("frame/7/image", "frames/7.png.stage", "frames/7.png", HashA);
+                CaptureArtifactDescriptor descriptor = Descriptor("frame/7/image", "frames/7.png.stage", HashA);
                 CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\frames\\7.png.stage");
                 CaptureArtifactCompletion artifact = new CaptureArtifactCompletion(
                     token, 7, descriptor, new CaptureArtifactFrameRelation(new[] { 7L }),
@@ -152,13 +168,11 @@ namespace Zantetsu.Core.Tests
         {
             string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-evidence-" + Guid.NewGuid().ToString("N"));
             string stagingBase = Path.Combine(sandbox, "staging");
-            string finalBase = Path.Combine(sandbox, "final");
             Directory.CreateDirectory(stagingBase);
-            Directory.CreateDirectory(finalBase);
 
             try
             {
-                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
+                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, 3);
                 CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
 
                 using (CaptureFrameReadbackBufferPool buffers = new CaptureFrameReadbackBufferPool(1, 64))
@@ -190,8 +204,8 @@ namespace Zantetsu.Core.Tests
                     Assert.That(metadata.Descriptor.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameMetadata));
 
                     // The staged files are content-verified without transformation.
-                    Assert.That(store.VerifyStaging(image.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                    Assert.That(store.VerifyStaging(metadata.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                    AssertStagedContentMatches(layout, image.Descriptor);
+                    AssertStagedContentMatches(layout, metadata.Descriptor);
 
                     // Surface and raw slot are fully recovered.
                     backend.BeginDrain();
@@ -357,7 +371,7 @@ namespace Zantetsu.Core.Tests
             CaptureArtifactFrameRelation runScoped = new CaptureArtifactFrameRelation(Array.Empty<long>());
             CaptureArtifactFrameRelation shared = new CaptureArtifactFrameRelation(new[] { 4L, 9L });
             CaptureFrameWorkToken producer = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 4);
-            CaptureArtifactDescriptor descriptor = Descriptor("segment/4-9", "segments/4-9.stage", "segments/4-9", HashA);
+            CaptureArtifactDescriptor descriptor = Descriptor("segment/4-9", "segments/4-9.stage", HashA);
             using (FakeArtifactStore store = new FakeArtifactStore())
             {
                 CaptureArtifactWriteReceipt receipt = new CaptureArtifactWriteReceipt(store, descriptor, "C:\\staging\\segments\\4-9.stage");
@@ -383,229 +397,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(registry.ReservedArtifactCount, Is.EqualTo(1));
 
             CaptureFrameWorkToken token = new CaptureFrameWorkToken(Guid.NewGuid(), 0, 1, 3, 1);
-            CaptureArtifactDescriptor descriptor = Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA);
+            CaptureArtifactDescriptor descriptor = Descriptor("a", "artifacts/a.stage", HashA);
             CaptureArtifactFrameRelation relation = new CaptureArtifactFrameRelation(new[] { 1L });
             Assert.That(registry.TryRegister(token, descriptor, relation), Is.True);
             Assert.That(registry.ReservedArtifactCount, Is.Zero);
             Assert.That(registry.GetFrameRelation(0), Is.SameAs(relation));
-        }
-
-        [Test]
-        public void GenericPublicationPlan_AllowsZeroOneAndMultipleArtifactsPerFrame()
-        {
-            CaptureArtifactDescriptor first = Descriptor("a", "frames/1.a.stage", "frames/1.a", HashA);
-            CaptureArtifactDescriptor second = Descriptor("b", "frames/1.b.stage", "frames/1.b", HashB);
-            CapturePublicationPlan plan = new CapturePublicationPlan(
-                3,
-                InitializationId,
-                HashA,
-                new[] { first, second },
-                new[]
-                {
-                    new CaptureFrameEvidenceEntry(1, Array.Empty<string>()),
-                    new CaptureFrameEvidenceEntry(2, new[] { "a" }),
-                    new CaptureFrameEvidenceEntry(3, new[] { "a", "b" })
-                });
-            Assert.That(plan.IsValid, Is.True);
-            Assert.That(plan.GetCaptureFrameEvidence(0).ArtifactCount, Is.Zero);
-            Assert.That(plan.GetCaptureFrameEvidence(1).ArtifactCount, Is.EqualTo(1));
-            Assert.That(plan.GetCaptureFrameEvidence(2).ArtifactCount, Is.EqualTo(2));
-
-            string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CapturePublicationPlan.cs"));
-            Assert.That(source, Does.Not.Contain("PngStagingRelativePath"));
-            Assert.That(source, Does.Not.Contain("SidecarStagingRelativePath"));
-            Assert.That(source, Does.Not.Contain("PngByteLength"));
-        }
-
-        [Test]
-        public void GenericArtifactStore_WritesPublishesVerifiesAndRecovers()
-        {
-            string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-artifact-store-" + Guid.NewGuid().ToString("N"));
-            string stagingBase = Path.Combine(sandbox, "staging");
-            string finalBase = Path.Combine(sandbox, "final");
-            Directory.CreateDirectory(stagingBase);
-            Directory.CreateDirectory(finalBase);
-            try
-            {
-                byte[] payload = Encoding.UTF8.GetBytes("format-neutral artifact");
-                CaptureArtifactDescriptor descriptor = new CaptureArtifactDescriptor(
-                    "artifact/1", CaptureArtifactKind.TraceBundle, "application/octet-stream", 1,
-                    "artifacts/1.bin.stage", "artifacts/1.bin", payload.LongLength, Hash(payload));
-                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
-                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
-                CaptureArtifactWriteReceipt write = store.WriteStaging(new CaptureArtifactWriteRequest(descriptor, payload));
-                Assert.That(write.IsIssuedFor(store, descriptor), Is.True);
-                Assert.That(store.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                Assert.That(store.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
-
-                CapturePublicationPlan plan = new CapturePublicationPlan(3, InitializationId, HashA,
-                    new[] { descriptor }, new[] { new CaptureFrameEvidenceEntry(1, new[] { "artifact/1" }) });
-                CapturePublicationPlanWriteReceipt persisted = store.WritePlan(plan);
-                Assert.That(persisted.IsIssuedFor(store, plan), Is.True);
-
-                // A new store/coordinator instance simulates recovery after a
-                // process restart. The generic persisted plan is the source.
-                CaptureArtifactFileStore restartedStore = new CaptureArtifactFileStore(layout);
-                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(restartedStore);
-                CapturePublicationRecoverySnapshot snapshot = recovery.InspectPersisted(
-                    restartedStore, CapturePublicationPlanCodec.MaximumCanonicalByteCount);
-                Assert.That(snapshot.Plan.TestRunId, Is.EqualTo(3));
-                Assert.That(snapshot.Plan.GetArtifact(0).ArtifactId, Is.EqualTo("artifact/1"));
-                Assert.That(CapturePublicationRecoveryClassifier.Classify(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.PublishMissingArtifacts));
-                Assert.That(recovery.ExecuteMissing(snapshot), Is.EqualTo(CapturePublicationRecoveryDisposition.CaptureComplete));
-                Assert.That(restartedStore.Verify(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                Assert.That(restartedStore.VerifyStaging(descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.Absent));
-            }
-            finally
-            {
-                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
-            }
-        }
-
-        [Test]
-        public void GenericPublicationPlanCodec_IsBoundedAndRejectsNonCanonicalPersistence()
-        {
-            CapturePublicationPlan plan = new CapturePublicationPlan(
-                3,
-                InitializationId,
-                HashA,
-                new[] { Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA) },
-                new[] { new CaptureFrameEvidenceEntry(1, new[] { "a" }) });
-            byte[] canonical = CapturePublicationPlanCodec.SerializeCanonical(plan);
-
-            using (MemoryStream exact = new MemoryStream(canonical, false))
-            {
-                CapturePublicationPlan decoded = CapturePublicationPlanCodec.DeserializeCanonical(exact, canonical.Length);
-                Assert.That(decoded.IsValid, Is.True);
-                Assert.That(decoded.GetArtifact(0).ArtifactId, Is.EqualTo("a"));
-            }
-            using (MemoryStream tooSmall = new MemoryStream(canonical, false))
-            {
-                Assert.Throws<ArgumentException>(() =>
-                    CapturePublicationPlanCodec.DeserializeCanonical(tooSmall, canonical.Length - 1));
-            }
-
-            byte[] nonCanonical = new byte[canonical.Length + 1];
-            Array.Copy(canonical, nonCanonical, canonical.Length);
-            nonCanonical[nonCanonical.Length - 1] = (byte)'\n';
-            Assert.Throws<ArgumentException>(() => CapturePublicationPlanCodec.DeserializeCanonical(nonCanonical));
-
-            string source = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CapturePublicationPlanCodec.cs"));
-            Assert.That(source.IndexOf("ValidateStructureBeforeObjectification(canonicalBytes)", StringComparison.Ordinal),
-                Is.LessThan(source.IndexOf("JsonUtility.FromJson<PlanDto>", StringComparison.Ordinal)));
-            Assert.That(source, Does.Contain("MaximumArtifactCount"));
-            Assert.That(source, Does.Contain("MaximumCaptureFrameEvidenceCount"));
-            Assert.That(source, Does.Contain("MaximumArtifactReferencesPerFrame"));
-        }
-
-        [Test]
-        public void GenericPublicationPlanCodec_RejectsReferenceCountBeforeDtoObjectification()
-        {
-            StringBuilder document = new StringBuilder(900000);
-            document.Append("{\"schemaVersion\":2,\"testRunId\":3,\"runInitializationId\":\"")
-                .Append(InitializationId)
-                .Append("\",\"runManifestContentHash\":\"")
-                .Append(HashA)
-                .Append("\",\"artifactDescriptors\":[],\"captureFrameEvidenceEntries\":[{\"captureFrameId\":1,\"artifactIds\":[");
-            for (int i = 0; i <= CapturePublicationPlanCodec.MaximumArtifactReferencesPerFrame; i++)
-            {
-                if (i != 0) document.Append(',');
-                document.Append("\"a\"");
-            }
-            document.Append("]}]}");
-
-            byte[] bytes = Encoding.UTF8.GetBytes(document.ToString());
-            Assert.That(bytes.Length, Is.LessThan(CapturePublicationPlanCodec.MaximumCanonicalByteCount));
-            Assert.Throws<ArgumentException>(() => CapturePublicationPlanCodec.DeserializeCanonical(bytes));
-        }
-
-        [Test]
-        public void RunPublicationCoordinator_SelectsOnlyGenericPlanPersistence()
-        {
-            string source = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunPublicationCoordinator.cs"));
-            Assert.That(source, Does.Contain("_publication.BuildAndPersist"));
-            Assert.That(source, Does.Contain("CaptureEvidenceRunFreezeReceipt freezeReceipt"));
-            Assert.That(source, Does.Contain("internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)"));
-            Assert.That(source, Does.Contain("ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout)"));
-            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlan"));
-            Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
-
-            string freeze = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureFrameFreezeTerminalCoordinator.cs"));
-            Assert.That(freeze, Does.Contain("TryCompleteEvidenceRun"));
-            Assert.That(freeze, Does.Contain("evidence.BeginDrain()"));
-            Assert.That(freeze, Does.Contain("evidence.TryJoin()"));
-            Assert.That(freeze, Does.Contain("evidence.IsFullyDrained"));
-            Assert.That(freeze, Does.Contain("CaptureRunLockIdentityEvidence lockIdentityEvidence"));
-            Assert.That(freeze, Does.Contain("runSession.IsValid"));
-            Assert.That(freeze, Does.Contain("lockIdentityEvidence.IsValid"));
-            Assert.That(freeze, Does.Contain("new CaptureEvidenceRunFreezeReceipt"));
-            Assert.That(freeze, Does.Not.Contain("runSession.IsCreated"));
-            Assert.That(freeze, Does.Not.Contain(".LockLease"));
-            Assert.That(freeze, Does.Not.Contain("OwnsLockLease"));
-
-            string freezeReceipt = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunFreezeReceipt.cs"));
-            Assert.That(freezeReceipt, Does.Contain("artifacts.ReservedArtifactCount != 0"));
-            Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(runSession.TestRunId)"));
-            Assert.That(freezeReceipt, Does.Not.Contain(".LockLease"));
-
-
-            string evidence = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceDraftCoordinator.cs"));
-            Assert.That(evidence, Does.Contain("internal bool IsFullyDrained => _drainStarted"));
-            Assert.That(evidence, Does.Contain("&& _queuedCancelled"));
-            Assert.That(evidence, Does.Contain("&& _joined"));
-        }
-
-        [Test]
-        public void GenericPlanRecovery_PromotesCanonicalTemporary_AndFailsClosedOnCollisionOrInvalidTemporary()
-        {
-            string sandbox = Path.Combine(Path.GetTempPath(), "zantetsu-plan-recovery-" + Guid.NewGuid().ToString("N"));
-            string stagingBase = Path.Combine(sandbox, "staging");
-            string finalBase = Path.Combine(sandbox, "final");
-            Directory.CreateDirectory(stagingBase);
-            Directory.CreateDirectory(finalBase);
-            try
-            {
-                CaptureRunRootLayout layout = new CaptureRunRootLayout(stagingBase, finalBase, 3);
-                Directory.CreateDirectory(layout.StagingRunRoot);
-                string temporary = Path.Combine(layout.StagingRunRoot, "publication.plan.tmp");
-                string final = Path.Combine(layout.StagingRunRoot, "publication.plan");
-                CapturePublicationPlan plan = new CapturePublicationPlan(
-                    3, InitializationId, HashA,
-                    new[] { Descriptor("a", "artifacts/a.stage", "artifacts/a", HashA) },
-                    new[] { new CaptureFrameEvidenceEntry(1, new[] { "a" }) });
-                byte[] bytes = CapturePublicationPlanCodec.SerializeCanonical(plan);
-                File.WriteAllBytes(temporary, bytes);
-
-                CaptureArtifactFileStore store = new CaptureArtifactFileStore(layout);
-                CapturePublicationRecoveryCoordinator recovery = new CapturePublicationRecoveryCoordinator(store);
-                CapturePublicationRecoverySnapshot recovered = recovery.InspectPersisted(store, bytes.Length);
-                Assert.That(recovered.Plan.IsValid, Is.True);
-                Assert.That(File.Exists(final), Is.True);
-                Assert.That(File.Exists(temporary), Is.False);
-
-                File.WriteAllBytes(temporary, bytes);
-                Assert.Throws<InvalidDataException>(() => recovery.InspectPersisted(store, bytes.Length));
-                Assert.That(File.Exists(final), Is.True);
-                Assert.That(File.Exists(temporary), Is.True);
-
-                File.Delete(final);
-                File.WriteAllText(temporary, "not canonical", Encoding.UTF8);
-                Assert.Throws<ArgumentException>(() => recovery.InspectPersisted(store, bytes.Length));
-                Assert.That(File.Exists(temporary), Is.True);
-                Assert.That(File.Exists(final), Is.False);
-                Assert.That(store.DiscardInvalidTemporaryPlan(bytes.Length), Is.True);
-                Assert.That(File.Exists(temporary), Is.False);
-                Assert.That(store.WritePlan(plan).IsIssuedFor(store, plan), Is.True);
-            }
-            finally
-            {
-                if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true);
-            }
         }
 
         [Test]
@@ -614,7 +410,7 @@ namespace Zantetsu.Core.Tests
             CaptureFrameEnvelope frame = MakeEnvelope(7);
             CaptureArtifactDescriptor image = new CaptureArtifactDescriptor(
                 "frame/7/image", CaptureArtifactKind.FrameImage, "image/png", 1,
-                "frames/7.png.stage", "frames/7.png", 20, HashA);
+                "frames/7.png", 20, HashA);
             string json = Encoding.UTF8.GetString(PngJsonFrameMetadataCodec.SerializeCanonical(frame, image));
             Assert.That(json, Does.Contain("\"captureFrameId\":7"));
             Assert.That(json, Does.Contain("\"testCaseId\":91"));
@@ -640,8 +436,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(source, Does.Not.Contain("CaptureArtifactKind.FrameMetadata"));
             Assert.That(source, Does.Not.Contain("SHA256"));
 
-            // No synchronous fallback, LINQ, resizable queues, or extra worker.
-            Assert.That(source, Does.Not.Contain("PngJsonSynchronousCaptureFrameEncodeService"));
+            // No LINQ, resizable queues, or extra worker.
             Assert.That(source, Does.Not.Contain("List<"));
             Assert.That(source, Does.Not.Contain("Queue<"));
             Assert.That(source, Does.Not.Contain("Stack<"));
@@ -657,7 +452,7 @@ namespace Zantetsu.Core.Tests
             string[] files =
             {
                 "CaptureFrameEnvelope.cs", "ICaptureEvidenceSession.cs", "CaptureEvidenceCoordinator.cs",
-                "CaptureArtifactDescriptor.cs", "ICaptureArtifactStore.cs", "CapturePublicationPlan.cs"
+                "CaptureArtifactDescriptor.cs", "ICaptureArtifactStore.cs"
             };
             string text = string.Empty;
             foreach (string file in files) text += File.ReadAllText(Path.Combine(root, file));
@@ -762,9 +557,9 @@ namespace Zantetsu.Core.Tests
                 CaptureFrameProfile.CreatePhaseZeroUnityLeftEye(9, new CaptureImageRect(0, 0, 2, 2)));
         }
 
-        private static CaptureArtifactDescriptor Descriptor(string id, string staging, string final, string hash)
+        private static CaptureArtifactDescriptor Descriptor(string id, string staging, string hash)
         {
-            return new CaptureArtifactDescriptor(id, CaptureArtifactKind.TraceBundle, "application/octet-stream", 1, staging, final, 1, hash);
+            return new CaptureArtifactDescriptor(id, CaptureArtifactKind.TraceBundle, "application/octet-stream", 1, staging, 1, hash);
         }
 
         private static string Hash(byte[] payload)
@@ -837,31 +632,6 @@ namespace Zantetsu.Core.Tests
             public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
             {
                 return new CaptureArtifactWriteReceipt(this, request.Descriptor, "C:\\staging\\" + request.Descriptor.ArtifactId);
-            }
-
-            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.MatchesExpected,
-                    CaptureArtifactVerificationFailureReason.None,
-                    descriptor.ByteLength);
-            }
-
-            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.Absent,
-                    CaptureArtifactVerificationFailureReason.FileAbsent,
-                    0);
-            }
-
-            public CaptureArtifactPublishReceipt Publish(CaptureArtifactDescriptor descriptor)
-            {
-                throw new NotSupportedException();
             }
 
             public void Dispose() { }

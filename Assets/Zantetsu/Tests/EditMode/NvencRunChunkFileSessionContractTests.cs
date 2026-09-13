@@ -90,12 +90,12 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunRootLayout MakeLayout(string staging, string final)
         {
-            return new CaptureRunRootLayout(staging, final, 1);
+            return new CaptureRunRootLayout(staging, 1);
         }
 
         private static string ChunksDir(CaptureRunRootLayout layout)
         {
-            return Path.Combine(layout.StagingRunRoot, "chunks");
+            return Path.Combine(layout.RunRoot, "chunks");
         }
 
         private static string PendingPath(CaptureRunRootLayout layout)
@@ -140,25 +140,18 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout, List<string> disposeLog)
         {
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
-            FakeHandle first = new FakeHandle(pathSet.FirstLockPath, true, disposeLog) { Tag = "first" };
-            FakeHandle second = new FakeHandle(pathSet.SecondLockPath, true, disposeLog) { Tag = "second" };
-            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first, second);
+            FakeHandle first = new FakeHandle(pathSet.LockPath, true, disposeLog) { Tag = "first" };
+            CaptureRunLockLease lease = new CaptureRunLockLease(pathSet, first);
             return CaptureRunInitializationSessionOwnershipLease.Create(ref lease);
         }
 
-        private static CaptureRunLockIdentityEvidence MakeIdentityEvidence(
-            CaptureRunInitializationSessionOwnershipLease ownershipLease)
-        {
-            return CaptureRunLockIdentityEvidence.Create(ownershipLease, ownershipLease.LockPathSet);
-        }
 
         private static CaptureRunInitializationSessionIssue MakeIssue(
             CaptureRunRootLayout layout, List<string> disposeLog)
         {
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            return CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            return CaptureRunInitializationSessionIssue.Create(owner, evidence);
         }
 
         private static string RuntimeDirectory()
@@ -203,7 +196,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -254,7 +247,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (string sandbox, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             string outside = Path.Combine(sandbox, "outside");
             Directory.CreateDirectory(outside);
@@ -275,9 +268,9 @@ namespace Zantetsu.Core.Tests
 
             string outside = Path.Combine(sandbox, "outside");
             Directory.CreateDirectory(outside);
-            Directory.CreateDirectory(Path.GetDirectoryName(layout.StagingRunRoot));
-            CreateJunction(layout.StagingRunRoot, outside);
-            _junctions.Add(layout.StagingRunRoot);
+            Directory.CreateDirectory(Path.GetDirectoryName(layout.RunRoot));
+            CreateJunction(layout.RunRoot, outside);
+            _junctions.Add(layout.RunRoot);
 
             Assert.Throws<IOException>(() => NvencRunChunkFileSession.Create(MakeIssue(layout, null)));
 
@@ -290,7 +283,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
             File.WriteAllBytes(ChunksDir(layout), new byte[] { 1 });
 
             Assert.Throws<IOException>(() => NvencRunChunkFileSession.Create(MakeIssue(layout, null)));
@@ -306,7 +299,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -328,7 +321,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -350,7 +343,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -373,7 +366,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -392,7 +385,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -415,7 +408,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null));
             try
@@ -446,7 +439,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
@@ -473,7 +466,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             byte[] data = new byte[] { 1, 2, 3, 4, 5 };
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
@@ -513,7 +506,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null));
             session.Append(new byte[] { 1, 2, 3, 4 }, 0, 4);
@@ -528,13 +521,12 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             List<string> disposeLog = new List<string>();
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, disposeLog);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionIssue.Create(owner, evidence);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(issue))
             {
@@ -551,7 +543,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null));
             session.Append(new byte[] { 1, 2, 3 }, 0, 3);
@@ -559,8 +551,8 @@ namespace Zantetsu.Core.Tests
 
             // The pending file is opened without delete sharing, so a leaked
             // handle would block the recursive delete below.
-            Assert.DoesNotThrow(() => Directory.Delete(layout.StagingRunRoot, true));
-            Assert.That(Directory.Exists(layout.StagingRunRoot), Is.False);
+            Assert.DoesNotThrow(() => Directory.Delete(layout.RunRoot, true));
+            Assert.That(Directory.Exists(layout.RunRoot), Is.False);
         }
 
         [Test]
@@ -569,12 +561,11 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             CaptureRunInitializationSessionOwnershipLease owner = MakeOwnershipLease(layout, null);
-            CaptureRunLockIdentityEvidence identity = MakeIdentityEvidence(owner);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(MakeExecutionReceipt(layout));
-            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);
+            CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSessionIssue.Create(owner, evidence);
 
             owner.Dispose();
 
@@ -588,7 +579,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             CaptureRunInitializationSessionIssue foreign =
                 (CaptureRunInitializationSessionIssue)FormatterServices.GetUninitializedObject(
@@ -606,7 +597,7 @@ namespace Zantetsu.Core.Tests
             RequireWindows();
             (_, string staging, string final) = MakeSandbox();
             CaptureRunRootLayout layout = MakeLayout(staging, final);
-            Directory.CreateDirectory(layout.StagingRunRoot);
+            Directory.CreateDirectory(layout.RunRoot);
 
             using (NvencRunChunkFileSession session = NvencRunChunkFileSession.Create(MakeIssue(layout, null)))
             {
