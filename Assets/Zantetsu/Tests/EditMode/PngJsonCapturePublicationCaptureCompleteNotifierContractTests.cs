@@ -390,7 +390,6 @@ namespace Zantetsu.Core.Tests
                     typeof(CaptureEvidenceRunPublicationCoordinator));
             SetField(coordinator, "_store", store);
             SetField(coordinator, "_freshPublicationGate", new object());
-            SetField(coordinator, "_recoveryReceiptAuthority", new object());
             return coordinator;
         }
 

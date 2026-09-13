@@ -341,7 +341,6 @@ namespace Zantetsu.Core.Tests
                     typeof(CaptureEvidenceRunPublicationCoordinator));
             SetField(coordinator, "_store", store);
             SetField(coordinator, "_freshPublicationGate", new object());
-            SetField(coordinator, "_recoveryReceiptAuthority", new object());
 
             CaptureEvidencePublicationCoordinator publication =
                 (CaptureEvidencePublicationCoordinator)FormatterServices.GetUninitializedObject(
@@ -663,13 +662,12 @@ namespace Zantetsu.Core.Tests
             CapturePublicationPlanWriteReceipt writeReceipt = new CapturePublicationPlanWriteReceipt(
                 store, plan, store.PublicationPlanPath, 16);
 
-            // A proof minted with the recovery authority instead of the fresh
-            // publication gate is rejected at construction.
-            object recoveryAuthority = GetField(coordinator, "_recoveryReceiptAuthority");
+            // A proof minted with any gate other than the coordinator's own
+            // fresh publication gate is rejected at construction.
             CaptureEvidenceRunPublicationCoordinator.IssuanceProof forged =
                 new CaptureEvidenceRunPublicationCoordinator.IssuanceProof(
                     coordinator,
-                    recoveryAuthority,
+                    new object(),
                     freezeReceipt,
                     writeReceipt,
                     freezeReceipt.Drafts,
@@ -957,19 +955,6 @@ namespace Zantetsu.Core.Tests
 
             // Identity evidence is forwarded; the session is a non-owning reference.
             Assert.That(type.GetProperty("LockIdentityEvidence", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), Is.Not.Null);
-        }
-
-        [Test]
-        public void Coordinator_FreshAndRecoveryAuthoritiesDistinct()
-        {
-            using (TempStore temp = new TempStore())
-            {
-                object fresh = GetField(temp.Coordinator, "_freshPublicationGate");
-                object recovery = GetField(temp.Coordinator, "_recoveryReceiptAuthority");
-                Assert.That(fresh, Is.Not.Null);
-                Assert.That(recovery, Is.Not.Null);
-                Assert.That(ReferenceEquals(fresh, recovery), Is.False);
-            }
         }
 
         // ---- Source inspection ----

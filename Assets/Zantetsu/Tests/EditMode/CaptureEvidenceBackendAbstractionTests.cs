@@ -521,21 +521,14 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void RunLifecycleCoordinator_SelectsOnlyGenericPlanPersistenceAndRecovery()
+        public void RunPublicationCoordinator_SelectsOnlyGenericPlanPersistence()
         {
             string source = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunPublicationCoordinator.cs"));
             Assert.That(source, Does.Contain("_publication.BuildAndPersist"));
             Assert.That(source, Does.Contain("CaptureEvidenceRunFreezeReceipt freezeReceipt"));
-            Assert.That(source, Does.Contain("CaptureRunInitializationOpenOutcome openOutcome"));
-            Assert.That(source, Does.Contain("CaptureEvidenceRunRecoveryInspectionReceipt"));
             Assert.That(source, Does.Contain("internal CaptureEvidenceRunPublicationCoordinator(CaptureArtifactFileStore store)"));
             Assert.That(source, Does.Contain("ReferenceEquals(freezeReceipt.RootLayout, _store.RootLayout)"));
-            Assert.That(source, Does.Contain("ReferenceEquals(openOutcome.RootLayout, _store.RootLayout)"));
-            Assert.That(source, Does.Contain("_recovery.InspectPersisted(_store"));
-            Assert.That(source, Does.Contain("plan.TestRunId == openOutcome.TestRunId"));
-            Assert.That(source, Does.Contain("plan.TestRunId == _store.RootLayout.TestRunId"));
-            Assert.That(source, Does.Contain("inspectionReceipt.IsIssuedFor(this)"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlan"));
             Assert.That(source, Does.Not.Contain("PngJsonCapturePublicationPlanCodec"));
 
@@ -559,11 +552,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(freezeReceipt, Does.Contain("_issuedBy.IsFrozenFor(runSession.TestRunId)"));
             Assert.That(freezeReceipt, Does.Not.Contain(".LockLease"));
 
-            string recoveryReceipt = File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceRunRecoveryInspectionReceipt.cs"));
-            Assert.That(recoveryReceipt, Does.Contain("ReferenceEquals(_issuedBy, coordinator)"));
-            Assert.That(recoveryReceipt, Does.Contain("IsRecoveryReceiptAuthority(_authority)"));
-            Assert.That(recoveryReceipt, Does.Contain("IsRecoveryContextFor(_openOutcome, _snapshot)"));
 
             string evidence = File.ReadAllText(Path.Combine(
                 RepositoryRoot(), "Assets/Zantetsu/Runtime/Observability/CaptureEvidenceDraftCoordinator.cs"));
