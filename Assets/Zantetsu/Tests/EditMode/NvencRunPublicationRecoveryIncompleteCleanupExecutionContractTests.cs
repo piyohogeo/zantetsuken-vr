@@ -310,7 +310,7 @@ namespace Zantetsu.Core.Tests
         // ---- Forward graph ----
 
         [Test]
-        public void Result_AndItsReceipt_ForwardTheSameOperationGraph()
+        public void Result_ForwardsTheOperationGraph()
         {
             FakeCleaner cleaner = new FakeCleaner();
             NvencRunPublicationRecoveryIncompleteCleanupOperation operation = MakeOperation();
@@ -318,7 +318,6 @@ namespace Zantetsu.Core.Tests
             NvencRunPublicationRecoveryIncompleteCleanupAttemptResult result =
                 new NvencRunPublicationRecoveryIncompleteCleanupExecutionCoordinator(cleaner)
                     .Execute(operation);
-            NvencRunPublicationRecoveryIncompleteCleanupReceipt receipt = result.Receipt;
 
             Assert.That(ReferenceEquals(result.Decision, operation.Decision), Is.True);
             Assert.That(ReferenceEquals(result.Snapshot, operation.Snapshot), Is.True);
@@ -331,19 +330,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(result.TestRunId, Is.EqualTo(operation.TestRunId));
             Assert.That(
                 ReferenceEquals(result.RunInitializationId, operation.RunInitializationId),
-                Is.True);
-
-            Assert.That(ReferenceEquals(receipt.Decision, result.Decision), Is.True);
-            Assert.That(ReferenceEquals(receipt.Snapshot, result.Snapshot), Is.True);
-            Assert.That(ReferenceEquals(receipt.OwnershipLease, result.OwnershipLease), Is.True);
-            Assert.That(ReferenceEquals(receipt.OpenOutcome, result.OpenOutcome), Is.True);
-            Assert.That(
-                ReferenceEquals(receipt.LockIdentityEvidence, result.LockIdentityEvidence),
-                Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, result.RootLayout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(result.TestRunId));
-            Assert.That(
-                ReferenceEquals(receipt.RunInitializationId, result.RunInitializationId),
                 Is.True);
         }
 

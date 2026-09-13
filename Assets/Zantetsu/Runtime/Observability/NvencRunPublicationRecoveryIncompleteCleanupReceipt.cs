@@ -9,19 +9,21 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Those two references are the whole state. The publication recovery
+    /// The receipt holds exactly two references, the exact cleaner and the
+    /// exact cleanup operation, and they are the whole state. What was cleaned
+    /// up is read from <see cref="CleanupOperation"/>: the publication recovery
     /// decision, its snapshot, the initialization open outcome, the lock
     /// identity evidence, the Session Ownership Lease, the root layout, and the
-    /// Run identity are forwarded from the operation's graph rather than
-    /// copied, and no plan, temporary observation, path, hash, file set, or
-    /// deletion progress is duplicated into a field of its own.
+    /// Run identity are none of them restated as a field or property of the
+    /// receipt's own, and neither are any plan, temporary observation, path,
+    /// hash, file set, or deletion progress.
     /// </para>
     /// <para>
     /// This is process-local evidence of one successful synchronous call. It is
     /// not a filesystem snapshot, not a proof of full durability, and not
-    /// evidence that the OS lock was released. It is minted only on success,
-    /// through the success-only factory, which requires a cleaner, an
-    /// operation, and that the operation is still valid.
+    /// evidence that the OS lock was released. Only <see cref="Cleaned"/>
+    /// issues one, and only on success: it requires a cleaner, an operation,
+    /// and that the operation is still valid.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing, performs no filesystem
@@ -75,24 +77,6 @@ namespace Zantetsu.Observability
 
         internal NvencRunPublicationRecoveryIncompleteCleanupOperation CleanupOperation =>
             _operation;
-
-        internal NvencRunPublicationRecoveryDecision Decision => _operation.Decision;
-
-        internal NvencRunPublicationRecoveryInspectionSnapshot Snapshot => _operation.Snapshot;
-
-        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease =>
-            _operation.OwnershipLease;
-
-        internal CaptureRunInitializationOpenOutcome OpenOutcome => _operation.OpenOutcome;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence =>
-            _operation.LockIdentityEvidence;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {
