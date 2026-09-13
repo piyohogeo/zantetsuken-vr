@@ -75,7 +75,9 @@ namespace Zantetsu.Observability
             PngJsonCapturePublicationPlan plan = actionPlan.AuthoritativePlan;
             if (entryIndex < 0 || entryIndex >= plan.EntryCount)
             {
-                throw new ArgumentOutOfRangeException(nameof(stepIndex), entryIndex, "Publish entry index must be within the authoritative plan entry count.");
+                throw new ArgumentException(
+                    "Action plan's publish entry index must be within the authoritative plan entry count.",
+                    nameof(actionPlan));
             }
 
             CaptureRunPublicationArtifactInspectionSnapshot snapshot = actionPlan.Decision.Snapshot;
