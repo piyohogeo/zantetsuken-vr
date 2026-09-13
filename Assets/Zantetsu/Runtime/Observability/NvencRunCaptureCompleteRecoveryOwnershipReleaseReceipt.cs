@@ -14,7 +14,7 @@ namespace Zantetsu.Observability
     /// released is read from <see cref="Operation"/>: the cleanup result and
     /// its operation, the lease, the open outcome, the lock identity evidence,
     /// the root layout, the Run identity, the cleanup status, and whether a
-    /// commit receipt is behind it are none of them restated as a field or
+    /// commit receipt is behind it - none of it is restated as a field or
     /// property of the receipt's own. The plan, the snapshot, the commit
     /// receipt, and the raw lock handles likewise stay reachable through that
     /// graph rather than being surfaced here.

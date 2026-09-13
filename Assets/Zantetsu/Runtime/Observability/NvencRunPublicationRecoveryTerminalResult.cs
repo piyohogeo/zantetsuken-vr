@@ -260,14 +260,13 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// The whole admission of a factory: the receipt exists and is
-        /// currently valid. Its graph is its own to vouch for and is not
-        /// re-checked here.
+        /// The whole admission: the receipt exists and is currently valid. Its
+        /// graph is its own to vouch for and is not re-checked here.
         /// </summary>
         private static void RequireIssued(object receipt, bool isValid)
         {
-            // Every factory names its one argument "receipt", so the rejected
-            // parameter is the same in all three.
+            // Each of the three creation boundaries names its one argument
+            // "receipt", so the rejected parameter is the same in all three.
             if (receipt == null)
             {
                 throw new ArgumentNullException("receipt");
