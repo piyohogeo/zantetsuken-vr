@@ -856,16 +856,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_Shape_StaticNoFields()
-        {
-            Type type = typeof(PngJsonCapturePublicationCaptureCompleteCleanupOperationFactory);
-
-            Assert.That(type.IsPublic, Is.False);
-            Assert.That(type.IsAbstract && type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Create_NullArguments_Rejected()
         {
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
@@ -1221,18 +1211,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(trustedBody, Does.Not.Contain("GetEntry"));
             Assert.That(trustedBody, Does.Not.Contain("SerializeCanonical"));
             Assert.That(trustedBody, Does.Not.Contain("for ("));
-        }
-
-        [Test]
-        public void Source_Factory_NoValidationOrPathDerivation()
-        {
-            string source = ReadSource("Assets/Zantetsu/Runtime/Observability/PngJsonCapturePublicationCaptureCompleteCleanupOperationFactory.cs");
-
-            Assert.That(source, Does.Not.Contain("TryValidate"));
-            Assert.That(source, Does.Not.Contain("IsValid"));
-            Assert.That(source, Does.Not.Contain("Path.Combine"));
-            Assert.That(source, Does.Not.Contain("GetStep"));
-            Assert.That(source, Does.Contain("PngJsonCapturePublicationCaptureCompleteCleanupOperation.Create("));
         }
 
         [Test]

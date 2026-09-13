@@ -136,7 +136,7 @@ namespace Zantetsu.Observability
                 case CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingReadyMarker:
                 case CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingInitializationMarker:
                 case CaptureRunPublicationCaptureCompleteCleanupAction.RemoveStagingRunRoot:
-                    operation = PngJsonCapturePublicationCaptureCompleteCleanupOperationFactory.CreateIndexLocal(
+                    operation = PngJsonCapturePublicationCaptureCompleteCleanupOperation.CreateIndexLocal(
                         token,
                         actionPlan,
                         publicationPaths,

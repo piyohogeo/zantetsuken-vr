@@ -1430,13 +1430,13 @@ namespace Zantetsu.Core.Tests
 
             int accessorIndex = source.IndexOf("token.TryGetIssuedCleanupInputs(", StringComparison.Ordinal);
             Assert.That(accessorIndex, Is.GreaterThan(0));
-            int operationFactoryIndex = source.IndexOf("PngJsonCapturePublicationCaptureCompleteCleanupOperationFactory.CreateIndexLocal(", StringComparison.Ordinal);
-            Assert.That(operationFactoryIndex, Is.GreaterThan(accessorIndex));
+            int operationCreateIndex = source.IndexOf("PngJsonCapturePublicationCaptureCompleteCleanupOperation.CreateIndexLocal(", StringComparison.Ordinal);
+            Assert.That(operationCreateIndex, Is.GreaterThan(accessorIndex));
 
-            string preFactory = source.Substring(accessorIndex, operationFactoryIndex - accessorIndex);
-            Assert.That(preFactory, Does.Not.Contain("actionPlan.Count"));
-            Assert.That(preFactory, Does.Not.Contain("actionPlan.GetStep"));
-            Assert.That(preFactory, Does.Not.Contain("for ("));
+            string preCreate = source.Substring(accessorIndex, operationCreateIndex - accessorIndex);
+            Assert.That(preCreate, Does.Not.Contain("actionPlan.Count"));
+            Assert.That(preCreate, Does.Not.Contain("actionPlan.GetStep"));
+            Assert.That(preCreate, Does.Not.Contain("for ("));
         }
 
         [Test]
