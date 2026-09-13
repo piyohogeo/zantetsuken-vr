@@ -14,10 +14,11 @@ namespace Zantetsu.Observability
     /// no filesystem, hash, or serialization work, deletes nothing, releases no
     /// lease, and is not an <see cref="IDisposable"/>. The CaptureComplete,
     /// capture index, and artifact publication receipts and operations, the
-    /// plan, the root layout, and the run identity are forwarded from the
-    /// operation and never duplicated as fields, and no new proof, token, or
-    /// nonce is introduced. A receipt is process-local evidence that one
-    /// synchronous cleanup call succeeded.
+    /// plan, the root layout, and the run identity are read from
+    /// <see cref="Operation"/> when they are needed; the receipt does not
+    /// restate them, and no new proof, token, or nonce is introduced. A
+    /// receipt is process-local evidence that one synchronous cleanup call
+    /// succeeded.
     /// </remarks>
     internal sealed class NvencRunCaptureCompleteCleanupReceipt
     {
