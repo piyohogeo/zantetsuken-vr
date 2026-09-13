@@ -56,18 +56,18 @@ namespace Zantetsu.Observability
             _captureCompleteReceipt.Operation;
 
         internal NvencRunCaptureIndexCommitReceipt CaptureIndexCommitReceipt =>
-            _captureCompleteReceipt.CaptureIndexCommitReceipt;
+            _captureCompleteReceipt.Operation.CaptureIndexCommitReceipt;
 
         internal NvencRunArtifactPublicationReceipt ArtifactPublicationReceipt =>
-            _captureCompleteReceipt.ArtifactPublicationReceipt;
+            _captureCompleteReceipt.Operation.ArtifactPublicationReceipt;
 
-        internal CapturePublicationPlan Plan => _captureCompleteReceipt.Plan;
+        internal CapturePublicationPlan Plan => _captureCompleteReceipt.Operation.Plan;
 
-        internal CaptureRunRootLayout RootLayout => _captureCompleteReceipt.RootLayout;
+        internal CaptureRunRootLayout RootLayout => _captureCompleteReceipt.Operation.RootLayout;
 
-        internal long TestRunId => _captureCompleteReceipt.TestRunId;
+        internal long TestRunId => _captureCompleteReceipt.Operation.TestRunId;
 
-        internal string RunInitializationId => _captureCompleteReceipt.RunInitializationId;
+        internal string RunInitializationId => _captureCompleteReceipt.Operation.RunInitializationId;
 
         /// <summary>
         /// Admission validity, checked before a cleanup starts: the process

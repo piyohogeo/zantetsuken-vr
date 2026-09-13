@@ -14,8 +14,9 @@ namespace Zantetsu.Observability
     /// performs no filesystem, hash, or serialization work, and is not an
     /// <see cref="IDisposable"/>. The capture index and artifact publication
     /// receipts and operations, the plan, the root layout, and the run identity
-    /// are forwarded from the operation and never duplicated as fields, and no
-    /// new proof, token, nonce, file snapshot, or hash copy is introduced. A
+    /// are read from <see cref="Operation"/>; the receipt does not restate
+    /// them, and no new proof, token, nonce, file snapshot, or hash copy is
+    /// introduced. A
     /// receipt is process-local evidence that one synchronous CaptureComplete
     /// call succeeded; it is not a persistent filesystem snapshot.
     /// </remarks>
@@ -58,26 +59,6 @@ namespace Zantetsu.Observability
         internal INvencRunCaptureCompleter Completer => _completer;
 
         internal NvencRunCaptureCompleteOperation Operation => _operation;
-
-        internal NvencRunCaptureIndexCommitReceipt CaptureIndexCommitReceipt =>
-            _operation.CaptureIndexCommitReceipt;
-
-        internal NvencRunCaptureIndexCommitOperation CaptureIndexCommitOperation =>
-            _operation.CaptureIndexCommitOperation;
-
-        internal NvencRunArtifactPublicationReceipt ArtifactPublicationReceipt =>
-            _operation.ArtifactPublicationReceipt;
-
-        internal NvencRunArtifactPublicationOperation ArtifactPublicationOperation =>
-            _operation.ArtifactPublicationOperation;
-
-        internal CapturePublicationPlan Plan => _operation.Plan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid =>
             _completer != null

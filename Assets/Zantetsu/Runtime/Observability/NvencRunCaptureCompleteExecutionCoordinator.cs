@@ -46,45 +46,13 @@ namespace Zantetsu.Observability
 
             NvencRunCaptureCompleteAttemptResult attempt = _completer.Complete(operation);
 
-            if (!IsValidAttempt(attempt, operation))
+            if (!attempt.IsIssuedFor(_completer, operation))
             {
                 throw new InvalidOperationException(
                     "Completer returned a null, foreign, default, or corrupt attempt result.");
             }
 
             return attempt;
-        }
-
-        private bool IsValidAttempt(
-            NvencRunCaptureCompleteAttemptResult attempt,
-            NvencRunCaptureCompleteOperation operation)
-        {
-            if (attempt.IsNone || !attempt.IsValid)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(attempt.Completer, _completer)
-                || !ReferenceEquals(attempt.Operation, operation))
-            {
-                return false;
-            }
-
-            switch (attempt.Status)
-            {
-                case NvencRunCaptureCompleteStatus.Completed:
-                {
-                    NvencRunCaptureCompleteReceipt receipt = attempt.Receipt;
-                    return receipt != null
-                        && receipt.IsIssuedFor(_completer, operation);
-                }
-
-                case NvencRunCaptureCompleteStatus.Failed:
-                    return attempt.Receipt == null;
-
-                default:
-                    return false;
-            }
         }
     }
 }

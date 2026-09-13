@@ -85,7 +85,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Complete_ResultAndReceipt_ForwardTheOperationGraph()
+        public void Complete_ResultForwardsOperationGraph_ReceiptHoldsCompleterAndOperation()
         {
             using (Harness h = Harness.Create())
             {
@@ -95,8 +95,12 @@ namespace Zantetsu.Core.Tests
                 NvencRunCaptureCompleteAttemptResult result = completer.Complete(operation);
                 NvencRunCaptureCompleteReceipt receipt = result.Receipt;
 
-                // Every forwarded value is the operation graph's exact
-                // reference: the completer copies nothing.
+                // The receipt holds only the exact completer and the exact
+                // operation. The attempt result also holds the status and the
+                // receipt, but what it forwards comes from the operation graph:
+                // its reference-valued members preserve that graph's exact
+                // references and its scalar values are read from it, so the
+                // completer copies nothing.
                 Assert.That(ReferenceEquals(
                     result.CaptureIndexCommitReceipt, operation.CaptureIndexCommitReceipt), Is.True);
                 Assert.That(ReferenceEquals(
@@ -111,19 +115,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(ReferenceEquals(
                     result.RunInitializationId, operation.RunInitializationId), Is.True);
 
-                Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexCommitReceipt, operation.CaptureIndexCommitReceipt), Is.True);
-                Assert.That(ReferenceEquals(
-                    receipt.CaptureIndexCommitOperation, operation.CaptureIndexCommitOperation), Is.True);
-                Assert.That(ReferenceEquals(
-                    receipt.ArtifactPublicationReceipt, operation.ArtifactPublicationReceipt), Is.True);
-                Assert.That(ReferenceEquals(
-                    receipt.ArtifactPublicationOperation, operation.ArtifactPublicationOperation), Is.True);
-                Assert.That(ReferenceEquals(receipt.Plan, operation.Plan), Is.True);
-                Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-                Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-                Assert.That(ReferenceEquals(
-                    receipt.RunInitializationId, operation.RunInitializationId), Is.True);
+                Assert.That(receipt.Completer, Is.SameAs(completer));
+                Assert.That(receipt.IsIssuedFor(completer, operation), Is.True);
             }
         }
 
