@@ -1991,7 +1991,7 @@ Unity現在世界
 | Conditional | 既知Animation、単純運動、確定済みMobPlan | Deterministic条件に加え、Animation入力・Identity／PlanGeneration／予測前提の一致 |
 | Speculative | 直接予測Gateを通った自由飛行剛体で、命中までに前提が崩れ得るもの | Deterministic条件に加え、実接触時の姿勢・Physics状態照合に合格 |
 
-メインスレッドはUnity状態を数値データへスナップショットし、Job SystemとBurstは予測、頂点分類、交差、断面生成を行う。UnityのGameObject、Transform、Animatorをワーカージョブから直接操作しない。VP出力・転送・Geometry Commitは4.5.6に従う。物理適用は表示Geometryの完成を待たず7.1に従って進める。
+実行境界は4.3に従う。VP出力・転送・Geometry Commitは4.5.6に従う。物理適用は表示Geometryの完成を待たず7.1に従って進める。
 
 ### 19.3 未来姿勢の求め方
 
