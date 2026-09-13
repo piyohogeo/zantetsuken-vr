@@ -18,12 +18,11 @@ namespace Zantetsu.Observability
     /// operation is built.
     /// </para>
     /// <para>
-    /// The document set keeps owning its internal arrays, which are never
-    /// mutated. Each getter copy is owned by this batch only until its
-    /// operation takes ownership, which the operation signals by clearing the
-    /// caller variable. The two ready operations receive separate copies and
-    /// never share an array. No dispose contract is introduced for the managed
-    /// arrays.
+    /// The document set keeps its internal arrays, which are never mutated.
+    /// Each getter returns a fresh array, which is handed to one write
+    /// operation and never read again here. The two ready operations receive
+    /// separate copies and never share an array. No dispose contract is
+    /// introduced for the managed arrays.
     /// </para>
     /// <para>
     /// This type performs no path construction, no canonical serialization,
