@@ -29,9 +29,9 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// A contract-violating receipt — null, issued by a foreign backend, bound
-    /// to a different operation, or whose forwarded values disagree with the
-    /// operation — throws <see cref="InvalidOperationException"/> and also
-    /// skips the remaining steps.
+    /// to a different operation, or naming an operation that no longer passes
+    /// index-local validation — throws <see cref="InvalidOperationException"/>
+    /// and also skips the remaining steps.
     /// </para>
     /// <para>
     /// This coordinator does not release the draft registry, send the
@@ -111,25 +111,9 @@ namespace Zantetsu.Observability
             CaptureRunPublicationCaptureCompleteCleanupOperation operation = prepared.CleanupOperation;
 
             if (receipt == null
-                || !ReferenceEquals(receipt.IssuedBy, _backend)
-                || !ReferenceEquals(receipt.Operation, operation)
                 || !receipt.IsIssuedForIndexLocal(_backend, operation, token))
             {
                 throw new InvalidOperationException("Cleanup receipt must be issued by this backend for this cleanup operation.");
-            }
-
-            if (receipt.Action != prepared.Action
-                || receipt.StepIndex != prepared.StepIndex
-                || receipt.EntryIndex != operation.EntryIndex
-                || receipt.ArtifactKind != operation.ArtifactKind
-                || !string.Equals(receipt.TargetPath, operation.TargetPath, StringComparison.Ordinal)
-                || !ReferenceEquals(receipt.ActionPlan, operation.ActionPlan)
-                || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || !ReferenceEquals(receipt.LockIdentityEvidence, operation.LockIdentityEvidence)
-                || receipt.TestRunId != operation.TestRunId
-                || !string.Equals(receipt.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException("Cleanup receipt must match the cleanup operation.");
             }
         }
     }

@@ -11,9 +11,11 @@ namespace Zantetsu.Observability
     /// This type owns and disposes nothing and performs no filesystem work. It
     /// is not an <see cref="IDisposable"/>, MonoBehaviour, or ScriptableObject.
     /// It holds no path, hash, byte count, handle, or array in its own fields.
-    /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
-    /// checks from the values without throwing, including after the lease has
-    /// been released or a nested value was forged.
+    /// What was cleaned up is read from <see cref="Operation"/>; the receipt
+    /// does not restate it. <see cref="IsValid"/> and
+    /// <see cref="IsIssuedFor"/> recompute the held checks from the values
+    /// without throwing, including after the lease has been released or a
+    /// nested value was forged.
     /// </para>
     /// </remarks>
     internal sealed class CaptureRunPublicationCaptureCompleteCleanupReceipt
@@ -47,28 +49,6 @@ namespace Zantetsu.Observability
         internal ICaptureRunPublicationCaptureCompleteCleanupBackend IssuedBy => _issuedBy;
 
         internal CaptureRunPublicationCaptureCompleteCleanupOperation Operation => _operation;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupActionPlan ActionPlan => _operation.ActionPlan;
-
-        internal int StepIndex => _operation.StepIndex;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupStep Step => _operation.Step;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupAction Action => _operation.Action;
-
-        internal int EntryIndex => _operation.EntryIndex;
-
-        internal CaptureRunPublicationArtifactKind ArtifactKind => _operation.ArtifactKind;
-
-        internal string TargetPath => _operation.TargetPath;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         internal bool IsValid
         {

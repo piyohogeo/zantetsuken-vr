@@ -1301,7 +1301,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_HoldsReferencesAndForwards()
+        public void Receipt_HoldsBackendAndOperation()
         {
             FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
             CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
@@ -1312,17 +1312,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.IssuedBy, Is.SameAs(backend));
             Assert.That(receipt.Operation, Is.SameAs(op));
             Assert.That(receipt.IsValid, Is.True);
-            Assert.That(receipt.ActionPlan, Is.SameAs(plan));
-            Assert.That(receipt.StepIndex, Is.EqualTo(0));
-            Assert.That(receipt.Step, Is.SameAs(op.Step));
-            Assert.That(receipt.Action, Is.EqualTo(op.Action));
-            Assert.That(receipt.EntryIndex, Is.EqualTo(op.EntryIndex));
-            Assert.That(receipt.ArtifactKind, Is.EqualTo(op.ArtifactKind));
-            Assert.That(receipt.TargetPath, Is.EqualTo(op.TargetPath));
-            Assert.That(receipt.RootLayout, Is.SameAs(op.RootLayout));
-            Assert.That(receipt.LockIdentityEvidence, Is.SameAs(op.LockIdentityEvidence));
-            Assert.That(receipt.TestRunId, Is.EqualTo(op.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(op.RunInitializationId));
         }
 
         [Test]
@@ -3492,24 +3481,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Coordinator_ForwardingMismatchReceipt_Rejected()
-        {
-            CaptureRunPublicationCaptureCompleteCleanupActionPlan plan = BuildCommitPlanWithPublicationPlanTemporary();
-            CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(plan);
-
-            // Step 1 is the PNG staging artifact and step 2 the sidecar: binding
-            // a receipt to the sidecar operation while the step expects PNG makes
-            // the forwarded artifact kind, entry index, and target path disagree.
-            CaptureRunPublicationCaptureCompleteCleanupOperation sidecarOperation = MakeOp(plan, 2);
-            FakePublicationCleanupBackend backend = new FakePublicationCleanupBackend();
-            backend.ReceiptOverride = op => new CaptureRunPublicationCaptureCompleteCleanupReceipt(backend, sidecarOperation);
-            CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator coordinator =
-                new CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator(backend);
-
-            Assert.Throws<InvalidOperationException>(() => coordinator.Execute(batch));
-        }
-
-        [Test]
         public void Coordinator_BackendException_PropagatesIdentical_NoRetry_NoSubsequentSteps()
         {
             CaptureRunPublicationCaptureCompleteCleanupExecutionBatch batch = BuildBatch(BuildCommitPlanWithPublicationPlanTemporary());
@@ -4192,24 +4163,6 @@ namespace Zantetsu.Core.Tests
             // already fully validated the completed-step sequence.
             Assert.That(CountOccurrences(resultSource, "token.IsIssuedFor("), Is.EqualTo(0));
             Assert.That(resultSource, Does.Contain("IsIssuedForExactBindings"));
-        }
-
-        [Test]
-        public void Source_ForwardingComparisons()
-        {
-            string coordinatorSource = File.ReadAllText(
-                LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunPublicationCaptureCompleteCleanupExecutionCoordinator.cs"));
-
-            Assert.That(coordinatorSource, Does.Contain("receipt.Action != prepared.Action"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.StepIndex != prepared.StepIndex"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.EntryIndex != operation.EntryIndex"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ArtifactKind != operation.ArtifactKind"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.TargetPath"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.ActionPlan"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.RootLayout"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.LockIdentityEvidence"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.TestRunId"));
-            Assert.That(coordinatorSource, Does.Contain("receipt.RunInitializationId"));
         }
 
         [Test]
