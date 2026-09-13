@@ -17,10 +17,12 @@ namespace Zantetsu.Observability
     /// output capacity before any side effect, fully verify the current record,
     /// build the submit operation, request the source release handoff, call the
     /// submitter exactly once, build the exclusive output record, enqueue it
-    /// exactly once, wake the one bound Output Worker, and only then clear the
-    /// current work. A not-yet-completed work leaves the current held and never
-    /// overtakes a later record. A full output queue or a busy gate leaves the
-    /// current held with no side effect.
+    /// exactly once, and only then clear the current work. Releasing the
+    /// submit-step gate on the way out is what wakes the Output Worker, so the
+    /// record is in the queue and the gate is free before anyone is told.
+    /// A not-yet-completed work leaves the current held and never overtakes a
+    /// later record. A full output queue or a busy gate leaves the current held
+    /// with no side effect.
     /// </para>
     /// <para>
     /// A submitter exception poisons the process and is re-thrown unchanged; no
@@ -45,12 +47,6 @@ namespace Zantetsu.Observability
 
         private NvencSubmissionRecord _current;
         private volatile bool _hasCurrent;
-
-        // The one Output Worker this processor wakes after an enqueue. Bound
-        // once at composition, because that worker cannot exist until the
-        // Submit Worker that owns this processor does. Volatile because the
-        // binding is written by the composing thread and read by the worker.
-        private volatile NvencOrderedOutputWorkerService _outputWorker;
 
         internal NvencOrderedSubmitProcessor(
             NvencCaptureProcessState processState,
@@ -103,42 +99,6 @@ namespace Zantetsu.Observability
             _sampleSlots = sampleSlots;
             _releaseCoordinator = releaseCoordinator;
             _submitter = submitter;
-        }
-
-        /// <summary>
-        /// Binds the one Output Worker this processor wakes when it has put a
-        /// record in the Submit-to-Output Queue. Exactly once, at composition.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// The two workers are composed in one order only: this processor, the
-        /// Submit Worker that owns it, the Output Processor, and then the
-        /// Output Worker, which needs the Submit Worker to exist. The wake
-        /// therefore cannot be a constructor argument, and is bound afterwards
-        /// - once, before the Submit Worker is started. There is no way to
-        /// replace it, and no registry or bus behind it: this is one worker
-        /// waking one other worker.
-        /// </para>
-        /// <para>
-        /// Without a binding the processor still works exactly as before and
-        /// simply wakes nobody, which is what the step-driven fixtures that
-        /// have no Output Worker rely on.
-        /// </para>
-        /// </remarks>
-        internal void BindOutputWorkerNotification(NvencOrderedOutputWorkerService outputWorker)
-        {
-            if (outputWorker == null)
-            {
-                throw new ArgumentNullException(nameof(outputWorker));
-            }
-
-            if (_outputWorker != null)
-            {
-                throw new InvalidOperationException(
-                    "This submit processor already notifies an Output Worker; the binding is made once.");
-            }
-
-            _outputWorker = outputWorker;
         }
 
         internal bool HasCurrentWork => _hasCurrent;
@@ -275,10 +235,6 @@ namespace Zantetsu.Observability
                         return false;
                     }
 
-                    // The record is in the queue and observable there before
-                    // anyone is told about it.
-                    NotifyOutputWorker();
-
                     _hasCurrent = false;
                     _current = default;
                     return true;
@@ -317,11 +273,9 @@ namespace Zantetsu.Observability
                     return false;
                 }
 
-                // 10. Wake the Output Worker, now that the record is in the
-                // queue and not before.
-                NotifyOutputWorker();
-
-                // 11. Clear the current only after the successful enqueue.
+                // 10. Clear the current only after the successful enqueue. The
+                // Output Worker is woken by the submit-step gate release in the
+                // finally below, with the record already in the queue.
                 _hasCurrent = false;
                 _current = default;
                 return true;
@@ -329,40 +283,6 @@ namespace Zantetsu.Observability
             finally
             {
                 _processState.EndSubmitStep();
-            }
-        }
-
-        /// <summary>
-        /// Wakes the bound Output Worker once, after a record has actually
-        /// reached the Submit-to-Output Queue.
-        /// </summary>
-        /// <remarks>
-        /// A coalescing state-change hint and nothing more: it carries no
-        /// count, acknowledgement, receipt, generation, or retry state, and
-        /// several of them may collapse into one wake. Nothing here waits,
-        /// sleeps, polls, or times anything.
-        ///
-        /// A failure to deliver it leaves a record already in the queue, so
-        /// there is nothing to take back: the process is poisoned and the
-        /// failure propagates, becoming the worker's fatal failure, rather than
-        /// the queue being unwound on a guess.
-        /// </remarks>
-        private void NotifyOutputWorker()
-        {
-            NvencOrderedOutputWorkerService outputWorker = _outputWorker;
-            if (outputWorker == null)
-            {
-                return;
-            }
-
-            try
-            {
-                outputWorker.Notify();
-            }
-            catch (Exception)
-            {
-                _processState.TryPoison();
-                throw;
             }
         }
     }

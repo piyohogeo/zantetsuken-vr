@@ -526,7 +526,6 @@ namespace Zantetsu.Core.Tests
                 Worker.Settled += _settledHandler;
                 SubmitWorker.Settled += _submitSettledHandler;
 
-                SubmitProcessor.BindOutputWorkerNotification(Worker);
                 State.BindResourceResolutionReleaseNotification(Worker);
                 SubmitWorker.Start();
             }

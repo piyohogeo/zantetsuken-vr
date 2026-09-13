@@ -35,6 +35,31 @@ confirmed, or to "Resolved" once it is fixed.
 Entries here are tests that no longer exist. Nothing below is permission to
 re-run anything, and nothing below records a proven product defect.
 
+### EditMode: `NvencSubmitToOutputNotificationContractTests`
+
+`Notification_FollowsTheEnqueue_AndLeavesFifoOrderUnchanged` failed in 2 of 87
+recorded EditMode runs (`20260912-164956-44a845`, `20260913-113712-68e411`)
+with `the second record did not complete`: the second completion was not
+collectable inside the test's watchdog.
+
+The fixture composed the Run without binding the shared gate's release
+notification, which a complete composition does bind. With that binding
+missing, a collector that met the busy resource-resolution gate parked with
+nothing left to wake it when the gate was released, so a record could stay
+staged indefinitely.
+
+The contract it checked was also a second wake for the same record: the submit
+step enqueues inside the gate it holds, and releasing that gate on the way out
+already wakes the bound Output Worker after the enqueue. The processor's own
+notification fired earlier, while the gate was still held, and could itself
+create the contention it then failed to recover from.
+
+It was retired rather than given a longer timeout or re-run: the direct
+notification and this fixture were removed, leaving the gate-release wake as
+the only one. That a freshly enqueued record wakes the Output Worker is
+observed by `NvencResourceResolutionGateWakeContractTests`, which reaches
+Source through the real submit-step gate release.
+
 ### Standalone: `Player_RunsAndCollectsItsConversionCommands`
 
 The conversion-command sentinel failed 3 times across 142 recorded Standalone

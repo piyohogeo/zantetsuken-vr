@@ -1458,10 +1458,9 @@ namespace Zantetsu.Observability.StandaloneTests
                     processState, outputProcessor, context, submitWorker, teardown);
                 ownerGraph[3] = outputWorker;
 
-                // 5. the two notifications this Run needs, each bound once:
-                //    the enqueue wake, and the wake that retries a collector
-                //    which could not take the shared gate.
-                submitProcessor.BindOutputWorkerNotification(outputWorker);
+                // 5. the one notification this Run needs, bound once: the
+                //    wake that follows every shared-gate release, which is what
+                //    both an enqueued record and a retried collector rely on.
                 processState.BindResourceResolutionReleaseNotification(outputWorker);
 
                 // 6. Only now may the Submit Worker run.
@@ -2471,10 +2470,9 @@ namespace Zantetsu.Observability.StandaloneTests
                 OutputWorker = new NvencOrderedOutputWorkerService(
                     ProcessState, OutputProcessor, Context, SubmitWorker, Teardown);
 
-                // 5. the two notifications this Run needs, each bound once:
-                //    the enqueue wake, and the wake that retries a collector
-                //    which could not take the shared gate.
-                submitProcessor.BindOutputWorkerNotification(OutputWorker);
+                // 5. the one notification this Run needs, bound once: the
+                //    wake that follows every shared-gate release, which is what
+                //    both an enqueued record and a retried collector rely on.
                 ProcessState.BindResourceResolutionReleaseNotification(OutputWorker);
 
                 // 6. Only now may the Submit Worker run.
