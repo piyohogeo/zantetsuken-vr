@@ -51,13 +51,25 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void ProductKernel_BurstPath_OnPublicInputs()
         {
+            bool synchronousBefore = BurstCompiler.Options.EnableBurstCompileSynchronously;
             bool safetyBefore = BurstCompiler.Options.EnableBurstSafetyChecks;
-            BurstCompiler.Options.EnableBurstSafetyChecks = false;
             var sb = new StringBuilder();
-            sb.AppendLine("Phase 2.9 performance (median us per cut, Burst, safety checks off, warm-up " + k_warmupIterations + ", samples " + k_samples + ", interleaved execute / query / query+execute / seams)");
-            sb.AppendLine("case | T | K | execute us (p10/p90) | query us | query+execute us (p10/p90) | total/execute | seams execute us | deficit: failed + rerun us | queried newV bound / used | queried newI bound / used | caps | cycles split/comb | seams renderV / smooth renderV");
             try
             {
+                // Turning safety checks off asks for a different Burst variant
+                // than the one the kernel tests already compiled, so the
+                // synchronous setting goes on first: the new variant is then
+                // compiled before the first call rather than falling back to
+                // managed while an asynchronous compile is still running. The
+                // class-level CompileSynchronously does not reach the kernel's
+                // own [BurstCompile] methods, and the warm-up iterations time
+                // the kernel rather than wait for it.
+                BurstCompiler.Options.EnableBurstCompileSynchronously = true;
+                BurstCompiler.Options.EnableBurstSafetyChecks = false;
+
+                sb.AppendLine("Phase 2.9 performance (median us per cut, Burst, safety checks off, warm-up " + k_warmupIterations + ", samples " + k_samples + ", interleaved execute / query / query+execute / seams)");
+                sb.AppendLine("case | T | K | execute us (p10/p90) | query us | query+execute us (p10/p90) | total/execute | seams execute us | deficit: failed + rerun us | queried newV bound / used | queried newI bound / used | caps | cycles split/comb | seams renderV / smooth renderV");
+
                 foreach (var (name, builder, plane) in Cases())
                 {
                     var smooth = builder.Finish(new LogicalMeshBuilder.AttributeOptions());
@@ -105,7 +117,14 @@ namespace Zantetsu.MeshCut.Tests
                     }
                 }
             }
-            finally { BurstCompiler.Options.EnableBurstSafetyChecks = safetyBefore; }
+            finally
+            {
+                // Restoring safety checks asks for the original variant again,
+                // so the synchronous setting stays on until that recompile has
+                // been requested.
+                BurstCompiler.Options.EnableBurstSafetyChecks = safetyBefore;
+                BurstCompiler.Options.EnableBurstCompileSynchronously = synchronousBefore;
+            }
             TestContext.Out.WriteLine(sb.ToString());
         }
     }
