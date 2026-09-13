@@ -29,7 +29,7 @@ namespace Zantetsu.Core.Tests
             NvencRunChunkFinalizationReceipt receipt = h.Writer.FinalizeChunk(operation);
 
             Assert.That(receipt.IsValid, Is.True);
-            Assert.That(receipt.ContentHash, Is.EqualTo(ComputeSha256Hex(session.Captured.ToArray())));
+            Assert.That(receipt.Descriptor.ContentHash, Is.EqualTo(ComputeSha256Hex(session.Captured.ToArray())));
             Assert.That(h.Writer.State, Is.EqualTo(NvencRunChunkWriterState.Finalized));
         }
 

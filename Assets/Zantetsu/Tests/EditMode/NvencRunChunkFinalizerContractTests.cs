@@ -43,7 +43,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_ForwardsAllValuesExactly()
+        public void Receipt_HoldsIssuerOperationAndDescriptor()
         {
             Harness h = new Harness();
             CaptureFrameWorkToken token1 = h.ProduceOwnedLease(1, 64, Seed, out NvencOwnedAccessUnitLease lease1);
@@ -65,19 +65,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(receipt.IssuedBy, Is.SameAs(finalizer));
             Assert.That(receipt.Operation, Is.SameAs(operation));
             Assert.That(receipt.Descriptor, Is.SameAs(descriptor));
-            Assert.That(receipt.Sink, Is.SameAs(h.Sink));
-            Assert.That(receipt.Evidence, Is.SameAs(evidence));
-            Assert.That(receipt.FrameRelation, Is.SameAs(operation.FrameRelation));
-            Assert.That(receipt.ArtifactId, Is.EqualTo("chunk/0"));
-            Assert.That(receipt.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameSequence));
-            Assert.That(receipt.FormatId, Is.EqualTo("NvencH264IdrChunk"));
-            Assert.That(receipt.FormatVersion, Is.EqualTo(1));
-            Assert.That(receipt.StagingRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(receipt.FinalRelativePath, Is.EqualTo(ChunkPath));
-            Assert.That(receipt.ByteLength, Is.EqualTo(112));
-            Assert.That(receipt.ContentHash, Is.EqualTo(Hash64));
-            Assert.That(receipt.AppendedCount, Is.EqualTo(2));
-            Assert.That(receipt.LastFrameId, Is.EqualTo(3));
         }
 
         [Test]

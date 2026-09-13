@@ -88,31 +88,31 @@ namespace Zantetsu.Observability
 
         internal CaptureArtifactDescriptor Descriptor => _receipt.Descriptor;
 
-        internal CaptureArtifactFrameRelation FrameRelation => _receipt.FrameRelation;
+        internal CaptureArtifactFrameRelation FrameRelation => _operation.FrameRelation;
 
-        internal NvencRunChunkSink Sink => _receipt.Sink;
+        internal NvencRunChunkSink Sink => _operation.Sink;
 
-        internal NvencRunChunkSinkFinalizationEvidence Evidence => _receipt.Evidence;
+        internal NvencRunChunkSinkFinalizationEvidence Evidence => _operation.Evidence;
 
-        internal string ArtifactId => _receipt.ArtifactId;
+        internal string ArtifactId => _receipt.Descriptor.ArtifactId;
 
-        internal CaptureArtifactKind ArtifactKind => _receipt.ArtifactKind;
+        internal CaptureArtifactKind ArtifactKind => _receipt.Descriptor.ArtifactKind;
 
-        internal string FormatId => _receipt.FormatId;
+        internal string FormatId => _receipt.Descriptor.FormatId;
 
-        internal int FormatVersion => _receipt.FormatVersion;
+        internal int FormatVersion => _receipt.Descriptor.FormatVersion;
 
-        internal string StagingRelativePath => _receipt.StagingRelativePath;
+        internal string StagingRelativePath => _receipt.Descriptor.StagingRelativePath;
 
-        internal string FinalRelativePath => _receipt.FinalRelativePath;
+        internal string FinalRelativePath => _receipt.Descriptor.FinalRelativePath;
 
-        internal long ByteLength => _receipt.ByteLength;
+        internal long ByteLength => _receipt.Descriptor.ByteLength;
 
-        internal string ContentHash => _receipt.ContentHash;
+        internal string ContentHash => _receipt.Descriptor.ContentHash;
 
-        internal long AppendedCount => _receipt.AppendedCount;
+        internal long AppendedCount => _operation.AppendedCount;
 
-        internal long LastFrameId => _receipt.LastFrameId;
+        internal long LastFrameId => _operation.LastFrameId;
 
         internal bool IsValid
         {

@@ -13,6 +13,8 @@ namespace Zantetsu.Observability
     /// The only normal issue path is <see cref="Create"/>, which requires a
     /// valid operation and a valid descriptor that matches it.
     /// <see cref="IsValid"/> re-checks the same correlation without throwing.
+    /// What was finalized is read from <see cref="Operation"/> and
+    /// <see cref="Descriptor"/>; the receipt does not restate it.
     /// </remarks>
     internal sealed class NvencRunChunkFinalizationReceipt
     {
@@ -74,32 +76,6 @@ namespace Zantetsu.Observability
         internal NvencRunChunkFinalizationOperation Operation => _operation;
 
         internal CaptureArtifactDescriptor Descriptor => _descriptor;
-
-        internal NvencRunChunkSink Sink => _operation.Sink;
-
-        internal NvencRunChunkSinkFinalizationEvidence Evidence => _operation.Evidence;
-
-        internal CaptureArtifactFrameRelation FrameRelation => _operation.FrameRelation;
-
-        internal string ArtifactId => _descriptor.ArtifactId;
-
-        internal CaptureArtifactKind ArtifactKind => _descriptor.ArtifactKind;
-
-        internal string FormatId => _descriptor.FormatId;
-
-        internal int FormatVersion => _descriptor.FormatVersion;
-
-        internal string StagingRelativePath => _descriptor.StagingRelativePath;
-
-        internal string FinalRelativePath => _descriptor.FinalRelativePath;
-
-        internal long ByteLength => _descriptor.ByteLength;
-
-        internal string ContentHash => _descriptor.ContentHash;
-
-        internal long AppendedCount => _operation.AppendedCount;
-
-        internal long LastFrameId => _operation.LastFrameId;
 
         internal bool IsValid
         {

@@ -44,10 +44,7 @@ namespace Zantetsu.Observability
 
             NvencRunChunkFinalizationReceipt receipt = _finalizer.FinalizeChunk(operation);
 
-            if (receipt == null ||
-                !ReferenceEquals(receipt.IssuedBy, _finalizer) ||
-                !ReferenceEquals(receipt.Operation, operation) ||
-                !receipt.IsIssuedFor(_finalizer, operation))
+            if (receipt == null || !receipt.IsIssuedFor(_finalizer, operation))
             {
                 throw new InvalidOperationException("Finalizer returned an invalid receipt.");
             }
