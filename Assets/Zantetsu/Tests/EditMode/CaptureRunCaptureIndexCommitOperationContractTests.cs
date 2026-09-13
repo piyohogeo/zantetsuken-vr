@@ -10,7 +10,7 @@ using Zantetsu.Observability;
 
 namespace Zantetsu.Core.Tests
 {
-    public class CaptureRunCaptureIndexCommitOperationFactoryTests
+    public class CaptureRunCaptureIndexCommitOperationContractTests
     {
         private const string InitId = "0123456789abcdef0123456789abcdef";
 
@@ -405,12 +405,6 @@ namespace Zantetsu.Core.Tests
             return plan.Decision.PublicationDecision.Snapshot.Operation.PublicationPaths;
         }
 
-        private static CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken MintBytesToken(
-            PngJsonCapturePublicationPlan plan)
-        {
-            return CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan);
-        }
-
         private static CaptureRunCaptureIndexCommitOperation ForgeOperation(
             CaptureRunPublicationArtifactRecoveryActionPlan actionPlan,
             int stepIndex,
@@ -435,7 +429,7 @@ namespace Zantetsu.Core.Tests
                 return relativePath;
             }
 
-            string dir = Path.GetDirectoryName(typeof(CaptureRunCaptureIndexCommitOperationFactoryTests).Assembly.Location);
+            string dir = Path.GetDirectoryName(typeof(CaptureRunCaptureIndexCommitOperationContractTests).Assembly.Location);
             while (dir != null)
             {
                 string candidate = Path.Combine(dir, relativePath);
@@ -570,7 +564,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_AbsentTemporary_CreateMode()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.CreateTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -585,7 +579,7 @@ namespace Zantetsu.Core.Tests
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocCanonical, 100, plan),
                 plan: plan);
 
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(actionPlan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReuseCanonicalTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -598,7 +592,7 @@ namespace Zantetsu.Core.Tests
                 out _, out _,
                 captureIndexTemporary: MakeDoc(CaptureIndexTemporary, DocInvalid, 10));
 
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(actionPlan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(actionPlan, 0);
 
             Assert.That(commit.Mode, Is.EqualTo(CaptureRunCaptureIndexCommitMode.ReplaceInvalidTemporaryAndCommit));
             Assert.That(commit.IsValid, Is.True);
@@ -623,10 +617,7 @@ namespace Zantetsu.Core.Tests
             SetField(tmp, "_status", DocLimitExceeded);
             SetField(tmp, "_probedByteCount", 1001);
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(actionPlan.AuthoritativePlan);
-
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
-            Assert.That(bytesToken, Is.Not.Null);
+            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
         }
 
         [Test]
@@ -636,67 +627,61 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = actionPlan.AcquireValidationToken();
 
             CaptureRunPublicationDocumentObservation tmp = actionPlan.Decision.PublicationDecision.Snapshot.CaptureIndexTemporary;
-            PngJsonCapturePublicationPlan authoritativePlan = actionPlan.AuthoritativePlan;
-
             // Invalid status with a negative probed byte count is inconsistent.
             SetField(tmp, "_status", DocInvalid);
             SetField(tmp, "_probedByteCount", -5);
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(authoritativePlan);
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
-            Assert.That(bytesToken, Is.Not.Null);
+            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
 
             // Absent status with a non-null plan is inconsistent.
             SetField(tmp, "_status", DocAbsent);
             SetField(tmp, "_probedByteCount", 0);
             SetField(tmp, "_plan", MakePlan());
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken2 = MintBytesToken(authoritativePlan);
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken2));
-            Assert.That(bytesToken2, Is.Not.Null);
+            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
         }
 
         // ---- Rejection ----
 
         [Test]
-        public void Factory_NullPlan_Rejected()
+        public void Construction_NullPlan_Rejected()
         {
             ArgumentNullException ex = Assert.Throws<ArgumentNullException>(
-                () => CaptureRunCaptureIndexCommitOperationFactory.Create(null, 0));
+                () => new CaptureRunCaptureIndexCommitOperation(null, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_InvalidPlan_Rejected()
+        public void Construction_InvalidPlan_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = (CaptureRunPublicationArtifactRecoveryActionPlan)FormatterServices.GetUninitializedObject(
                 typeof(CaptureRunPublicationArtifactRecoveryActionPlan));
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => new CaptureRunCaptureIndexCommitOperation(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
         }
 
         [Test]
-        public void Factory_StepIndexOutOfRange_Rejected()
+        public void Construction_StepIndexOutOfRange_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
 
             foreach (int bad in new[] { -1, 2, int.MinValue, int.MaxValue })
             {
                 ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(
-                    () => CaptureRunCaptureIndexCommitOperationFactory.Create(plan, bad));
+                    () => new CaptureRunCaptureIndexCommitOperation(plan, bad));
                 Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
             }
         }
 
         [Test]
-        public void Factory_NonCommitStep_Rejected()
+        public void Construction_NonCommitStep_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildPublishPngPlan(out _);
 
             ArgumentException ex = Assert.Throws<ArgumentException>(
-                () => CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0));
+                () => new CaptureRunCaptureIndexCommitOperation(plan, 0));
             Assert.That(ex.ParamName, Is.EqualTo("stepIndex"));
         }
 
@@ -719,10 +704,7 @@ namespace Zantetsu.Core.Tests
             {
                 SetField(publicationSnapshot, "_captureIndex", index);
 
-                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan);
-
-                Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
-                Assert.That(bytesToken, Is.Not.Null);
+                Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
             }
         }
 
@@ -739,12 +721,9 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationRecoveryInspectionSnapshot publicationSnapshot = actionPlan.Decision.PublicationDecision.Snapshot;
             SetField(publicationSnapshot.CaptureIndexTemporary, "_plan", MakePlan(entries: new[] { MakeEntry(11) }));
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(actionPlan.AuthoritativePlan);
-
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
+                new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
-            Assert.That(bytesToken, Is.Not.Null);
         }
 
         [Test]
@@ -755,12 +734,9 @@ namespace Zantetsu.Core.Tests
 
             SetField(actionPlan.Decision.PublicationDecision, "_disposition", CaptureRunPublicationRecoveryDisposition.CaptureIndexAuthoritative);
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(actionPlan.AuthoritativePlan);
-
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
+                new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("actionPlan"));
-            Assert.That(bytesToken, Is.Not.Null);
         }
 
         [Test]
@@ -771,10 +747,7 @@ namespace Zantetsu.Core.Tests
 
             SetField(actionPlan.Decision.Snapshot, "_traceManifestStatus", EvMismatch);
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(actionPlan.AuthoritativePlan);
-
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
-            Assert.That(bytesToken, Is.Not.Null);
+            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
         }
 
         [Test]
@@ -786,28 +759,25 @@ namespace Zantetsu.Core.Tests
             SetField(observation, "_finalPngStatus", EvAbsent);
             SetField(observation, "_finalPngProbedByteCount", 0);
 
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(actionPlan.AuthoritativePlan);
-
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0, ref bytesToken));
-            Assert.That(bytesToken, Is.Not.Null);
+            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(actionPlan, token, 0));
         }
 
         // ---- Token ----
 
         [Test]
-        public void Factory_CrossToken_Rejected()
+        public void IndexLocalConstruction_CrossToken_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan planA = BuildCommitPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan planB = BuildCommitPlan(out _, out _);
             CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken tokenA = planA.AcquireValidationToken();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                CaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(planB, tokenA, 0));
+                new CaptureRunCaptureIndexCommitOperation(planB, tokenA, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
         [Test]
-        public void Factory_StaleToken_Rejected()
+        public void IndexLocalConstruction_StaleToken_Rejected()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(
                 out CaptureRunPublicationArtifactInspectionOperation operation,
@@ -818,7 +788,7 @@ namespace Zantetsu.Core.Tests
             owner.Dispose();
 
             ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                CaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(plan, token, 0));
+                new CaptureRunCaptureIndexCommitOperation(plan, token, 0));
             Assert.That(ex.ParamName, Is.EqualTo("token"));
         }
 
@@ -830,7 +800,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
 
             Assert.That(commit.ActionPlan, Is.SameAs(plan));
             Assert.That(commit.StepIndex, Is.EqualTo(0));
@@ -850,7 +820,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
 
             Assert.That(commit.TemporaryPath, Is.EqualTo(paths.CaptureIndexTemporaryPath));
             Assert.That(commit.FinalPath, Is.EqualTo(paths.CaptureIndexPath));
@@ -864,142 +834,18 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
 
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
 
             byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(commit.AuthoritativePlan);
             Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
             Assert.That(commit.ByteCount, Is.EqualTo((long)expected.Length));
         }
 
-        // ---- Bytes ownership ----
-
-        [Test]
-        public void Constructor_Success_NullsRefAndTakesOwnership()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan.AuthoritativePlan);
-            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
-
-            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken);
-
-            Assert.That(bytesToken, Is.Null);
-            Assert.That(commit.IsValid, Is.True);
-            Assert.That(commit.GetCanonicalBytes(), Is.EqualTo(expected));
-        }
-
-        [Test]
-        public void Constructor_Failure_TokenNotTransferred()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            // Step index out of range.
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken1 = MintBytesToken(plan.AuthoritativePlan);
-            Assert.Throws<ArgumentOutOfRangeException>(() => new CaptureRunCaptureIndexCommitOperation(plan, token, 99, ref bytesToken1));
-            Assert.That(bytesToken1, Is.Not.Null);
-
-            // Null token.
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken nullToken = null;
-            Assert.Throws<ArgumentNullException>(() => new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref nullToken));
-            Assert.That(nullToken, Is.Null);
-
-            // Forged trace status.
-            SetField(plan.Decision.Snapshot, "_traceManifestStatus", EvMismatch);
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken2 = MintBytesToken(plan.AuthoritativePlan);
-            Assert.Throws<ArgumentException>(() => new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken2));
-            Assert.That(bytesToken2, Is.Not.Null);
-        }
-
-        [Test]
-        public void CanonicalBytesToken_ConsumedOrModifiedBytes_Rejected_NoOwnershipTransfer()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            // The token owns its byte array privately; TakeBytes consumes that
-            // ownership. After the bytes are taken and mutated in place, the
-            // empty token cannot be used to construct an operation and is not
-            // nulled out (no ownership transfer).
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan.AuthoritativePlan);
-            byte[] bytes = bytesToken.TakeBytes();
-            bytes[0] = (byte)(bytes[0] ^ 0xFF);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken));
-            Assert.That(ex.ParamName, Is.EqualTo("canonicalBytesToken"));
-            Assert.That(bytesToken, Is.Not.Null);
-        }
-
-        [Test]
-        public void CanonicalBytesToken_Acquire_ReturnsCanonicalSerialization()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken =
-                CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken.Acquire(plan.AuthoritativePlan);
-
-            Assert.That(bytesToken.IsIssuedFor(plan.AuthoritativePlan), Is.True);
-            Assert.That(bytesToken.IsIssuedFor(MakePlan()), Is.False);
-
-            byte[] expected = PngJsonCapturePublicationPlanCodec.SerializeCanonical(plan.AuthoritativePlan);
-            Assert.That(bytesToken.TakeBytes(), Is.EqualTo(expected));
-
-            // After TakeBytes the token is no longer issued for any plan.
-            Assert.That(bytesToken.IsIssuedFor(plan.AuthoritativePlan), Is.False);
-        }
-
-        [Test]
-        public void CanonicalBytesToken_EmptyBytes_Rejected_TokenNotConsumed()
-        {
-            CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunPublicationArtifactRecoveryActionPlan.ValidationToken token = plan.AcquireValidationToken();
-
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken bytesToken = MintBytesToken(plan.AuthoritativePlan);
-            CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken original = bytesToken;
-
-            FieldInfo bytesField = typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken)
-                .GetField("_bytes", BindingFlags.NonPublic | BindingFlags.Instance);
-            byte[] empty = new byte[0];
-            bytesField.SetValue(bytesToken, empty);
-
-            ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-                new CaptureRunCaptureIndexCommitOperation(plan, token, 0, ref bytesToken));
-
-            Assert.That(ex.ParamName, Is.EqualTo("canonicalBytesToken"));
-            Assert.That(bytesToken, Is.SameAs(original));
-            Assert.That(bytesField.GetValue(bytesToken), Is.SameAs(empty));
-        }
-
-        [Test]
-        public void CanonicalBytesToken_Acquire_DoesNotExposeBytes()
-        {
-            // A token can only be minted from a plan and keeps its byte array
-            // private: Acquire takes no byte[] input or output and the token
-            // has no public constructor or byte-returning property.
-            MethodInfo acquire = typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken)
-                .GetMethod("Acquire", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.That(acquire, Is.Not.Null);
-
-            ParameterInfo[] parameters = acquire.GetParameters();
-            Assert.That(parameters.Length, Is.EqualTo(1));
-            Assert.That(parameters[0].ParameterType, Is.EqualTo(typeof(PngJsonCapturePublicationPlan)));
-
-            Assert.That(
-                typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken).GetConstructors(BindingFlags.Public | BindingFlags.Instance),
-                Is.Empty);
-
-            PropertyInfo[] properties = typeof(CaptureRunCaptureIndexCommitOperation.CanonicalBytesToken)
-                .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            Assert.That(properties, Is.Empty);
-        }
-
         [Test]
         public void GetCanonicalBytes_DefensiveCopy_NoExternalAlias()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out _);
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
 
             byte[] first = commit.GetCanonicalBytes();
             byte[] second = commit.GetCanonicalBytes();
@@ -1020,7 +866,7 @@ namespace Zantetsu.Core.Tests
         public void Operation_ForgedFields_IsValidFalse_NoException()
         {
             CaptureRunPublicationArtifactRecoveryActionPlan plan = BuildCommitPlan(out _, out CaptureRunPublicationArtifactEntryObservation observation);
-            CaptureRunCaptureIndexCommitOperation commit = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation commit = new CaptureRunCaptureIndexCommitOperation(plan, 0);
             CaptureRunPublicationPathSet paths = GetPublicationPaths(plan);
 
             Assert.That(commit.IsValid, Is.True);
@@ -1095,19 +941,9 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Factory_IsStaticWithNoState()
-        {
-            Type type = typeof(CaptureRunCaptureIndexCommitOperationFactory);
-
-            Assert.That(type.IsAbstract, Is.True);
-            Assert.That(type.IsSealed, Is.True);
-            Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static), Is.Empty);
-        }
-
-        [Test]
         public void Shape_NoLeaseExposure()
         {
-            foreach (Type type in new[] { typeof(CaptureRunCaptureIndexCommitOperation), typeof(CaptureRunCaptureIndexCommitOperationFactory) })
+            foreach (Type type in new[] { typeof(CaptureRunCaptureIndexCommitOperation) })
             {
                 foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
                 {
@@ -1141,29 +977,21 @@ namespace Zantetsu.Core.Tests
         // ---- Source ----
 
         [Test]
-        public void Factory_Create_SingleFullValidation()
+        public void Construction_SingleFullValidation()
         {
-            string factorySource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperationFactory.cs"));
             string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperation.cs"));
 
-            Assert.That(factorySource, Does.Not.Contain("!actionPlan.IsValid"));
             Assert.That(operationSource, Does.Not.Contain("!actionPlan.IsValid"));
-            Assert.That(factorySource, Does.Contain("AcquireValidationToken"));
-
-            int indexLocal = factorySource.IndexOf("CreateIndexLocal", StringComparison.Ordinal);
-            Assert.That(indexLocal, Is.GreaterThan(0));
-            Assert.That(factorySource.Substring(indexLocal), Does.Not.Contain("AcquireValidationToken"));
-            Assert.That(factorySource.Substring(indexLocal), Does.Not.Contain("actionPlan.IsValid"));
+            Assert.That(operationSource, Does.Contain("AcquireValidationToken"));
         }
 
         [Test]
         public void Source_NoForbiddenDependencies()
         {
             string operationSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperation.cs"));
-            string factorySource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitOperationFactory.cs"));
             string modeSource = File.ReadAllText(LocateSource("Assets/Zantetsu/Runtime/Observability/CaptureRunCaptureIndexCommitMode.cs"));
 
-            foreach (string source in new[] { operationSource, factorySource, modeSource })
+            foreach (string source in new[] { operationSource, modeSource })
             {
                 Assert.That(source, Does.Not.Contain("File."));
                 Assert.That(source, Does.Not.Contain("Directory."));
@@ -1184,14 +1012,8 @@ namespace Zantetsu.Core.Tests
                 Assert.That(source, Does.Not.Contain("TraceLogger"));
             }
 
-            // The factory must not serialize or copy bytes; it mints the bytes
-            // token, whose Acquire performs the single canonical serialization.
-            Assert.That(factorySource, Does.Not.Contain("Array.Copy"));
-            Assert.That(factorySource, Does.Not.Contain("SerializeCanonical"));
-            Assert.That(factorySource, Does.Contain("Acquire"));
-
-            // The operation serializes once inside Acquire and re-serializes in
-            // IsValid, and defensively copies in the getter.
+            // The operation serializes for itself when constructed and
+            // re-serializes in IsValid, and defensively copies in the getter.
             Assert.That(operationSource, Does.Contain("SerializeCanonical"));
             Assert.That(operationSource, Does.Contain("GetCanonicalBytes"));
         }

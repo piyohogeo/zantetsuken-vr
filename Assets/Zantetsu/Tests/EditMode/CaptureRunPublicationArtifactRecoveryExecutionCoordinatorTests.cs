@@ -1105,7 +1105,7 @@ namespace Zantetsu.Core.Tests
             CaptureRunPublicationArtifactRecoveryExecutionBatch batch = BuildBatch(plan);
 
             FakeCommitter committer = new FakeCommitter();
-            CaptureRunCaptureIndexCommitOperation wrongOperation = CaptureRunCaptureIndexCommitOperationFactory.Create(
+            CaptureRunCaptureIndexCommitOperation wrongOperation = new CaptureRunCaptureIndexCommitOperation(
                 BuildCommitPlan(out _, out _), 0);
             committer.ReceiptOverride = op => new CaptureRunCaptureIndexCommitReceipt(committer, wrongOperation);
             CaptureRunPublicationArtifactRecoveryExecutionCoordinator coordinator = MakeCoordinator(new FakePublisher(), committer);

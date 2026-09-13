@@ -391,7 +391,7 @@ namespace Zantetsu.Core.Tests
             out CaptureRunInitializationSessionOwnershipLease owner)
         {
             plan = BuildCommitPlan(out inspectionOperation, out _, out owner);
-            return CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            return new CaptureRunCaptureIndexCommitOperation(plan, 0);
         }
 
         private static CaptureRunCaptureIndexCommitOperation ForgeOperation(
@@ -804,7 +804,7 @@ namespace Zantetsu.Core.Tests
                 out CaptureRunPublicationArtifactInspectionOperation inspectionOperation,
                 out _,
                 out CaptureRunInitializationSessionOwnershipLease owner);
-            CaptureRunCaptureIndexCommitOperation operation = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation operation = new CaptureRunCaptureIndexCommitOperation(plan, 0);
             FakeCommitter committer = new FakeCommitter();
 
             CaptureRunCaptureIndexCommitReceipt receipt = new CaptureRunCaptureIndexCommitReceipt(committer, operation);

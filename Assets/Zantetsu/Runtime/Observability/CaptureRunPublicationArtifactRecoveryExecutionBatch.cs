@@ -76,7 +76,7 @@ namespace Zantetsu.Observability
                             token,
                             i,
                             null,
-                            CaptureRunCaptureIndexCommitOperationFactory.CreateIndexLocal(actionPlan, token, i));
+                            new CaptureRunCaptureIndexCommitOperation(actionPlan, token, i));
                         break;
 
                     default:

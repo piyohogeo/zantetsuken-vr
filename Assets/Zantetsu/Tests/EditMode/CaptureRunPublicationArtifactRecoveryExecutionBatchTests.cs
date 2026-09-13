@@ -798,7 +798,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(batch.GetStep(0).PublishOperation, Is.Null);
             Assert.That(batch.GetStep(0).CaptureIndexCommitOperation, Is.Not.Null);
 
-            CaptureRunCaptureIndexCommitOperation expected = CaptureRunCaptureIndexCommitOperationFactory.Create(plan, 0);
+            CaptureRunCaptureIndexCommitOperation expected = new CaptureRunCaptureIndexCommitOperation(plan, 0);
             CaptureRunCaptureIndexCommitOperation actual = batch.GetStep(0).CaptureIndexCommitOperation;
 
             Assert.That(actual.Mode, Is.EqualTo(expected.Mode));
