@@ -9,9 +9,12 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly three reference fields and has no public
-    /// constructor. It holds no path, hash, byte count, handle, lease, proof
-    /// array, or duplicate path set.
+    /// The type owns exactly three reference fields — the issuer, the
+    /// operation, and the token it was issued under — and has no public
+    /// constructor. What was cleaned up is read from <see cref="Operation"/>:
+    /// the receipt restates none of it and holds no path, hash, byte count,
+    /// authority, handle, lease, proof array, or duplicate path set of its
+    /// own.
     /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
     /// checks with O(1) index-local correlation and never throw, including
     /// after the lease has been released or a nested value was forged.
@@ -76,38 +79,6 @@ namespace Zantetsu.Observability
         internal IPngJsonCapturePublicationCaptureCompleteCleanupBackend IssuedBy => _issuedBy;
 
         internal PngJsonCapturePublicationCaptureCompleteCleanupOperation Operation => _operation;
-
-        internal PngJsonCapturePublicationCaptureCompleteCleanupActionPlan ActionPlan => _operation.ActionPlan;
-
-        internal int StepIndex => _operation.StepIndex;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupStep Step => _operation.Step;
-
-        internal CaptureRunPublicationCaptureCompleteCleanupAction Action => _operation.Action;
-
-        internal int EntryIndex => _operation.EntryIndex;
-
-        internal CaptureRunPublicationArtifactKind ArtifactKind => _operation.ArtifactKind;
-
-        internal string TargetPath => _operation.TargetPath;
-
-        internal long ExpectedByteCount => _operation.ExpectedByteCount;
-
-        internal string ExpectedContentSha256 => _operation.ExpectedContentSha256;
-
-        internal PngJsonCapturePublicationPlan AuthoritativePlan => _operation.AuthoritativePlan;
-
-        internal PngJsonCapturePublicationArtifactInspectionAuthority Authority => _operation.Authority;
-
-        internal PngJsonCapturePublicationArtifactInspectionAuthorityKind AuthorityKind => _operation.AuthorityKind;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal CaptureRunLockIdentityEvidence LockIdentityEvidence => _operation.LockIdentityEvidence;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
 
         /// <summary>
         /// Exception-safe validity: the three held references must be present

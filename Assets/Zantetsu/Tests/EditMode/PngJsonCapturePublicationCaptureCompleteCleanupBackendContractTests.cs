@@ -885,7 +885,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_Create_ForwardsAll()
+        public void Receipt_Create_HoldsIssuerOperationAndTokenBinding()
         {
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan plan = BuildPlan(commitRoute: true);
             PngJsonCapturePublicationCaptureCompleteCleanupActionPlan.ValidationToken token;
@@ -897,22 +897,6 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(ReferenceEquals(receipt.IssuedBy, backend), Is.True);
             Assert.That(ReferenceEquals(receipt.Operation, operation), Is.True);
-            Assert.That(ReferenceEquals(receipt.ActionPlan, plan), Is.True);
-            Assert.That(receipt.StepIndex, Is.EqualTo(0));
-            Assert.That(ReferenceEquals(receipt.Step, plan.GetStep(0)), Is.True);
-            Assert.That(receipt.Action, Is.EqualTo(CaptureRunPublicationCaptureCompleteCleanupAction.DeleteStagingArtifact));
-            Assert.That(receipt.EntryIndex, Is.EqualTo(0));
-            Assert.That(receipt.ArtifactKind, Is.EqualTo(Png));
-            Assert.That(receipt.TargetPath, Is.EqualTo(operation.TargetPath));
-            Assert.That(receipt.ExpectedByteCount, Is.EqualTo(operation.ExpectedByteCount));
-            Assert.That(receipt.ExpectedContentSha256, Is.EqualTo(operation.ExpectedContentSha256));
-            Assert.That(ReferenceEquals(receipt.AuthoritativePlan, plan.AuthoritativePlan), Is.True);
-            Assert.That(ReferenceEquals(receipt.Authority, plan.Authority), Is.True);
-            Assert.That(receipt.AuthorityKind, Is.EqualTo(plan.AuthorityKind));
-            Assert.That(ReferenceEquals(receipt.RootLayout, plan.RootLayout), Is.True);
-            Assert.That(ReferenceEquals(receipt.LockIdentityEvidence, plan.LockIdentityEvidence), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(plan.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(plan.RunInitializationId));
             Assert.That(receipt.IsValid, Is.True);
             Assert.That(receipt.IsIssuedFor(backend, operation, token), Is.True);
         }
