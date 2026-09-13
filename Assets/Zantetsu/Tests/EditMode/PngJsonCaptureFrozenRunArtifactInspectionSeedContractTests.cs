@@ -727,7 +727,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(constructors[0].IsPrivate, Is.True);
             Assert.That(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
 
-            // The atomic factory takes only the plan binding, so no path set,
+            // The Create boundary takes only the plan binding, so no path set,
             // legacy plan, frozen result, or lock identity evidence can be
             // injected.
             MethodInfo create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
@@ -765,8 +765,8 @@ namespace Zantetsu.Core.Tests
 
             AssertNoForbiddenDependencies(source);
 
-            // The binding is the sole full-plan validation boundary: once in the
-            // factory and once in IsValid, never a bare generic/legacy plan
+            // The binding is the sole full-plan validation boundary: once in
+            // Create and once in IsValid, never a bare generic/legacy plan
             // validation, and the path set is built exactly once.
             Assert.That(CountOccurrences(source, "planBinding.IsValid"), Is.EqualTo(2));
             Assert.That(source, Does.Not.Contain("genericPlan.IsValid"));

@@ -10,14 +10,15 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the plan binding
-    /// and the publication path set — and has no public or internal
-    /// constructor. It duplicates no descriptor, entry, identifier, path, hash,
-    /// or session; every accessor forwards from the held graph. The only
-    /// construction path is <see cref="Create"/>, which validates the binding
-    /// once, correlates the exact references, builds the path set once, and
-    /// assigns the fields through the private assignment constructor, so no
-    /// path set, legacy plan, or frozen result can be injected from outside.
+    /// The type holds exactly two readonly references — the plan binding and
+    /// the publication path set — and has no public or internal constructor. It
+    /// duplicates no descriptor, entry, identifier, path, hash, or session;
+    /// every accessor forwards from the held graph. The only construction path
+    /// is <see cref="Create"/>, which validates the binding once, derives the
+    /// rest of the graph from it and checks only the correlations that hold
+    /// between different graphs, builds the path set once, and assigns the
+    /// fields through the private assignment constructor, so no path set,
+    /// legacy plan, or frozen result can be injected from outside.
     /// </para>
     /// <para>
     /// This seed does not claim that any <c>publication.plan</c> bytes were
@@ -43,10 +44,10 @@ namespace Zantetsu.Observability
         }
 
         /// <summary>
-        /// Atomic validated factory: the single validation-and-assignment site.
-        /// It validates the binding once as the sole full-plan boundary, then
-        /// confirms only reference, value, and O(1) ownership correlation,
-        /// builds the publication path set once, and assigns fields.
+        /// The static creation boundary: the single validation-and-assignment
+        /// site. It validates the binding once as the sole full-plan boundary,
+        /// then confirms only the correlations that hold between different
+        /// graphs, builds the publication path set once, and assigns fields.
         /// </summary>
         internal static PngJsonCaptureFrozenRunArtifactInspectionSeed Create(
             PngJsonCaptureFrozenRunPublicationPlanBinding planBinding)
@@ -67,58 +68,48 @@ namespace Zantetsu.Observability
                 throw new ArgumentException("Plan binding must hold a frozen publication result.", nameof(planBinding));
             }
 
-            CapturePublicationPlan genericPlan = planBinding.GenericPlan;
+            CapturePublicationPlan genericPlan = frozen.PlanWriteReceipt.Plan;
             PngJsonCapturePublicationPlan legacyPlan = planBinding.LegacyPlan;
             if (genericPlan == null || legacyPlan == null)
             {
                 throw new ArgumentException("Plan binding must hold both plans.", nameof(planBinding));
             }
 
-            if (!ReferenceEquals(frozen.PlanWriteReceipt.Plan, genericPlan)
-                || !ReferenceEquals(planBinding.LegacyPlan, legacyPlan))
-            {
-                throw new ArgumentException("Plan binding must hold the exact frozen and legacy plans.", nameof(planBinding));
-            }
-
-            CaptureRunRootLayout rootLayout = planBinding.RootLayout;
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = frozen.FreezeReceipt;
+            CaptureRunRootLayout rootLayout = freezeReceipt.RootLayout;
             if (rootLayout == null || !rootLayout.IsValid)
             {
                 throw new ArgumentException("Plan binding must hold a valid root layout.", nameof(planBinding));
             }
 
-            CaptureRunLockIdentityEvidence lockIdentityEvidence = planBinding.LockIdentityEvidence;
+            CaptureRunLockIdentityEvidence lockIdentityEvidence = freezeReceipt.LockIdentityEvidence;
             if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid)
             {
                 throw new ArgumentException("Plan binding must hold live lock identity evidence.", nameof(planBinding));
             }
 
-            CaptureEvidenceRunFreezeReceipt freezeReceipt = planBinding.FreezeReceipt;
-            CaptureRunInitializationSession session = planBinding.RunSession;
-            if (freezeReceipt == null || session == null || !session.IsValid
+            CaptureRunInitializationSession session = freezeReceipt.RunSession;
+            if (session == null || !session.IsValid
                 || session.TestRunId != lockIdentityEvidence.TestRunId
                 || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
             {
                 throw new ArgumentException("Plan binding must hold a live session bound to the exact lock identity evidence.", nameof(planBinding));
             }
 
-            if (planBinding.TestRunId != frozen.FreezeReceipt.TestRunId
-                || planBinding.TestRunId != genericPlan.TestRunId
-                || planBinding.TestRunId != legacyPlan.TestRunId
-                || planBinding.TestRunId != rootLayout.TestRunId)
+            if (freezeReceipt.TestRunId != genericPlan.TestRunId
+                || freezeReceipt.TestRunId != legacyPlan.TestRunId
+                || freezeReceipt.TestRunId != rootLayout.TestRunId)
             {
                 throw new ArgumentException("Test run ID must match across the seed graph.", nameof(planBinding));
             }
 
-            if (!string.Equals(planBinding.RunInitializationId, frozen.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(planBinding.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(planBinding.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
+            if (!string.Equals(freezeReceipt.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
+                || !string.Equals(freezeReceipt.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Run initialization ID must match across the seed graph.", nameof(planBinding));
             }
 
-            if (!string.Equals(planBinding.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal)
-                || !string.Equals(planBinding.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal)
-                || !string.Equals(frozen.PlanWriteReceipt.Plan.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
+            if (!string.Equals(genericPlan.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Manifest hash must match across the seed graph.", nameof(planBinding));
             }
@@ -185,55 +176,49 @@ namespace Zantetsu.Observability
                 }
 
                 CaptureEvidenceFrozenRunPublicationResult frozen = planBinding.FrozenPublicationResult;
-                CapturePublicationPlan genericPlan = planBinding.GenericPlan;
+                if (frozen == null)
+                {
+                    return false;
+                }
+
+                CapturePublicationPlan genericPlan = frozen.PlanWriteReceipt.Plan;
                 PngJsonCapturePublicationPlan legacyPlan = planBinding.LegacyPlan;
-                if (frozen == null || genericPlan == null || legacyPlan == null)
+                if (genericPlan == null || legacyPlan == null)
                 {
                     return false;
                 }
 
-                if (!ReferenceEquals(frozen.PlanWriteReceipt.Plan, genericPlan)
-                    || !ReferenceEquals(planBinding.LegacyPlan, legacyPlan))
-                {
-                    return false;
-                }
-
-                CaptureRunRootLayout rootLayout = planBinding.RootLayout;
+                CaptureEvidenceRunFreezeReceipt freezeReceipt = frozen.FreezeReceipt;
+                CaptureRunRootLayout rootLayout = freezeReceipt.RootLayout;
                 if (rootLayout == null || !rootLayout.IsValid)
                 {
                     return false;
                 }
 
-                CaptureRunLockIdentityEvidence lockIdentityEvidence = planBinding.LockIdentityEvidence;
-                CaptureRunInitializationSession session = planBinding.RunSession;
-                CaptureEvidenceRunFreezeReceipt freezeReceipt = planBinding.FreezeReceipt;
+                CaptureRunLockIdentityEvidence lockIdentityEvidence = freezeReceipt.LockIdentityEvidence;
+                CaptureRunInitializationSession session = freezeReceipt.RunSession;
                 if (lockIdentityEvidence == null || !lockIdentityEvidence.IsValid
                     || session == null || !session.IsValid
-                    || freezeReceipt == null
                     || session.TestRunId != lockIdentityEvidence.TestRunId
                     || !ReferenceEquals(session.RootLayout, lockIdentityEvidence.RootLayout))
                 {
                     return false;
                 }
 
-                if (planBinding.TestRunId != frozen.FreezeReceipt.TestRunId
-                    || planBinding.TestRunId != genericPlan.TestRunId
-                    || planBinding.TestRunId != legacyPlan.TestRunId
-                    || planBinding.TestRunId != rootLayout.TestRunId)
+                if (freezeReceipt.TestRunId != genericPlan.TestRunId
+                    || freezeReceipt.TestRunId != legacyPlan.TestRunId
+                    || freezeReceipt.TestRunId != rootLayout.TestRunId)
                 {
                     return false;
                 }
 
-                if (!string.Equals(planBinding.RunInitializationId, frozen.FreezeReceipt.RunInitializationId, StringComparison.Ordinal)
-                    || !string.Equals(planBinding.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
-                    || !string.Equals(planBinding.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
+                if (!string.Equals(freezeReceipt.RunInitializationId, genericPlan.RunInitializationId, StringComparison.Ordinal)
+                    || !string.Equals(freezeReceipt.RunInitializationId, legacyPlan.RunInitializationId, StringComparison.Ordinal))
                 {
                     return false;
                 }
 
-                if (!string.Equals(planBinding.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal)
-                    || !string.Equals(planBinding.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal)
-                    || !string.Equals(frozen.PlanWriteReceipt.Plan.RunManifestContentHash, genericPlan.RunManifestContentHash, StringComparison.Ordinal))
+                if (!string.Equals(genericPlan.RunManifestContentHash, legacyPlan.RunManifestContentSha256, StringComparison.Ordinal))
                 {
                     return false;
                 }
