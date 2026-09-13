@@ -945,6 +945,18 @@ Phase 0.2の要求範囲は凍結する。先行branchから採用する少数Ge
 
 検証用形式と手順は17章の実装詳細とし、採用済み入力を現在の用途で利用できることだけを引き継ぐ。旧Structural Slab系列を含め、旧形式のReader、同じ手順での再生成、旧採否の再評価を将来まで要求しない。既存実装は実際の依存に応じて利用し、将来のFixture追加・置換はその時点の目的に応じた別作業として扱い、旧Phase 0.2を再開しない。
 
+#### 10.2.3 Phase 0.21 Reference Asset Intake
+
+先行独立研究、日々のAsset作業、外部ツール等から、利用許可のある完成済みAssetをテスト・計測へ受け入れる開発用の入口とする。Datasetは参考実行のサンプリング母集団であり、全件の実行義務や製品への適合を表さない。Phase 0.2の凍結・採用入力は維持し、同Phaseの再開・形式移行を要求しない。
+
+**受入れと内容識別。** 正本は書出し済みFBXと読込みに必要なTextureの実体とし、元の`.blend`、Recipe、Script、研究repository、作業メモ等は任意の参考情報とする。生成工程の本隊移植・再生成・byte一致・由来監査や、研究側の可変な作業treeへの依存を要求しない。実体をSHA-256で追跡し、FBXと必要Textureの内容・組合せ・対応関係をAsset SHAで識別する。DatasetはAsset SHAの集合を正本とし、その集合から内容revisionを識別する。外側の配置・表示名・参考情報だけの変更は内容更新にしない。再試験用に保持するrevisionは参照実体も保持するが、全履歴の永久保存や旧形式Loaderの維持は要求しない。
+
+**配置と所在解決。** 初期配置先は非公開Asset repositoryの`Working/Phase0.21`とする。directory名から用途・Recipe・版を推定せず、登録情報とSHAで対象を解決する。結果から実体の所在を引き、存在する場合は隣接する原資料等も容易に開けるようにする。登録外の周辺ファイルを暗黙の入力にしない。登録・索引・保存形式・SHA算出方法・操作UIは実装詳細とし、公開／非公開と利用許可の境界は10.8に従う。本入口への登録自体は製品採用や共有許可を与えない。
+
+**参考実行。** 明示指定したDatasetまたはAssetについて、利用側Harnessが入力準備・適否判断・対象処理・サンプリングと実行量を決める。各Runは、使用したDataset revisionまたはAsset SHA、実際の入力・処理・条件、成否と得られた観測値を利用側Harnessの実施記録へ残し、実行途中のDataset更新を混入させない。失敗・入力不適合・未対応・未実行を成功とせず、比較可能な項目だけ固定入力の結果と比較する。少数Assetを限定した処理へ通すことから始め、全Assetと全試験条件の直積、完全巡回、全Consumer対応を要求しない。FBXから必要な数値入力・Topology等を得られるかは利用側で確認し、見た目の一致だけを同じ入力の証拠にしない。入口で推測修復せず、既存のGeometry／Physics入力条件とRuntime／オフライン検証の分離を維持する。
+
+**標準実行との境界。** 参考Datasetの有無・更新・結果は、標準回帰・Benchmark・CIの対象・集計・合否やPhase完了条件を自動変更しない。標準実行は本入口を暗黙に探索せず、更新型Datasetの将来revisionへ追随しない。参考実行の未実施・失敗・未観測・乖離解消・結果閲覧を進行Gateや自動の未完了負債にしない。ただし、調査で確認した既存必須要求への違反は、その既存基準で扱う。発見だけでDataset全体を必須回帰へ昇格しない。既存要求を確認する個別AssetやSynthetic回帰ケースの追加・差替えは、対象を固定して通常作業として行え、個別の人間承認を要求しない。必須対象・評価基準・Phase完了条件を拡大する変更だけを人間判断とし、本書の契約を変える場合は改訂する。
+
 ### 10.3 Blenderヘッドレス前処理
 
 Blenderを手作業用DCCだけでなく、ライセンスAssetをローカル変換するバッチプロセッサとして使用する。システムに既存のBlenderやPATH上の`blender`には依存せず、プロジェクト専用の固定版を明示パスから`--background --factory-startup --python --python-exit-code 1`で起動する。PythonスクリプトとAsset別Recipeから共用Cut Geometry、切断用Topology、Compound Physics Proxy、検証レポートを生成する。製品用Strict Solidは生成しない。
@@ -1334,6 +1346,8 @@ T-091のLease確認は、各旧Cooked GeometryをProvisional Shapeへ結び付�
 
 Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視せず、一括改番しない。Slash UX系列は0.5→0.51→0.52→0.53→0.54→0.55、表示系列は0.9→0.91→0.92→0.93→0.94→1→1.50→1.51→1.52→2→3→4→4.1→4.3とする。両系列は0.5後に並行可能で、1.50は0.5と0.94／1を前提とし、0.51～0.55を待たない。0.55と4.3の双方から4.50→4.51→4.52へ合流し、基本Playableを成立させる。4.52以降は4.53→4.54→任意4.55と、4.52→4.61→4.65→4.70の分岐とする。4.71は4.65採用時だけ未来VP準備を既存DAG／VPプールへ接続し、4.72は4.52＋4.53＋4.71を統合する。4.55は基本ゲームと4.61以降の必須依存にせず、4.65不採用なら4.71／4.72を省略して4.70から4.8へ進む。いずれも未完了負債にしない。
 
+Phase 0.21は10.2.3の受入れ責務を定め、最初に必要とするPhaseが、その用途に必要な登録・内容識別・所在解決・Harness接続を具体化する。初回利用元と接続先は実施記録へ残し、特定のPhase番号や全Consumer共通API・汎用Runnerを先に固定しない。独立した先行作業でも利用Phaseとの並行実装でもよく、Phase 0.2の完了・再開や未実装Consumerの前倒しを要求しない。個別データの持込みや独立した他Phaseの進行を0.21完了待ちにせず、既存Harnessへの入力は先行できる。導入後の入力更新・参考実行と、後続用途に必要な拡張・変更は通常作業とし、同じ受入れ責務の範囲では0.21を再開しない。
+
 Phase 3.9は7.2の数値Kernelを先行実装する独立分岐とし、Phase 0.x～3の完了を着手・merge条件にしない。専用branchで開発し、ゲーム経路に未接続でもmainへ早期mergeできる。Phase 4はPhase 1～3と、その時点の3.9の数値Kernelを実物理へ接続する。先行mergeはAPI・layoutの凍結ではなく、残る形状・容量・所有権の意味契約を維持し、現行利用箇所と試験を追従させて破壊的変更・置換・削除できる。旧API維持・互換層・migrationを要求しない。Phase 1～3のHarness内合成Final Physics入力は維持し、3.9の利用や実物理統合を前倒ししない。
 
 3.9の初期移植元は独立Probe `zantetsuken-convex-cut-cook-probe` の `REPORT.md`（2026-09-13追補）のA-Walk、Burst R0→R1、double質量計算とする。これは初期実装選択であり方式の恒久固定ではない。Probe全体、比較Backend、旧managed prototype、全測定の再現はmerge条件にせず、公開SyntheticとLicensed入力の既存分離を維持する。
@@ -1351,6 +1365,7 @@ Phase 3.9は7.2の数値Kernelを先行実装する独立分岐とし、Phase 0.
 | Phase 0.13 | MemoryBounded Paged Trace History | ProfileでPage size／Page数／総容量を決めてRun開始前に確保するPayload Page列、Pageごとの`CommittedByteCount`、History全体の64 bit `CommittedRecordCount`を0.12 backendへ追加する。History Index、Page状態enum、live Snapshotを持たない | 21.16.3の最大record全体のPage収容条件とProducer Lane容量条件を開始前に確認する。record全体を単一Pageへ書いた後だけcommit値を進め、Page末尾不足、History満杯、確保不能を待機や拡張なしでReject／Dropできる。停止後Viewは全record配列を生成しない。Release既定はまだ切り替えない |
 | Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。Release既定の採用と製品接続先がない場合の完了条件は21.16.1に従い、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
 | Phase 0.2 | 採用Fixtureの凍結 | 少数Geometry、表示切断／Physics Cook／正しさ確認の用途対応、公開Synthetic／非公開Licensed入力 | 10.2.2の採用ファイルと用途対応をmergeし、後続から利用できる時点で完了する。旧quota・全再生成・再監査・形式統合を条件にしない |
+| Phase 0.21 | Reference Asset Intake | 最初の利用Phaseに必要な10.2.3のAsset登録・内容識別・所在解決と一つのHarness接続 | 少数の実Assetで登録・更新と保持したrevisionの読込みを確認し、一つの対応Harnessへ限定サンプルを渡して実処理・結果記録まで通す。結果から実体と存在する参考資料へ辿れ、参考入力の有無・更新・失敗が標準実行の対象・集計・合否を自動変更しない。登録ツールだけで完了とせず、全Asset成功・全件実行・全Harness対応・乖離解消は要求しない |
 | Phase 0.5 | 最小XRスモーク | 共用Sandbox Sceneの初期状態、OpenXR、Quest 3S有線Link、左右Grip Pose＋暫定固定Offset、BladeAxis／EdgeDirection／SideNormal、位置・回転の利用可否を表す一つの追跡有効性、Single Pass | T-014だけで基本XRを確認する。Profilerは90Hzモードと明白な継続破綻の確認に使い、速度履歴、Gate、Stroke／Plane、Wave、校正UI、製品性能SLAを含めない |
 | Phase 0.51 | Blade Sample／追跡不連続 | 刀姿勢・軸・Cut Sample Point・Emitter・時刻・追跡有効性を後続処理へ渡す内部Sampleと履歴Reset | 固定Pose列と実入力の左右で、位置または回転が無効なSampleを除外し、追跡喪失前と復帰後を速度区間として結ばない。型・field列は固定せず、速度閾値・Gesture・調整UIは含めない |
 | Phase 0.52 | Gesture受付／Plane候補 | Cut Sample Point速度と長軸成分除外、Edge Lead Score、暫定閾値、accepted samples、Stroke Begin、SourceSlashPlane候補、復路拒否・再準備 | 少数固定Pose列で往路受付、復路／峰側拒否、刀を返した新Stroke受付、斜め振り、復帰後の新Sample蓄積を確認し、受付列からfiniteなPlane候補を得る。Latch・Frame確定・SlashId・Waveは含めず、閾値は0.55で調整する |
@@ -1503,6 +1518,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 開発用検証（Test、Benchmark、Probe、Fixture、Harness、Capture、Trace）の保存形式・Schema・Codec・Golden・Manifest・Receipt・Report・Index・Profile・file構成・hash・version・Loader・実行／再開手順・反復回数・試験階層は、本書で製品Runtimeの外部形式またはSubsystem間の意味的互換契約として明示したものを除き実装詳細とする。DESIGNは成立させる能力を定め、検証方法だけの変更に改訂を要求しない。Runtimeの所有権・資源寿命・非待機・容量境界・安全な失敗・公開状態・Geometry／Physics契約は維持する。これには、所有権移転、対象ファイルを操作する権限、安全なteardown、完成済み出力の公開に必要な意味的条件を含む。その確認・受渡し方法と型・保存表現は実装詳細とし、既存ReceiptやOS lockそのものの維持を義務にしない。
 
+10.2.3の参考Dataset更新・検証方法の変更と既存要求を確認する個別ケースの追加・差替えは通常作業とし、個別承認制にしない。必須対象・評価基準・Phase完了条件の拡大は同節の人間判断に従う。日々のSHAやケース一覧を本書へ転記しない。
+
 2026-09-12の人間承認により、Phase 0／0.1／0.11／0.2の旧形式維持・旧Reader・同一手順での再生成を将来義務にしない。旧成果物が現行ツールで読めなくなることを許容し、現在の利用に必要な相関・用途と残る意味的契約を満たす範囲で、依存関係に基づき実装を変更・削除できる。既存実装・試験・成果物はそのまま利用でき、改訂だけを理由に再実行・再承認・作り直しを要求しない。0.12～0.14に残る旧形式維持要求にも同じ整理を適用する。
 
 今回外す検証詳細と専用Decision・Test・Open Item・用語は、以下の履歴保持規則の例外として直接削除する。経緯はGitへ委ね、ID欠番を許容する。旧仕様の付録、廃止台帳、互換層、新しい完了証明は追加しない。
@@ -1531,7 +1548,7 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - 技術検証は測定環境、再現手順、数値結果、スクリーンショット／Profiler参照を残す。
 
-- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
+- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
 
 - 新しい機能提案は『即時応答』『幾何精度』『物理整合』『性能予算』のどれへ影響するかを明記する。
 
