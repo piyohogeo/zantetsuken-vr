@@ -46,45 +46,13 @@ namespace Zantetsu.Observability
 
             NvencRunCaptureCompleteCleanupAttemptResult attempt = _cleaner.Clean(operation);
 
-            if (!IsValidAttempt(attempt, operation))
+            if (!attempt.IsIssuedFor(_cleaner, operation))
             {
                 throw new InvalidOperationException(
                     "Cleaner returned a null, foreign, default, or corrupt attempt result.");
             }
 
             return attempt;
-        }
-
-        private bool IsValidAttempt(
-            NvencRunCaptureCompleteCleanupAttemptResult attempt,
-            NvencRunCaptureCompleteCleanupOperation operation)
-        {
-            if (attempt.IsNone || !attempt.IsValid)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(attempt.Cleaner, _cleaner)
-                || !ReferenceEquals(attempt.Operation, operation))
-            {
-                return false;
-            }
-
-            switch (attempt.Status)
-            {
-                case NvencRunCaptureCompleteCleanupStatus.Cleaned:
-                {
-                    NvencRunCaptureCompleteCleanupReceipt receipt = attempt.Receipt;
-                    return receipt != null
-                        && receipt.IsIssuedFor(_cleaner, operation);
-                }
-
-                case NvencRunCaptureCompleteCleanupStatus.Failed:
-                    return attempt.Receipt == null;
-
-                default:
-                    return false;
-            }
         }
     }
 }

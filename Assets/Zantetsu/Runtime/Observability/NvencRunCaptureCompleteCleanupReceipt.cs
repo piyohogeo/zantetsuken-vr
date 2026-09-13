@@ -59,26 +59,6 @@ namespace Zantetsu.Observability
 
         internal NvencRunCaptureCompleteCleanupOperation Operation => _operation;
 
-        internal NvencRunCaptureCompleteReceipt CaptureCompleteReceipt =>
-            _operation.CaptureCompleteReceipt;
-
-        internal NvencRunCaptureCompleteOperation CaptureCompleteOperation =>
-            _operation.CaptureCompleteOperation;
-
-        internal NvencRunCaptureIndexCommitReceipt CaptureIndexCommitReceipt =>
-            _operation.CaptureIndexCommitReceipt;
-
-        internal NvencRunArtifactPublicationReceipt ArtifactPublicationReceipt =>
-            _operation.ArtifactPublicationReceipt;
-
-        internal CapturePublicationPlan Plan => _operation.Plan;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
         /// <summary>
         /// An issued receipt stays valid across the reflection of its own
         /// outcome and across a later Poison, so it uses the operation's
