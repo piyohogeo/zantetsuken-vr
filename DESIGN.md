@@ -502,7 +502,7 @@ Disconnectedな閉Component、全体反転した閉Component、bind pose／skinn
 
 Runtimeの共用Geometryは面積0のTriangleを通常の入力・成功出力として保持できる。面積0だけを理由に面やedge-useを除去、非寄与化、修復、Commit拒否せず、閉鎖・edge／vertex manifold・局所winding整合を論理Topologyで維持したまま表示、Stencil、再切断へ使用する。
 
-退化面の属性はfiniteに保つが、定義できない幾何法線の正規化を要求しない。アセット前処理とPhysics Convexの非退化条件は変更せず、スキニング後または切断後のRuntime表示Geometryへ再適用しない。Fixture固有の検証は17章の実装詳細とする。
+退化面の属性はfiniteに保つが、定義できない幾何法線の正規化を要求しない。アセット前処理の非退化品質条件は変更せず、スキニング後または切断後のRuntime表示Geometryへ再適用しない。Physics ConvexのRuntime条件は7.2に従う。Fixture固有の検証は17章の実装詳細とする。
 
 ### 6.4 切断とCap生成
 
@@ -581,13 +581,17 @@ Provisional一式の構築不能、またはLogical Publication前にFinal Physi
 
 受付に必要なrobust support scanは7.6に従って同期実行してよい。同節で分割対象としたConvexだけを採用面d = 0で切り、その他は対応Sideへ未切断で継承する。既存Bake共有枠・Dispatcher・Work依存を使い、cut/cookの分担を理由に新しいSchedulerや公開状態を作らない。
 
-**容量。** 現在のOwnerが持つB-repのConvex数・頂点数・edge数等から必要なworst-caseのscratch／output容量を算出し、全必要領域の予約成功後に数値WorkをScheduleする。half-edge、正負出力、補面、Polygon参照等を実際の表現に応じて含め、Lを中間scratch上限へ流用しない。予約した領域内で処理が完結する構成とし、容量式は実装時に導出して小さい境界Fixtureで確認する。Runtime Count pass、途中拡張、容量不足による再実行、部分出力公開は設けない。共有資源の一時的な不足は既存Pending、絶対backing容量の不成立は4.5.4に従い、予約未成立のWorkをScheduleしない。これはPhysics側の契約であり、表示VPの4.5.3の範囲予約・再実行を変更しない。
+**数値Kernel。** Phase 3.9で先行実装し、現在のCompound Convex B-rep、採用面と同じ局所frameのsigned distance・support分類、親質量等の必要値、およびcaller提供のscratch／output範囲を受ける。7.6で確定したdistance・分類を共用し、別の受付判定で置き換えない。正負B-rep、質量特性、実使用量と成否を返し、入力Convexから未切断継承先・正負出力への対応を取得できるものとする。対応は当該呼出し内の情報でよく、恒久Convex IDを要求しない。呼出側は数値Workの投入から実行完了まで入力B-rep・採用面・distance／support分類・親質量等を保持して不変とし、scratch／output範囲も有効に保つ。Kernelは予約外へ書かず、完了後に参照を保持しない。outputの後続利用中の保持・回収は既存の資源寿命に従う。Unity Object、資源取得、Schedule、公開・退役はKernelの外で扱う。具体的な型・field・layout・関数名は実装詳細とする。Phase 4では同じmanaged Job内で数値処理とMeshData出力を接続でき、分離を理由に別Job・永続中間成果物・引渡し状態を要求しない。
 
-**形状の構築。** 有効な入力からfiniteで閉凸・非退化の出力を構成する。完成出力のfinite、面向き、閉性、凸性、重複、自己交差、包含を再走査するRuntime Validatorを設けない。Runtimeでは構築中の局所predicate、メモリ範囲、質量計算の成立と、既存境界で判明するcook／物理構築不成立を扱う。内部エラーの全検出は保証せず、検出保証のための専用Result・Reason・Buffer・Traceを作らない。
+**容量。** 数値Workに使う同じ入力B-repのConvex数・頂点数・edge数等と実装表現上の上限から、Kernel実装側の容量式を同期評価してworst-caseのscratch／output必要量を算出する。呼出側が全必要範囲を予約し、その範囲を渡して数値WorkをScheduleする。容量照会では実clipや出力生成を行わない。half-edge、正負出力、補面、Polygon参照等を実際の表現に応じて含め、Lを中間scratch上限へ流用しない。予約した領域内で処理が完結する構成とし、容量式は実装時に導出して小さい境界Fixtureで確認する。Runtime Count pass、途中拡張、容量不足による再実行、部分出力公開は設けない。共有資源の一時的な不足は既存Pending、絶対backing容量の不成立は4.5.4に従い、予約未成立のWorkをScheduleしない。これはPhysics側の契約であり、表示VPの4.5.3の範囲予約・再実行を変更しない。
+
+**形状の構築。** Runtime Physics Convexは全体としてfiniteで正体積の閉凸形状を構成する。2026-09-13の人間承認により、浮動小数点丸めに由来し、Kernelの局所predicate上で退化扱いとなるface／edgeや同位置に丸められた頂点を、それだけで失敗とはしない。閉鎖・向き整合のTopologyと定義される幾何量のfinite性を維持し、これらを含む採用B-repを次回切断入力として使用できるものとする。局所退化の除去・修復は要求しない。完成出力のfinite、面向き、閉性、凸性、重複、自己交差、包含を再走査するRuntime Validatorを設けない。Runtimeでは構築中の局所predicate、メモリ範囲、質量計算の成立と、既存境界で判明するcook／物理構築不成立を扱う。内部エラーの全検出は保証せず、検出保証のための専用Result・Reason・Buffer・Traceを作らない。
 
 頂点数がLを超える出力だけを、通常clip結果の内側に収まるL以下の有効なConvexへ内接削減する。切断前ConvexをP、採用側半空間をH、通常clip結果をC、削減結果をQとして、`Q ⊆ C = P ∩ H ⊆ P`を構築条件とする。削減対象、削除順、頂点の移動・生成、局所再構成、頂点由来、決定性の範囲は実装詳細とする。L以下の有効なConvexを構成できなければ当該Physics処理を失敗とし、一般凸包再構築や別形状Fallbackで救済しない。採用した削減後B-repをcookと次回切断の基底とする。
 
 Convex内部の識別は非公開の配列位置または実装handleでよい。現在のConvexと点Anchor集合の対応は7.1に従って保持し、非交差継承と正負／OnPlane配分に使う。AnchorをCollider頂点や削減結果から再生成しない。
+
+**数値frameと物理への対応。** 数値精度のため、Compound中心近傍へ数値B-repの共通局所frameをrecenterするP1方針を採用する（2026-09-13人間承認）。Phase 3.9ではその共通局所frameの入力・出力で数値処理を実行・確認する。Phase 4でB-rep・採用面・Anchor・Colliderを対応付け、recenter前後で座標表現の丸め誤差を許容して同じworld形状を表し、Actorのpose・運動を維持して接続する。Cook用座標変換だけで数値B-repのrecenterを実施済みとはしない。具体的な変換方式・内部表現は実装詳細とし、専用frame型や数値上限Gateは追加しない。
 
 **Final質量特性。** 切断受付時の親Rigidbody質量をSnapshotし、Final質量の正本とする。正負子の質量・重心・慣性は採用Convex集合から近似し、各Convexの体積を重複控除せず加算してよい。CompoundのBoolean Union、重複領域の厳密控除、表示Meshの体積積分、永続的なConvex別配分Metadataを要求しない。
 
@@ -601,7 +605,7 @@ Convex内部の識別は非公開の配列位置または実装handleでよい�
 
 - Parent ActorからProvisional Actorを初めて作る時だけ、速度継承の正本点を`FragmentRenderAnchor`とする。Source ActorのCOM線速度から`v_anchor = v_sourceCOM + omega_source x (anchor - COM_source)`を求め、`v_provisionalCOM = v_anchor + omega_source x (COM_provisional - anchor)`、`omega_provisional = omega_source`を設定し、切断命中時の表示Fragment poseとAnchor点速度を連続させる。Provisionalを省略して直接Finalへ分裂する場合も同じ初回分裂式を使用する。質量変更前後の運動量、角運動量、運動エネルギー保存は要求しない。
 
-- ProvisionalからFinal Colliderへのhandoffでは物理Actorを正本とし、ActorのWorld pose、COM線速度、角速度をそのまま維持して、Final Shape、center of mass、inertiaだけを同一Actorへ置換する。Render Anchorを維持するためのActor pose補正や、新COMに合わせた線速度変換を行わない。Final Geometryは同じFragment Physics Frameに保持し、由来Convex内に、分割したものは採用半空間内にも収まるよう本節の構築規則で生成する。19.5.1の採用Local Plane由来のFinalにも同じ構築条件とframe対応を適用し、命中時Snapshotまたは予測Pose／速度へActorを戻さない。これによりFinal Collider自体を瞬間移動させて外界へ再penetrationさせる経路を作らない。表示GeometryはActorへ従属し、local origin／frame差によりFinal Commit時に瞬間的な位置・姿勢差が出ても許容する。分離ImpulseはProvisional生成時に一度だけ加え、Final Commitで重ねて再適用しない。Provisionalを省略して直接Finalへ分裂する場合だけCommit時に小さな分離Impulseを加える。Final Shape交換直後のSibling pairは既存の一時衝突抑止を使用できるが、外界とのGhost Contact履歴を理由にpose／velocityを巻き戻さない。
+- ProvisionalからFinal Colliderへのhandoffでは物理Actorを正本とし、ActorのWorld pose、COM線速度、角速度をそのまま維持して、Final Shape、center of mass、inertiaだけを同一Actorへ置換する。Render Anchorを維持するためのActor pose補正や、新COMに合わせた線速度変換を行わない。Final Geometryは由来Convex内に、分割したものは採用半空間内にも収まるよう本節の構築規則で生成し、本節の数値frame対応に従ってFragment Physics Frameへ配置する。recenterによる座標表現の丸め誤差は本節の数値frame条件に従う。19.5.1の採用Local Plane由来のFinalにも同じ構築条件とframe対応を適用し、命中時Snapshotまたは予測Pose／速度へActorを戻さない。これによりFinal Collider自体を瞬間移動させて外界へ再penetrationさせる経路を作らない。表示GeometryはActorへ従属し、local origin／frame差によりFinal Commit時に瞬間的な位置・姿勢差が出ても許容する。分離ImpulseはProvisional生成時に一度だけ加え、Final Commitで重ねて再適用しない。Provisionalを省略して直接Finalへ分裂する場合だけCommit時に小さな分離Impulseを加える。Final Shape交換直後のSibling pairは既存の一時衝突抑止を使用できるが、外界とのGhost Contact履歴を理由にpose／velocityを巻き戻さない。
 
 - Final handoffはSource Logical Convex CellのAnchor local位置と所属系譜を同じ子Cellへ引き継ぎ、Collider頂点・Shape共有・再cookからAnchorを再構築しない。物理固定は採用側が継承したAnchorの有無で決め、固定側のOffset／Impulseは0とする。
 
@@ -1316,7 +1320,9 @@ Jobベイクを採用した場合のPhase 4.72では、T-008／T-018／T-092の�
 
 T-093の再切断・世代照合は8章に従う。子孫切断の受付だけで祖先GeometryをRejectせず、外部authority喪失と区別する。Operation公開前の受付見送りと非再生はT-007で確認する。
 
-T-005の削減成功例を再切断とT-091のcook／handoffへ接続し、採用した削減済みB-repが次回入力となり、既存のFinal包含・frame・親質量保存を満たすことを確認する。縮小由来の接触消失・運動変化は7.2の品質許容とし、Actorの巻戻しや不正形状の公開を成功扱いしない。削減専用の試験ID・Fixture体系・cook結果抽出基盤は追加しない。
+T-005／T-085／T-086の数値部分はPhase 3.9で確認する。削減不能等は数値結果として呼出側へ返す。実Actor／cook、Abort、Provisional、公開・退役との接続、およびT-059／T-069／T-074／T-091の実物理部分はPhase 4で確認し、数値部分だけで統合試験を完了扱いにしない。Probe由来のFixture・生成器・Verifierは必要なものを選抜・改変でき、検証方法とケース集合は17章の実装詳細とする。Verifierを製品Runtimeへ接続しない。
+
+T-005の削減成功例をPhase 3.9の再切断とPhase 4のT-091 cook／handoffへ接続し、採用した削減済みB-repが次回入力となり、既存のFinal包含・frame・親質量保存を満たすことを確認する。縮小由来の接触消失・運動変化は7.2の品質許容とし、Actorの巻戻しや不正形状の公開を成功扱いしない。削減専用の試験ID・Fixture体系・cook結果抽出基盤は追加しない。
 
 T-007／T-083でA Geometry未完了のままBを受付・公開し、A Commitで現在B子孫へGA＋Temporary Bを適用してTemporary Aだけを回収する。B Kernel・CommitはA Commit後とし、同じ更新内でもよい。片枝の退役は生存SiblingのCommitを妨げず、全読者退役なら履歴完成だけの計算を続けず既存IncompleteOperationTraceとする。描画経路固有DescriptorはRendererが構築し、同じ描画Snapshotの全PassでCommitted GeometryとTemporary集合が一致する。
 
@@ -1327,6 +1333,10 @@ T-091のLease確認は、各旧Cooked GeometryをProvisional Shapeへ結び付�
 ## 15. 実装ロードマップ
 
 Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視せず、一括改番しない。Slash UX系列は0.5→0.51→0.52→0.53→0.54→0.55、表示系列は0.9→0.91→0.92→0.93→0.94→1→1.50→1.51→1.52→2→3→4→4.1→4.3とする。両系列は0.5後に並行可能で、1.50は0.5と0.94／1を前提とし、0.51～0.55を待たない。0.55と4.3の双方から4.50→4.51→4.52へ合流し、基本Playableを成立させる。4.52以降は4.53→4.54→任意4.55と、4.52→4.61→4.65→4.70の分岐とする。4.71は4.65採用時だけ未来VP準備を既存DAG／VPプールへ接続し、4.72は4.52＋4.53＋4.71を統合する。4.55は基本ゲームと4.61以降の必須依存にせず、4.65不採用なら4.71／4.72を省略して4.70から4.8へ進む。いずれも未完了負債にしない。
+
+Phase 3.9は7.2の数値Kernelを先行実装する独立分岐とし、Phase 0.x～3の完了を着手・merge条件にしない。専用branchで開発し、ゲーム経路に未接続でもmainへ早期mergeできる。Phase 4はPhase 1～3と、その時点の3.9の数値Kernelを実物理へ接続する。先行mergeはAPI・layoutの凍結ではなく、残る形状・容量・所有権の意味契約を維持し、現行利用箇所と試験を追従させて破壊的変更・置換・削除できる。旧API維持・互換層・migrationを要求しない。Phase 1～3のHarness内合成Final Physics入力は維持し、3.9の利用や実物理統合を前倒ししない。
+
+3.9の初期移植元は独立Probe `zantetsuken-convex-cut-cook-probe` の `REPORT.md`（2026-09-13追補）のA-Walk、Burst R0→R1、double質量計算とする。これは初期実装選択であり方式の恒久固定ではない。Probe全体、比較Backend、旧managed prototype、全測定の再現はmerge条件にせず、公開SyntheticとLicensed入力の既存分離を維持する。
 
 今回追加・細分化するPhaseは既存実装を段階的に完成させる境界とし、後続機能の仮実装やPhase専用のRuntime状態・Coordinator・Scene・Assembly・Logger・Schema・Receipt／Proof・引渡しartifactを追加しない。0.5～0.55は一つのSandbox Sceneを継続使用し、0.5時点の空Sceneを恒久保存しない。0.53のCoreは4.50へ、1.51／1.52のShader・PassはPhase 2へ接続する。観測は既存Trace／Profiler、画面・Consoleと19.1.12の開発情報を使う。調整値は暫定とし、操作値は0.55、製品Wave容量は4.50前、Stencil予算はPhase 2以降の既存Open Itemで判断する。
 
@@ -1339,7 +1349,7 @@ Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視
 | Phase 0.11 | 短時間NVENC確認 | 対応環境のGPU画像から短い映像を生成する非同期Capture | 21.15のCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離を満たす。既存の承認済み方式で完了でき、固定fps・Frame数・時間・試験階層は要求しない。製品連続録画形式は確定しない |
 | Phase 0.12 | 可変長Trace Writer | D-159と21.16のprivate Writer、producer専用固定容量Payload／Runtime Index Ring、固定Event mask、bounded Drain、stop／join後の単純sealを同一移行系列の内部backendとして実装する | 通常writeに共有locked RMWと実行中allocationがなく、payloadコピー完了後だけRuntime Indexが公開される。lane FIFO、wrap、Index／Payload容量不足、oversize Drop、固定件数Drain、最終Drainを検証し、現行WriterとCPU時間、copy byte、allocation、Dropを比較する。Release既定の切替と旧経路削除はまだ行わない |
 | Phase 0.13 | MemoryBounded Paged Trace History | ProfileでPage size／Page数／総容量を決めてRun開始前に確保するPayload Page列、Pageごとの`CommittedByteCount`、History全体の64 bit `CommittedRecordCount`を0.12 backendへ追加する。History Index、Page状態enum、live Snapshotを持たない | 21.16.3の最大record全体のPage収容条件とProducer Lane容量条件を開始前に確認する。record全体を単一Pageへ書いた後だけcommit値を進め、Page末尾不足、History満杯、確保不能を待機や拡張なしでReject／Dropできる。停止後Viewは全record配列を生成しない。Release既定はまだ切り替えない |
-| Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。成立後にRelease既定を切り替え、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
+| Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。Release既定の採用と製品接続先がない場合の完了条件は21.16.1に従い、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
 | Phase 0.2 | 採用Fixtureの凍結 | 少数Geometry、表示切断／Physics Cook／正しさ確認の用途対応、公開Synthetic／非公開Licensed入力 | 10.2.2の採用ファイルと用途対応をmergeし、後続から利用できる時点で完了する。旧quota・全再生成・再監査・形式統合を条件にしない |
 | Phase 0.5 | 最小XRスモーク | 共用Sandbox Sceneの初期状態、OpenXR、Quest 3S有線Link、左右Grip Pose＋暫定固定Offset、BladeAxis／EdgeDirection／SideNormal、位置・回転の利用可否を表す一つの追跡有効性、Single Pass | T-014だけで基本XRを確認する。Profilerは90Hzモードと明白な継続破綻の確認に使い、速度履歴、Gate、Stroke／Plane、Wave、校正UI、製品性能SLAを含めない |
 | Phase 0.51 | Blade Sample／追跡不連続 | 刀姿勢・軸・Cut Sample Point・Emitter・時刻・追跡有効性を後続処理へ渡す内部Sampleと履歴Reset | 固定Pose列と実入力の左右で、位置または回転が無効なSampleを除外し、追跡喪失前と復帰後を速度区間として結ばない。型・field列は固定せず、速度閾値・Gesture・調整UIは含めない |
@@ -1358,7 +1368,8 @@ Phase IDは文字列とし、0.5と0.50、1.5と1.50、4.50と旧4.5を同一視
 | Phase 1.52 | VP Stencil基本確認 | 正向きの固定合成閉Geometry、既知Cap Polygon、固定Clip Descriptor、少数の固定割当てStencil Color | 全8bitを使い、Colorごとの128初期化、Wrap加減算、Ref 128 / Comp LessでS>128だけがColor／Depthを書くこと、全Volume後に全Cap、Color間の再初期化、左右眼一致を確認する。Cap生成・Cull・Compatibility・Residual Support・Color割当て・Pending Stateを前倒ししない |
 | Phase 2 | 仮断面・影強化 | 表示／Stencil共用基底Geometry、6.2の入力Gate、`RenderCutTopologyMap`、T-084、ゼロKerf、LogicalCutOperation、TemporaryRenderCapRecordSet、OBB交差Cap Bounds Polygon、両眼Frustum／Facing Cull、128初期化の正符号8bit IncrementWrap／DecrementWrap Stencil、Residual Stencil Supportの保守的投影競合、符号保存のCapCompatibility Group、`MaxStencilColors`と最後の統合Color、Color単位Volume／Cap Batch、`TemporaryClipConstraintCandidateSet`、`SV_ClipDistance` 8面＋PS `clip()` 4面＋5.2のPlane overflow処理、共通トゥーンの粘土色グレー、Temporary／Committed断面デバッグ色、ShadowCaster用同一Hybrid Clip／Offset、XR両眼対応、Pending Cut／Stable履歴管理、T-067／T-089 | 1.50～1.52の成立後、そのShader／Passへ製品状態・Cap生成・Batchを接続する。2～4連続切断と複数対象で、表示とStencil Volumeが同じ合格済み基底／Stable Geometry、Topology、windingを参照し、用途別Geometryや描画時のGeometry再検証を持たない。通常Colorは左右眼の非互換Residual Supportを分離し、Color数を固定上限内に保ち、同じColorでは全Volume後に全Capを描く。Self-intersection、別Topologyの重複／Coincident、Internal／Nested、全体反転を向き保存で受理し、共通入力Gate不合格は切断対象へ登録しない。符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupは作らない。`S=(128+W) mod 256`と`S>128`を使い、範囲外は5.2の品質例外とする。最後のColorでは混入、欠落、余計なCap、誤Depthを許容し、GPU時間は測定対象に留める。8bitを排他利用できない構成は4章の共通Player終了に従い、部分Bitや代替経路を持たない。候補面は古い未Commit祖先制約を優先するdependency-closedなstable順で全Pass／両眼へ共有し、8面をRaster、続く4面をPixelで処理する。超過した後発面は即時Stencil VolumeをsubmitせずCap板と論理／背景処理を残す。Cap pair／Coverage探索、Cap単位Buffer compaction、Mesh部分更新、多段Fallbackを行わない。Color割当ては5.6の実装自由度に従い、全Graph構築を必須としない。Camera内部／Near Plane近傍では5.2の品質例外を許容する。Shadow MapではStencil Capなしの影近似を使用する |
 | Phase 3 | 共用表示／Stencilジオメトリ | Job＋Burstの一つの三角形切断系列、4.5のVPプール入力・出力と範囲所有権、`RenderCutTopologyMap`、Topology系譜の交点共有、共通signed-distance分類、有向境界と整合するCap、閉鎖・edge／vertex manifold・局所winding整合の出力継承、Runtime面積0 Triangle許容、正負各最大1のGeometry範囲、単一予約内の正負Index直接出力、Final／Logical公開後の祖先順Geometry Commitと内部転送、GPU範囲更新とメインスレッドGeometry参照公開、両用途の原子的Geometry Commit、空出力の非生成、命中済みGeometryを投機・Maintenanceより先に扱う共有Dispatch接続、T-083 | 少数Fixtureで正負連続Indexと転送1回／再利用時0回を確認し、Harness内合成Final公開から現在追従先を使った表示と4.5.6のA→B Commit順序をPhase 4の実cookなしで成立させる。仮表示から共用VP Geometryへ置換し、切断Kernelの重い頂点処理がMain Threadへ戻らない。通常更新で全Job／GPUを待たず、容量拡張時の停止・容量限界での終了だけ4.5.4に従う。箱、凹形、複数閉Component、全体反転、Self-intersection、別Topologyの重複／Coincident／Nested、vertex／edge／face通過、同一点複数port、面積0を含む契約内Fixtureで、生成Capを含む各非空出力が入力と同じ共通契約を継承して再切断できる。表示とStencilが同じ世代・Triangle集合を使用し、用途別の切断、Cap生成、適否、修復、簡易表示Proxyを持たない。Triangle数0の側にはdummy Mesh／Cap／Rendererを作らない。製品Runtime出力Validatorを持たず、表面化した予期しない内部エラーは4章に従う。世代不一致は通常の不採用・回収とし、出力予約不足では部分出力を公開しない。出力予約不足だけは4.5.3の再予約・再実行を許容する。全Mesh self-intersection／inside-outside／shell分類をRuntimeへ追加しない |
-| Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、7.2のOwner単位Cut/Cook・事前容量予約・内接削減・質量近似、単一Cooking Profile、初回速度継承・Final handoff、0.5G仮設定 | Phase 1～3のHarnessを実物理へ接続し、T-005／T-059／T-069／T-074／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9のGC Policyは前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
+| Phase 3.9 | Physics Convex数値Kernel先行実装 | 7.2のB-rep clip、非交差継承、内接削減、質量特性、worst-case容量照会を行うBurst数値Kernelと最小Harness | 現行Unity環境でbuild・Burst実行でき、7.2／7.6の数値契約、削減成功、局所退化を含む採用B-repの再切断、予約範囲内の実行を代表入力で確認する。中心近傍の共通局所frameを使用し、Actor・Anchor・Cook Frameとの接続はPhase 4に残す。MeshData、製品アロケータ・Job wrapper、Mesh／Bake／Actor／Commitへ未接続でも完了し、Phase 4／4.1の完了とは扱わない。検証詳細は17章に従う |
+| Phase 4 | 物理 | 7.1の短寿命PhysicsSplitTransaction、7.6のrobust support、実Actor／Shape／cookとLogical Publicationの一体公開、旧Cooked Geometry Lease、anchor-offset D6、Phase 3.9の数値Kernelを使う7.2のOwner単位Cut/Cook統合・事前容量予約・P1 recenterの物理接続、単一Cooking Profile、初回速度継承・Final handoff、0.5G仮設定 | Phase 1～3のHarnessとPhase 3.9の数値Kernelを実物理へ接続し、T-005／T-059／T-069／T-074／T-085／T-086／T-091を確認する。正常成功は正負2所有者、Geometry空はRendererなしとし、Final先着・Provisional構築不能・Final不成立・Stale・個別退役を7.1で閉じる。通常LogicalFragmentを単独退役する低レベル処理も本Phaseで実装し、7.9のGC Policyは前倒ししない。切断・BakeのMain Thread停止を避け、暫定的な実行枠・メモリ予算で既存Fixtureを回帰する。Unity経路の要件違反だけD-086で再検討する |
 | Phase 4.1 | Cut/Cook Profiling | Phase 4の製品経路と代表Fixture、既存Profiler／Harness | T-076で7.5の費用を確認し、O-035／O-039の暫定実行枠・メモリ予算を調整する。保存形式、分位、反復数は実装詳細。Slashの到達Deadlineへの適用はPhase 4.53へ分ける |
 | Phase 4.2 | Player非接触Locomotion | Player Layer非接触、Level初期化時の固定PlayerLocomotionOccupancy、候補次姿勢Overlap Reject、T-088 | 人工移動の要求全体Rejectと、物理所有者・切断・Commit・Fragment・GCへ追従しない固定集合をT-088で確認する。実空間HMDはClampせず、Camera被り・内部視点はD-131の許容に従う。退出処理や将来のOccupancy更新を要求しない |
 | Phase 4.3 | 建物由来子のWorld D6と一般外部Joint撤去 | 7.2.2のIsBuildingDerived／BuildingSplitDepth、通常1→2公開でのWorld D6生成、指数Limit、Actor寿命と既存失敗境界への接続、既知Constraint識別、T-094 | 手書きSyntheticで生成・建物由来だけの予定Depthと正式公開・Abort・Final handoff時の維持・構築不能を確認する。一般外部Jointの継承・付け替え・保護・予測を要求せず、4.54が既知Constraintを識別できる。拘束効果を保証せず、製品Recipe・5.6分割・5.7 GC・未来予測本体を待たず完了する |
@@ -1514,11 +1525,13 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 - Phase 0.9～1と関連するGeometry仕様の旧工程・所属／Commit条件、不要な共通型・Profile・固定識別表現・Boundary件数上限は直接削除し、経緯をGitへ委ねる。同じ責務のDecision／Test IDは継続し、既存実装の一括改名・再生成や互換層を要求しない。Topology、公開・資源寿命、0.91／0.94の比較実験は維持する。
 
+- Phase 3.9の追加と7.2の局所退化許容で置換する旧記述は直接削除・短縮し、経緯はGitへ委ねる。旧仕様の付録や互換表現を追加しない。
+
 - 未決事項は結論、根拠、決定日を追記して決定事項へ移す。
 
 - 技術検証は測定環境、再現手順、数値結果、スクリーンショット／Profiler参照を残す。
 
-- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
+- ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。
 
 - 新しい機能提案は『即時応答』『幾何精度』『物理整合』『性能予算』のどれへ影響するかを明記する。
 
@@ -2257,7 +2270,7 @@ Captureの不成立、故障、対応外構成はCapture内に閉じ、ゲーム
 
 #### 21.16.1 適用範囲と切替
 
-対象はDomain Trace、Writer、History、保存／読込み、およびCapture終了時のproducer停止・最終Drain・sealとの接続とする。Encoderや映像取得経路を変更しない。0.12～0.14を同一変更系列の内部checkpointとし、0.14成立時にRelease既定を一度切り替える。旧新backendの並行搭載・二重記録を要求せず、置換済みのWriterと専用試験は同系列で削除できる。旧保存形式のLoader・Golden・再exportを維持する義務はなく、17章の扱いに従う。
+対象はDomain Trace、Writer、History、保存／読込み、および以下の終了境界と製品接続とする。Encoderや映像取得経路を変更しない。0.12～0.14を同一変更系列の内部checkpointとする。製品Trace接続先が存在する場合は0.14でRelease既定を切り替える。製品Trace接続先が存在しない場合は、本系列のWriter／Historyについて、producer利用終了後に最終Drain・seal・保存を順に実行でき、保存・読込みで相関と不完全性を維持できる終了境界を確認すれば0.14を完了できる。実Capture終了経路への接続とRelease既定の採用は製品接続時に行い、その接続先の前倒し実装を0.14の完了条件にしない（2026-09-13人間承認）。旧新backendの並行搭載・二重記録を要求せず、置換済みのWriterと専用試験は同系列で削除できる。旧保存形式のLoader・Golden・再exportを維持する義務はなく、17章の扱いに従う。
 
 #### 21.16.2 Writer、Lane、Drain、seal
 
@@ -2283,7 +2296,7 @@ seal済みHistoryのcommitted prefixを、全recordの別配列を作らずbound
 
 #### 21.16.5 完了条件と非目標
 
-0.12は21.16.2のWriter公開順・所有権・非待機・bounded Drain、0.13は21.16.3の容量とcommitted prefix・停止後View、0.14は21.16.4の保存・読込みと切替を確認する。代表負荷で記録・回収・保存の費用、allocation、欠落とメモリを確認する。具体的なFixture、形式の境界値、試験手順は実装詳細とし、旧形式互換試験や巨大な条件直積を完了条件にしない。
+0.12は21.16.2のWriter公開順・所有権・非待機・bounded Drain、0.13は21.16.3の容量とcommitted prefix・停止後View、0.14は21.16.4の保存・読込みと21.16.1の接続先に応じた完了条件を確認する。代表負荷で記録・回収・保存の費用、allocation、欠落とメモリを確認する。具体的なFixture、形式の境界値、試験手順は実装詳細とし、旧形式互換試験や巨大な条件直積を完了条件にしない。
 
 初版はMemoryBoundedだけとし、Rolling、Background／Segment Writer、保持中Page再利用、record分割、Context Registry、sampling、動的Profile、全producer間total order、Timeline random access、部分file修復、敵対的改ざん検知を追加しない。実測または具体的な用途が必要性を示した場合だけ別Phaseで判断する。
 
