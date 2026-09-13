@@ -18,6 +18,33 @@ namespace Zantetsu.Core.Tests
         private const string HashB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         private const string InitializationId = "0123456789abcdef0123456789abcdef";
 
+        /// <summary>
+        /// Reads the staged file back and confirms it is byte-for-byte what
+        /// the descriptor promised: the same length, and the same SHA-256.
+        /// </summary>
+        private static void AssertStagedContentMatches(CaptureRunRootLayout layout, CaptureArtifactDescriptor descriptor)
+        {
+            string path = Path.Combine(layout.RunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Assert.That(File.Exists(path), Is.True, path);
+
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.That(bytes.LongLength, Is.EqualTo(descriptor.ByteLength));
+
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                const string hex = "0123456789abcdef";
+                char[] chars = new char[hash.Length * 2];
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    chars[i * 2] = hex[hash[i] >> 4];
+                    chars[i * 2 + 1] = hex[hash[i] & 15];
+                }
+
+                Assert.That(new string(chars), Is.EqualTo(descriptor.ContentHash));
+            }
+        }
+
         [Test]
         public void CommonBoundary_IsBeforeReadbackAndFormatNeutral()
         {
@@ -177,8 +204,8 @@ namespace Zantetsu.Core.Tests
                     Assert.That(metadata.Descriptor.ArtifactKind, Is.EqualTo(CaptureArtifactKind.FrameMetadata));
 
                     // The staged files are content-verified without transformation.
-                    Assert.That(store.VerifyStaging(image.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                    Assert.That(store.VerifyStaging(metadata.Descriptor).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                    AssertStagedContentMatches(layout, image.Descriptor);
+                    AssertStagedContentMatches(layout, metadata.Descriptor);
 
                     // Surface and raw slot are fully recovered.
                     backend.BeginDrain();
@@ -605,26 +632,6 @@ namespace Zantetsu.Core.Tests
             public CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request)
             {
                 return new CaptureArtifactWriteReceipt(this, request.Descriptor, "C:\\staging\\" + request.Descriptor.ArtifactId);
-            }
-
-            public CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.MatchesExpected,
-                    CaptureArtifactVerificationFailureReason.None,
-                    descriptor.ByteLength);
-            }
-
-            public CaptureArtifactVerificationResult Verify(CaptureArtifactDescriptor descriptor)
-            {
-                return new CaptureArtifactVerificationResult(
-                    descriptor,
-                    CaptureArtifactVerificationExecutionDisposition.Completed,
-                    CaptureArtifactVerificationStatus.Absent,
-                    CaptureArtifactVerificationFailureReason.FileAbsent,
-                    0);
             }
 
             public void Dispose() { }

@@ -483,6 +483,33 @@ namespace Zantetsu.Core.Tests
 
         // ---- Tests ----
 
+        /// <summary>
+        /// Reads the staged file back and confirms it is byte-for-byte what
+        /// the descriptor promised: the same length, and the same SHA-256.
+        /// </summary>
+        private static void AssertStagedContentMatches(CaptureRunRootLayout layout, CaptureArtifactDescriptor descriptor)
+        {
+            string path = Path.Combine(layout.RunRoot, descriptor.StagingRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Assert.That(File.Exists(path), Is.True, path);
+
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.That(bytes.LongLength, Is.EqualTo(descriptor.ByteLength));
+
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(bytes);
+                const string hex = "0123456789abcdef";
+                char[] chars = new char[hash.Length * 2];
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    chars[i * 2] = hex[hash[i] >> 4];
+                    chars[i * 2 + 1] = hex[hash[i] & 15];
+                }
+
+                Assert.That(new string(chars), Is.EqualTo(descriptor.ContentHash));
+            }
+        }
+
         [Test]
         public void Phase01_FullPipeline_FreezeReceiptAndArtifactCompatibility()
         {
@@ -598,8 +625,8 @@ namespace Zantetsu.Core.Tests
                 }
 
                 // Staging content is verified without transformation.
-                Assert.That(scope.Store.VerifyStaging(image).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
-                Assert.That(scope.Store.VerifyStaging(metadata).Status, Is.EqualTo(CaptureArtifactVerificationStatus.MatchesExpected));
+                AssertStagedContentMatches(scope.Layout, image);
+                AssertStagedContentMatches(scope.Layout, metadata);
 
                 // PNG decode via the existing Unity decoder: dimensions and the
                 // asymmetric cell placement prove top/bottom and left/right

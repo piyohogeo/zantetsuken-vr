@@ -1,15 +1,14 @@
 namespace Zantetsu.Observability
 {
     /// <summary>
-    /// Format-neutral durable staging boundary. A successful write must be
-    /// non-overwriting and content-verified, and staging data is flushed
-    /// before its receipt is returned. Platform-level no-follow and
-    /// directory-metadata durability remain capabilities of the selected store
-    /// implementation rather than assumptions in capture code.
+    /// Format-neutral durable staging boundary. A write is non-overwriting,
+    /// its payload is hash-checked against the descriptor before a byte
+    /// reaches the disk, and the bytes are flushed and renamed into place
+    /// before the receipt is returned, so a partially written file is never
+    /// visible under the artifact's own name.
     /// </summary>
     internal interface ICaptureArtifactStore
     {
         CaptureArtifactWriteReceipt WriteStaging(CaptureArtifactWriteRequest request);
-        CaptureArtifactVerificationResult VerifyStaging(CaptureArtifactDescriptor descriptor);
     }
 }
