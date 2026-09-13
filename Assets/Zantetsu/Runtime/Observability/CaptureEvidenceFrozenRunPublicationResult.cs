@@ -17,7 +17,7 @@ namespace Zantetsu.Observability
     /// <see cref="PlanWriteReceipt"/>, and <see cref="IssuedBy"/>: the store,
     /// plan, draft registry, artifact registry, run session, root layout, lock
     /// identity evidence, Run identity, run manifest content hash, publication
-    /// plan path, and canonical byte count are none of them restated as a field
+    /// plan path, and canonical byte count - none of it is restated as a field
     /// or property of this type's own. The proof is never exposed.
     /// </para>
     /// <para>

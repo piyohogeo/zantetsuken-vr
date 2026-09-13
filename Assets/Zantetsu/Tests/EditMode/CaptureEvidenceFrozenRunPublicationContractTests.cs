@@ -611,12 +611,30 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Result_HoldsCoordinatorFreezeAndWriteReceipts()
         {
-            CaptureEvidenceFrozenRunPublicationResult result = MakeResult();
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureArtifactFileStore store = ForgeStore(layout);
+            CaptureEvidenceRunPublicationCoordinator coordinator = ForgeCoordinator(store);
+            CaptureEvidenceRunFreezeReceipt freezeReceipt = MakeValidFreezeReceipt(layout);
+            CapturePublicationPlan plan = new CapturePublicationPlan(
+                layout.TestRunId,
+                InitId,
+                HashA,
+                Array.Empty<CaptureArtifactDescriptor>(),
+                Array.Empty<CaptureFrameEvidenceEntry>());
+            CapturePublicationPlanWriteReceipt writeReceipt = new CapturePublicationPlanWriteReceipt(
+                store, plan, store.PublicationPlanPath, 16);
+
+            CaptureEvidenceFrozenRunPublicationResult result =
+                CaptureEvidenceFrozenRunPublicationResult.Create(
+                    coordinator,
+                    MintProof(coordinator, freezeReceipt, writeReceipt),
+                    freezeReceipt,
+                    writeReceipt);
 
             Assert.That(result.IsValid, Is.True);
-            Assert.That(result.IssuedBy, Is.Not.Null);
-            Assert.That(result.FreezeReceipt, Is.Not.Null);
-            Assert.That(result.PlanWriteReceipt, Is.Not.Null);
+            Assert.That(ReferenceEquals(result.IssuedBy, coordinator), Is.True);
+            Assert.That(ReferenceEquals(result.FreezeReceipt, freezeReceipt), Is.True);
+            Assert.That(ReferenceEquals(result.PlanWriteReceipt, writeReceipt), Is.True);
         }
 
         [Test]
