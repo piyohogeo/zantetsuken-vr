@@ -241,17 +241,15 @@ namespace Zantetsu.Core.Tests
         {
             CaptureRunInitializationDocumentSet documents = MakeDocuments();
             CaptureRunMarkerPathSet paths = documents.MarkerPaths;
-            CaptureRunMarkerBinding binding = documents.MarkerBinding;
 
             string stagingInitPathBefore = paths.StagingInitializationPath;
-            string initIdBefore = binding.RunInitializationId;
+            string initIdBefore = documents.RunInitializationId;
 
             CaptureRunInitializationWriteBatch batch = new CaptureRunInitializationWriteBatch(documents);
 
             Assert.That(documents.MarkerPaths, Is.SameAs(paths));
-            Assert.That(documents.MarkerBinding, Is.SameAs(binding));
             Assert.That(paths.StagingInitializationPath, Is.EqualTo(stagingInitPathBefore));
-            Assert.That(binding.RunInitializationId, Is.EqualTo(initIdBefore));
+            Assert.That(documents.RunInitializationId, Is.EqualTo(initIdBefore));
         }
 
         [Test]

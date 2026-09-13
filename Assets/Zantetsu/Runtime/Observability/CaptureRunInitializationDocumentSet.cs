@@ -4,9 +4,9 @@ namespace Zantetsu.Observability
 {
     /// <summary>
     /// Immutable, filesystem-free Capture Run initialization document set: the
-    /// marker paths and markers of one Run, plus the canonical bytes of the
-    /// four markers it must write, serialized once at construction and exposed
-    /// only as defensive copies.
+    /// marker paths of one Run, its initialization id, and the canonical bytes
+    /// of the four markers it must write, serialized once at construction and
+    /// exposed only as defensive copies.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -17,8 +17,10 @@ namespace Zantetsu.Observability
     /// <see cref="CaptureRunInitializationMarkerCodec"/> and the ready marker
     /// with <see cref="CaptureRunReadyMarkerCodec"/>, and verifies that every
     /// byte array is non-empty and within the codec's documented maximum. The
-    /// two references and the three owned byte arrays are held only after every
-    /// check succeeds.
+    /// path set, the id the binding settled on, and the three owned byte arrays
+    /// are held only after every check succeeds; the binding and its markers go
+    /// out of scope with the constructor, since the bytes are what gets
+    /// written.
     /// </para>
     /// <para>
     /// Both Run roots receive the same ready content, so only one ready byte
@@ -30,7 +32,7 @@ namespace Zantetsu.Observability
     /// <para>
     /// This type owns the arrays returned by the codecs, but never re-computes
     /// or caches any hash, never decodes or re-parses, and treats the binding
-    /// as the authority for init hashes. It generates no initialization ID,
+    /// it built as the authority for init hashes. It generates no initialization ID,
     /// performs no file, directory, or stream access, no tmp write, flush, or
     /// rename, no OS locking, and no recovery or collision classification.
     /// It is not an <see cref="IDisposable"/>, MonoBehaviour, or
@@ -40,7 +42,7 @@ namespace Zantetsu.Observability
     internal sealed class CaptureRunInitializationDocumentSet
     {
         private readonly CaptureRunMarkerPathSet _markerPaths;
-        private readonly CaptureRunMarkerBinding _markerBinding;
+        private readonly string _runInitializationId;
         private readonly byte[] _stagingInitializationBytes;
         private readonly byte[] _finalInitializationBytes;
         private readonly byte[] _readyBytes;
@@ -71,7 +73,7 @@ namespace Zantetsu.Observability
             RequireNonEmptyWithinLimit(readyBytes, CaptureRunReadyMarkerCodec.MaximumCanonicalByteCount, "Ready");
 
             _markerPaths = markerPaths;
-            _markerBinding = binding;
+            _runInitializationId = binding.RunInitializationId;
             _stagingInitializationBytes = stagingInitializationBytes;
             _finalInitializationBytes = finalInitializationBytes;
             _readyBytes = readyBytes;
@@ -79,13 +81,11 @@ namespace Zantetsu.Observability
 
         internal CaptureRunMarkerPathSet MarkerPaths => _markerPaths;
 
-        internal CaptureRunMarkerBinding MarkerBinding => _markerBinding;
-
         internal CaptureRunRootLayout RootLayout => _markerPaths.RootLayout;
 
         internal long TestRunId => _markerPaths.RootLayout.TestRunId;
 
-        internal string RunInitializationId => _markerBinding.RunInitializationId;
+        internal string RunInitializationId => _runInitializationId;
 
         internal int StagingInitializationByteCount => _stagingInitializationBytes.Length;
 

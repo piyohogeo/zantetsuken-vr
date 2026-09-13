@@ -32,6 +32,15 @@ namespace Zantetsu.Core.Tests
             return new CaptureRunInitializationDocumentSet(layout, initId);
         }
 
+        private static CaptureRunMarkerBinding ExpectedBinding(CaptureRunRootLayout layout, string initId = InitId)
+        {
+            return new CaptureRunMarkerBinding(
+                layout.TestRunId,
+                initId,
+                layout.StagingRunRootSha256,
+                layout.FinalRunRootSha256);
+        }
+
         private static byte[] GetFieldBytes(object target, string fieldName)
         {
             FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
@@ -63,7 +72,6 @@ namespace Zantetsu.Core.Tests
             CaptureRunInitializationDocumentSet result = Create(layout);
 
             Assert.That(result.MarkerPaths, Is.Not.Null);
-            Assert.That(result.MarkerBinding, Is.Not.Null);
             Assert.That(result.MarkerPaths.RootLayout, Is.SameAs(layout));
             Assert.That(result.RootLayout, Is.SameAs(layout));
         }
@@ -101,28 +109,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(paths.FinalInitializationPath, Is.EqualTo(final + sep + "run.init"));
             Assert.That(paths.FinalReadyTemporaryPath, Is.EqualTo(final + sep + "run.ready.tmp"));
             Assert.That(paths.FinalReadyPath, Is.EqualTo(final + sep + "run.ready"));
-        }
-
-        [Test]
-        public void InitMarkers_HaveRolesAndValues()
-        {
-            CaptureRunRootLayout layout = MakeLayout(3);
-            CaptureRunInitializationDocumentSet result = Create(layout);
-
-            CaptureRunMarkerBinding binding = result.MarkerBinding;
-
-            Assert.That(binding.StagingInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Staging));
-            Assert.That(binding.FinalInitialization.RootRole, Is.EqualTo(CaptureRunRootRole.Final));
-
-            Assert.That(binding.StagingInitialization.TestRunId, Is.EqualTo(layout.TestRunId));
-            Assert.That(binding.StagingInitialization.RunInitializationId, Is.EqualTo(InitId));
-            Assert.That(binding.StagingInitialization.StagingRunRootSha256, Is.EqualTo(layout.StagingRunRootSha256));
-            Assert.That(binding.StagingInitialization.FinalRunRootSha256, Is.EqualTo(layout.FinalRunRootSha256));
-
-            Assert.That(binding.FinalInitialization.TestRunId, Is.EqualTo(layout.TestRunId));
-            Assert.That(binding.FinalInitialization.RunInitializationId, Is.EqualTo(InitId));
-            Assert.That(binding.FinalInitialization.StagingRunRootSha256, Is.EqualTo(layout.StagingRunRootSha256));
-            Assert.That(binding.FinalInitialization.FinalRunRootSha256, Is.EqualTo(layout.FinalRunRootSha256));
         }
 
         // ---- Initialization ID delegation ----
@@ -164,9 +150,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void StagingInitBytes_MatchCodec()
         {
-            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet set = Create(layout);
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(
+                ExpectedBinding(layout).StagingInitialization);
 
             Assert.That(set.GetStagingInitializationBytes(), Is.EqualTo(expected));
         }
@@ -174,9 +162,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void FinalInitBytes_MatchCodec()
         {
-            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet set = Create(layout);
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.FinalInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(
+                ExpectedBinding(layout).FinalInitialization);
 
             Assert.That(set.GetFinalInitializationBytes(), Is.EqualTo(expected));
         }
@@ -184,9 +174,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void ReadyBytes_MatchCodec()
         {
-            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet set = Create(layout);
 
-            byte[] expected = CaptureRunReadyMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingReady);
+            byte[] expected = CaptureRunReadyMarkerCodec.SerializeCanonical(
+                ExpectedBinding(layout).StagingReady);
 
             Assert.That(set.GetStagingReadyBytes(), Is.EqualTo(expected));
             Assert.That(set.GetFinalReadyBytes(), Is.EqualTo(expected));
@@ -249,9 +241,11 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void MutatingReturnedCopy_DoesNotAffectNext()
         {
-            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet set = Create(layout);
 
-            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingInitialization);
+            byte[] expected = CaptureRunInitializationMarkerCodec.SerializeCanonical(
+                ExpectedBinding(layout).StagingInitialization);
 
             byte[] copy = set.GetStagingInitializationBytes();
             for (int i = 0; i < copy.Length; i++)
@@ -265,10 +259,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void StagingInitMutation_DoesNotAffectFinalOrReady()
         {
-            CaptureRunInitializationDocumentSet set = Create(MakeLayout());
+            CaptureRunRootLayout layout = MakeLayout();
+            CaptureRunInitializationDocumentSet set = Create(layout);
 
-            byte[] finalExpected = CaptureRunInitializationMarkerCodec.SerializeCanonical(set.MarkerBinding.FinalInitialization);
-            byte[] readyExpected = CaptureRunReadyMarkerCodec.SerializeCanonical(set.MarkerBinding.StagingReady);
+            CaptureRunMarkerBinding expectedMarkers = ExpectedBinding(layout);
+            byte[] finalExpected = CaptureRunInitializationMarkerCodec.SerializeCanonical(expectedMarkers.FinalInitialization);
+            byte[] readyExpected = CaptureRunReadyMarkerCodec.SerializeCanonical(expectedMarkers.StagingReady);
 
             byte[] staging = set.GetStagingInitializationBytes();
             for (int i = 0; i < staging.Length; i++)
