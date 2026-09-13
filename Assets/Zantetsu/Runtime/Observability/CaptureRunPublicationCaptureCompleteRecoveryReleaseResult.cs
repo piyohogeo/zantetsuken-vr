@@ -10,7 +10,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly four read-only reference fields — the issuing
+    /// The type holds exactly four readonly references — the issuing
     /// coordinator, the coordinator-bound issuance proof, the release
     /// operation, and the release receipt — and has no public constructor.
     /// Every accessor forwards a value from the held graph: the releaser,
@@ -23,18 +23,18 @@ namespace Zantetsu.Observability
     /// </para>
     /// <para>
     /// <see cref="Create"/> and <see cref="IsValid"/> share one exception-safe
-    /// correlation predicate. It re-checks that the coordinator, proof,
-    /// operation, and receipt are non-null, that the proof was minted by this
-    /// exact coordinator for the exact releaser, operation, and receipt, that
-    /// the receipt was issued by the coordinator's releaser and still proves
-    /// the exact operation, that the operation's issuance proof is intact,
-    /// that the exact ownership lease has fully completed release via
-    /// <see cref="CaptureRunInitializationSessionOwnershipLease.IsReleaseComplete"/>,
-    /// and that every forwarded value matches between receipt and operation.
-    /// Any forged, replaced, or released value converges to <c>false</c> without
-    /// throwing. The upstream evidence, notification result, and operation are
-    /// intentionally not re-validated here, because a completed release makes
-    /// them invalid by design.
+    /// correlation predicate of three steps: the coordinator, proof, operation,
+    /// and receipt are non-null; the proof was minted by this exact coordinator
+    /// for the exact releaser, operation, and receipt; and the receipt is issued
+    /// for the coordinator's releaser and that exact operation. That last call
+    /// is the one post-release validation — it settles the exact releaser, the
+    /// exact operation, the operation's issuance proof, and the release terminal
+    /// state together, so nothing here re-derives the open outcome, the
+    /// ownership lease, or the release completion. Any forged, replaced, or
+    /// released value converges to <c>false</c> without throwing. The upstream
+    /// evidence, notification result, and operation are intentionally not
+    /// re-validated here, because a completed release makes them invalid by
+    /// design.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -161,52 +161,11 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            ICaptureRunPublicationCaptureCompleteRecoveryReleaser releaser = coordinator.Releaser;
-            if (releaser == null)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(receipt.IssuedBy, releaser)
-                || !ReferenceEquals(receipt.Operation, operation))
-            {
-                return false;
-            }
-
-            // The single post-release full validation path: this re-checks the
-            // receipt issuer, the operation identity, and the operation's
-            // issuance proof and terminal state in one call.
-            if (!receipt.IsIssuedFor(releaser, operation))
-            {
-                return false;
-            }
-
-            if (!operation.IsIssuanceProofIntact)
-            {
-                return false;
-            }
-
-            CaptureRunInitializationOpenOutcome openOutcome = operation.OpenOutcome;
-            CaptureRunInitializationSessionOwnershipLease ownershipLease = operation.OwnershipLease;
-            if (openOutcome == null || ownershipLease == null || !ownershipLease.IsReleaseComplete)
-            {
-                return false;
-            }
-
-            if (!ReferenceEquals(receipt.OpenOutcome, openOutcome)
-                || !ReferenceEquals(receipt.OwnershipLease, ownershipLease)
-                || !ReferenceEquals(receipt.LifecycleEvidence, operation.LifecycleEvidence)
-                || !ReferenceEquals(receipt.NotificationResult, operation.NotificationResult)
-                || !ReferenceEquals(receipt.RootLayout, operation.RootLayout)
-                || receipt.TestRunId != operation.TestRunId
-                || !string.Equals(receipt.RunInitializationId, operation.RunInitializationId, StringComparison.Ordinal)
-                || !string.Equals(receipt.RunManifestContentSha256, operation.RunManifestContentSha256, StringComparison.Ordinal)
-                || !string.Equals(receipt.CaptureIndexPath, operation.CaptureIndexPath, StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            return true;
+            // The single post-release validation path: one call settles the
+            // exact releaser, the exact operation, that operation's issuance
+            // proof, and the release terminal state, so nothing here re-derives
+            // the open outcome, the ownership lease, or the release completion.
+            return receipt.IsIssuedFor(coordinator.Releaser, operation);
         }
     }
 }

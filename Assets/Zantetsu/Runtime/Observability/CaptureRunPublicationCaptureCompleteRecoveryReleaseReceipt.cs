@@ -9,7 +9,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The type owns exactly two read-only reference fields — the issuing
+    /// The type holds exactly two readonly reference fields — the issuing
     /// releaser and the release operation — and has no public constructor. It
     /// can be constructed only after the release succeeded: the constructor
     /// rejects a null issuer, a null operation, and any operation whose
@@ -19,9 +19,12 @@ namespace Zantetsu.Observability
     /// <see cref="IsValid"/> and <see cref="IsIssuedFor"/> recompute the held
     /// checks without throwing. They do not require the lifecycle evidence or
     /// the notification result to remain valid, because the ownership lease
-    /// release makes them invalid by design; instead they verify the opaque issuance proof
-    /// and the current release terminal state. Every other accessor forwards a
-    /// value from the held operation.
+    /// release makes them invalid by design; instead they verify the opaque
+    /// issuance proof and the current release terminal state. What was released
+    /// is read from <see cref="Operation"/>; the receipt restates none of its
+    /// values and duplicates no lifecycle evidence, notification result, open
+    /// outcome, ownership lease, path, hash, or Run identity as a field of its
+    /// own.
     /// </para>
     /// <para>
     /// This type owns, mutates, and disposes nothing and is not an
@@ -61,24 +64,6 @@ namespace Zantetsu.Observability
         internal ICaptureRunPublicationCaptureCompleteRecoveryReleaser IssuedBy => _issuedBy;
 
         internal CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation Operation => _operation;
-
-        internal CaptureRunPublicationCaptureCompleteLifecycleEvidence LifecycleEvidence => _operation.LifecycleEvidence;
-
-        internal CaptureRunPublicationCaptureCompleteNotificationResult NotificationResult => _operation.NotificationResult;
-
-        internal CaptureRunInitializationOpenOutcome OpenOutcome => _operation.OpenOutcome;
-
-        internal CaptureRunInitializationSessionOwnershipLease OwnershipLease => _operation.OwnershipLease;
-
-        internal CaptureRunRootLayout RootLayout => _operation.RootLayout;
-
-        internal long TestRunId => _operation.TestRunId;
-
-        internal string RunInitializationId => _operation.RunInitializationId;
-
-        internal string RunManifestContentSha256 => _operation.RunManifestContentSha256;
-
-        internal string CaptureIndexPath => _operation.CaptureIndexPath;
 
         internal bool IsValid => IsCorrelated(_issuedBy, _operation);
 

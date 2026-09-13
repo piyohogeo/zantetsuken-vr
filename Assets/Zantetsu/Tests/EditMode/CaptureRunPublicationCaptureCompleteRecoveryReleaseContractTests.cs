@@ -1043,24 +1043,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void Receipt_ForwardsAllValues()
-        {
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseOperation operation = MakeReleaseOperation();
-            FakeReleaser releaser = new FakeReleaser();
-            CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt = ReleaseSuccessfully(releaser, operation);
-
-            Assert.That(ReferenceEquals(receipt.LifecycleEvidence, operation.LifecycleEvidence), Is.True);
-            Assert.That(ReferenceEquals(receipt.NotificationResult, operation.NotificationResult), Is.True);
-            Assert.That(ReferenceEquals(receipt.OpenOutcome, operation.OpenOutcome), Is.True);
-            Assert.That(ReferenceEquals(receipt.OwnershipLease, operation.OwnershipLease), Is.True);
-            Assert.That(ReferenceEquals(receipt.RootLayout, operation.RootLayout), Is.True);
-            Assert.That(receipt.TestRunId, Is.EqualTo(operation.TestRunId));
-            Assert.That(receipt.RunInitializationId, Is.EqualTo(operation.RunInitializationId));
-            Assert.That(receipt.RunManifestContentSha256, Is.EqualTo(operation.RunManifestContentSha256));
-            Assert.That(receipt.CaptureIndexPath, Is.EqualTo(operation.CaptureIndexPath));
-        }
-
-        [Test]
         public void Receipt_UninitializedAndFieldCorruptionConvergesFalse()
         {
             CaptureRunPublicationCaptureCompleteRecoveryReleaseReceipt receipt =
