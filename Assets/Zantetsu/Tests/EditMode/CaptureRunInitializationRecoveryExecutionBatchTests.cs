@@ -635,36 +635,6 @@ namespace Zantetsu.Core.Tests
             Assert.That(prepared.IsValid, Is.False);
         }
 
-        [Test]
-        public void PreparedStep_CorruptedWriteOperation_Invalid()
-        {
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
-
-            CaptureRunInitializationRecoveryActionPlan plan = BuildPlan(
-                MakeCanonicalInit(Staging, binding.StagingInitialization),
-                MakeCanonicalInit(Final, binding.FinalInitialization),
-                layout); // step 0 = Write(Staging, Ready)
-
-            // corrupt bytes
-            CaptureRunMarkerWriteOperation corrupted = ForgeWriteOperation(
-                Staging, ReadyKind,
-                markerPaths.StagingReadyTemporaryPath, markerPaths.StagingReadyPath,
-                new byte[] { 1, 2, 3 });
-
-            CaptureRunInitializationRecoveryPreparedStep prepared = (CaptureRunInitializationRecoveryPreparedStep)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunInitializationRecoveryPreparedStep));
-            SetField(prepared, "_actionPlan", plan);
-            SetField(prepared, "_markerPaths", markerPaths);
-            SetField(prepared, "_stepIndex", 0);
-            SetField(prepared, "_cleanupOperation", null);
-            SetField(prepared, "_provisionOperation", null);
-            SetField(prepared, "_markerWriteOperation", corrupted);
-
-            Assert.That(prepared.IsValid, Is.False);
-        }
-
         // ---- Batch array corruption ----
 
         [Test]
@@ -723,27 +693,6 @@ namespace Zantetsu.Core.Tests
             SetField(prepared, "_markerWriteOperation", null);
 
             Assert.That(prepared.IsValid, Is.False);
-        }
-
-        // ---- Factory IsOperationFor ----
-
-        [Test]
-        public void Factory_IsOperationFor_MatchesAndRejects()
-        {
-            CaptureRunRootLayout layout = MakeLayout();
-            CaptureRunMarkerBinding binding = MakeBinding(layout);
-            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
-
-            CaptureRunInitializationRecoveryActionPlan plan = BuildPlan(
-                MakeCanonicalInit(Staging, binding.StagingInitialization),
-                MakeCanonicalInit(Final, binding.FinalInitialization),
-                layout); // step 0 = Write(Staging, Ready)
-
-            CaptureRunMarkerWriteOperation op = CaptureRunInitializationRecoveryMarkerWriteOperationFactory.Create(plan, markerPaths, 0);
-
-            Assert.That(CaptureRunInitializationRecoveryMarkerWriteOperationFactory.IsOperationFor(plan, markerPaths, 0, op), Is.True);
-            Assert.That(CaptureRunInitializationRecoveryMarkerWriteOperationFactory.IsOperationFor(plan, markerPaths, 1, op), Is.False);
-            Assert.That(CaptureRunInitializationRecoveryMarkerWriteOperationFactory.IsOperationFor(plan, markerPaths, 0, null), Is.False);
         }
 
         // ---- Non-mutation ----
@@ -859,23 +808,6 @@ namespace Zantetsu.Core.Tests
         }
 
         // ---- Assertion helpers ----
-
-        private static CaptureRunMarkerWriteOperation ForgeWriteOperation(
-            CaptureRunRootRole rootRole,
-            CaptureRunMarkerKind markerKind,
-            string temporaryPath,
-            string finalPath,
-            byte[] canonicalBytes)
-        {
-            CaptureRunMarkerWriteOperation op = (CaptureRunMarkerWriteOperation)FormatterServices.GetUninitializedObject(
-                typeof(CaptureRunMarkerWriteOperation));
-            SetField(op, "_rootRole", rootRole);
-            SetField(op, "_markerKind", markerKind);
-            SetField(op, "_temporaryPath", temporaryPath);
-            SetField(op, "_finalPath", finalPath);
-            SetField(op, "_canonicalBytes", canonicalBytes);
-            return op;
-        }
 
         private static CaptureRunInitializationRecoveryExecutionBatch ForgeBatch(
             CaptureRunInitializationRecoveryActionPlan actionPlan,

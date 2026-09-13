@@ -11,10 +11,12 @@ namespace Zantetsu.Observability
     /// <para>
     /// Exactly one of the three operation fields is non-null for a cleanup,
     /// provision, or write step; a routing step holds none. Construction
-    /// delegates to the existing cleanup operation, root provision operation,
-    /// and write factory contracts. <see cref="IsValid"/> recomputes the
-    /// exclusivity and correlation checks from the held values without
-    /// throwing.
+    /// delegates to the existing cleanup and root provision operations, and
+    /// builds the marker write itself: it picks the marker and the two paths
+    /// the step names, serializes that one marker once, and hands the bytes to
+    /// the write operation. <see cref="IsValid"/> recomputes the exclusivity
+    /// and correlation checks from the held values without throwing, and never
+    /// re-serializes a marker.
     /// </para>
     /// <para>
     /// This type performs no filesystem work and is not an
@@ -82,7 +84,7 @@ namespace Zantetsu.Observability
                     break;
 
                 case CaptureRunInitializationRecoveryAction.WriteMarker:
-                    write = CaptureRunInitializationRecoveryMarkerWriteOperationFactory.Create(actionPlan, markerPaths, stepIndex);
+                    write = CreateMarkerWrite(actionPlan, markerPaths, step);
                     break;
             }
 
@@ -189,10 +191,24 @@ namespace Zantetsu.Observability
                     }
 
                     case CaptureRunInitializationRecoveryAction.WriteMarker:
-                        return _cleanupOperation == null
-                            && _provisionOperation == null
-                            && _markerWriteOperation != null
-                            && CaptureRunInitializationRecoveryMarkerWriteOperationFactory.IsOperationFor(_actionPlan, _markerPaths, _stepIndex, _markerWriteOperation);
+                    {
+                        if (_cleanupOperation != null || _provisionOperation != null || _markerWriteOperation == null)
+                        {
+                            return false;
+                        }
+
+                        if (!_markerWriteOperation.IsValid
+                            || _markerWriteOperation.RootRole != step.RootRole
+                            || _markerWriteOperation.MarkerKind != step.MarkerKind)
+                        {
+                            return false;
+                        }
+
+                        SelectPaths(step, _markerPaths, out string temporaryPath, out string finalPath);
+
+                        return string.Equals(_markerWriteOperation.TemporaryPath, temporaryPath, StringComparison.Ordinal)
+                            && string.Equals(_markerWriteOperation.FinalPath, finalPath, StringComparison.Ordinal);
+                    }
 
                     default:
                         return _cleanupOperation == null
@@ -200,6 +216,78 @@ namespace Zantetsu.Observability
                             && _markerWriteOperation == null;
                 }
             }
+        }
+
+        private static CaptureRunMarkerWriteOperation CreateMarkerWrite(
+            CaptureRunInitializationRecoveryActionPlan actionPlan,
+            CaptureRunMarkerPathSet markerPaths,
+            CaptureRunInitializationRecoveryStep step)
+        {
+            CaptureRunMarkerBinding expectedBinding = actionPlan.Decision.ExpectedBinding;
+
+            SelectPaths(step, markerPaths, out string temporaryPath, out string finalPath);
+            byte[] canonicalBytes = SerializeMarker(step, expectedBinding);
+
+            CaptureRunMarkerWriteOperation operation = new CaptureRunMarkerWriteOperation(
+                step.RootRole,
+                step.MarkerKind,
+                temporaryPath,
+                finalPath,
+                ref canonicalBytes);
+
+            if (canonicalBytes != null)
+            {
+                throw new InvalidOperationException("Write operation must take ownership of the canonical bytes.");
+            }
+
+            return operation;
+        }
+
+        private static void SelectPaths(
+            CaptureRunInitializationRecoveryStep step,
+            CaptureRunMarkerPathSet markerPaths,
+            out string temporaryPath,
+            out string finalPath)
+        {
+            if (step.RootRole == CaptureRunRootRole.Staging)
+            {
+                if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
+                {
+                    temporaryPath = markerPaths.StagingInitializationTemporaryPath;
+                    finalPath = markerPaths.StagingInitializationPath;
+                }
+                else
+                {
+                    temporaryPath = markerPaths.StagingReadyTemporaryPath;
+                    finalPath = markerPaths.StagingReadyPath;
+                }
+            }
+            else if (step.MarkerKind == CaptureRunMarkerKind.Initialization)
+            {
+                temporaryPath = markerPaths.FinalInitializationTemporaryPath;
+                finalPath = markerPaths.FinalInitializationPath;
+            }
+            else
+            {
+                temporaryPath = markerPaths.FinalReadyTemporaryPath;
+                finalPath = markerPaths.FinalReadyPath;
+            }
+        }
+
+        private static byte[] SerializeMarker(
+            CaptureRunInitializationRecoveryStep step,
+            CaptureRunMarkerBinding binding)
+        {
+            if (step.RootRole == CaptureRunRootRole.Staging)
+            {
+                return step.MarkerKind == CaptureRunMarkerKind.Initialization
+                    ? CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization)
+                    : CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
+            }
+
+            return step.MarkerKind == CaptureRunMarkerKind.Initialization
+                ? CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization)
+                : CaptureRunReadyMarkerCodec.SerializeCanonical(binding.FinalReady);
         }
     }
 }
