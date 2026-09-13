@@ -10,7 +10,7 @@ namespace Zantetsu.Observability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The constructor re-verifies every correlation itself rather than
+    /// The constructor re-verifies the correlations it can see rather than
     /// trusting the coordinator: all eight references must be non-null, the two
     /// provision receipts must share one issuer, the four write receipts must
     /// share one issuer, the provision operations must be the staging and final
@@ -18,6 +18,11 @@ namespace Zantetsu.Observability
     /// describe an operation that is one of the four the marker paths name.
     /// <see cref="IsValid"/> recomputes the same checks from the stored values
     /// without an independent flag.
+    /// </para>
+    /// <para>
+    /// The initialization id is kept as the coordinator supplied it and is only
+    /// ever checked for being present. It is never re-derived from the marker
+    /// bytes, and no marker is decoded or hashed here to corroborate it.
     /// </para>
     /// <para>
     /// <see cref="RootLayout"/> and <see cref="TestRunId"/> are forwarded from
@@ -86,7 +91,7 @@ namespace Zantetsu.Observability
                 throw new ArgumentNullException(nameof(finalReadyWrite));
             }
 
-            if (!CorrelationsHold(markerPaths, stagingProvision, finalProvision, stagingInitializationWrite, finalInitializationWrite, stagingReadyWrite, finalReadyWrite))
+            if (!CorrelationsHold(markerPaths, runInitializationId, stagingProvision, finalProvision, stagingInitializationWrite, finalInitializationWrite, stagingReadyWrite, finalReadyWrite))
             {
                 throw new ArgumentException("Execution receipt inputs are not mutually correlated.");
             }
@@ -121,10 +126,11 @@ namespace Zantetsu.Observability
 
         internal string RunInitializationId => _runInitializationId;
 
-        internal bool IsValid => CorrelationsHold(_markerPaths, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
+        internal bool IsValid => CorrelationsHold(_markerPaths, _runInitializationId, _stagingProvision, _finalProvision, _stagingInitializationWrite, _finalInitializationWrite, _stagingReadyWrite, _finalReadyWrite);
 
         private static bool CorrelationsHold(
             CaptureRunMarkerPathSet markerPaths,
+            string runInitializationId,
             CaptureRunRootProvisionReceipt stagingProvision,
             CaptureRunRootProvisionReceipt finalProvision,
             CaptureRunMarkerWriteReceipt stagingInitializationWrite,
@@ -133,6 +139,7 @@ namespace Zantetsu.Observability
             CaptureRunMarkerWriteReceipt finalReadyWrite)
         {
             if (markerPaths == null
+                || runInitializationId == null
                 || stagingProvision == null
                 || finalProvision == null
                 || stagingInitializationWrite == null
