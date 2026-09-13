@@ -1165,10 +1165,9 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator executionCoordinator = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeMarkerWriter());
-            return executionCoordinator.Execute(documents);
+            return executionCoordinator.Execute(layout, InitId);
         }
 
         private static void ParkAtSubmittedPublish(

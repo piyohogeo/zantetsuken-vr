@@ -238,11 +238,10 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator executionCoordinator = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(new List<string>()),
                 new FakeWriter(new List<string>()));
-            return executionCoordinator.Execute(documents);
+            return executionCoordinator.Execute(layout, InitId);
         }
 
         private static CaptureRunLockLease MakeLease(CaptureRunRootLayout layout, List<string> disposeLog, out FakeHandle first, out FakeHandle second)

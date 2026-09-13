@@ -251,8 +251,8 @@ namespace Zantetsu.Core.Tests
             provisioner.ProvisionNew(StagingProvision(layout));
             provisioner.ProvisionNew(FinalProvision(layout));
 
-            CaptureRunInitializationDocumentSet documents = MakeDocuments(layout);
-            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
+            CaptureRunMarkerBinding markers = MakeMarkers(layout);
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
 
             CaptureRunMarkerWriteOperation[] operations =
             {
@@ -261,25 +261,25 @@ namespace Zantetsu.Core.Tests
                     CaptureRunMarkerKind.Initialization,
                     markerPaths.StagingInitializationTemporaryPath,
                     markerPaths.StagingInitializationPath,
-                    documents.GetStagingInitializationBytes()),
+                    CaptureRunInitializationMarkerCodec.SerializeCanonical(markers.StagingInitialization)),
                 new CaptureRunMarkerWriteOperation(
                     CaptureRunRootRole.Final,
                     CaptureRunMarkerKind.Initialization,
                     markerPaths.FinalInitializationTemporaryPath,
                     markerPaths.FinalInitializationPath,
-                    documents.GetFinalInitializationBytes()),
+                    CaptureRunInitializationMarkerCodec.SerializeCanonical(markers.FinalInitialization)),
                 new CaptureRunMarkerWriteOperation(
                     CaptureRunRootRole.Staging,
                     CaptureRunMarkerKind.Ready,
                     markerPaths.StagingReadyTemporaryPath,
                     markerPaths.StagingReadyPath,
-                    documents.GetStagingReadyBytes()),
+                    CaptureRunReadyMarkerCodec.SerializeCanonical(markers.StagingReady)),
                 new CaptureRunMarkerWriteOperation(
                     CaptureRunRootRole.Final,
                     CaptureRunMarkerKind.Ready,
                     markerPaths.FinalReadyTemporaryPath,
                     markerPaths.FinalReadyPath,
-                    documents.GetFinalReadyBytes()),
+                    CaptureRunReadyMarkerCodec.SerializeCanonical(markers.StagingReady)),
             };
 
             foreach (CaptureRunMarkerWriteOperation operation in operations)
@@ -306,7 +306,7 @@ namespace Zantetsu.Core.Tests
                 new CaptureRunInitializationExecutionCoordinator(
                     CaptureRunRootOsProvisioner.Create(),
                     CaptureRunMarkerOsAtomicWriter.Create())
-                .Execute(MakeDocuments(layout));
+                .Execute(layout, InitId);
 
             Assert.That(receipt, Is.Not.Null);
 
@@ -340,22 +340,25 @@ namespace Zantetsu.Core.Tests
         // Helpers
         // -------------------------------------------------------------------
 
-        private static CaptureRunInitializationDocumentSet MakeDocuments(CaptureRunRootLayout layout)
+        private static CaptureRunMarkerBinding MakeMarkers(CaptureRunRootLayout layout)
         {
-            return new CaptureRunInitializationDocumentSet(layout, InitId);
+            return new CaptureRunMarkerBinding(
+                layout.TestRunId,
+                InitId,
+                layout.StagingRunRootSha256,
+                layout.FinalRunRootSha256);
         }
 
         private static CaptureRunMarkerWriteOperation StagingInitializationWrite(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents = MakeDocuments(layout);
-            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(layout);
 
             return new CaptureRunMarkerWriteOperation(
                 CaptureRunRootRole.Staging,
                 CaptureRunMarkerKind.Initialization,
                 markerPaths.StagingInitializationTemporaryPath,
                 markerPaths.StagingInitializationPath,
-                documents.GetStagingInitializationBytes());
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(MakeMarkers(layout).StagingInitialization));
         }
 
         /// <summary>

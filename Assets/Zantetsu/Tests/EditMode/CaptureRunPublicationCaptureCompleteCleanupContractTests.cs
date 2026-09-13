@@ -5625,10 +5625,9 @@ namespace Zantetsu.Core.Tests
             out CaptureRunInitializationSessionOwnershipLease owner,
             out CaptureRunLockIdentityEvidence lockIdentityEvidence)
         {
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator execution = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(documents);
+            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(layout, InitId);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
 
             CaptureRunLockLease lease = MakeLease(layout);

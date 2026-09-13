@@ -120,10 +120,9 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator executionCoordinator = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
-            return executionCoordinator.Execute(documents);
+            return executionCoordinator.Execute(layout, InitId);
         }
 
         private static CaptureRunInitializationRecoveryOrchestrationResult MakeRecoveryResult(

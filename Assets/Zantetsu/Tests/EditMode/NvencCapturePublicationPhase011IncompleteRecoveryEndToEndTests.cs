@@ -286,8 +286,11 @@ namespace Zantetsu.Core.Tests
             CaptureRunRootLayout layout = new CaptureRunRootLayout(
                 Path.Combine(root, "staging"), Path.Combine(root, "final"), 1);
 
-            CaptureRunInitializationDocumentSet documents =
-                new CaptureRunInitializationDocumentSet(layout, InitId);
+            CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                layout.TestRunId,
+                InitId,
+                layout.StagingRunRootSha256,
+                layout.FinalRunRootSha256);
 
             string chunksDirectory = Path.Combine(layout.StagingRunRoot, ChunksDirectoryName);
             Directory.CreateDirectory(chunksDirectory);
@@ -295,10 +298,10 @@ namespace Zantetsu.Core.Tests
 
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, RunInitializationMarkerName),
-                documents.GetStagingInitializationBytes());
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization));
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, RunReadyMarkerName),
-                documents.GetStagingReadyBytes());
+                CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
 
             // Uncommitted NVENC artifacts at their fixed paths. Their content
             // is never read by this path, so any small bytes will do.
@@ -314,10 +317,10 @@ namespace Zantetsu.Core.Tests
 
             File.WriteAllBytes(
                 Path.Combine(layout.FinalRunRoot, RunInitializationMarkerName),
-                documents.GetFinalInitializationBytes());
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.FinalInitialization));
             File.WriteAllBytes(
                 Path.Combine(layout.FinalRunRoot, RunReadyMarkerName),
-                documents.GetFinalReadyBytes());
+                CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
 
             // The state this recovery is about, as a file set: no finished
             // plan, and a final side holding nothing but its markers.

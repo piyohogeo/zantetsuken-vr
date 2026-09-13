@@ -285,10 +285,9 @@ namespace Zantetsu.Core.Tests
             _owners.Add(owner);
             identity = CaptureRunLockIdentityEvidence.Create(owner, owner.LockPathSet);
 
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator execution = new CaptureRunInitializationExecutionCoordinator(
                 new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(documents);
+            CaptureRunInitializationExecutionReceipt receipt = execution.Execute(layout, InitId);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(receipt);
 
             CaptureRunInitializationSessionIssue issue = CaptureRunInitializationSession.IssuanceProof.Mint(owner, identity, evidence);

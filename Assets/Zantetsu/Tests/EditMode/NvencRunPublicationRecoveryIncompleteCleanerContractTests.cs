@@ -1038,25 +1038,31 @@ namespace Zantetsu.Core.Tests
 
             internal void Seed(bool temporaryPresent, bool partialChunk, bool finalizedChunk)
             {
-                CaptureRunInitializationDocumentSet documents =
-                    new CaptureRunInitializationDocumentSet(Layout, InitId);
-                StagingInitBytes = documents.GetStagingInitializationBytes();
+                CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                    Layout.TestRunId,
+                    InitId,
+                    Layout.StagingRunRootSha256,
+                    Layout.FinalRunRootSha256);
+                StagingInitBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization);
 
-                CaptureRunInitializationDocumentSet foreign =
-                    new CaptureRunInitializationDocumentSet(Layout, OtherInitId);
-                ForeignStagingInitBytes = foreign.GetStagingInitializationBytes();
+                CaptureRunMarkerBinding foreign = new CaptureRunMarkerBinding(
+                    Layout.TestRunId,
+                    OtherInitId,
+                    Layout.StagingRunRootSha256,
+                    Layout.FinalRunRootSha256);
+                ForeignStagingInitBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(foreign.StagingInitialization);
                 ForeignReadyBytes = MakeForeignPeerReadyBytes();
 
                 FileSystem.AddDirectory(StagingRunsPath);
                 FileSystem.AddDirectory(Layout.StagingRunRoot);
                 FileSystem.AddDirectory(ChunksPath);
-                FileSystem.AddFile(StagingReadyPath, documents.GetStagingReadyBytes());
+                FileSystem.AddFile(StagingReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
                 FileSystem.AddFile(StagingInitPath, StagingInitBytes);
 
                 FileSystem.AddDirectory(FinalRunsPath);
                 FileSystem.AddDirectory(Layout.FinalRunRoot);
-                FileSystem.AddFile(FinalReadyPath, documents.GetFinalReadyBytes());
-                FileSystem.AddFile(FinalInitPath, documents.GetFinalInitializationBytes());
+                FileSystem.AddFile(FinalReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
+                FileSystem.AddFile(FinalInitPath, CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.FinalInitialization));
 
                 if (temporaryPresent)
                 {
@@ -1116,8 +1122,11 @@ namespace Zantetsu.Core.Tests
 
             internal void Populate()
             {
-                CaptureRunInitializationDocumentSet documents =
-                    new CaptureRunInitializationDocumentSet(Layout, InitId);
+                CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                    Layout.TestRunId,
+                    InitId,
+                    Layout.StagingRunRootSha256,
+                    Layout.FinalRunRootSha256);
 
                 string chunks = Path.Combine(Layout.StagingRunRoot, ChunksDirectoryName);
                 Directory.CreateDirectory(chunks);
@@ -1130,16 +1139,16 @@ namespace Zantetsu.Core.Tests
                     Path.Combine(chunks, PartialChunkName), new byte[] { 10, 20, 30, 40 });
                 File.WriteAllBytes(
                     Path.Combine(Layout.StagingRunRoot, RunReadyMarkerName),
-                    documents.GetStagingReadyBytes());
+                    CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
                 File.WriteAllBytes(
                     Path.Combine(Layout.StagingRunRoot, RunInitializationMarkerName),
-                    documents.GetStagingInitializationBytes());
+                    CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization));
                 File.WriteAllBytes(
                     Path.Combine(Layout.FinalRunRoot, RunReadyMarkerName),
-                    documents.GetFinalReadyBytes());
+                    CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
                 File.WriteAllBytes(
                     Path.Combine(Layout.FinalRunRoot, RunInitializationMarkerName),
-                    documents.GetFinalInitializationBytes());
+                    CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.FinalInitialization));
             }
         }
 

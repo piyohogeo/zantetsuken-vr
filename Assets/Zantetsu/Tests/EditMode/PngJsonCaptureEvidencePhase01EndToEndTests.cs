@@ -307,11 +307,9 @@ namespace Zantetsu.Core.Tests
             _owners.Add(scope.Owner);
             scope.Identity = CaptureRunLockIdentityEvidence.Create(scope.Owner, scope.Owner.LockPathSet);
 
-            CaptureRunInitializationDocumentSet documents =
-                new CaptureRunInitializationDocumentSet(scope.Layout, InitId);
             CaptureRunInitializationExecutionCoordinator execution =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeWriter());
-            CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(documents);
+            CaptureRunInitializationExecutionReceipt executionReceipt = execution.Execute(scope.Layout, InitId);
             CaptureRunInitializationReadyEvidence evidence = CaptureRunInitializationReadyEvidence.FromFresh(executionReceipt);
             CaptureRunInitializationSessionIssue issue =
                 CaptureRunInitializationSession.IssuanceProof.Mint(scope.Owner, scope.Identity, evidence);

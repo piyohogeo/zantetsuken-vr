@@ -148,9 +148,8 @@ namespace Zantetsu.Observability
 
             string runInitializationId = _initializationIdSource.Create();
 
-            CaptureRunInitializationDocumentSet documents = new CaptureRunInitializationDocumentSet(recoveryResult.RootLayout, runInitializationId);
-
-            CaptureRunInitializationExecutionReceipt receipt = _executionCoordinator.Execute(documents);
+            CaptureRunInitializationExecutionReceipt receipt =
+                _executionCoordinator.Execute(recoveryResult.RootLayout, runInitializationId);
 
             if (receipt == null
                 || !receipt.IsValid

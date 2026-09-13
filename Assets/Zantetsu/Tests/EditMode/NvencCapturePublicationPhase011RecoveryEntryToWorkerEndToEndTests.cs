@@ -473,16 +473,19 @@ namespace Zantetsu.Core.Tests
                 },
                 MakeFrameEvidence());
 
-            CaptureRunInitializationDocumentSet documents =
-                new CaptureRunInitializationDocumentSet(layout, InitId);
+            CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                layout.TestRunId,
+                InitId,
+                layout.StagingRunRootSha256,
+                layout.FinalRunRootSha256);
 
             Directory.CreateDirectory(Path.Combine(layout.StagingRunRoot, ChunksDirectoryName));
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, RunInitializationMarkerName),
-                documents.GetStagingInitializationBytes());
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization));
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, RunReadyMarkerName),
-                documents.GetStagingReadyBytes());
+                CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
             File.WriteAllBytes(
                 Path.Combine(layout.StagingRunRoot, PublicationPlanName),
                 CapturePublicationPlanCodec.SerializeCanonical(plan));
@@ -495,10 +498,10 @@ namespace Zantetsu.Core.Tests
             File.WriteAllBytes(finalChunkPath, chunkBytes);
             File.WriteAllBytes(
                 Path.Combine(layout.FinalRunRoot, RunInitializationMarkerName),
-                documents.GetFinalInitializationBytes());
+                CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.FinalInitialization));
             File.WriteAllBytes(
                 Path.Combine(layout.FinalRunRoot, RunReadyMarkerName),
-                documents.GetFinalReadyBytes());
+                CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
 
             Assert.That(
                 File.Exists(Path.Combine(layout.FinalRunRoot, CaptureIndexName)), Is.False);

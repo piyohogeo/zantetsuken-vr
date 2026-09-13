@@ -383,13 +383,16 @@ namespace Zantetsu.Core.Tests
 
             internal void WriteMarkers()
             {
-                CaptureRunInitializationDocumentSet documents =
-                    new CaptureRunInitializationDocumentSet(Layout, InitId);
+                CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                    Layout.TestRunId,
+                    InitId,
+                    Layout.StagingRunRootSha256,
+                    Layout.FinalRunRootSha256);
 
-                File.WriteAllBytes(StagingInitPath, documents.GetStagingInitializationBytes());
-                File.WriteAllBytes(StagingReadyPath, documents.GetStagingReadyBytes());
-                File.WriteAllBytes(FinalInitPath, documents.GetFinalInitializationBytes());
-                File.WriteAllBytes(FinalReadyPath, documents.GetFinalReadyBytes());
+                File.WriteAllBytes(StagingInitPath, CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization));
+                File.WriteAllBytes(StagingReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
+                File.WriteAllBytes(FinalInitPath, CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.FinalInitialization));
+                File.WriteAllBytes(FinalReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
             }
         }
 
@@ -519,11 +522,9 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents =
-                new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator executionCoordinator =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeMarkerWriter());
-            return executionCoordinator.Execute(documents);
+            return executionCoordinator.Execute(layout, InitId);
         }
 
         private static CaptureFrameWorkToken MakeToken(long frameId)

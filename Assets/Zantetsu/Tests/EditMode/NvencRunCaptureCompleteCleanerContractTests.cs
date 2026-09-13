@@ -413,9 +413,12 @@ namespace Zantetsu.Core.Tests
 
                 // A ready marker minted for a different Run initialization: the
                 // first two steps succeed and the third refuses.
-                CaptureRunInitializationDocumentSet foreign =
-                    new CaptureRunInitializationDocumentSet(sandbox.Layout, ForeignInitId);
-                File.WriteAllBytes(sandbox.StagingReadyPath, foreign.GetStagingReadyBytes());
+                CaptureRunMarkerBinding foreign = new CaptureRunMarkerBinding(
+                    sandbox.Layout.TestRunId,
+                    ForeignInitId,
+                    sandbox.Layout.StagingRunRootSha256,
+                    sandbox.Layout.FinalRunRootSha256);
+                File.WriteAllBytes(sandbox.StagingReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(foreign.StagingReady));
 
                 RecordingFileSystem fileSystem = new RecordingFileSystem(CaptureIndexCommitFileSystem.Create());
                 NvencRunCaptureCompleteCleanupAttemptResult result =
@@ -458,9 +461,12 @@ namespace Zantetsu.Core.Tests
                 // An initialization marker for a different Run: the ready
                 // marker's peer binding no longer holds, so step 3 refuses
                 // before the ready marker is deleted.
-                CaptureRunInitializationDocumentSet foreign =
-                    new CaptureRunInitializationDocumentSet(sandbox.Layout, ForeignInitId);
-                File.WriteAllBytes(sandbox.StagingInitPath, foreign.GetStagingInitializationBytes());
+                CaptureRunMarkerBinding foreign = new CaptureRunMarkerBinding(
+                    sandbox.Layout.TestRunId,
+                    ForeignInitId,
+                    sandbox.Layout.StagingRunRootSha256,
+                    sandbox.Layout.FinalRunRootSha256);
+                File.WriteAllBytes(sandbox.StagingInitPath, CaptureRunInitializationMarkerCodec.SerializeCanonical(foreign.StagingInitialization));
 
                 RecordingFileSystem fileSystem = new RecordingFileSystem(CaptureIndexCommitFileSystem.Create());
                 NvencRunCaptureCompleteCleanupAttemptResult result =
@@ -805,11 +811,14 @@ namespace Zantetsu.Core.Tests
 
             internal void Populate(NvencRunCaptureCompleteCleanupOperation operation)
             {
-                CaptureRunInitializationDocumentSet documents =
-                    new CaptureRunInitializationDocumentSet(Layout, InitId);
+                CaptureRunMarkerBinding documents = new CaptureRunMarkerBinding(
+                    Layout.TestRunId,
+                    InitId,
+                    Layout.StagingRunRootSha256,
+                    Layout.FinalRunRootSha256);
 
-                File.WriteAllBytes(StagingInitPath, documents.GetStagingInitializationBytes());
-                File.WriteAllBytes(StagingReadyPath, documents.GetStagingReadyBytes());
+                File.WriteAllBytes(StagingInitPath, CaptureRunInitializationMarkerCodec.SerializeCanonical(documents.StagingInitialization));
+                File.WriteAllBytes(StagingReadyPath, CaptureRunReadyMarkerCodec.SerializeCanonical(documents.StagingReady));
                 File.WriteAllBytes(
                     StagingPlanPath, CapturePublicationPlanCodec.SerializeCanonical(operation.Plan));
 
@@ -1016,11 +1025,9 @@ namespace Zantetsu.Core.Tests
 
         private static CaptureRunInitializationExecutionReceipt MakeExecutionReceipt(CaptureRunRootLayout layout)
         {
-            CaptureRunInitializationDocumentSet documents =
-                new CaptureRunInitializationDocumentSet(layout, InitId);
             CaptureRunInitializationExecutionCoordinator executionCoordinator =
                 new CaptureRunInitializationExecutionCoordinator(new FakeProvisioner(), new FakeMarkerWriter());
-            return executionCoordinator.Execute(documents);
+            return executionCoordinator.Execute(layout, InitId);
         }
 
         private static CaptureFrameWorkToken MakeToken(long frameId)

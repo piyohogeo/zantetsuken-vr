@@ -18,10 +18,12 @@ namespace Zantetsu.Observability
     /// re-rooted, case-folded, Unicode-normalized, or separator-converted.
     /// </para>
     /// <para>
-    /// The byte array is held as given, without copying, and validation never
-    /// changes its contents. <see cref="GetCanonicalBytes"/> returns a fresh
-    /// defensive copy, so what a caller reads back can never reach the held
-    /// array. Callers pass an array they have just built and do not keep using.
+    /// The byte array is held as given, without copying, and nothing here
+    /// changes its contents — not validation, and not the operation afterwards.
+    /// Canonical bytes are immutable once serialized, so two operations may be
+    /// given the same array; the two <c>run.ready</c> writes of one Run are.
+    /// <see cref="GetCanonicalBytes"/> returns a fresh defensive copy, so what
+    /// a caller reads back can never reach the held array.
     /// </para>
     /// <para>
     /// This type holds no document set, plan, binding, or marker, calls no

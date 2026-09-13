@@ -20,12 +20,14 @@ namespace Zantetsu.Observability
     /// <para>
     /// A partial failure may leave roots, temporary entries, or final markers
     /// on disk; resumption is the responsibility of a future recovery
-    /// coordinator, not of this type. The four write operations are built from
-    /// the document set before any backend is called, so a rejected document
-    /// set stops the sequence before the first side effect. This coordinator
-    /// performs no filesystem work itself, owns no operation or receipt across
-    /// calls, never disposes its dependencies, and mutates no document set or
-    /// canonical bytes.
+    /// coordinator, not of this type. The marker paths, the marker binding,
+    /// the three canonical byte arrays and the four write operations are all
+    /// produced before any backend is called, so a rejected root layout or
+    /// initialization id stops the sequence before the first side effect. The
+    /// two ready operations share the one ready array, which nothing mutates
+    /// after it is serialized. This coordinator performs no filesystem work
+    /// itself, owns no operation or receipt across calls, never disposes its
+    /// dependencies, and mutates no canonical bytes.
     /// Thread selection is the caller's responsibility.
     /// </para>
     /// </remarks>
@@ -52,52 +54,54 @@ namespace Zantetsu.Observability
             _markerWriter = markerWriter;
         }
 
-        internal CaptureRunInitializationExecutionReceipt Execute(CaptureRunInitializationDocumentSet documents)
+        internal CaptureRunInitializationExecutionReceipt Execute(
+            CaptureRunRootLayout rootLayout,
+            string runInitializationId)
         {
-            if (documents == null)
-            {
-                throw new ArgumentNullException(nameof(documents));
-            }
-
-            CaptureRunMarkerPathSet markerPaths = documents.MarkerPaths;
-            if (markerPaths == null)
-            {
-                throw new ArgumentException("Documents must hold a marker path set.", nameof(documents));
-            }
-
-            CaptureRunRootLayout rootLayout = markerPaths.RootLayout;
             if (rootLayout == null)
             {
-                throw new ArgumentException("Marker path set must hold a root layout.", nameof(documents));
+                throw new ArgumentNullException(nameof(rootLayout));
             }
+
+            CaptureRunMarkerPathSet markerPaths = new CaptureRunMarkerPathSet(rootLayout);
+
+            CaptureRunMarkerBinding binding = new CaptureRunMarkerBinding(
+                rootLayout.TestRunId,
+                runInitializationId,
+                rootLayout.StagingRunRootSha256,
+                rootLayout.FinalRunRootSha256);
+
+            byte[] stagingInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.StagingInitialization);
+            byte[] finalInitializationBytes = CaptureRunInitializationMarkerCodec.SerializeCanonical(binding.FinalInitialization);
+            byte[] readyBytes = CaptureRunReadyMarkerCodec.SerializeCanonical(binding.StagingReady);
 
             CaptureRunMarkerWriteOperation stagingInitialization = new CaptureRunMarkerWriteOperation(
                 CaptureRunRootRole.Staging,
                 CaptureRunMarkerKind.Initialization,
                 markerPaths.StagingInitializationTemporaryPath,
                 markerPaths.StagingInitializationPath,
-                documents.GetStagingInitializationBytes());
+                stagingInitializationBytes);
 
             CaptureRunMarkerWriteOperation finalInitialization = new CaptureRunMarkerWriteOperation(
                 CaptureRunRootRole.Final,
                 CaptureRunMarkerKind.Initialization,
                 markerPaths.FinalInitializationTemporaryPath,
                 markerPaths.FinalInitializationPath,
-                documents.GetFinalInitializationBytes());
+                finalInitializationBytes);
 
             CaptureRunMarkerWriteOperation stagingReady = new CaptureRunMarkerWriteOperation(
                 CaptureRunRootRole.Staging,
                 CaptureRunMarkerKind.Ready,
                 markerPaths.StagingReadyTemporaryPath,
                 markerPaths.StagingReadyPath,
-                documents.GetStagingReadyBytes());
+                readyBytes);
 
             CaptureRunMarkerWriteOperation finalReady = new CaptureRunMarkerWriteOperation(
                 CaptureRunRootRole.Final,
                 CaptureRunMarkerKind.Ready,
                 markerPaths.FinalReadyTemporaryPath,
                 markerPaths.FinalReadyPath,
-                documents.GetFinalReadyBytes());
+                readyBytes);
 
             CaptureRunRootProvisionOperation stagingProvisionOperation = new CaptureRunRootProvisionOperation(rootLayout, CaptureRunRootRole.Staging);
             CaptureRunRootProvisionReceipt stagingProvisionReceipt = ValidateProvisionReceipt(
@@ -121,7 +125,7 @@ namespace Zantetsu.Observability
 
             return new CaptureRunInitializationExecutionReceipt(
                 markerPaths,
-                documents.RunInitializationId,
+                binding.RunInitializationId,
                 stagingProvisionReceipt,
                 finalProvisionReceipt,
                 stagingInitializationWriteReceipt,

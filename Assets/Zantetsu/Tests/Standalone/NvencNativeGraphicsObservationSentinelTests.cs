@@ -2255,8 +2255,7 @@ namespace Zantetsu.Observability.StandaloneTests
             CaptureRunInitializationExecutionReceipt receipt =
                 new CaptureRunInitializationExecutionCoordinator(
                     new SentinelRootProvisioner(), new SentinelMarkerWriter())
-                .Execute(new CaptureRunInitializationDocumentSet(
-                    layout, SentinelRunInitId));
+                .Execute(layout, SentinelRunInitId);
 
             CaptureRunLockPathSet pathSet = new CaptureRunLockPathSet(layout);
             CaptureRunLockLease lease = new CaptureRunLockLease(
