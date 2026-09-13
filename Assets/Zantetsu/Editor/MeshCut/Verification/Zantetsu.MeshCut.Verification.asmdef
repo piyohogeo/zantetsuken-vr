@@ -1,0 +1,21 @@
+{
+    "name": "Zantetsu.MeshCut.Verification",
+    "rootNamespace": "Zantetsu.MeshCut.Verification",
+    "references": [
+        "Zantetsu.MeshCut",
+        "Unity.Mathematics",
+        "Unity.Collections",
+        "Unity.Burst"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
