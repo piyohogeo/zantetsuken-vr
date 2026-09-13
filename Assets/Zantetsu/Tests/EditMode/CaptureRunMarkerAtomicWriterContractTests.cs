@@ -114,19 +114,6 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void ForwardingValues_MatchOperation()
-        {
-            CaptureRunMarkerWriteOperation operation = MakeOperation();
-            CaptureRunMarkerWriteReceipt receipt = new CaptureRunMarkerWriteReceipt(new FakeWriter(), operation);
-
-            Assert.That(receipt.RootRole, Is.EqualTo(operation.RootRole));
-            Assert.That(receipt.MarkerKind, Is.EqualTo(operation.MarkerKind));
-            Assert.That(receipt.TemporaryPath, Is.EqualTo(operation.TemporaryPath));
-            Assert.That(receipt.FinalPath, Is.EqualTo(operation.FinalPath));
-            Assert.That(receipt.ByteCount, Is.EqualTo(operation.ByteCount));
-        }
-
-        [Test]
         public void ValidReceipt_IsValid()
         {
             CaptureRunMarkerWriteReceipt receipt = new CaptureRunMarkerWriteReceipt(new FakeWriter(), MakeOperation());

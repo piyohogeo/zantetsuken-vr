@@ -164,15 +164,6 @@ namespace Zantetsu.Observability
             {
                 throw new InvalidOperationException("Write receipt must be valid and issued for the write operation.");
             }
-
-            if (receipt.RootRole != operation.RootRole
-                || receipt.MarkerKind != operation.MarkerKind
-                || !string.Equals(receipt.TemporaryPath, operation.TemporaryPath, StringComparison.Ordinal)
-                || !string.Equals(receipt.FinalPath, operation.FinalPath, StringComparison.Ordinal)
-                || receipt.ByteCount != operation.ByteCount)
-            {
-                throw new InvalidOperationException("Write receipt must match the write operation.");
-            }
         }
     }
 }

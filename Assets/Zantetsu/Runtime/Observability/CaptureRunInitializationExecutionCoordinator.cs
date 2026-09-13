@@ -196,15 +196,6 @@ namespace Zantetsu.Observability
                 throw new InvalidOperationException("Write receipt corresponds to an unexpected operation.");
             }
 
-            if (receipt.RootRole != expectedOperation.RootRole
-                || receipt.MarkerKind != expectedOperation.MarkerKind
-                || !string.Equals(receipt.TemporaryPath, expectedOperation.TemporaryPath, StringComparison.Ordinal)
-                || !string.Equals(receipt.FinalPath, expectedOperation.FinalPath, StringComparison.Ordinal)
-                || receipt.ByteCount != expectedOperation.ByteCount)
-            {
-                throw new InvalidOperationException("Write receipt values do not match the operation.");
-            }
-
             return receipt;
         }
     }

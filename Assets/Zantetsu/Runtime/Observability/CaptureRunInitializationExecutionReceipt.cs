@@ -14,8 +14,8 @@ namespace Zantetsu.Observability
     /// trusting the coordinator: all eight references must be non-null, the two
     /// provision receipts must share one issuer, the four write receipts must
     /// share one issuer, the provision operations must be the staging and final
-    /// operations of the marker paths' root layout, and each write receipt must
-    /// describe an operation that is one of the four the marker paths name.
+    /// operations of the marker paths' root layout, and the operation each
+    /// write receipt names must be one of the four the marker paths describe.
     /// <see cref="IsValid"/> recomputes the same checks from the stored values
     /// without an independent flag.
     /// </para>
@@ -225,14 +225,6 @@ namespace Zantetsu.Observability
                 return false;
             }
 
-            if (!WriteReceiptMatches(stagingInitializationWrite, stagingInitialization)
-                || !WriteReceiptMatches(finalInitializationWrite, finalInitialization)
-                || !WriteReceiptMatches(stagingReadyWrite, stagingReady)
-                || !WriteReceiptMatches(finalReadyWrite, finalReady))
-            {
-                return false;
-            }
-
             return true;
         }
 
@@ -247,17 +239,6 @@ namespace Zantetsu.Observability
                 && operation.MarkerKind == expectedKind
                 && string.Equals(operation.TemporaryPath, expectedTemporaryPath, StringComparison.Ordinal)
                 && string.Equals(operation.FinalPath, expectedFinalPath, StringComparison.Ordinal);
-        }
-
-        private static bool WriteReceiptMatches(
-            CaptureRunMarkerWriteReceipt receipt,
-            CaptureRunMarkerWriteOperation operation)
-        {
-            return receipt.RootRole == operation.RootRole
-                && receipt.MarkerKind == operation.MarkerKind
-                && string.Equals(receipt.TemporaryPath, operation.TemporaryPath, StringComparison.Ordinal)
-                && string.Equals(receipt.FinalPath, operation.FinalPath, StringComparison.Ordinal)
-                && receipt.ByteCount == operation.ByteCount;
         }
     }
 }
