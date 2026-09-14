@@ -119,6 +119,10 @@ Gitでは`Assets`、`Packages`、`ProjectSettings`を管理し、`Library`、`Te
 
 Unity CLIはPoC初期には使用しない。これはEditorやRuntimeに必須ではなく、現時点では実験的な外部管理ツールである。自動テストとビルドはまず固定版`Unity.exe`を明示パスから`-batchmode`で起動する。CI導入時にCLIの成熟度とUnity Pipeline依存を再評価し、導入する場合もプロジェクト形式の変更とは分離する。AI AssistantとHubのソース管理連携も初期作成時は無効とし、既存Gitを使用する。
 
+Windows PCVR向けに生成する標準Playerは、PoC用途のPlayerを含めx64 IL2CPPとし、Development Build／非Development Buildで共通とする。Editor上のEdit Mode／Play Modeおよび開発用HarnessにはPlayer化・IL2CPP化を要求せず、Mono Playerは補助的な機能確認・参考測定に使用してよい。Mono Playerの提供・継続互換性は要求しない。製品性能の判断は14章に従う。
+
+IL2CPP設定の反映と初回Player確認は、次の独立した作業単位で行い、現在接続済みの代表シナリオをx64 IL2CPP Development Playerでbuild・起動・短時間実行できることを確認する。製品性能評価やコンテンツ完成まで延期しない。以後、製品Playerに新しい主要経路を初めて接続する既存Phaseの完了時に、そのPhaseの代表シナリオをIL2CPP Playerで確認する。内部実装だけの作業単位やEditor／HarnessだけのPhaseには追加のPlayer確認を要求せず、全試験のPlayer移植や毎変更のPlayer buildも要求しない。
+
 Unityを更新するときもプロジェクトは作り直さない。Unity Hubへ新旧Editorを並存させ、Gitの専用アップグレードブランチでバックアップ、Package互換性確認、Editor変換、再インポート、固定テスト、非VR性能基準、XRスモークテストの順に検証する。合格するまで旧Editorを削除せず、`ProjectVersion.txt`、`manifest.json`、`packages-lock.json`の変更をレビュー対象とする。
 
 Unityメジャー版ごとの恒久的なプロジェクト複製は作らず、リポジトリ直下の1プロジェクトを正本とする。同時比較が必要な更新作業だけ、リポジトリ外の兄弟ディレクトリへGit worktreeを作成し、検証後に破棄する。`Library`等の生成物はworktree間で共有しない。
@@ -1119,6 +1123,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-174 | Provisional Sibling D6 | `ProvisionalSeparationConstraint`は7.1の固定anchor-offset D6を採用し、方式比較・動的Limit決定・Actor／Joint Pool導入判断を初期要件から外す | 人間承認済み、2026-09-11。D-132の方式とO-044の法線Limitを確定。有限区間による引止め・運動差を許容し、7.1の既存境界から判明した異常の扱いと資源寿命に従う |
 | D-175 | 短寿命PhysicsSplitTransactionとCommit直列Geometry | 4.2、4.5.6、7.1～7.7、8、21章に従い、Final Physics／Logical Publication、祖先順Geometry Commit、個別退役へ整理する | 人間承認済み、2026-09-12。物理成立不能によるSource退役と正常退役に起因するIncompleteOperationTraceを許容する。新しい公開ID、状態・Reason、監視・復旧、GPU部分範囲freeを設けない |
 | D-176 | 任意LogicalFragment GCとVB回収 | 7.10の寿命Policyと4.5.3のPublished済みVB回収を任意Phase 7.1で導入する。前段への非前倒し・省略条件は15章に従う | 人間承認済み、2026-09-13。消滅・物理変化・固定Occupancy残存の許容と最小確認は7.10に従う |
+| D-177 | Player Scripting Backend | 製品と異なるBackendの測定で製品性能を確定せず、Player固有の不成立を開発終盤まで持ち越さないため、3.3の標準Playerと早期・統合時の動作確認、14章の性能判断を採用する | 人間承認済み、2026-09-14 |
 
 ## 13. 未決事項
 
@@ -1152,6 +1157,8 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | O-048 | Building World D6設定 | L1、A1、共通減衰率rと、建物D6を含む既存Constraint容量の製品値 | 拘束挙動、Joint数、生成・退役・Physics Step費用。倒壊防止率・最大変位・性能SLAは追加しない | Phase 4.3／T-094の少数FixtureとProfilerで判断 |
 
 ## 14. 技術検証項目
+
+製品Playerの性能合否・実行予算を判断する測定は、3.3のIL2CPP Playerを基準とする。性能測定は必要になる既存Phaseで行い、3.3の初回Player動作確認へ測定や性能目標の達成を前倒ししない。Editor／Monoの測定は開発中の参考値とし、機能確認やKernel単体の比較・退行調査に利用できるが、製品性能の確認を代替しない。Development／非Development、観測有無等の実行構成は既存の測定記録で区別し、IL2CPPという名称だけで同条件と扱わない。保存形式は17章の実装詳細とする。本変更だけを理由に完了済みPhaseを再開せず、全試験・過去測定の再実行を要求しない。
 
 4章の共通Player終了出口を最初に接続する既存Phaseでは、終了APIをfakeに置き換えた短いシナリオで、Worker通知だけではlatchが変わらずMain回収時に確定すること、ログ・終了APIより先に受付・Commitが閉じて終了APIを一度だけ呼ぶこと、後続要求でログ・終了処理を重複実行しないことを確認する。専用Test ID・Phase、実Player終了、全エラー直積・競合網羅・診断保存試験は追加しない。
 
@@ -2061,7 +2068,7 @@ PlayerLocomotionRejectedは固定Occupancyへの候補次姿勢Overlapによる�
 
 ### 21.6 性能上の規則
 
-ホットパスでTaskごとのDebug.Log、文字列化、全状態の毎フレームSnapshotを行わない。観測資源をboundedに管理し、記録・回収・保存の負荷と欠落を既存Profilerで確認する。Development Buildでは通常有効、Release Buildでは無効または重大異常だけとする。
+ホットパスでTaskごとのDebug.Log、文字列化、全状態の毎フレームSnapshotを行わない。観測資源をboundedに管理し、記録・回収・保存の負荷と欠落を既存Profilerで確認する。Development Buildでは通常有効、非Development Buildでは無効または重大異常だけとする。
 
 ### 21.7 映像キャプチャとTrace同期
 
