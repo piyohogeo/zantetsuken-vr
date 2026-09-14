@@ -45,6 +45,8 @@ namespace Zantetsu.Core.Tests
         private GameObject waveVisualRoot;
         private Transform[] waveVisuals;
 
+        private GameObject recorderObject;
+
         [SetUp]
         public void SetUp()
         {
@@ -70,6 +72,11 @@ namespace Zantetsu.Core.Tests
 
             // A test that opens the sandbox scene or enters Play Mode destroys
             // these along with the scene they were created in.
+            if (recorderObject != null)
+            {
+                Object.DestroyImmediate(recorderObject);
+            }
+
             if (waveVisualRoot != null)
             {
                 Object.DestroyImmediate(waveVisualRoot);
@@ -277,6 +284,57 @@ namespace Zantetsu.Core.Tests
             Assert.That(property, Is.Not.Null, "the display slot field is gone");
             Assert.That(index, Is.InRange(0, property.arraySize - 1));
             return property.GetArrayElementAtIndex(index).objectReferenceValue as Transform;
+        }
+
+        // A recorder on its own object. Its katana is a private serialized
+        // field set in the scene, so tests set it the way the editor does.
+        private SandboxSlashPoseRecorder CreateRecorder(SandboxRightHandKatana target)
+        {
+            recorderObject = new GameObject("Slash Diagnostics");
+            SandboxSlashPoseRecorder recorder = recorderObject.AddComponent<SandboxSlashPoseRecorder>();
+            if (target != null)
+            {
+                AssignRecorderKatana(recorder, target);
+            }
+
+            return recorder;
+        }
+
+        private static void AssignRecorderKatana(SandboxSlashPoseRecorder recorder, SandboxRightHandKatana target)
+        {
+            SerializedObject serialized = new SerializedObject(recorder);
+            SerializedProperty property = serialized.FindProperty("katana");
+            Assert.That(property, Is.Not.Null, "the recorder's katana field is gone");
+            property.objectReferenceValue = target;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        // Appends tracked samples of a straight sweep to a recording, on the
+        // recording's own clock.
+        private static void AppendSweepToRecording(
+            SandboxSlashPoseRecorder recorder, Quaternion gripRotation, Vector3 step, int count,
+            ref double time, ref Vector3 position)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                time += SampleInterval;
+                position += step;
+                Assert.That(
+                    recorder.TryAppendRecordedSample(new BladePoseSample(0, time, position, gripRotation,
+                        BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                    Is.True);
+            }
+        }
+
+        // Feeds the next replayed samples into a katana the way the recorder's
+        // Update does.
+        private static void ReplayInto(SandboxSlashPoseRecorder recorder, SandboxRightHandKatana target, int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Assert.That(recorder.TryTakeNextReplaySample(i, out BladePoseSample sample), Is.True);
+                target.TryRecordSample(sample);
+            }
         }
 
         // Four display slots under a world-fixed root with identity scale, the
@@ -3061,6 +3119,321 @@ namespace Zantetsu.Core.Tests
             Assert.That(shown, Does.Contain("#0"));
             Assert.That(shown, Does.Contain("closed at"));
             Assert.That(shown, Does.Not.Contain("open"));
+        }
+
+        [Test]
+        public void TheSandboxScene_HasOnePoseRecorderReadingTheKatana()
+        {
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            try
+            {
+                Scene scene = EditorSceneManager.OpenScene(SandboxScenePath, OpenSceneMode.Single);
+
+                List<SandboxSlashPoseRecorder> recorders = new List<SandboxSlashPoseRecorder>();
+                SandboxRightHandKatana sceneFollower = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    recorders.AddRange(root.GetComponentsInChildren<SandboxSlashPoseRecorder>(true));
+                    if (sceneFollower == null)
+                    {
+                        sceneFollower = root.GetComponentInChildren<SandboxRightHandKatana>(true);
+                    }
+                }
+
+                Assert.That(recorders.Count, Is.EqualTo(1), "exactly one pose recorder");
+                Assert.That(sceneFollower, Is.Not.Null);
+
+                SerializedProperty reference = new SerializedObject(recorders[0]).FindProperty("katana");
+                Assert.That(reference, Is.Not.Null, "the recorder's katana field is gone");
+                Assert.That(reference.objectReferenceValue, Is.SameAs(sceneFollower));
+            }
+            finally
+            {
+                if (setup != null && setup.Length > 0)
+                {
+                    EditorSceneManager.RestoreSceneManagerSetup(setup);
+                }
+                else
+                {
+                    EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+                }
+            }
+        }
+
+        [Test]
+        public void Recorder_WithNothingRecorded_CannotReplay()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(null);
+
+            Assert.That(recorder.TryBeginReplay(0.0), Is.False);
+            Assert.That(recorder.IsReplaying, Is.False);
+            Assert.That(recorder.TryTakeNextReplaySample(0, out _), Is.False);
+        }
+
+        [Test]
+        public void Recorder_StopsAtCapacityInsteadOfGrowing()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(null);
+            recorder.BeginRecording();
+
+            int stored = 0;
+            for (int i = 0; i < SandboxSlashPoseRecorder.Capacity + 100; i++)
+            {
+                if (recorder.TryAppendRecordedSample(new BladePoseSample(i, i * SampleInterval, Vector3.zero,
+                        Quaternion.identity, BladeTrackingState.Position | BladeTrackingState.Rotation)))
+                {
+                    stored++;
+                }
+            }
+
+            Assert.That(stored, Is.EqualTo(SandboxSlashPoseRecorder.Capacity));
+            Assert.That(recorder.RecordedSampleCount, Is.EqualTo(SandboxSlashPoseRecorder.Capacity));
+            Assert.That(recorder.IsRecording, Is.False, "a full recording ends itself");
+        }
+
+        [Test]
+        public void Recorder_Clear_ForgetsTheRecordingAndEndsTheReplay()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.BeginRecording();
+            double time = 2.0;
+            Vector3 position = strokePosition;
+            AppendSweepToRecording(recorder, UprightGrip(follower), EdgeStep, 10, ref time, ref position);
+            recorder.Stop();
+
+            Assert.That(recorder.TryBeginReplay(20.0), Is.True);
+            Assert.That(recorder.TryTakeNextReplaySample(0, out _), Is.True);
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(1));
+
+            recorder.Clear();
+
+            Assert.That(recorder.RecordedSampleCount, Is.EqualTo(0));
+            Assert.That(recorder.ReplayIndex, Is.EqualTo(0));
+            Assert.That(recorder.IsReplaying, Is.False);
+            Assert.That(follower.LiveInputEnabled, Is.True, "input goes back to the controller");
+            Assert.That(recorder.TryBeginReplay(30.0), Is.False);
+        }
+
+        [Test]
+        public void Recorder_KeepsTrackingLossAndMonotonicTimesAndReplaysThemOnItsOwnClock()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(null);
+            recorder.BeginRecording();
+            BladeTrackingState tracked = BladeTrackingState.Position | BladeTrackingState.Rotation;
+
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(1, 7.000, Vector3.zero, Quaternion.identity, tracked)), Is.True);
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(2, 7.011, Vector3.one, Quaternion.identity, tracked)), Is.True);
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(3, 7.011, Vector3.one, Quaternion.identity, tracked)), Is.False,
+                "a time that does not move forward is left out");
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(4, 7.030, Vector3.zero, Quaternion.identity, BladeTrackingState.None)), Is.True,
+                "tracking loss is recorded like any other sample");
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(5, double.NaN, Vector3.zero, Quaternion.identity, tracked)), Is.False);
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(6, 7.050, Vector3.up, Quaternion.identity, tracked)), Is.True);
+            recorder.Stop();
+            Assert.That(recorder.RecordedSampleCount, Is.EqualTo(4));
+
+            Assert.That(recorder.TryBeginReplay(100.0), Is.True);
+
+            double[] expected = { 100.000, 100.011, 100.030, 100.050 };
+            double previous = double.NegativeInfinity;
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.That(recorder.TryTakeNextReplaySample(40 + i, out BladePoseSample sample), Is.True);
+                Assert.That(sample.TimestampSeconds, Is.EqualTo(expected[i]).Within(1e-9));
+                Assert.That(sample.TimestampSeconds, Is.GreaterThan(previous));
+                Assert.That(sample.FrameId, Is.EqualTo(40 + i));
+                previous = sample.TimestampSeconds;
+
+                if (i == 2)
+                {
+                    Assert.That(sample.TrackingState, Is.EqualTo(BladeTrackingState.None));
+                }
+            }
+
+            Assert.That(recorder.TryTakeNextReplaySample(99, out _), Is.False, "the recording has been fed through");
+            Assert.That(recorder.IsReplaying, Is.False);
+        }
+
+        [Test]
+        public void TurningLiveInputOff_StartsTheSlashStateOverOnlyWhenItChanges()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            follower.LiveInputEnabled = false;
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+            Assert.That(katanaObject.activeSelf, Is.False);
+
+            // Fed from elsewhere, samples still go through.
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+
+            follower.LiveInputEnabled = false;
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1), "setting the same value is not a switch");
+
+            follower.LiveInputEnabled = true;
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0), "switching back starts over too");
+        }
+
+        [Test]
+        public void ReplayingARecordedSweep_StartsOverAndPublishesTheWaveAgain()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "a live wave is already flying");
+
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.BeginRecording();
+            double time = 3.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            AppendSweepToRecording(recorder, UprightGrip(follower), EdgeStep, 7, ref time, ref position);
+            recorder.Stop();
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+
+            Assert.That(follower.LiveInputEnabled, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "replay starts from nothing");
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "the recorded sweep latched again");
+            Assert.That(recorder.IsReplaying, Is.True);
+
+            // With every sample fed, the next step ends the replay but keeps
+            // input with it, so the replayed wave can still be watched.
+            Assert.That(recorder.TryTakeNextReplaySample(99, out _), Is.False);
+            Assert.That(recorder.IsReplaying, Is.False);
+            Assert.That(recorder.IsShowingReplayResult, Is.True);
+            Assert.That(follower.LiveInputEnabled, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "the replayed wave is still there");
+
+            recorder.Stop();
+
+            Assert.That(recorder.IsShowingReplayResult, Is.False);
+            Assert.That(follower.LiveInputEnabled, Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "Stop closes the replay result");
+        }
+
+        [Test]
+        public void AfterAReplay_ItsWaveFliesOnUntilItExpiresAndClearHandsInputBack()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.BeginRecording();
+            double time = 3.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            AppendSweepToRecording(recorder, UprightGrip(follower), EdgeStep, 7, ref time, ref position);
+            recorder.Stop();
+
+            Assert.That(recorder.TryTakeReplayResultTick(0, 0.1, out _), Is.False, "no replay result before a replay");
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(99, out _), Is.False);
+            Assert.That(recorder.IsShowingReplayResult, Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 travelAxis, out _, out _,
+                out _, out _, out Vector3 startBefore, out _), Is.True);
+
+            Assert.That(recorder.TryTakeReplayResultTick(100, 0.1, out BladePoseSample tick), Is.True);
+            Assert.That(tick.TrackingState, Is.EqualTo(BladeTrackingState.None), "no pose is made up after the recording");
+            follower.TryRecordSample(tick);
+
+            Assert.That(follower.LiveInputEnabled, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 startAfter, out _), Is.True);
+            Assert.That(Vector3.Dot(startAfter - startBefore, travelAxis), Is.GreaterThan(0f), "the wave flew on");
+
+            for (int i = 0; i < 20 && follower.WaveCount > 0; i++)
+            {
+                Assert.That(recorder.TryTakeReplayResultTick(101 + i, 0.1, out tick), Is.True);
+                follower.TryRecordSample(tick);
+            }
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "the wave expired on the continued replay clock");
+            Assert.That(follower.LiveInputEnabled, Is.False, "input stays with the replay until it is closed");
+
+            recorder.Clear();
+
+            Assert.That(follower.LiveInputEnabled, Is.True);
+            Assert.That(recorder.IsShowingReplayResult, Is.False);
+            Assert.That(recorder.TryTakeReplayResultTick(200, 0.1, out _), Is.False);
+        }
+
+        [Test]
+        public void ReplayingARecordingWithATrackingGap_RefillsTheWindowAfterIt()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            Quaternion upright = UprightGrip(follower);
+            recorder.BeginRecording();
+            double time = 1.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            AppendSweepToRecording(recorder, upright, EdgeStep, 5, ref time, ref position);
+            time += SampleInterval;
+            Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(0, time, position, upright, BladeTrackingState.None)), Is.True);
+            AppendSweepToRecording(recorder, upright, EdgeStep, 4, ref time, ref position);
+            recorder.Stop();
+
+            Assert.That(recorder.TryBeginReplay(10.0), Is.True);
+
+            ReplayInto(recorder, follower, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0), "the sweep before the gap was accepted");
+
+            ReplayInto(recorder, follower, 1);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0), "the gap empties the history");
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+
+            ReplayInto(recorder, follower, 3);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "three poses cannot span the window yet");
+
+            ReplayInto(recorder, follower, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1), "the window refilled after the gap");
+        }
+
+        // Update and Before Render only run in Play Mode. No controller exists
+        // in a test run, so a live read would be untracked: it would hide the
+        // katana and empty the history on every frame it got through.
+        [UnityTest]
+        public IEnumerator DuringReplay_TheControllerIsNotRead()
+        {
+            yield return new EnterPlayMode();
+
+            GameObject rig = new GameObject("Sandbox Katana Rig");
+            GameObject playKatana = new GameObject("Katana");
+            SandboxRightHandKatana playFollower = rig.AddComponent<SandboxRightHandKatana>();
+            playFollower.Katana = playKatana.transform;
+
+            GameObject host = new GameObject("Slash Diagnostics");
+            SandboxSlashPoseRecorder recorder = host.AddComponent<SandboxSlashPoseRecorder>();
+            AssignRecorderKatana(recorder, playFollower);
+
+            recorder.BeginRecording();
+            double time = 0.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            AppendSweepToRecording(recorder, UprightGrip(playFollower), EdgeStep, 40, ref time, ref position);
+            recorder.Stop();
+
+            Assert.That(recorder.TryBeginReplay(Time.unscaledTimeAsDouble), Is.True);
+            Assert.That(playFollower.LiveInputEnabled, Is.False);
+
+            for (int i = 0; i < 6; i++)
+            {
+                yield return null;
+            }
+
+            Assert.That(recorder.IsReplaying, Is.True);
+            Assert.That(recorder.ReplayIndex, Is.GreaterThanOrEqualTo(2), "the recorder fed samples on Update");
+            Assert.That(playKatana.activeSelf, Is.True, "no untracked live pose hid the replayed katana");
+            Assert.That(playFollower.RecordedPoseCount, Is.GreaterThanOrEqualTo(2),
+                "no untracked live pose emptied the replayed history");
+
+            recorder.Stop();
+            Assert.That(playFollower.LiveInputEnabled, Is.True);
+
+            yield return new ExitPlayMode();
         }
 
         [Test]

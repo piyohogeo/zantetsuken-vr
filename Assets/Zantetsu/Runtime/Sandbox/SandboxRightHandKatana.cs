@@ -80,6 +80,10 @@ namespace Zantetsu.Sandbox
     /// display only: gameplay never reads a quad's transform, and nothing
     /// here builds or edits geometry.
     ///
+    /// Live input can be handed over: with it turned off, nothing reads the
+    /// controller and a replay feeds recorded samples through the same Update
+    /// path instead. Handing it over either way starts the slash state over.
+    ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
     /// tracking origin, so device poses are already world-space poses.
     /// </summary>
@@ -162,6 +166,37 @@ namespace Zantetsu.Sandbox
         // Provisional height of a wave quad in metres, fixed in code: display
         // only, and no part of the gameplay sweep.
         private const float WaveVisualHeight = 0.35f;
+
+        // Whether Update and Before Render read the controller. Off only while
+        // something else -- a replay -- feeds TryRecordSample instead.
+        private bool liveInputEnabled = true;
+
+        /// <summary>
+        /// Whether this component reads the right-hand controller itself. A
+        /// replay turns it off and feeds <see cref="TryRecordSample"/> in its
+        /// place; nothing reads the controller while it is off, on Update or
+        /// on Before Render. Every switch starts the slash state over -- the
+        /// katana is hidden and the stroke, the history, the waves and their
+        /// display are all cleared -- so samples from the controller and
+        /// samples fed from elsewhere never meet in one stroke or one wave.
+        /// </summary>
+        internal bool LiveInputEnabled
+        {
+            get => liveInputEnabled;
+            set
+            {
+                if (liveInputEnabled == value)
+                {
+                    return;
+                }
+
+                liveInputEnabled = value;
+                Hide();
+                ResetStroke();
+                waveStore.Clear();
+                HideAllWaveVisuals();
+            }
+        }
 
         /// <summary>Katana visual root driven by the grip pose.</summary>
         internal Transform Katana
@@ -793,7 +828,7 @@ namespace Zantetsu.Sandbox
         /// a missing device or a feature the runtime does not report yields an
         /// untracked sample rather than a stale one.
         /// </summary>
-        private static BladePoseSample ReadRightHandGripSample()
+        internal static BladePoseSample ReadRightHandGripSample()
         {
             long frameId = Time.frameCount;
             double timestampSeconds = Time.unscaledTimeAsDouble;
@@ -862,11 +897,23 @@ namespace Zantetsu.Sandbox
 
         private void Update()
         {
+            if (!liveInputEnabled)
+            {
+                return;
+            }
+
             TryRecordSample(ReadRightHandGripSample());
         }
 
         private void ApplyGripPoseForRender()
         {
+            // A replayed pose must not be overwritten by the live one on its
+            // way to the screen.
+            if (!liveInputEnabled)
+            {
+                return;
+            }
+
             TryApplySample(ReadRightHandGripSample());
         }
 
