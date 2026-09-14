@@ -201,6 +201,8 @@ namespace Zantetsu.Rendering.Tests
             Assert.Throws<ObjectDisposedException>(() => pool.TryAppend(BuiltIn("Quad.fbx"), out _));
             Assert.Throws<ObjectDisposedException>(() => _ = pool.Vertices);
             Assert.Throws<ObjectDisposedException>(() => _ = pool.Indices);
+            Assert.Throws<ObjectDisposedException>(() => _ = pool.AppendedVertices);
+            Assert.Throws<ObjectDisposedException>(() => _ = pool.AppendedIndices);
         }
 
         [Test]

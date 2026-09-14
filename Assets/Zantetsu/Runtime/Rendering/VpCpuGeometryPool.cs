@@ -1,6 +1,9 @@
 using System;
+using System.Runtime.CompilerServices;
 using Unity.Collections;
 using UnityEngine;
+
+[assembly: InternalsVisibleTo("Zantetsu.Core.EditModeTests")]
 
 namespace Zantetsu.Rendering
 {
@@ -57,6 +60,26 @@ namespace Zantetsu.Rendering
             {
                 ThrowIfDisposed();
                 return _indices.GetSubArray(0, IndexCount).AsReadOnly();
+            }
+        }
+
+        /// <summary>The appended vertices as a NativeArray view for GPU uploads inside this assembly. Not to be written.</summary>
+        internal NativeArray<VpRenderVertex> AppendedVertices
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _vertices.GetSubArray(0, VertexCount);
+            }
+        }
+
+        /// <summary>The appended indices as a NativeArray view for GPU uploads inside this assembly. Not to be written.</summary>
+        internal NativeArray<uint> AppendedIndices
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _indices.GetSubArray(0, IndexCount);
             }
         }
 
