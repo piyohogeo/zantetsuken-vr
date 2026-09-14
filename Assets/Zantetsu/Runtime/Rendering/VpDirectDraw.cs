@@ -5,8 +5,8 @@ namespace Zantetsu.Rendering
 {
     /// <summary>
     /// Stage 1 draw issue (DESIGN 4.5.5): one Direct non-indexed draw of an index range, read by the VP shader through
-    /// the structured vertex and index buffers. The draw casts shadows through the shader's ShadowCaster pass. No
-    /// hardware index buffer, shadow receiving or batching.
+    /// the structured vertex and index buffers. The draw casts shadows through the shader's ShadowCaster pass and
+    /// receives the main light's shadow. No hardware index buffer or batching.
     /// </summary>
     public static class VpDirectDraw
     {
@@ -46,7 +46,7 @@ namespace Zantetsu.Rendering
                 matProps = properties,
                 worldBounds = worldBounds,
                 shadowCastingMode = ShadowCastingMode.On,
-                receiveShadows = false,
+                receiveShadows = true,
             };
             Graphics.RenderPrimitives(renderParams, MeshTopology.Triangles, range.indexCount);
         }

@@ -6,7 +6,7 @@ namespace Zantetsu.Rendering
     /// <summary>
     /// Shows one mesh through the Stage 1 VP path (DESIGN 4.5.5): while enabled, the mesh lives in its own CPU pool
     /// and GPU buffers and is drawn once per frame with <see cref="VpDirectDraw"/> at this transform. Meant for a few
-    /// meshes; it has no shared pool, shadow receiving or growth.
+    /// meshes; it has no shared pool or growth.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class VpMeshDisplay : MonoBehaviour

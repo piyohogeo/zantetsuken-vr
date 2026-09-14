@@ -1,7 +1,7 @@
 // Stage 1 vertex-pulling shader (DESIGN 4.5.5): a Direct non-indexed draw whose SV_VertexID reads the uint index
 // buffer, and the index reads the VP vertex buffer. The colour is the base colour shaded by a fixed direction, not by
-// scene lights, and the geometry casts shadows through the ShadowCaster pass. It does not receive shadows. No clipping
-// or stencil.
+// scene lights, darkened where the main light's realtime shadow falls; the geometry casts shadows through the
+// ShadowCaster pass. No additional lights, soft or screen-space shadow sampling, clipping or stencil.
 Shader "Zantetsu/VP Unlit"
 {
     Properties
@@ -65,11 +65,16 @@ Shader "Zantetsu/VP Unlit"
             #pragma vertex Vertex
             #pragma fragment Fragment
             #pragma multi_compile_instancing
+            // Main light realtime shadows only: one map or its cascades.
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
                 float3 normalWS : TEXCOORD0;
+                float3 positionWS : TEXCOORD1;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -83,13 +88,16 @@ Shader "Zantetsu/VP Unlit"
                 float3 positionWS = mul(_VpObjectToWorld, float4(vertex.position, 1.0)).xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)_VpObjectToWorld, vertex.normal);
+                output.positionWS = positionWS;
                 return output;
             }
 
             half4 Fragment(Varyings input) : SV_Target
             {
                 half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
-                return half4(_BaseColor.rgb * (0.5 + 0.5 * facing), 1.0);
+                // The shadow coordinate picks its cascade from the world position, so it is computed per fragment.
+                half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
+                return half4(_BaseColor.rgb * (0.5 + 0.5 * facing * shadow), 1.0);
             }
             ENDHLSL
         }
