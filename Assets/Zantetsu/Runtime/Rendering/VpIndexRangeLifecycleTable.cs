@@ -123,6 +123,32 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        /// <summary>
+        /// Reserved → Published with the range cut to its first <paramref name="publishedCount"/> indices, for the
+        /// allocator to return the unused tail. A range cut to nothing starts at 0. Fails when the count is negative or
+        /// exceeds the reserved count.
+        /// </summary>
+        internal bool TryPublish(VpIndexRangeHandle handle, int publishedCount)
+        {
+            if (!TryFind(handle, out int d)
+                || _descriptors[d].state != VpIndexRangeState.Reserved
+                || publishedCount < 0
+                || publishedCount > _descriptors[d].indexCount)
+            {
+                return false;
+            }
+
+            ref Descriptor descriptor = ref _descriptors[d];
+            descriptor.state = VpIndexRangeState.Published;
+            descriptor.indexCount = publishedCount;
+            if (publishedCount == 0)
+            {
+                descriptor.indexStart = 0;
+            }
+
+            return true;
+        }
+
         /// <summary>Reserved → Free, for an unused or failed reservation.</summary>
         public bool TryCancelReservation(VpIndexRangeHandle handle)
         {
