@@ -255,9 +255,12 @@ CPUのVertex／Indexはそれぞれ単一の大きな線形領域とし、Jobへ
 | --- | --- |
 | Free | 割当可能 |
 | Reserved | 所有Jobだけが読み書きする出力予約。他Job・転送処理は触れない |
-| Published | 書込み完了後に公開した読取り専用範囲。複数読者が参照可能 |
+| Published | 書込み完了後に公開した読取り専用範囲。複数読者が参照可能。再利用可能なPublished IBの一時読取りにはRead Leaseが必要 |
+| Retiring | 退役が確定した範囲。新しいRead Leaseを取得できず、取得済みのRead Leaseだけが読取りを継続できる。全Lease返却後にFreeへ移る |
 
 VPプールへのJobアクセスは内部Published入力と自分のReserved出力に限る。同一Geometry Work内部の段階間所有権移管はJob完了回収後に行い、共有書込みを許可しない。実使用部分を内部Publishedにし、未使用予約を解除する。切断間の入力は直前祖先のCommitted Geometryに限り、未Commit成果物を後続切断へ公開しない。Publishedはアロケータ内部の読取り許可であり、Geometry Commit・GPU転送・Gameplay／Trace状態を表さない。安全属性の解除でJob完了や実データ依存を省略しない。
+
+再利用可能なPublished IBを一時的に読む読者は、IBの範囲単位のRead Leaseを保持する。Read LeaseはPublished状態の範囲からだけ取得でき、同じ範囲へ複数の読者が同時に取得できる。CPU処理、Job、GPU転送元としての一時読取りを保護する。退役要求で範囲はRetiringへ移り、新しい取得を拒否する。既存のLeaseがすべて一度ずつ返却された後だけFreeにし、再利用する。二重返却、範囲の再利用後に届いた古いLease、Retiring／Freeからの取得は不正として検出する。Leaseの取得、Retiringへの遷移、Job完了回収後の返却、Freeへの遷移はメインスレッドのアロケータが直列に管理し、Workerは範囲の状態を直接変更しない。
 
 数値Kernelの入出力は6.1に従う。新規Vertexは一つの連続予約の先頭から実使用部分を詰めて出力し、継承Vertexは既存番号を参照する。新規Indexは4.5.6の一つの連続予約へ正側、負側の順で出力する。属性seamやCapのために必要な新規Render Vertexはこの新規Vertex出力へ含める。表示切断に厳密Count→確保→Writeを必須にせず、出力予約不足では範囲外へ書く前に容量不足で終了し、部分成果物を公開せず再予約・再実行できる。7.9の新Index領域も同じ予約規則を使う。形状不正・世代不一致の救済や切断受付の再試行へ広げず、範囲外書込み後の例外回復を設けない。
 
@@ -265,9 +268,11 @@ Published Vertexは保持中に上書き・移動せず、子から既存番号�
 
 導入時のVBは、ObjectIdが所有する確保範囲を当該ObjectIdの生存LogicalFragmentがなくなるまで保守的に保持し、その後に既存の資源寿命と予算に従って回収する方式でよい。全Fragment終了は親子置換等の一体公開後の状態で判断する。一部Fragmentの生存によって不要Vertexを含む範囲が残ることを許容し、Fragment別・頂点別の早期回収や全範囲の同一Frame解放を要求しない。
 
+VBにはGeometry range単位のRead LeaseをPhase 0.93で導入しない。Geometryが参照するVertex集合は継承参照により不連続になり得るため、Published Vertexは既存どおりObjectId単位で保守的に保持する。将来VBを回収するときは、当該ObjectIdの生存LogicalFragmentがなく、未完了Job・CPU読者・転送元利用も終了したことをObjectId単位で保証してからFreeにする。
+
 VB／IBは各回収単位の正本参照と必要な利用が終了してから一度だけFreeし、再利用する。未実行Jobを含む入力保持・出力予約、CPU／Job／転送元読者、他の生存利用者を保護する。IBは既存の範囲別回収を維持し、ObjectId全体の終了待ちにしない。所有範囲・利用状況の管理、回収待ちの保持・確認・分割方法、およびVB／IB間の実装共用は実装詳細とする。
 
-CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理し、再利用したoffsetの新内容を旧内容の転送済み判定で省略しない。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
+CPU再利用自体はGPU Bufferを変更せず、GPU完了待ちをCPU解放条件にしない。Read LeaseはCPU・Job・転送元の一時読取りだけを保護し、提出済みdrawのGPU完了を表さない。Leaseの返却のためにGPU完了待ちを追加しない。対応GPU offset更新と旧描画利用とのhazardはVP転送／Renderer内部で処理し、再利用したoffsetの新内容を旧内容の転送済み判定で省略しない。成果物別GPU部分rangeのallocate／freeを設けず、Geometry参照とRenderer登録は一度だけ退役する。旧GPU Buffer全体の解放は4.5.4に従う。
 
 0.93の再利用対象は主に退役Indexと、Vertex／Indexの未使用・失敗予約であり、これらの回収をPhase 7.1やObjectId全体の終了待ちへ延期しない。未公開予約の回収は初期のVertex追記方針に反しない。単純な空き領域のbest-effort再利用でよく、最適配置、断片化解消、コンパクション、Buffer縮小やCPUページのOS返却を要求しない。表示Instance／Geometry参照の退役は生存物体の寿命Policyとは別であり、0.93へ7.9／7.10のPolicyを前倒ししない。
 
