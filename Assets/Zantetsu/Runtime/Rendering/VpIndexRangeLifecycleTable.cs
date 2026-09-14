@@ -205,20 +205,13 @@ namespace Zantetsu.Rendering
         /// </summary>
         public bool TryReleaseReadLease(VpIndexReadLease lease)
         {
-            if (!TryFind(lease.range, out int d) || (uint)lease.slot >= (uint)_usedLeaseSlotCount)
+            if (!IsHeld(lease))
             {
                 return false;
             }
 
+            int d = lease.range.descriptor;
             ref LeaseSlot leaseSlot = ref _leaseSlots[lease.slot];
-            if (!leaseSlot.held
-                || leaseSlot.generation != lease.slotGeneration
-                || leaseSlot.descriptor != d
-                || leaseSlot.descriptorGeneration != lease.range.generation)
-            {
-                return false;
-            }
-
             leaseSlot.held = false;
             if (leaseSlot.generation != _lastGeneration)
             {
@@ -253,6 +246,24 @@ namespace Zantetsu.Rendering
             indexStart = _descriptors[d].indexStart;
             indexCount = _descriptors[d].indexCount;
             return true;
+        }
+
+        /// <summary>
+        /// Whether the lease is held: lent by this table on the current registration of its descriptor and not yet
+        /// returned. A held lease's range is Published or Retiring.
+        /// </summary>
+        internal bool IsHeld(VpIndexReadLease lease)
+        {
+            if (!TryFind(lease.range, out int d) || (uint)lease.slot >= (uint)_usedLeaseSlotCount)
+            {
+                return false;
+            }
+
+            ref LeaseSlot leaseSlot = ref _leaseSlots[lease.slot];
+            return leaseSlot.held
+                && leaseSlot.generation == lease.slotGeneration
+                && leaseSlot.descriptor == d
+                && leaseSlot.descriptorGeneration == lease.range.generation;
         }
 
         /// <summary>The number of leases currently held on the handle's registration.</summary>

@@ -167,6 +167,12 @@ namespace Zantetsu.Rendering
             return _table.TryGetState(handle, out state, out indexStart, out indexCount);
         }
 
+        /// <inheritdoc cref="VpIndexRangeLifecycleTable.IsHeld"/>
+        internal bool IsLeaseHeld(VpIndexReadLease lease)
+        {
+            return _table.IsHeld(lease);
+        }
+
         internal bool TryGetReaderCount(VpIndexRangeHandle handle, out int readerCount)
         {
             return _table.TryGetReaderCount(handle, out readerCount);
