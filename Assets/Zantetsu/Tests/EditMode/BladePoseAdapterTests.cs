@@ -232,44 +232,5 @@ namespace Zantetsu.Core.Tests
             Assert.That(ok, Is.False);
             Assert.That(result.FrameId, Is.EqualTo(0));
         }
-
-        [Test]
-        public void FakeSource_ReturnsSample()
-        {
-            BladePoseSample expected = new BladePoseSample(42, 2.0, new Vector3(3, 4, 5), Quaternion.Euler(5, 6, 7), BladeTrackingState.Position | BladeTrackingState.Rotation);
-            IBladePoseSource source = new FakeBladePoseSource(expected, true);
-
-            Assert.That(source.TryGetLatestSample(out BladePoseSample sample), Is.True);
-            Assert.That(sample.FrameId, Is.EqualTo(42));
-            Assert.That(sample.IsFullyTracked, Is.True);
-        }
-
-        [Test]
-        public void FakeSource_ReturnsDefaultWhenUnavailable()
-        {
-            IBladePoseSource source = new FakeBladePoseSource(default, false);
-
-            Assert.That(source.TryGetLatestSample(out BladePoseSample sample), Is.False);
-            Assert.That(sample.FrameId, Is.EqualTo(0));
-            Assert.That(sample.IsFullyTracked, Is.False);
-        }
-
-        private sealed class FakeBladePoseSource : IBladePoseSource
-        {
-            private readonly BladePoseSample _sample;
-            private readonly bool _hasSample;
-
-            public FakeBladePoseSource(BladePoseSample sample, bool hasSample)
-            {
-                _sample = sample;
-                _hasSample = hasSample;
-            }
-
-            public bool TryGetLatestSample(out BladePoseSample sample)
-            {
-                sample = _hasSample ? _sample : default;
-                return _hasSample;
-            }
-        }
     }
 }
