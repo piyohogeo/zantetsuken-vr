@@ -14,6 +14,7 @@
         "Zantetsu.MeshCut",
         "Zantetsu.MeshCut.Verification",
         "Zantetsu.Sandbox",
+        "Zantetsu.Rendering",
         "Unity.XR.Management",
         "Unity.XR.Management.Editor",
         "Unity.XR.OpenXR"
