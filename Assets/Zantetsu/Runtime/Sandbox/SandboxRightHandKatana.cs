@@ -54,6 +54,9 @@ namespace Zantetsu.Sandbox
     /// every reset listed above drop both, but none of it hides the katana: a
     /// pose that can be shown is still shown.
     ///
+    /// The stroke's source slash plane candidate is derived from the accepted
+    /// samples on demand rather than stored, so it lives and dies with them.
+    ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
     /// tracking origin, so device poses are already world-space poses.
     /// </summary>
@@ -93,6 +96,10 @@ namespace Zantetsu.Sandbox
         // The mirror of the edge lead threshold: a motion this far onto the
         // spine side is the return half of the stroke.
         private const float ReturnStrokeEdgeLeadScore = -0.15f;
+
+        // A summed plane normal shorter than this is a stroke with no swept
+        // area to speak of, not a plane.
+        private const float MinPlaneNormalLengthSquared = 1e-12f;
 
         [Tooltip("Katana visual root. Its local axes are the blade frame: +Z blade axis, -Y edge direction, +X side normal.")]
         [SerializeField] private Transform katana;
@@ -144,6 +151,93 @@ namespace Zantetsu.Sandbox
 
             sample = acceptedSamples[0];
             return true;
+        }
+
+        /// <summary>
+        /// Derives the stroke's source slash plane from the accepted samples,
+        /// or false when there are fewer than two of them or the samples are
+        /// too degenerate to give a finite plane. Nothing is stored: the plane is
+        /// computed from the accepted samples every time it is asked for, so
+        /// it becomes unavailable the moment they do.
+        ///
+        /// Each consecutive pair contributes the cross product of the later
+        /// sample's blade axis with the movement between them, folded onto
+        /// that sample's side normal, so movement along the blade contributes
+        /// nothing and no separate projection is kept. The plane passes
+        /// through the stroke's begin cut sample point, and the summed normal
+        /// finally takes the side the newest accepted sample faces.
+        /// </summary>
+        internal bool TryGetSourceSlashPlaneCandidate(out Plane plane)
+        {
+            plane = default;
+
+            if (acceptedSampleCount < 2)
+            {
+                return false;
+            }
+
+            Vector3 sum = Vector3.zero;
+            for (int i = 1; i < acceptedSampleCount; i++)
+            {
+                Vector3 movement = acceptedSamples[i].CutSamplePosition - acceptedSamples[i - 1].CutSamplePosition;
+                Vector3 candidate = Vector3.Cross(acceptedSamples[i].BladeAxis, movement);
+                if (!IsFinite(candidate))
+                {
+                    return false;
+                }
+
+                if (Vector3.Dot(candidate, acceptedSamples[i].SideNormal) < 0f)
+                {
+                    candidate = -candidate;
+                }
+
+                sum += candidate;
+            }
+
+            if (!IsFinite(sum))
+            {
+                return false;
+            }
+
+            float lengthSquared = sum.sqrMagnitude;
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinPlaneNormalLengthSquared)
+            {
+                return false;
+            }
+
+            float length = Mathf.Sqrt(lengthSquared);
+            Vector3 normal = new Vector3(sum.x / length, sum.y / length, sum.z / length);
+            if (!IsFinite(normal))
+            {
+                return false;
+            }
+
+            if (Vector3.Dot(normal, acceptedSamples[acceptedSampleCount - 1].SideNormal) < 0f)
+            {
+                normal = -normal;
+            }
+
+            Vector3 origin = acceptedSamples[0].CutSamplePosition;
+            if (!IsFinite(origin))
+            {
+                return false;
+            }
+
+            // A finite normal and a finite point can still give a distance
+            // that overflows, so the constructed plane is what gets checked.
+            plane = new Plane(normal, origin);
+            if (!IsFinite(plane.normal) || !float.IsFinite(plane.distance))
+            {
+                plane = default;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsFinite(Vector3 v)
+        {
+            return float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
         }
 
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>

@@ -155,6 +155,22 @@ namespace Zantetsu.Core.Tests
             RecordSweep(follower, gripRotation, step, count, ref strokeFrameId, ref strokeTime, ref strokePosition);
         }
 
+        // Every plane the component reports as a success must satisfy this.
+        private static void AssertFinitePlane(Plane plane)
+        {
+            Assert.That(float.IsFinite(plane.normal.x), Is.True, "plane normal x is not finite");
+            Assert.That(float.IsFinite(plane.normal.y), Is.True, "plane normal y is not finite");
+            Assert.That(float.IsFinite(plane.normal.z), Is.True, "plane normal z is not finite");
+            Assert.That(float.IsFinite(plane.distance), Is.True, "plane distance is not finite");
+            Assert.That(plane.normal.magnitude, Is.EqualTo(1f).Within(PositionTolerance), "plane normal is not unit length");
+        }
+
+        private Vector3 CurrentCutSamplePosition()
+        {
+            Transform katana = katanaObject.transform;
+            return katana.position + katana.forward * (BladeLength * 0.7f);
+        }
+
         private void AssertKatanaShows(Vector3 gripPosition, Quaternion gripRotation)
         {
             Assert.That(katanaObject.activeSelf, Is.True, "The katana is hidden.");
@@ -305,6 +321,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(katana.activeSelf, Is.True);
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(5));
             Assert.That(playModeFollower.AcceptedSampleCount, Is.GreaterThan(0));
+            Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
 
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
@@ -323,6 +340,8 @@ namespace Zantetsu.Core.Tests
                 "A re-enabled component must not carry the history from before it was disabled.");
             Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
                 "A re-enabled component must not carry the stroke from before it was disabled.");
+            Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.False,
+                "The plane candidate goes with the stroke it was derived from.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
@@ -779,6 +798,181 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
             Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void WithFewerThanTwoAcceptedSamples_ThereIsNoPlaneCandidate()
+        {
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane none), Is.False);
+            Assert.That(none.normal, Is.EqualTo(Vector3.zero));
+
+            Sweep(UprightGrip(follower), EdgeStep, 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.False);
+        }
+
+        [Test]
+        public void PlanarSweep_YieldsAUnitNormalOnTheSideTheBladeFaces()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThanOrEqualTo(2));
+
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane plane), Is.True);
+
+            AssertFinitePlane(plane);
+            Assert.That(Vector3.Dot(plane.normal, katanaObject.transform.right), Is.GreaterThan(0f),
+                "the normal takes the side the newest accepted sample faces");
+        }
+
+        [Test]
+        public void PlanarSweep_PutsTheStrokeBeginAndTheNewestPointOnThePlane()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane plane), Is.True);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+
+            AssertFinitePlane(plane);
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(begin.CutSamplePosition)), Is.LessThan(PositionTolerance));
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(CurrentCutSamplePosition())), Is.LessThan(PositionTolerance));
+        }
+
+        [Test]
+        public void DiagonalSweep_YieldsAFinitePlaneCandidate()
+        {
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+
+            Sweep(UprightGrip(follower), diagonalStep, 6);
+
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane plane), Is.True);
+
+            AssertFinitePlane(plane);
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(CurrentCutSamplePosition())), Is.LessThan(PositionTolerance));
+        }
+
+        [Test]
+        public void RotatingTheWholeStroke_RotatesThePlaneCandidate()
+        {
+            Quaternion rotation = Quaternion.Euler(23f, 41f, 17f);
+            Vector3 origin = strokePosition;
+
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane upright), Is.True);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose uprightBegin), Is.True);
+            AssertFinitePlane(upright);
+
+            GameObject rotatedRig = new GameObject("Rotated Rig");
+            GameObject rotatedKatana = new GameObject("Rotated Katana");
+            try
+            {
+                SandboxRightHandKatana rotatedFollower = rotatedRig.AddComponent<SandboxRightHandKatana>();
+                rotatedFollower.Katana = rotatedKatana.transform;
+
+                long frameId = 0;
+                double time = 0.0;
+                Vector3 position = rotation * origin;
+                RecordSweep(rotatedFollower, rotation * UprightGrip(rotatedFollower), rotation * EdgeStep, 6,
+                    ref frameId, ref time, ref position);
+
+                Assert.That(rotatedFollower.TryGetSourceSlashPlaneCandidate(out Plane rotated), Is.True);
+                Assert.That(rotatedFollower.TryGetStrokeBeginSample(out EvaluatedBladePose rotatedBegin), Is.True);
+
+                AssertFinitePlane(rotated);
+                AssertVector(rotated.normal, rotation * upright.normal);
+                AssertVector(rotatedBegin.CutSamplePosition, rotation * uprightBegin.CutSamplePosition);
+                Assert.That(Mathf.Abs(rotated.GetDistanceToPoint(rotatedBegin.CutSamplePosition)), Is.LessThan(PositionTolerance));
+            }
+            finally
+            {
+                Object.DestroyImmediate(rotatedKatana);
+                Object.DestroyImmediate(rotatedRig);
+            }
+        }
+
+        [Test]
+        public void BeforeRenderDisplayUpdate_DoesNotMoveThePlaneCandidate()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane before), Is.True);
+            AssertFinitePlane(before);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime,
+                    strokePosition + new Vector3(0.2f, 0.1f, 0f), upright,
+                    BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane after), Is.True);
+            AssertFinitePlane(after);
+            AssertVector(after.normal, before.normal);
+            Assert.That(after.distance, Is.EqualTo(before.distance).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void PastCapacity_TheNewestAcceptedSampleStillMovesThePlane()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 12);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8), "the accepted samples are at capacity");
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane before), Is.True);
+            AssertFinitePlane(before);
+
+            // Leave the swept plane while still leading with the edge. The
+            // newest sample can only reach the result through the last slot.
+            Sweep(upright, new Vector3(0.06f, -0.06f, 0f), 2);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8));
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane after), Is.True);
+            AssertFinitePlane(after);
+            Assert.That(Vector3.Angle(before.normal, after.normal), Is.GreaterThan(1f));
+        }
+
+        [Test]
+        public void TrackingLossOnUpdate_RemovesThePlaneCandidate()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.False);
+        }
+
+        [Test]
+        public void TrackingLossOnBeforeRender_RemovesThePlaneCandidate()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryApplySample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.False);
+        }
+
+        [Test]
+        public void ReturnSweep_RemovesThePlaneCandidate()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 6);
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
+
+            bool reArmed = false;
+            for (int i = 0; i < 12 && !reArmed; i++)
+            {
+                Sweep(upright, -EdgeStep, 1);
+                reArmed = follower.AcceptedSampleCount == 0;
+            }
+
+            Assert.That(reArmed, Is.True, "a return sweep must re-arm the stroke");
+            Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.False);
         }
 
         [Test]
