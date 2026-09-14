@@ -148,6 +148,28 @@ namespace Zantetsu.Rendering.Tests
             }
         }
 
+        [TestCase("Cube.fbx")]
+        [TestCase("Sphere.fbx")]
+        public void ConvertingAcquiredMeshData_MatchesConvertingTheMeshAndLeavesTheDataToTheCaller(string builtIn)
+        {
+            Mesh mesh = Resources.GetBuiltinResource<Mesh>(builtIn);
+            Assert.That(mesh, Is.Not.Null, builtIn);
+            ConvertExactly(mesh, out VpRenderVertex[] expectedVertices, out uint[] expectedIndices);
+
+            using (Mesh.MeshDataArray dataArray = Mesh.AcquireReadOnlyMeshData(mesh))
+            using (var vertexPool = new NativeArray<VpRenderVertex>(mesh.vertexCount, Allocator.Persistent))
+            using (var indexPool = new NativeArray<uint>(IndexCount(mesh), Allocator.Persistent))
+            {
+                Assert.That(VpMeshConverter.TryConvert(dataArray[0], vertexPool, indexPool, out int vertexCount, out int indexCount), Is.True);
+
+                Assert.That(vertexCount, Is.EqualTo(mesh.vertexCount));
+                Assert.That(indexCount, Is.EqualTo(IndexCount(mesh)));
+                Assert.That(vertexPool.ToArray(), Is.EqualTo(expectedVertices));
+                Assert.That(indexPool.ToArray(), Is.EqualTo(expectedIndices));
+                Assert.That(dataArray[0].vertexCount, Is.EqualTo(mesh.vertexCount), "the acquired data stays usable after the conversion");
+            }
+        }
+
         [Test]
         public void SubMeshes_AreAppendedInOrderWithTheirBaseVertexApplied()
         {

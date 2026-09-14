@@ -33,60 +33,74 @@ namespace Zantetsu.Rendering
 
             using (Mesh.MeshDataArray dataArray = Mesh.AcquireReadOnlyMeshData(mesh))
             {
-                Mesh.MeshData data = dataArray[0];
-                vertexCount = data.vertexCount;
-                indexCount = 0;
-                bool triangleLists = true;
-                for (int s = 0; s < data.subMeshCount; s++)
-                {
-                    SubMeshDescriptor subMesh = data.GetSubMesh(s);
-                    triangleLists &= subMesh.topology == MeshTopology.Triangles;
-                    indexCount += subMesh.indexCount;
-                }
-
-                if (!triangleLists
-                    || !data.HasVertexAttribute(VertexAttribute.Normal)
-                    || vertexCount > vertices.Length
-                    || indexCount > indices.Length)
-                {
-                    return false;
-                }
-
-                using (var positions = new NativeArray<Vector3>(vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
-                using (var normals = new NativeArray<Vector3>(vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
-                using (var uvs = new NativeArray<Vector2>(vertexCount, Allocator.Temp))
-                {
-                    data.GetVertices(positions);
-                    data.GetNormals(normals);
-                    if (data.HasVertexAttribute(VertexAttribute.TexCoord0))
-                    {
-                        data.GetUVs(0, uvs);
-                    }
-
-                    for (int v = 0; v < vertexCount; v++)
-                    {
-                        vertices[v] = new VpRenderVertex { position = positions[v], normal = normals[v], uv0 = uvs[v] };
-                    }
-                }
-
-                int written = 0;
-                for (int s = 0; s < data.subMeshCount; s++)
-                {
-                    int count = data.GetSubMesh(s).indexCount;
-                    using (var subMeshIndices = new NativeArray<int>(count, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
-                    {
-                        data.GetIndices(subMeshIndices, s, applyBaseVertex: true);
-                        for (int i = 0; i < count; i++)
-                        {
-                            indices[written + i] = (uint)subMeshIndices[i];
-                        }
-                    }
-
-                    written += count;
-                }
-
-                return true;
+                return TryConvert(dataArray[0], vertices, indices, out vertexCount, out indexCount);
             }
+        }
+
+        /// <summary>
+        /// The conversion of <see cref="TryConvert(Mesh, NativeArray{VpRenderVertex}, NativeArray{uint}, out int, out int)"/>
+        /// from mesh data the caller has already acquired and still owns, with the same results and rejections except
+        /// for the null mesh.
+        /// </summary>
+        internal static bool TryConvert(
+            Mesh.MeshData data,
+            NativeArray<VpRenderVertex> vertices,
+            NativeArray<uint> indices,
+            out int vertexCount,
+            out int indexCount)
+        {
+            vertexCount = data.vertexCount;
+            indexCount = 0;
+            bool triangleLists = true;
+            for (int s = 0; s < data.subMeshCount; s++)
+            {
+                SubMeshDescriptor subMesh = data.GetSubMesh(s);
+                triangleLists &= subMesh.topology == MeshTopology.Triangles;
+                indexCount += subMesh.indexCount;
+            }
+
+            if (!triangleLists
+                || !data.HasVertexAttribute(VertexAttribute.Normal)
+                || vertexCount > vertices.Length
+                || indexCount > indices.Length)
+            {
+                return false;
+            }
+
+            using (var positions = new NativeArray<Vector3>(vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
+            using (var normals = new NativeArray<Vector3>(vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
+            using (var uvs = new NativeArray<Vector2>(vertexCount, Allocator.Temp))
+            {
+                data.GetVertices(positions);
+                data.GetNormals(normals);
+                if (data.HasVertexAttribute(VertexAttribute.TexCoord0))
+                {
+                    data.GetUVs(0, uvs);
+                }
+
+                for (int v = 0; v < vertexCount; v++)
+                {
+                    vertices[v] = new VpRenderVertex { position = positions[v], normal = normals[v], uv0 = uvs[v] };
+                }
+            }
+
+            int written = 0;
+            for (int s = 0; s < data.subMeshCount; s++)
+            {
+                int count = data.GetSubMesh(s).indexCount;
+                using (var subMeshIndices = new NativeArray<int>(count, Allocator.Temp, NativeArrayOptions.UninitializedMemory))
+                {
+                    data.GetIndices(subMeshIndices, s, applyBaseVertex: true);
+                    for (int i = 0; i < count; i++)
+                    {
+                        indices[written + i] = (uint)subMeshIndices[i];
+                    }
+                }
+
+                written += count;
+            }
+
+            return true;
         }
     }
 }
