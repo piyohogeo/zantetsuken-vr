@@ -232,6 +232,32 @@ namespace Zantetsu.Core.Tests
                 Is.True);
         }
 
+        // The signed in-plane cross product 19.1.5.1 writes as cross2_N.
+        private static float InPlaneCross(Vector3 normal, Vector3 x, Vector3 y)
+        {
+            return Vector3.Dot(normal, Vector3.Cross(x, y));
+        }
+
+        // The sweep is the closed convex hull of these four points, so all four
+        // have to lie on the wave's plane for it to be a plane figure at all.
+        private static void AssertSweepLiesOnThePlane(
+            Plane plane, Vector3 previousA, Vector3 previousB, Vector3 currentA, Vector3 currentB)
+        {
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(previousA)), Is.LessThan(PositionTolerance), "previous A is off the plane");
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(previousB)), Is.LessThan(PositionTolerance), "previous B is off the plane");
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(currentA)), Is.LessThan(PositionTolerance), "current A is off the plane");
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(currentB)), Is.LessThan(PositionTolerance), "current B is off the plane");
+        }
+
+        // Degenerate to a segment: no three of the four points span any area.
+        private static void AssertSweepIsCollinear(
+            Vector3 normal, Vector3 previousA, Vector3 previousB, Vector3 currentA, Vector3 currentB)
+        {
+            Vector3 along = currentB - previousA;
+            Assert.That(InPlaneCross(normal, along, previousB - previousA), Is.EqualTo(0f).Within(1e-4f));
+            Assert.That(InPlaneCross(normal, along, currentA - previousA), Is.EqualTo(0f).Within(1e-4f));
+        }
+
         // One pose with a rotation, step and interval of its own. The gate may
         // well turn it away; what matters here is that it was recorded.
         private bool RecordPose(Quaternion gripRotation, Vector3 step, double deltaSeconds)
@@ -2352,6 +2378,196 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AtLatch_TheSweepIsTheInitialSegmentTwiceOver()
+        {
+            SweepUntilLatch();
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out Vector3 spanAxis,
+                out float span, out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            AssertVector(previousA, currentA);
+            AssertVector(previousB, currentB);
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+            AssertSweepIsCollinear(plane.normal, previousA, previousB, currentA, currentB);
+            AssertVector(currentB, currentA + spanAxis * span);
+            Assert.That(Vector3.Distance(currentA, currentB), Is.EqualTo(span).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void FlyingAtAFixedSpan_MakesTheSweepAParallelogram()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 travelAxis, out _, out float span,
+                out _, out _, out Vector3 startBefore, out Vector3 endBefore), Is.True);
+
+            // The pose does not move, so the candidate stays where it was and
+            // the span does not change.
+            SkipTime(0.05);
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out _, out float spanAfter,
+                out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            Assert.That(spanAfter, Is.EqualTo(span));
+            AssertVector(previousA, startBefore);
+            AssertVector(previousB, endBefore);
+            Assert.That(Vector3.Dot(currentA - previousA, travelAxis), Is.GreaterThan(0f), "the wave travelled");
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+
+            // Both span vectors are the same, which is what makes it a
+            // parallelogram rather than a trapezoid.
+            AssertVector(currentB - currentA, previousB - previousA);
+            AssertVector(currentB - previousB, currentA - previousA);
+        }
+
+        [Test]
+        public void AWideningSpan_MakesTheSweepATrapezoidThatReachesPastTheOldSpan()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float spanBefore,
+                out _, out _, out Vector3 startBefore, out Vector3 endBefore), Is.True);
+
+            Assert.That(RecordPose(upright, EdgeStep * 3f, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out _, out float spanAfter,
+                out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            Assert.That(spanAfter, Is.GreaterThan(spanBefore));
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+
+            // The previous segment keeps the length it had; only the current
+            // one uses the wider span.
+            AssertVector(previousA, startBefore);
+            AssertVector(previousB, endBefore);
+            Assert.That(Vector3.Distance(previousA, previousB), Is.EqualTo(spanBefore).Within(PositionTolerance));
+            Assert.That(Vector3.Distance(currentA, currentB), Is.EqualTo(spanAfter).Within(PositionTolerance));
+
+            // Parallel sides of different lengths: a trapezoid.
+            Assert.That(InPlaneCross(plane.normal, previousB - previousA, currentB - currentA),
+                Is.EqualTo(0f).Within(1e-4f));
+            Assert.That(InPlaneCross(plane.normal, currentB - currentA, currentA - previousA),
+                Is.Not.EqualTo(0f).Within(1e-4f), "the sweep has area");
+
+            // A point past the old span, on the current segment, is inside the
+            // hull: this update's widening is part of the swept region.
+            float beyondOldSpan = (spanBefore + spanAfter) * 0.5f;
+            Assert.That(beyondOldSpan, Is.GreaterThan(spanBefore));
+            Assert.That(beyondOldSpan, Is.LessThan(spanAfter));
+            Vector3 addedPoint = currentA + spanAxis * beyondOldSpan;
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(addedPoint)), Is.LessThan(PositionTolerance));
+            Assert.That(InPlaneCross(plane.normal, currentB - currentA, addedPoint - currentA),
+                Is.EqualTo(0f).Within(1e-4f), "it lies on the current segment, an edge of the hull");
+
+            // A later update does not stretch that previous segment to the
+            // newer span.
+            Assert.That(RecordPose(upright, EdgeStep * 3f, SampleInterval), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanLater,
+                out Vector3 laterPreviousA, out Vector3 laterPreviousB, out _, out _), Is.True);
+            Assert.That(spanLater, Is.GreaterThan(spanAfter));
+            Assert.That(Vector3.Distance(laterPreviousA, laterPreviousB), Is.EqualTo(spanAfter).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void ARefusedCandidate_StillSweepsAFixedSpanParallelogram()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 travelAxis, out _, out float span,
+                out _, out _, out Vector3 startBefore, out Vector3 endBefore), Is.True);
+
+            // Back up the way it came: the candidate shrinks, so it is refused.
+            Assert.That(RecordPose(upright, -EdgeStep * 2f, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out _, out float spanAfter,
+                out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            Assert.That(spanAfter, Is.EqualTo(span));
+            AssertVector(previousA, startBefore);
+            AssertVector(previousB, endBefore);
+            Assert.That(Vector3.Dot(currentA - previousA, travelAxis), Is.GreaterThan(0f));
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+            AssertVector(currentB - currentA, previousB - previousA);
+        }
+
+        [Test]
+        public void NonOrthogonalAxes_SweepNormallyWithoutCorrection()
+        {
+            // Down and forward along the blade, so the emitter chord is not
+            // perpendicular to the travel axis.
+            Sweep(UprightGrip(follower), new Vector3(0f, -0.06f, 0.03f), 7);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 travelAxis, out Vector3 spanAxis,
+                out _, out _, out _, out Vector3 startBefore, out _), Is.True);
+            Assert.That(Mathf.Abs(Vector3.Dot(spanAxis, travelAxis)), Is.GreaterThan(0.1f),
+                "the axes are not orthogonal and were not made so");
+
+            SkipTime(0.05);
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out Vector3 travelAfter,
+                out Vector3 spanAxisAfter, out _, out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            AssertVector(travelAfter, travelAxis);
+            AssertVector(spanAxisAfter, spanAxis);
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+            Assert.That(Vector3.Dot(currentA - startBefore, travelAxis), Is.GreaterThan(0f));
+        }
+
+        [TestCase(1f, TestName = "ParallelAxes_AreAcceptedAndSweepDegeneratesToASegment")]
+        [TestCase(-1f, TestName = "AntiParallelAxes_AreAcceptedAndSweepDegeneratesToASegment")]
+        public void AxesAlongTheSameLine_AreAcceptedAndSweepDegeneratesToASegment(float spanSign)
+        {
+            // Straight at the store: no pose sequence puts the span axis on the
+            // travel axis, and the contract still has to hold if one did.
+            SandboxSlashWaveStore store = new SandboxSlashWaveStore();
+            Plane plane = new Plane(Vector3.right, Vector3.zero);
+            Vector3 travelAxis = Vector3.forward;
+            Vector3 spanAxis = travelAxis * spanSign;
+            Vector3 beginEmitter = Vector3.zero;
+            Vector3 latestEmitter = beginEmitter + spanAxis * 0.5f;
+
+            Assert.That(store.TryLatch(0.0, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, 0.5f), Is.True,
+                "axes on one line are not a reason to refuse a wave");
+            Assert.That(store.Count, Is.EqualTo(1));
+
+            store.Advance(0.2, 1, false, Vector3.zero, Vector3.zero);
+
+            Assert.That(store.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out Vector3 previousA, out Vector3 previousB,
+                out Vector3 currentA, out Vector3 currentB), Is.True);
+
+            Assert.That(store.Count, Is.EqualTo(1), "it was not clipped or retired");
+            Assert.That(span, Is.EqualTo(0.5f).Within(PositionTolerance));
+            AssertSweepLiesOnThePlane(plane, previousA, previousB, currentA, currentB);
+            AssertSweepIsCollinear(plane.normal, previousA, previousB, currentA, currentB);
+            Assert.That(Vector3.Dot(currentA - previousA, travelAxis), Is.GreaterThan(0f), "it still flew");
+            AssertVector(currentB, currentA + spanAxis * span);
+        }
+
+        [Test]
+        public void AnExpiredWave_ProducesNoSweepEndpoints()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.False, "an expired wave has no sweep to evaluate");
         }
 
         [Test]
