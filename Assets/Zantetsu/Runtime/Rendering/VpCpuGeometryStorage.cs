@@ -24,6 +24,7 @@ namespace Zantetsu.Rendering
         private readonly VpCpuVertexStorage _vertices;
         private readonly VpCpuIndexStorage _indices;
         private bool _disposed;
+        private bool _referenceTableClaimed;
 
         public VpCpuGeometryStorage(int vertexCapacity, int indexCapacity, int indexDescriptorCapacity, Allocator allocator)
         {
@@ -166,6 +167,23 @@ namespace Zantetsu.Rendering
             _disposed = true;
             _indices.Dispose();
             _vertices.Dispose();
+        }
+
+        /// <summary>
+        /// Claims the storage for its one <see cref="VpGeometryReferenceTable"/> for the rest of the storage's lifetime,
+        /// so that a geometry's index range has a single owner that retires it. Returns false when already claimed; the
+        /// claim is never released. Main thread only.
+        /// </summary>
+        internal bool TryClaimReferenceTable()
+        {
+            ThrowIfDisposed();
+            if (_referenceTableClaimed)
+            {
+                return false;
+            }
+
+            _referenceTableClaimed = true;
+            return true;
         }
 
         /// <summary>
