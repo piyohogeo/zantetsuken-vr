@@ -8,16 +8,18 @@ using Zantetsu.Core.Input;
 namespace Zantetsu.Sandbox
 {
     /// <summary>
-    /// Minimal Quest Link smoke component for the shared sandbox scene: it
-    /// reads the right-hand controller's OpenXR grip pose, converts it with
-    /// <see cref="BladePoseAdapter"/>, and drives the katana transform.
+    /// The sandbox's right-hand katana and everything a swing produces, for the
+    /// shared Quest Link scene: it reads the right-hand controller's OpenXR
+    /// grip pose, drives the katana transform through
+    /// <see cref="BladePoseAdapter"/>, accepts slash gestures, and latches,
+    /// advances and displays slash waves.
     ///
     /// Device input, pose conversion, display update, gesture acceptance and
-    /// slash wave publication deliberately live in one place; this assembly is
-    /// the boundary that keeps XR device APIs out of the device-independent
-    /// Zantetsu.Core. The aim (pointer) pose is never used. Everything past
-    /// publication -- raw span candidates, the guide ray, span close, wave
-    /// travel and VFX -- is still absent.
+    /// the slash waves deliberately live in one place; this assembly is the
+    /// boundary that keeps XR device APIs out of the device-independent
+    /// Zantetsu.Core. The aim (pointer) pose is never used. Nothing here acts
+    /// on what a wave sweeps through yet: there is no hit query, narrowphase
+    /// or cut.
     ///
     /// The katana is hidden whenever it is not showing a pose derived from a
     /// usable grip sample, including before the first one and after the
@@ -37,11 +39,6 @@ namespace Zantetsu.Sandbox
     /// the span. A shown sample the history itself refuses -- a timestamp that
     /// does not move forward -- empties it too.
     ///
-    /// The waves are shown through a fixed set of quads placed in the scene,
-    /// one per slot the store has, synced at the end of each update from the
-    /// store's current indices. They are display only: gameplay never reads
-    /// a quad's transform, and nothing here builds or edits geometry.
-    ///
     /// Gesture acceptance lives here too, on the Update boundary only: the
     /// span the history reports is run through <see cref="BladeEdgeGate"/>,
     /// and a pose that passes becomes an accepted sample. The first accepted
@@ -54,11 +51,11 @@ namespace Zantetsu.Sandbox
     /// it drops the raw history and the accepted samples together, and it is
     /// not itself accepted, so only a new edge-leading pass begins the next
     /// stroke. With no stroke under way the same motion is only rejected; it
-    /// does not keep wiping the raw history. Too
-    /// short a window, too little speed and too little displacement decide
-    /// nothing -- they neither begin nor end a stroke. An impossible speed and
-    /// every reset listed above drop both, but none of it hides the katana: a
-    /// pose that can be shown is still shown.
+    /// does not keep wiping the raw history. Too short a window, too little
+    /// speed and too little displacement decide nothing -- they neither begin
+    /// nor end a stroke. An impossible speed and every reset listed above drop
+    /// both, but none of it hides the katana: a pose that can be shown is
+    /// still shown.
     ///
     /// The stroke's source slash plane candidate, whether it has swept far
     /// enough to latch, and its first-candidate slash frame are all derived
@@ -70,10 +67,18 @@ namespace Zantetsu.Sandbox
     /// produced it: losing tracking or sweeping back re-arms the next stroke,
     /// carries the waves forward, and leaves them otherwise alone. Every pose
     /// this component can show and record is offered to those waves as a live
-    /// guide, whether or not the gate accepted it into the stroke.
-    /// Only disabling the component ends the waves it owns, taking their
-    /// display with them. A stroke gets one chance to latch -- if the store was full at that moment, that stroke
-    /// does not get another when a slot later frees up.
+    /// guide, whether or not the gate accepted it into the stroke, until a
+    /// wave's span capture window closes and it steers by the guide it froze
+    /// instead. A stroke gets one chance to latch -- if the store was full at
+    /// that moment, that stroke does not get another when a slot later frees
+    /// up. Only disabling the component ends the waves it owns, taking their
+    /// display with them.
+    ///
+    /// The waves are shown through a fixed set of quads placed in the scene,
+    /// one per slot the store has, synced at the end of each update -- never
+    /// from Before Render -- from the store's current indices. They are
+    /// display only: gameplay never reads a quad's transform, and nothing
+    /// here builds or edits geometry.
     ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
     /// tracking origin, so device poses are already world-space poses.
