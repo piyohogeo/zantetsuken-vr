@@ -63,7 +63,9 @@ namespace Zantetsu.Sandbox
     /// A published wave does not. Once latched it is state of its own in the
     /// wave store, flying on from that latch and outliving the stroke that
     /// produced it: losing tracking or sweeping back re-arms the next stroke,
-    /// carries the waves forward, and leaves them otherwise alone.
+    /// carries the waves forward, and leaves them otherwise alone. Every pose
+    /// this component can show and record is offered to those waves as a live
+    /// guide, whether or not the gate accepted it into the stroke.
     /// Only disabling the component ends the waves it owns. A stroke gets one
     /// chance to latch -- if the store was full at that moment, that stroke
     /// does not get another when a slot later frees up.
@@ -475,23 +477,34 @@ namespace Zantetsu.Sandbox
         internal bool TryRecordSample(in BladePoseSample sample)
         {
             // Waves that have reached their expiry go first, so a latch later
-            // in this same update can use the capacity they free. Flying the
-            // survivors before the gesture runs is what leaves a wave latched
-            // later in this same update sitting at its initial segment: no
-            // flag or id is needed to tell the two apart. An unusable sample
-            // resets the stroke but still carries the waves forward.
+            // in this same update can use the capacity they free. How many are
+            // left is also how the waves already flying are told apart from one
+            // latched further down this same update: the ones counted here fly
+            // and take the live guide, and anything published after does not.
+            // No flag or id is needed.
             waveStore.RemoveExpired(sample.TimestampSeconds);
-            waveStore.Advance(sample.TimestampSeconds);
+            int wavesAlreadyFlying = waveStore.Count;
 
-            bool recorded = TryRecordGestureSample(sample);
+            bool recorded = TryRecordGestureSample(sample, out EvaluatedBladePose current);
             TryPublishWave(sample.TimestampSeconds);
+
+            // A pose the gate turned away is still a live guide, as long as it
+            // could be shown and recorded. An unusable sample resets the stroke
+            // and leaves the waves flying on their existing span.
+            waveStore.Advance(
+                sample.TimestampSeconds,
+                wavesAlreadyFlying,
+                recorded,
+                recorded ? EmitterPosition(current) : Vector3.zero,
+                recorded ? current.BladeAxis : Vector3.zero);
+
             return recorded;
         }
 
-        private bool TryRecordGestureSample(in BladePoseSample sample)
+        private bool TryRecordGestureSample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
         {
             // A sample that cannot be shown has already reset the stroke.
-            if (!TryApplySample(sample, out EvaluatedBladePose evaluated))
+            if (!TryApplySample(sample, out evaluated))
             {
                 return false;
             }

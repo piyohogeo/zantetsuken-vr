@@ -232,6 +232,25 @@ namespace Zantetsu.Core.Tests
                 Is.True);
         }
 
+        // One pose with a rotation, step and interval of its own. The gate may
+        // well turn it away; what matters here is that it was recorded.
+        private bool RecordPose(Quaternion gripRotation, Vector3 step, double deltaSeconds)
+        {
+            strokeFrameId++;
+            strokeTime += deltaSeconds;
+            strokePosition += step;
+            return follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                gripRotation, BladeTrackingState.Position | BladeTrackingState.Rotation));
+        }
+
+        // The katana's emission control point right now, projected onto a wave's
+        // plane: the live guide origin that wave sees.
+        private Vector3 CurrentGuideOrigin(Plane plane)
+        {
+            Transform katana = katanaObject.transform;
+            return plane.ClosestPointOnPlane(katana.position + katana.forward * (BladeLength * 0.5f));
+        }
+
         // Where a wave's A end is at this time, straight from its latch
         // snapshot -- the same arithmetic the store does.
         private static Vector3 ExpectedA(Vector3 waveOrigin, Vector3 travelAxis, double latchedAt, double nowSeconds)
@@ -1442,7 +1461,7 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void AFullStore_PublishesNothingAndLeavesTheLivingWavesAlone()
+        public void AFullStore_PublishesNothingAndDoesNotEvictOrRewriteLatchSnapshots()
         {
             for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
             {
@@ -1451,17 +1470,22 @@ namespace Zantetsu.Core.Tests
             }
 
             Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
-            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out Vector3 firstOrigin,
-                out _, out _, out float firstSpan, out _, out _, out _, out _), Is.True);
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out Plane firstPlane, out Vector3 firstOrigin,
+                out Vector3 firstTravel, out Vector3 firstSpanAxis, out _, out _, out _, out _, out _), Is.True);
 
             SweepUntilLatch();
 
             Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity), "no wave was added");
-            Assert.That(follower.TryGetWave(0, out double stillLatchedAt, out _, out Vector3 stillOrigin,
-                out _, out _, out float stillSpan, out _, out _, out _, out _), Is.True);
+
+            // The living waves keep flying and may still take the live guide;
+            // what a full store must not do is retire one or rewrite its latch.
+            Assert.That(follower.TryGetWave(0, out double stillLatchedAt, out Plane stillPlane, out Vector3 stillOrigin,
+                out Vector3 stillTravel, out Vector3 stillSpanAxis, out _, out _, out _, out _, out _), Is.True);
             Assert.That(stillLatchedAt, Is.EqualTo(firstLatchedAt));
+            AssertVector(stillPlane.normal, firstPlane.normal);
             AssertVector(stillOrigin, firstOrigin);
-            Assert.That(stillSpan, Is.EqualTo(firstSpan).Within(PositionTolerance));
+            AssertVector(stillTravel, firstTravel);
+            AssertVector(stillSpanAxis, firstSpanAxis);
         }
 
         [Test]
@@ -1696,21 +1720,22 @@ namespace Zantetsu.Core.Tests
         public void BeforeRenderDoesNotFlyTheWave()
         {
             SweepUntilLatch();
-            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float beforeSpan,
                 out Vector3 beforePreviousStart, out _, out Vector3 beforeStart, out Vector3 beforeEnd), Is.True);
 
             strokeFrameId++;
             strokeTime += 0.1;
             Assert.That(
-                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition + EdgeStep * 4f,
                     UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
                 Is.True);
 
-            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float afterSpan,
                 out Vector3 afterPreviousStart, out _, out Vector3 afterStart, out Vector3 afterEnd), Is.True);
             AssertVector(afterStart, beforeStart);
             AssertVector(afterEnd, beforeEnd);
             AssertVector(afterPreviousStart, beforePreviousStart);
+            Assert.That(afterSpan, Is.EqualTo(beforeSpan), "Before Render is not a live guide");
         }
 
         [Test]
@@ -1834,6 +1859,254 @@ namespace Zantetsu.Core.Tests
             AssertVector(afterStart, beforeStart);
             AssertVector(afterEnd, beforeEnd);
             AssertVector(afterPreviousStart, beforePreviousStart);
+        }
+
+        [Test]
+        public void TheLatchUpdate_KeepsTheInitialSpanWithoutEvaluatingAGuide()
+        {
+            SweepUntilLatch();
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float frameSpan), Is.True);
+
+            Assert.That(span, Is.EqualTo(frameSpan).Within(PositionTolerance));
+            Assert.That(Vector3.Distance(currentStart, currentEnd), Is.EqualTo(frameSpan).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void TheNextLiveGuide_WidensTheAcceptedSpanToTheIntersection()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out Vector3 origin, out Vector3 travelAxis,
+                out Vector3 spanAxis, out float initialSpan, out _, out _, out _, out _), Is.True);
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane planeAfter, out Vector3 originAfter,
+                out Vector3 travelAfter, out Vector3 spanAxisAfter, out float span,
+                out _, out _, out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+
+            Assert.That(span, Is.GreaterThan(initialSpan));
+
+            // The same intersection, worked out from the wave's own frame and
+            // the katana's current pose.
+            Vector3 guideOrigin = CurrentGuideOrigin(plane);
+            Vector3 guideDirection = Vector3.ProjectOnPlane(katanaObject.transform.forward, plane.normal).normalized;
+            float denominator = Vector3.Dot(plane.normal, Vector3.Cross(spanAxis, guideDirection));
+            float expectedR = Vector3.Dot(plane.normal, Vector3.Cross(guideOrigin - currentStart, guideDirection)) / denominator;
+            Assert.That(span, Is.EqualTo(expectedR).Within(1e-3f));
+
+            // And independently: for this sweep the span line is world -Y, so
+            // the intersection is just how far the emitter is below A.
+            Assert.That(span, Is.EqualTo(currentStart.y - guideOrigin.y).Within(1e-3f));
+
+            AssertVector(currentEnd, currentStart + spanAxis * span);
+
+            // The latch snapshot is untouched by the wider span.
+            AssertVector(planeAfter.normal, plane.normal);
+            Assert.That(planeAfter.distance, Is.EqualTo(plane.distance).Within(PositionTolerance));
+            AssertVector(originAfter, origin);
+            AssertVector(travelAfter, travelAxis);
+            AssertVector(spanAxisAfter, spanAxis);
+        }
+
+        [Test]
+        public void ASmallerOrBackwardCandidate_LeavesTheAcceptedSpanAtItsMaximum()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float widest,
+                out _, out _, out Vector3 startBefore, out _), Is.True);
+
+            // Sweep back up past the wave origin: the candidate first shrinks
+            // and then goes behind the wave entirely.
+            for (int i = 0; i < 10; i++)
+            {
+                RecordPose(upright, -EdgeStep, SampleInterval);
+            }
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 startAfter, out Vector3 endAfter), Is.True);
+
+            Assert.That(span, Is.EqualTo(widest), "the accepted span is a running maximum");
+            Assert.That(startAfter, Is.Not.EqualTo(startBefore), "the wave kept flying");
+            AssertVector(endAfter, startAfter + spanAxis * span);
+        }
+
+        [Test]
+        public void ANearParallelGuide_LeavesTheSpanAndKeepsTheWaveFlying()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 startBefore, out _), Is.True);
+
+            // Point the blade along the span axis: the guide ray and the span
+            // line are parallel, so there is no usable intersection.
+            Quaternion alongSpan = Quaternion.Euler(90f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Assert.That(RecordPose(alongSpan, EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out _, out _, out Vector3 startAfter, out _), Is.True);
+            Assert.That(spanAfter, Is.EqualTo(span));
+            Assert.That(startAfter, Is.Not.EqualTo(startBefore));
+        }
+
+        [Test]
+        public void AGuideBehindTheWave_LeavesTheSpanAndKeepsTheWaveFlying()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 startBefore, out _), Is.True);
+
+            // Far along the blade axis: the intersection is behind the guide
+            // ray's origin, even though the span candidate itself grew.
+            RecordPose(upright, new Vector3(0f, -0.5f, 5f), SampleInterval);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out _, out _, out Vector3 startAfter, out _), Is.True);
+            Assert.That(spanAfter, Is.EqualTo(span));
+            Assert.That(startAfter, Is.Not.EqualTo(startBefore));
+        }
+
+        [Test]
+        public void APoseTheGateTurnedAway_IsStillALiveGuide()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out _, out _), Is.True);
+
+            // Rolled over, the same downward motion leads with the spine, so
+            // the gate takes none of it -- but the poses are still usable.
+            Quaternion flipped = FlippedGrip(follower);
+            Assert.That(RecordPose(flipped, EdgeStep, SampleInterval), Is.True);
+            Assert.That(RecordPose(flipped, EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the gate accepted none of them");
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(spanAfter, Is.GreaterThan(span));
+        }
+
+        [Test]
+        public void AnUpdateThatLosesTracking_KeepsTheSpanAndKeepsFlying()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float span,
+                out _, out _, out Vector3 startBefore, out _), Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out _, out _, out Vector3 startAfter, out Vector3 endAfter), Is.True);
+            Assert.That(spanAfter, Is.EqualTo(span), "no guide, so the span stands");
+            Assert.That(startAfter, Is.Not.EqualTo(startBefore), "the wave flies on that fixed span");
+            AssertVector(endAfter, startAfter + spanAxis * spanAfter);
+        }
+
+        [Test]
+        public void InOneUpdate_TheNewWaveKeepsItsInitialSpanWhileTheOlderOneFlies()
+        {
+            SweepUntilLatch();
+            ReArmStroke();
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 olderBefore, out _), Is.True);
+
+            Sweep(UprightGrip(follower), EdgeStep, 1);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 olderAfter, out _), Is.True);
+            Assert.That(olderAfter, Is.Not.EqualTo(olderBefore), "the wave already flying moved");
+
+            Assert.That(follower.TryGetWave(1, out _, out _, out Vector3 newOrigin, out _, out Vector3 newSpanAxis,
+                out float newSpan, out Vector3 newPreviousStart, out Vector3 newPreviousEnd,
+                out Vector3 newCurrentStart, out Vector3 newCurrentEnd), Is.True);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float frameSpan), Is.True);
+
+            Assert.That(newSpan, Is.EqualTo(frameSpan).Within(PositionTolerance), "no guide ran for the new wave");
+            AssertVector(newCurrentStart, newOrigin);
+            AssertVector(newCurrentEnd, newOrigin + newSpanAxis * newSpan);
+            AssertVector(newPreviousStart, newCurrentStart);
+            AssertVector(newPreviousEnd, newCurrentEnd);
+        }
+
+        [Test]
+        public void EachWaveEvaluatesTheSameGuideAgainstItsOwnFrame()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepUntilLatch();
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            }
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane firstPlane, out _, out _, out Vector3 firstSpanAxis,
+                out float firstSpan, out _, out _, out Vector3 firstStart, out Vector3 firstEnd), Is.True);
+            Assert.That(follower.TryGetWave(1, out _, out Plane secondPlane, out _, out _, out Vector3 secondSpanAxis,
+                out float secondSpan, out _, out _, out Vector3 secondStart, out Vector3 secondEnd), Is.True);
+
+            // One pose, but each wave measures it from its own A along its own
+            // span axis, so the two spans are not the same number.
+            Assert.That(firstSpan, Is.EqualTo(firstStart.y - CurrentGuideOrigin(firstPlane).y).Within(1e-3f));
+            Assert.That(secondSpan, Is.EqualTo(secondStart.y - CurrentGuideOrigin(secondPlane).y).Within(1e-3f));
+            AssertVector(firstEnd, firstStart + firstSpanAxis * firstSpan);
+            AssertVector(secondEnd, secondStart + secondSpanAxis * secondSpan);
+        }
+
+        [Test]
+        public void ATimeBehindTheWaveTravel_LeavesTheWaveExactlyAsItWas()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _,
+                out _, out _, out _, out _, out _), Is.True);
+
+            // Fly it well past its latch.
+            SkipTime(0.4);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out Vector3 previousStart, out Vector3 previousEnd,
+                out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+
+            // A time after the latch but before that: the pose history refuses
+            // it and the stroke resets, but the wave must not go backwards.
+            double backwards = (latchedAt + strokeTime) * 0.5;
+            Assert.That(backwards, Is.GreaterThan(latchedAt).And.LessThan(strokeTime));
+
+            strokeFrameId++;
+            Assert.That(
+                follower.TryRecordSample(new BladePoseSample(strokeFrameId, backwards, strokePosition,
+                    UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.False,
+                "the pose history refuses a timestamp that does not move forward");
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the stroke is reset as before");
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out Vector3 previousStartAfter, out Vector3 previousEndAfter,
+                out Vector3 currentStartAfter, out Vector3 currentEndAfter), Is.True);
+            Assert.That(spanAfter, Is.EqualTo(span));
+            AssertVector(previousStartAfter, previousStart);
+            AssertVector(previousEndAfter, previousEnd);
+            AssertVector(currentStartAfter, currentStart);
+            AssertVector(currentEndAfter, currentEnd);
         }
 
         [Test]
