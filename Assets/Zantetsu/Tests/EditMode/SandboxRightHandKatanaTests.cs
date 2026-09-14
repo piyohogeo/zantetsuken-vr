@@ -199,6 +199,53 @@ namespace Zantetsu.Core.Tests
             Assert.That(plane.normal.magnitude, Is.EqualTo(1f).Within(PositionTolerance), "plane normal is not unit length");
         }
 
+        // A fresh edge-leading stroke, swept until it latches: the seventh
+        // sample is the first with an emitter chord past the latch distance.
+        private void SweepUntilLatch()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+        }
+
+        // Sweeps back until the stroke re-arms, so the next forward sweep is a
+        // new stroke rather than a continuation.
+        private void ReArmStroke()
+        {
+            Quaternion upright = UprightGrip(follower);
+            for (int i = 0; i < 20 && follower.AcceptedSampleCount > 0; i++)
+            {
+                Sweep(upright, -EdgeStep, 1);
+            }
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the stroke did not re-arm");
+        }
+
+        // Moves time on without disturbing the stroke: the jump is far outside
+        // the gate's window, so nothing is accepted and nothing is re-armed,
+        // but expiry sees the new time.
+        private void SkipTime(double seconds)
+        {
+            strokeFrameId++;
+            strokeTime += seconds;
+            Assert.That(
+                follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                    UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+        }
+
+        private bool HasWaveLatchedAt(double latchedAt)
+        {
+            for (int i = 0; i < follower.WaveCount; i++)
+            {
+                if (follower.TryGetWave(i, out double at, out _, out _, out _, out _, out _, out _, out _, out _, out _)
+                    && at == latchedAt)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private Vector3 CurrentCutSamplePosition()
         {
             Transform katana = katanaObject.transform;
@@ -358,11 +405,17 @@ namespace Zantetsu.Core.Tests
             Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
             Assert.That(playModeFollower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.True);
 
+            RecordSweep(playModeFollower, UprightGrip(playModeFollower), EdgeStep, 3,
+                ref frameId, ref time, ref position);
+            Assert.That(playModeFollower.WaveCount, Is.EqualTo(1), "the stroke latched a wave");
+
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
 
             playModeFollower.enabled = false;
             Assert.That(katana.activeSelf, Is.False, "A disabled component must not leave the katana on screen.");
+            Assert.That(playModeFollower.WaveCount, Is.EqualTo(0),
+                "A disabled component ends the waves it owns.");
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
                 "A disabled component must not keep the history it was building.");
             Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
@@ -380,6 +433,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(playModeFollower.IsLatchReady, Is.False);
             Assert.That(playModeFollower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False,
                 "The slash frame goes with the stroke it was derived from.");
+            Assert.That(playModeFollower.WaveCount, Is.EqualTo(0),
+                "A re-enabled component does not carry waves across the gap.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
@@ -1248,6 +1303,270 @@ namespace Zantetsu.Core.Tests
             Assert.That(reArmed, Is.True, "a return sweep must re-arm the stroke");
             Assert.That(follower.IsLatchReady, Is.False);
             Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void BeforeTheLatchDistance_NoWaveIsPublished()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void LatchReadyWithAnInvalidFrame_PublishesNothingUntilTheFrameBecomesValid()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 4);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+
+            // Two samples straight along the blade. The window still has the
+            // lateral motion the gate wants, so both are accepted, but the
+            // movement between accepted samples is parallel to the blade axis
+            // and contributes no plane normal.
+            Sweep(upright, new Vector3(0f, 0f, 0.10f), 2);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
+            Assert.That(follower.IsLatchReady, Is.True, "the emitter chord is past the latch distance");
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+
+            // One sample back across the blade gives the plane a normal again.
+            Sweep(upright, EdgeStep, 1);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.True,
+                "a later sample of the same stroke may still give a frame");
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "the stroke was not spent by the invalid frame");
+        }
+
+        [Test]
+        public void APublishedWaveMatchesTheFrameItLatchedOn()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out Plane plane, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span), Is.True);
+
+            Assert.That(follower.TryGetWave(0,
+                out double latchedAt, out Plane wavePlane, out Vector3 waveOrigin,
+                out Vector3 waveTravel, out Vector3 waveSpanAxis, out float waveSpan,
+                out Vector3 previousStart, out Vector3 previousEnd,
+                out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+
+            Assert.That(latchedAt, Is.EqualTo(strokeTime).Within(1e-9),
+                "the wave latched at the current sample, not an earlier one");
+            AssertVector(wavePlane.normal, plane.normal);
+            Assert.That(wavePlane.distance, Is.EqualTo(plane.distance).Within(PositionTolerance));
+            AssertVector(waveOrigin, beginEmitter);
+            AssertVector(waveTravel, travelAxis);
+            AssertVector(waveSpanAxis, spanAxis);
+            Assert.That(waveSpan, Is.EqualTo(span).Within(PositionTolerance));
+
+            // At latch both segments are the same degenerate sweep from A to B.
+            AssertVector(previousStart, beginEmitter);
+            AssertVector(previousEnd, latestEmitter);
+            AssertVector(currentStart, previousStart);
+            AssertVector(currentEnd, previousEnd);
+            Assert.That(waveSpan, Is.EqualTo(Vector3.Distance(previousStart, previousEnd)).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void ContinuingTheSameStroke_PublishesNoSecondWave()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            Sweep(UprightGrip(follower), EdgeStep, 8);
+
+            Assert.That(follower.IsLatchReady, Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AWaveOutlivesTheStrokeThatPublishedIt()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the stroke is gone");
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "the wave is not");
+        }
+
+        [Test]
+        public void ARearmedStroke_PublishesAlongsideTheLivingWave()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            ReArmStroke();
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "re-arming leaves the earlier wave alone");
+
+            SweepUntilLatch();
+
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void AWaveExpiresOnceItsLifetimeIsUp()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _, out _, out _, out _, out _, out _), Is.True);
+
+            // Just short of the lifetime the wave is still alive.
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            // At the lifetime exactly it is gone, before anything else in the update.
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AFullStore_PublishesNothingAndLeavesTheLivingWavesAlone()
+        {
+            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            {
+                SweepUntilLatch();
+                ReArmStroke();
+            }
+
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out Vector3 firstOrigin,
+                out _, out _, out float firstSpan, out _, out _, out _, out _), Is.True);
+
+            SweepUntilLatch();
+
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity), "no wave was added");
+            Assert.That(follower.TryGetWave(0, out double stillLatchedAt, out _, out Vector3 stillOrigin,
+                out _, out _, out float stillSpan, out _, out _, out _, out _), Is.True);
+            Assert.That(stillLatchedAt, Is.EqualTo(firstLatchedAt));
+            AssertVector(stillOrigin, firstOrigin);
+            Assert.That(stillSpan, Is.EqualTo(firstSpan).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void AStrokeTurnedAwayByAFullStore_DoesNotRetryWhenASlotFrees()
+        {
+            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            {
+                SweepUntilLatch();
+                ReArmStroke();
+            }
+
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.IsLatchReady, Is.True, "the turned-away stroke is still under way");
+
+            // Let the oldest waves expire without disturbing that stroke.
+            SkipTime(SandboxSlashWaveStore.WaveLifetimeSeconds + 0.1);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "every wave expired");
+            Assert.That(follower.IsLatchReady, Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "the spent stroke does not latch into the free slot");
+
+            // Continuing it still publishes nothing.
+            Sweep(UprightGrip(follower), EdgeStep, 4);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ExpiryFreesCapacityForALatchInTheSameUpdate()
+        {
+            for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+            {
+                SweepUntilLatch();
+                ReArmStroke();
+            }
+
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+            Assert.That(follower.TryGetWave(0, out double oldestLatchedAt,
+                out _, out _, out _, out _, out _, out _, out _, out _, out _), Is.True);
+            double oldestExpiry = oldestLatchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+
+            // Start the next stroke shortly before the oldest wave runs out.
+            // The jump itself is far outside the gate's window, so it only
+            // seeds the history.
+            strokeFrameId++;
+            strokeTime = oldestExpiry - 0.080;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+
+            // Sweep to one accepted sample short of the latch distance, all of
+            // it still inside the oldest wave's lifetime.
+            Quaternion upright = UprightGrip(follower);
+            for (int i = 0; i < 12 && follower.AcceptedSampleCount < 3; i++)
+            {
+                Sweep(upright, EdgeStep, 1);
+            }
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity), "nothing has expired yet");
+
+            // Land the sample that completes the latch exactly on the oldest
+            // wave's expiry, so both happen in the one update.
+            double finalDelta = oldestExpiry - strokeTime;
+            Assert.That(finalDelta, Is.GreaterThan(0.0).And.LessThanOrEqualTo(0.05),
+                "the final sample has to stay inside the gate window");
+
+            strokeFrameId++;
+            strokeTime = oldestExpiry;
+            strokePosition += EdgeStep;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+
+            Assert.That(HasWaveLatchedAt(oldestLatchedAt), Is.False, "the oldest wave expired in this update");
+            Assert.That(HasWaveLatchedAt(strokeTime), Is.True,
+                "the slot the expiry freed was used by this update's latch");
+            Assert.That(follower.WaveCount, Is.EqualTo(SandboxSlashWaveStore.Capacity));
+        }
+
+        [Test]
+        public void WaveStore_RefusesAStateThatCannotStayFinite()
+        {
+            SandboxSlashWaveStore store = new SandboxSlashWaveStore();
+            Plane plane = new Plane(Vector3.right, Vector3.zero);
+
+            Assert.That(store.TryLatch(double.NaN, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, new Vector3(float.NaN, 0f, 0f), Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, float.PositiveInfinity), Is.False);
+
+            // A finite origin whose travel over the lifetime overflows.
+            Assert.That(
+                store.TryLatch(0.0, plane, new Vector3(float.MaxValue, 0f, 0f), Vector3.up,
+                    new Vector3(float.MaxValue, 0f, 0f), Vector3.up, 1f),
+                Is.False);
+
+            // Both ends have to survive the lifetime, not just A. This travel
+            // lands A well inside the finite range and takes B past it.
+            Vector3 travelAxis = new Vector3(1.8e37f, 0f, 0f);
+            Vector3 travel = travelAxis * (SandboxSlashWaveStore.WaveSpeed * SandboxSlashWaveStore.WaveLifetimeSeconds);
+            Vector3 aEnd = new Vector3(-3.0e38f, 0f, 0f);
+            Vector3 bEnd = new Vector3(1.0e38f, 0f, 0f);
+            Assert.That(float.IsFinite(travel.x), Is.True, "the travel itself must stay finite for this case to bite");
+            Assert.That(float.IsFinite((aEnd + travel).x), Is.True, "the A end stays finite");
+            Assert.That(float.IsFinite((bEnd + travel).x), Is.False, "the B end does not");
+
+            Assert.That(store.TryLatch(0.0, plane, aEnd, bEnd, travelAxis, Vector3.up, 1f), Is.False);
+
+            Assert.That(store.Count, Is.EqualTo(0));
+
+            // The same call with a state that stays finite does publish.
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.True);
+            Assert.That(store.Count, Is.EqualTo(1));
         }
 
         [Test]

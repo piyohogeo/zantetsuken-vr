@@ -12,11 +12,12 @@ namespace Zantetsu.Sandbox
     /// reads the right-hand controller's OpenXR grip pose, converts it with
     /// <see cref="BladePoseAdapter"/>, and drives the katana transform.
     ///
-    /// Device input, pose conversion and display update deliberately live in
-    /// one place; this assembly is the boundary that keeps XR device APIs out
-    /// of the device-independent Zantetsu.Core. The aim (pointer) pose is
-    /// never used. No velocity history, gesture, stroke or slash logic exists
-    /// here.
+    /// Device input, pose conversion, display update, gesture acceptance and
+    /// slash wave publication deliberately live in one place; this assembly is
+    /// the boundary that keeps XR device APIs out of the device-independent
+    /// Zantetsu.Core. The aim (pointer) pose is never used. Everything past
+    /// publication -- raw span candidates, the guide ray, span close, wave
+    /// travel and VFX -- is still absent.
     ///
     /// The katana is hidden whenever it is not showing a pose derived from a
     /// usable grip sample, including before the first one and after the
@@ -59,6 +60,13 @@ namespace Zantetsu.Sandbox
     /// from the accepted samples on demand rather than stored, so they live
     /// and die with them.
     ///
+    /// A published wave does not. Once latched it is state of its own in the
+    /// wave store, outliving the stroke that produced it: losing tracking or
+    /// sweeping back re-arms the next stroke and leaves earlier waves alone.
+    /// Only disabling the component ends the waves it owns. A stroke gets one
+    /// chance to latch -- if the store was full at that moment, that stroke
+    /// does not get another when a slot later frees up.
+    ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
     /// tracking origin, so device poses are already world-space poses.
     /// </summary>
@@ -84,6 +92,12 @@ namespace Zantetsu.Sandbox
 
         private readonly EvaluatedBladePose[] acceptedSamples = new EvaluatedBladePose[AcceptedSampleCapacity];
         private int acceptedSampleCount;
+
+        private readonly SandboxSlashWaveStore waveStore = new SandboxSlashWaveStore();
+
+        // The whole of the "one latch per stroke" rule: set when a stroke has
+        // had its chance, cleared with the stroke itself.
+        private bool strokeLatchSpent;
 
         // Provisional Phase 0.52 gate values, fixed in code on purpose: no
         // profile, asset, scene setting or tuning UI exists for them yet.
@@ -393,6 +407,40 @@ namespace Zantetsu.Sandbox
             return IsFinite(result);
         }
 
+        /// <summary>Number of slash waves this katana currently has alive.</summary>
+        internal int WaveCount => waveStore.Count;
+
+        /// <summary>
+        /// Reads one live wave back by value. The store itself never leaves
+        /// this component.
+        /// </summary>
+        internal bool TryGetWave(
+            int index,
+            out double latchedAt,
+            out Plane sourceSlashPlane,
+            out Vector3 waveOrigin,
+            out Vector3 travelAxis,
+            out Vector3 spanAxis,
+            out float acceptedSpan,
+            out Vector3 previousSegmentStart,
+            out Vector3 previousSegmentEnd,
+            out Vector3 currentSegmentStart,
+            out Vector3 currentSegmentEnd)
+        {
+            return waveStore.TryGetWave(
+                index,
+                out latchedAt,
+                out sourceSlashPlane,
+                out waveOrigin,
+                out travelAxis,
+                out spanAxis,
+                out acceptedSpan,
+                out previousSegmentStart,
+                out previousSegmentEnd,
+                out currentSegmentStart,
+                out currentSegmentEnd);
+        }
+
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>
         internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles));
 
@@ -425,6 +473,17 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal bool TryRecordSample(in BladePoseSample sample)
         {
+            // Waves that have reached their expiry go first, so a latch later
+            // in this same update can use the capacity they free.
+            waveStore.RemoveExpired(sample.TimestampSeconds);
+
+            bool recorded = TryRecordGestureSample(sample);
+            TryPublishWave(sample.TimestampSeconds);
+            return recorded;
+        }
+
+        private bool TryRecordGestureSample(in BladePoseSample sample)
+        {
             // A sample that cannot be shown has already reset the stroke.
             if (!TryApplySample(sample, out EvaluatedBladePose evaluated))
             {
@@ -435,12 +494,41 @@ namespace Zantetsu.Sandbox
             // clears itself, and the accepted samples go with it.
             if (!poseHistory.TryAppend(evaluated))
             {
-                acceptedSampleCount = 0;
+                ResetStroke();
                 return false;
             }
 
             EvaluateGesture(evaluated);
             return true;
+        }
+
+        // Every condition a wave needs, decided in one place at one instant:
+        // the stroke has not latched yet, it has swept far enough, it has a
+        // frame right now, and the store has room. A stroke with a frame gets
+        // exactly one attempt, so a full store costs it its latch rather than
+        // leaving it queued for the next free slot.
+        private void TryPublishWave(double nowSeconds)
+        {
+            if (strokeLatchSpent || !IsLatchReady)
+            {
+                return;
+            }
+
+            if (!TryGetSlashFrameCandidate(
+                    out Plane plane,
+                    out Vector3 beginEmitter,
+                    out Vector3 latestEmitter,
+                    out Vector3 travelAxis,
+                    out Vector3 spanAxis,
+                    out float acceptedSpan))
+            {
+                // Not yet a frame; a later sample of the same stroke may still
+                // give one.
+                return;
+            }
+
+            strokeLatchSpent = true;
+            waveStore.TryLatch(nowSeconds, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, acceptedSpan);
         }
 
         // Update boundary only. Before Render never reaches here.
@@ -493,10 +581,12 @@ namespace Zantetsu.Sandbox
             acceptedSamples[AcceptedSampleCapacity - 1] = pose;
         }
 
+        // Waves are deliberately not touched here: they outlive the stroke.
         private void ResetStroke()
         {
             poseHistory.Clear();
             acceptedSampleCount = 0;
+            strokeLatchSpent = false;
         }
 
         private bool TryApplySample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
@@ -564,12 +654,14 @@ namespace Zantetsu.Sandbox
         // The katana is applied on Before Render as well as on Update, the way
         // the camera's Tracked Pose Driver is, so the two do not show poses
         // sampled at different times. The enable/disable lifetime owns the
-        // subscription, so no re-entry flag is needed, and it resets the
-        // history and the stroke so neither is continued across the gap.
+        // subscription, so no re-entry flag is needed, it resets the history
+        // and the stroke so neither is continued across the gap, and it ends
+        // the waves this component owns.
         private void OnEnable()
         {
             Hide();
             ResetStroke();
+            waveStore.Clear();
             Application.onBeforeRender += ApplyGripPoseForRender;
         }
 
@@ -578,6 +670,7 @@ namespace Zantetsu.Sandbox
             Application.onBeforeRender -= ApplyGripPoseForRender;
             Hide();
             ResetStroke();
+            waveStore.Clear();
         }
 
         private void Hide()
