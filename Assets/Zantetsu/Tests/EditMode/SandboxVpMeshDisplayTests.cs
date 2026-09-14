@@ -17,6 +17,7 @@ namespace Zantetsu.Core.Tests
     {
         private const string SandboxScenePath = "Assets/Scenes/Sandbox.unity";
         private const string ProbeRootName = "VP Display Probe";
+        private const string UnityMeshDisplayRootName = "Unity Mesh Display";
 
         private SceneSetup[] previousSetup;
         private Scene scene;
@@ -57,6 +58,21 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(roots[0].GetComponentsInChildren<Renderer>(true), Is.Empty);
             Assert.That(roots[0].GetComponentsInChildren<MeshFilter>(true), Is.Empty);
+        }
+
+        [Test]
+        public void TheProbe_SharesTheSceneWithTheUnityMeshDisplayAndOneShadowingDirectionalLight()
+        {
+            GameObject[] roots = scene.GetRootGameObjects();
+            Assert.That(roots.Count(root => root.name == ProbeRootName), Is.EqualTo(1), "probe roots");
+            Assert.That(roots.Count(root => root.name == UnityMeshDisplayRootName), Is.EqualTo(1), "Unity mesh display roots");
+
+            Light[] directionalLights = roots
+                .SelectMany(root => root.GetComponentsInChildren<Light>(true))
+                .Where(light => light.type == LightType.Directional && light.enabled && light.gameObject.activeInHierarchy)
+                .ToArray();
+            Assert.That(directionalLights, Has.Length.EqualTo(1), "active directional lights");
+            Assert.That(directionalLights[0].shadows, Is.Not.EqualTo(LightShadows.None));
         }
     }
 }
