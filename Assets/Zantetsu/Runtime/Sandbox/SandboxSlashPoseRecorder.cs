@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using UnityEngine;
 using Zantetsu.Core.Input;
 
@@ -26,6 +28,16 @@ namespace Zantetsu.Sandbox
     /// new recording or disabling this component hands input back to the
     /// controller, which starts over again, so replayed and live samples never
     /// meet in one stroke or one wave.
+    ///
+    /// One result can be pinned for comparison. Pin copies what the katana
+    /// shows at that moment -- the wave count, each wave's latch time,
+    /// accepted span, span close and current segment, and the stroke's
+    /// accepted sample count and latch readiness -- into fixed arrays here,
+    /// so a person can read it beside the current result after replaying the
+    /// same recording again. Only this component's own display reads the pin:
+    /// gameplay never does, nothing is judged or adopted from it, and it is
+    /// never saved. A pin survives Stop and a new replay, and goes with Clear
+    /// or a new recording.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SandboxSlashPoseRecorder : MonoBehaviour
@@ -55,6 +67,23 @@ namespace Zantetsu.Sandbox
         // sample while the replay's result is shown.
         private double lastReplayTime;
 
+        // The one pinned result, copied from the katana on Pin. Parallel fixed
+        // arrays with one slot per wave the katana can hold; nothing else
+        // reads them.
+        private bool hasPin;
+        private int pinnedWaveCount;
+        private int pinnedAcceptedSampleCount;
+        private bool pinnedLatchReady;
+        private readonly double[] pinnedLatchedAt = new double[SandboxSlashWaveStore.Capacity];
+        private readonly float[] pinnedAcceptedSpan = new float[SandboxSlashWaveStore.Capacity];
+        private readonly bool[] pinnedSpanClosed = new bool[SandboxSlashWaveStore.Capacity];
+        private readonly double[] pinnedSpanClosedAt = new double[SandboxSlashWaveStore.Capacity];
+        private readonly Vector3[] pinnedSegmentStart = new Vector3[SandboxSlashWaveStore.Capacity];
+        private readonly Vector3[] pinnedSegmentEnd = new Vector3[SandboxSlashWaveStore.Capacity];
+
+        // Reused across draws: OnGUI runs more than once per frame.
+        private readonly StringBuilder comparisonText = new StringBuilder(1024);
+
         internal bool IsRecording => recording;
 
         internal bool IsReplaying => replaying;
@@ -70,10 +99,22 @@ namespace Zantetsu.Sandbox
 
         internal int ReplayIndex => replayIndex;
 
-        /// <summary>Starts a fresh recording, ending any replay first.</summary>
+        internal bool HasPin => hasPin;
+
+        internal int PinnedWaveCount => pinnedWaveCount;
+
+        internal int PinnedAcceptedSampleCount => pinnedAcceptedSampleCount;
+
+        internal bool PinnedLatchReady => pinnedLatchReady;
+
+        /// <summary>
+        /// Starts a fresh recording, ending any replay first. A pin taken from
+        /// the old recording goes with it.
+        /// </summary>
         internal void BeginRecording()
         {
             Stop();
+            ClearPin();
             sampleCount = 0;
             replayIndex = 0;
             recording = true;
@@ -226,12 +267,193 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        /// <summary>Ends whatever is running and forgets the recording.</summary>
+        /// <summary>Ends whatever is running and forgets the recording and the pin.</summary>
         internal void Clear()
         {
             Stop();
+            ClearPin();
             sampleCount = 0;
             replayIndex = 0;
+        }
+
+        /// <summary>
+        /// Pins what the katana shows right now, replacing any earlier pin.
+        /// Only reads the katana. False, leaving the pin as it was, when no
+        /// katana is assigned.
+        /// </summary>
+        internal bool TryPinCurrent()
+        {
+            if (katana == null)
+            {
+                return false;
+            }
+
+            int waveCount = Mathf.Min(katana.WaveCount, SandboxSlashWaveStore.Capacity);
+            int pinned = 0;
+            for (int i = 0; i < waveCount; i++)
+            {
+                if (!katana.TryGetWave(i, out double latchedAt, out _, out _, out _, out _, out float acceptedSpan,
+                        out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd))
+                {
+                    continue;
+                }
+
+                bool closed = katana.TryGetWaveSpanClose(i, out double closedAt, out _, out _);
+                pinnedLatchedAt[pinned] = latchedAt;
+                pinnedAcceptedSpan[pinned] = acceptedSpan;
+                pinnedSpanClosed[pinned] = closed;
+                pinnedSpanClosedAt[pinned] = closed ? closedAt : double.NaN;
+                pinnedSegmentStart[pinned] = segmentStart;
+                pinnedSegmentEnd[pinned] = segmentEnd;
+                pinned++;
+            }
+
+            pinnedWaveCount = pinned;
+            pinnedAcceptedSampleCount = katana.AcceptedSampleCount;
+            pinnedLatchReady = katana.IsLatchReady;
+            hasPin = true;
+            return true;
+        }
+
+        /// <summary>Forgets the pinned result.</summary>
+        internal void ClearPin()
+        {
+            hasPin = false;
+            pinnedWaveCount = 0;
+            pinnedAcceptedSampleCount = 0;
+            pinnedLatchReady = false;
+        }
+
+        /// <summary>
+        /// One wave of the pinned result. <paramref name="spanClosedAt"/> is
+        /// NaN while the span was still open when pinned. False when nothing
+        /// is pinned or the index is out of range.
+        /// </summary>
+        internal bool TryGetPinnedWave(
+            int index,
+            out double latchedAt,
+            out float acceptedSpan,
+            out bool spanClosed,
+            out double spanClosedAt,
+            out Vector3 segmentStart,
+            out Vector3 segmentEnd)
+        {
+            if (!hasPin || index < 0 || index >= pinnedWaveCount)
+            {
+                latchedAt = double.NaN;
+                acceptedSpan = 0f;
+                spanClosed = false;
+                spanClosedAt = double.NaN;
+                segmentStart = Vector3.zero;
+                segmentEnd = Vector3.zero;
+                return false;
+            }
+
+            latchedAt = pinnedLatchedAt[index];
+            acceptedSpan = pinnedAcceptedSpan[index];
+            spanClosed = pinnedSpanClosed[index];
+            spanClosedAt = pinnedSpanClosedAt[index];
+            segmentStart = pinnedSegmentStart[index];
+            segmentEnd = pinnedSegmentEnd[index];
+            return true;
+        }
+
+        /// <summary>
+        /// Writes the current result above the pinned one. Current is read from
+        /// the katana as it is now; Pinned is only ever the copy. Nothing is
+        /// compared or judged here -- that is left to whoever reads it.
+        /// </summary>
+        internal void AppendComparison(StringBuilder text)
+        {
+            text.Append("Current  ");
+            if (katana == null)
+            {
+                text.Append("no katana\n");
+            }
+            else
+            {
+                int waveCount = katana.WaveCount;
+                AppendResultHeader(text, waveCount, katana.AcceptedSampleCount, katana.IsLatchReady);
+                for (int i = 0; i < waveCount; i++)
+                {
+                    if (!katana.TryGetWave(i, out double latchedAt, out _, out _, out _, out _, out float acceptedSpan,
+                            out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd))
+                    {
+                        continue;
+                    }
+
+                    bool closed = katana.TryGetWaveSpanClose(i, out double closedAt, out _, out _);
+                    AppendWave(text, i, latchedAt, acceptedSpan, closed, closedAt, segmentStart, segmentEnd);
+                }
+            }
+
+            text.Append("Pinned   ");
+            if (!hasPin)
+            {
+                text.Append("none\n");
+                return;
+            }
+
+            AppendResultHeader(text, pinnedWaveCount, pinnedAcceptedSampleCount, pinnedLatchReady);
+            for (int i = 0; i < pinnedWaveCount; i++)
+            {
+                if (TryGetPinnedWave(i, out double latchedAt, out float acceptedSpan, out bool closed,
+                        out double closedAt, out Vector3 segmentStart, out Vector3 segmentEnd))
+                {
+                    AppendWave(text, i, latchedAt, acceptedSpan, closed, closedAt, segmentStart, segmentEnd);
+                }
+            }
+        }
+
+        private static void AppendResultHeader(StringBuilder text, int waveCount, int acceptedSampleCount, bool latchReady)
+        {
+            text.Append("waves ").Append(waveCount)
+                .Append("  accepted ").Append(acceptedSampleCount)
+                .Append("  latch ").Append(latchReady ? "ready" : "waiting").Append('\n');
+        }
+
+        private static void AppendWave(
+            StringBuilder text, int index, double latchedAt, float acceptedSpan, bool closed, double closedAt,
+            Vector3 segmentStart, Vector3 segmentEnd)
+        {
+            text.Append("  #").Append(index).Append("  latched ");
+            AppendSeconds(text, latchedAt);
+            text.Append("  span ");
+            AppendMetres(text, acceptedSpan);
+            text.Append("  ");
+            if (closed)
+            {
+                text.Append("closed at ");
+                AppendSeconds(text, closedAt);
+            }
+            else
+            {
+                text.Append("open");
+            }
+
+            text.Append("\n      A ");
+            AppendPoint(text, segmentStart);
+            text.Append("  B ");
+            AppendPoint(text, segmentEnd);
+            text.Append('\n');
+        }
+
+        private static void AppendSeconds(StringBuilder text, double seconds)
+        {
+            text.Append(seconds.ToString("F3", CultureInfo.InvariantCulture)).Append(" s");
+        }
+
+        private static void AppendMetres(StringBuilder text, float metres)
+        {
+            text.Append(metres.ToString("F3", CultureInfo.InvariantCulture)).Append(" m");
+        }
+
+        private static void AppendPoint(StringBuilder text, Vector3 point)
+        {
+            text.Append('(')
+                .Append(point.x.ToString("F2", CultureInfo.InvariantCulture)).Append(", ")
+                .Append(point.y.ToString("F2", CultureInfo.InvariantCulture)).Append(", ")
+                .Append(point.z.ToString("F2", CultureInfo.InvariantCulture)).Append(')');
         }
 
         private void Update()
@@ -269,8 +491,9 @@ namespace Zantetsu.Sandbox
 
         private void OnGUI()
         {
-            const float Width = 340f;
-            GUILayout.BeginArea(new Rect(Mathf.Max(0f, Screen.width - Width - 10f), 10f, Width, 64f), GUI.skin.box);
+            const float Width = 560f;
+            GUILayout.BeginArea(new Rect(Mathf.Max(0f, Screen.width - Width - 10f), 10f, Width, Mathf.Max(0f, Screen.height - 20f)));
+            GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.Label(
                 "Pose replay  "
                 + (recording ? "recording" : replaying ? "replaying" : IsShowingReplayResult ? "replay done" : "idle")
@@ -297,6 +520,23 @@ namespace Zantetsu.Sandbox
             }
 
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Pin Current"))
+            {
+                TryPinCurrent();
+            }
+
+            if (GUILayout.Button("Clear Pin"))
+            {
+                ClearPin();
+            }
+
+            GUILayout.EndHorizontal();
+
+            comparisonText.Clear();
+            AppendComparison(comparisonText);
+            GUILayout.Label(comparisonText.ToString());
+            GUILayout.EndVertical();
             GUILayout.EndArea();
         }
     }

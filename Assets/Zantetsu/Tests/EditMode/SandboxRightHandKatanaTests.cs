@@ -3363,6 +3363,173 @@ namespace Zantetsu.Core.Tests
             Assert.That(recorder.TryTakeReplayResultTick(200, 0.1, out _), Is.False);
         }
 
+        private static string ComparisonText(SandboxSlashPoseRecorder recorder)
+        {
+            StringBuilder text = new StringBuilder();
+            recorder.AppendComparison(text);
+            return text.ToString();
+        }
+
+        // Records the same seven-sample sweep that latches one wave.
+        private void RecordReplayableSweep(SandboxSlashPoseRecorder recorder)
+        {
+            recorder.BeginRecording();
+            double time = 3.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            AppendSweepToRecording(recorder, UprightGrip(follower), EdgeStep, 7, ref time, ref position);
+            recorder.Stop();
+        }
+
+        private static void AssertPinnedWaveMatchesCurrent(SandboxSlashPoseRecorder recorder, SandboxRightHandKatana target, int index)
+        {
+            Assert.That(target.TryGetWave(index, out double latchedAt, out _, out _, out _, out _, out float acceptedSpan,
+                out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+            bool closed = target.TryGetWaveSpanClose(index, out double closedAt, out _, out _);
+
+            Assert.That(recorder.TryGetPinnedWave(index, out double pinnedLatchedAt, out float pinnedSpan,
+                out bool pinnedClosed, out double pinnedClosedAt, out Vector3 pinnedStart, out Vector3 pinnedEnd), Is.True);
+            Assert.That(pinnedLatchedAt, Is.EqualTo(latchedAt).Within(1e-9));
+            Assert.That(pinnedSpan, Is.EqualTo(acceptedSpan).Within(PositionTolerance));
+            Assert.That(pinnedClosed, Is.EqualTo(closed));
+            if (closed)
+            {
+                Assert.That(pinnedClosedAt, Is.EqualTo(closedAt).Within(1e-9));
+            }
+            else
+            {
+                Assert.That(double.IsNaN(pinnedClosedAt), Is.True);
+            }
+
+            Assert.That(Vector3.Distance(pinnedStart, segmentStart), Is.LessThan(PositionTolerance));
+            Assert.That(Vector3.Distance(pinnedEnd, segmentEnd), Is.LessThan(PositionTolerance));
+        }
+
+        [Test]
+        public void WithoutAPin_TheComparisonShowsNoneForPinned()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+
+            Assert.That(recorder.HasPin, Is.False);
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(0));
+            Assert.That(recorder.TryGetPinnedWave(0, out _, out _, out _, out _, out _, out _), Is.False);
+
+            string text = ComparisonText(recorder);
+            StringAssert.Contains("Current  waves 1", text);
+            StringAssert.Contains("Pinned   none", text);
+        }
+
+        [Test]
+        public void PinCurrent_CopiesTheKatanasResult()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+            SkipTime(0.2);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            Assert.That(recorder.HasPin, Is.True);
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(follower.WaveCount));
+            Assert.That(recorder.PinnedAcceptedSampleCount, Is.EqualTo(follower.AcceptedSampleCount));
+            Assert.That(recorder.PinnedLatchReady, Is.EqualTo(follower.IsLatchReady));
+            AssertPinnedWaveMatchesCurrent(recorder, follower, 0);
+            Assert.That(recorder.TryGetPinnedWave(1, out _, out _, out _, out _, out _, out _), Is.False);
+
+            StringAssert.Contains("Pinned   waves 1", ComparisonText(recorder));
+        }
+
+        [Test]
+        public void ThePin_DoesNotFollowTheKatanaAfterwards()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+            Assert.That(recorder.TryGetPinnedWave(0, out double pinnedLatchedAt, out float pinnedSpan,
+                out _, out _, out Vector3 pinnedStart, out Vector3 pinnedEnd), Is.True);
+
+            strokeFrameId++;
+            strokeTime += 0.3;
+            follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime));
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 currentStart, out _), Is.True);
+            Assert.That(Vector3.Distance(currentStart, pinnedStart), Is.GreaterThan(1f), "the current wave flew on");
+
+            Assert.That(recorder.TryGetPinnedWave(0, out double latchedAtAfter, out float spanAfter,
+                out _, out _, out Vector3 startAfter, out Vector3 endAfter), Is.True);
+            Assert.That(latchedAtAfter, Is.EqualTo(pinnedLatchedAt));
+            Assert.That(spanAfter, Is.EqualTo(pinnedSpan));
+            Assert.That(startAfter, Is.EqualTo(pinnedStart));
+            Assert.That(endAfter, Is.EqualTo(pinnedEnd));
+
+            strokeFrameId++;
+            strokeTime += 2.0;
+            follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime));
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0), "the current wave expired");
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(1), "the pin keeps it");
+        }
+
+        [Test]
+        public void ThePin_SurvivesStopButNotClearOrANewRecording()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            recorder.Stop();
+            Assert.That(recorder.HasPin, Is.True, "Stop keeps the pin");
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(1));
+
+            recorder.BeginRecording();
+            Assert.That(recorder.HasPin, Is.False, "a new recording drops the pin");
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(0));
+            StringAssert.Contains("Pinned   none", ComparisonText(recorder));
+            recorder.Stop();
+
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+            Assert.That(recorder.HasPin, Is.True);
+
+            recorder.Clear();
+            Assert.That(recorder.HasPin, Is.False, "Clear drops the pin");
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ThePin_SurvivesAReplayOfTheSameRecordingAndIsShownBesideIt()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            RecordReplayableSweep(recorder);
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+
+            Assert.That(recorder.HasPin, Is.True, "a replay keeps the pin to compare against");
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            string during = ComparisonText(recorder);
+            StringAssert.Contains("Current  waves 0", during);
+            StringAssert.Contains("Pinned   waves 1", during);
+
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+
+            // Same recording on the same replay clock, so the current result
+            // lines up with the pin.
+            Assert.That(follower.WaveCount, Is.EqualTo(recorder.PinnedWaveCount));
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(recorder.PinnedAcceptedSampleCount));
+            AssertPinnedWaveMatchesCurrent(recorder, follower, 0);
+
+            string after = ComparisonText(recorder);
+            StringAssert.Contains("Current  waves 1", after);
+            StringAssert.Contains("Pinned   waves 1", after);
+        }
+
         [Test]
         public void ReplayingARecordingWithATrackingGap_RefillsTheWindowAfterIt()
         {
