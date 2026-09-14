@@ -17,9 +17,11 @@ namespace Zantetsu.Core.Tests
     /// Unity Meshes, with instances of one shape sharing one Mesh at different
     /// transforms, lit by one directional light plus ambient, with shadows.
     /// Built-in primitives are always present. The adopted fixture instances
-    /// reference licensed meshes generated outside git, so every test passes
-    /// in a checkout without them: the scene's references are always checked,
-    /// and the meshes themselves only where they have been generated.
+    /// -- two per category, plus the adopted grid of 24 per category used to
+    /// compare renderer setups -- reference licensed meshes generated outside
+    /// git, so every test passes in a checkout without them: the scene's
+    /// references are always checked, and the meshes themselves only where
+    /// they have been generated.
     /// Only the scene's configuration is checked -- no pixels, topology,
     /// submeshes or GPU state.
     /// </summary>
@@ -30,6 +32,9 @@ namespace Zantetsu.Core.Tests
         private const string AdoptedPrefix = "Adopted ";
         private const string LicensedMeshFolder = "Assets/Licensed/DisplayMeshes/";
         private const int MaximumAdoptedTriangles = 10000;
+        private const string GridName = "Adopted Grid";
+        private const string GridGroundName = "Grid Ground";
+        private const int GridInstancesPerCategory = 24;
 
         private SceneSetup[] previousSetup;
         private Scene scene;
@@ -135,8 +140,9 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void BuiltInInstancesOfOneShape_ShareOneMeshAtDifferentTransforms()
         {
-            MeshFilter[] filters = FindDisplayRoot().GetComponentsInChildren<MeshFilter>(true)
-                .Where(filter => !filter.name.StartsWith(AdoptedPrefix)).ToArray();
+            Transform displayRoot = FindDisplayRoot().transform;
+            MeshFilter[] filters = displayRoot.GetComponentsInChildren<MeshFilter>(true)
+                .Where(filter => filter.transform.parent == displayRoot && !filter.name.StartsWith(AdoptedPrefix)).ToArray();
 
             Dictionary<Mesh, List<MeshFilter>> byMesh = new Dictionary<Mesh, List<MeshFilter>>();
             foreach (MeshFilter filter in filters)
@@ -248,6 +254,84 @@ namespace Zantetsu.Core.Tests
                 Assert.That(geometry.Triangles.Length, Is.LessThanOrEqualTo(MaximumAdoptedTriangles));
                 Assert.That(asset.vertexCount, Is.EqualTo(geometry.Positions.Length), entry.Category + " vertices");
                 Assert.That(asset.GetIndexCount(0), Is.EqualTo((uint)(geometry.Triangles.Length * 3)), entry.Category + " indices");
+            }
+        }
+
+        private static string GridInstanceName(LicensedDisplayMesh entry, int index)
+        {
+            return entry.Category + " " + index.ToString("00");
+        }
+
+        private Transform FindGrid()
+        {
+            Transform grid = FindDisplayRoot().transform.Find(GridName);
+            Assert.That(grid, Is.Not.Null, "no " + GridName);
+            return grid;
+        }
+
+        [Test]
+        public void AdoptedGrid_HasTwentyFourInstancesPerCategoryReferencingItsLicensedMesh()
+        {
+            Transform grid = FindGrid();
+            Dictionary<string, string> references = MeshReferencesInSceneFile();
+
+            Transform ground = grid.Find(GridGroundName);
+            Assert.That(ground, Is.Not.Null, "the grid has its own ground");
+            Assert.That(ground.GetComponent<MeshFilter>().sharedMesh, Is.Not.Null, "the grid ground is a built-in mesh");
+
+            int expected = LicensedDisplayMeshes.Selection.Count * GridInstancesPerCategory;
+            Assert.That(grid.GetComponentsInChildren<MeshFilter>(true).Length, Is.EqualTo(expected + 1),
+                "the grid holds its instances and the ground, nothing else");
+
+            foreach (LicensedDisplayMesh entry in LicensedDisplayMeshes.Selection)
+            {
+                string guid = LicensedDisplayMeshes.GuidFor(entry);
+                Transform[] instances = new Transform[GridInstancesPerCategory];
+                for (int i = 0; i < instances.Length; i++)
+                {
+                    string instanceName = GridInstanceName(entry, i);
+                    instances[i] = grid.Find(instanceName);
+                    Assert.That(instances[i], Is.Not.Null, "no grid " + instanceName);
+                    Assert.That(instances[i].GetComponent<MeshFilter>(), Is.Not.Null, instanceName + " has a MeshFilter");
+
+                    Assert.That(references.TryGetValue(instanceName, out string reference), Is.True,
+                        instanceName + " has a saved mesh reference");
+                    StringAssert.Contains("fileID: 4300000,", reference, instanceName + " references a mesh asset");
+                    StringAssert.Contains("guid: " + guid + ",", reference, instanceName + " references the " + entry.Category + " mesh");
+                }
+
+                for (int i = 0; i < instances.Length; i++)
+                {
+                    for (int j = i + 1; j < instances.Length; j++)
+                    {
+                        AssertPlacedDifferently(instances[i], instances[j]);
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void AdoptedGrid_ShowsTheLicensedMeshWhereItHasBeenGenerated()
+        {
+            Transform grid = FindGrid();
+
+            foreach (LicensedDisplayMesh entry in LicensedDisplayMeshes.Selection)
+            {
+                Mesh asset = AssetDatabase.LoadAssetAtPath<Mesh>(LicensedDisplayMeshes.AssetPathFor(entry));
+                for (int i = 0; i < GridInstancesPerCategory; i++)
+                {
+                    MeshFilter filter = grid.Find(GridInstanceName(entry, i)).GetComponent<MeshFilter>();
+                    if (asset == null)
+                    {
+                        // Not generated in this checkout: the instance simply shows nothing.
+                        Assert.That(filter.sharedMesh == null, Is.True, filter.name + " has no mesh to show");
+                    }
+                    else
+                    {
+                        Assert.That(filter.sharedMesh, Is.Not.Null, filter.name + " shows the generated mesh");
+                        Assert.That(filter.sharedMesh, Is.SameAs(asset), filter.name + " shares the one " + entry.Category + " mesh");
+                    }
+                }
             }
         }
 
