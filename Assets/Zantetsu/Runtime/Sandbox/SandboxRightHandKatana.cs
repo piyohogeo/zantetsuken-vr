@@ -61,8 +61,9 @@ namespace Zantetsu.Sandbox
     /// and die with them.
     ///
     /// A published wave does not. Once latched it is state of its own in the
-    /// wave store, outliving the stroke that produced it: losing tracking or
-    /// sweeping back re-arms the next stroke and leaves earlier waves alone.
+    /// wave store, flying on from that latch and outliving the stroke that
+    /// produced it: losing tracking or sweeping back re-arms the next stroke,
+    /// carries the waves forward, and leaves them otherwise alone.
     /// Only disabling the component ends the waves it owns. A stroke gets one
     /// chance to latch -- if the store was full at that moment, that stroke
     /// does not get another when a slot later frees up.
@@ -474,8 +475,13 @@ namespace Zantetsu.Sandbox
         internal bool TryRecordSample(in BladePoseSample sample)
         {
             // Waves that have reached their expiry go first, so a latch later
-            // in this same update can use the capacity they free.
+            // in this same update can use the capacity they free. Flying the
+            // survivors before the gesture runs is what leaves a wave latched
+            // later in this same update sitting at its initial segment: no
+            // flag or id is needed to tell the two apart. An unusable sample
+            // resets the stroke but still carries the waves forward.
             waveStore.RemoveExpired(sample.TimestampSeconds);
+            waveStore.Advance(sample.TimestampSeconds);
 
             bool recorded = TryRecordGestureSample(sample);
             TryPublishWave(sample.TimestampSeconds);

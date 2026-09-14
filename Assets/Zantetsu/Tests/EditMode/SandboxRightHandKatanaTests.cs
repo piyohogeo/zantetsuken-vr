@@ -232,6 +232,13 @@ namespace Zantetsu.Core.Tests
                 Is.True);
         }
 
+        // Where a wave's A end is at this time, straight from its latch
+        // snapshot -- the same arithmetic the store does.
+        private static Vector3 ExpectedA(Vector3 waveOrigin, Vector3 travelAxis, double latchedAt, double nowSeconds)
+        {
+            return waveOrigin + travelAxis * (float)(SandboxSlashWaveStore.WaveSpeed * (nowSeconds - latchedAt));
+        }
+
         private bool HasWaveLatchedAt(double latchedAt)
         {
             for (int i = 0; i < follower.WaveCount; i++)
@@ -1567,6 +1574,266 @@ namespace Zantetsu.Core.Tests
             // The same call with a state that stays finite does publish.
             Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.True);
             Assert.That(store.Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void TheLatchUpdate_LeavesTheNewWaveAtItsInitialSegment()
+        {
+            SweepUntilLatch();
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out Vector3 origin, out _, out Vector3 spanAxis,
+                out float span, out Vector3 previousStart, out Vector3 previousEnd,
+                out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+
+            AssertVector(currentStart, origin);
+            AssertVector(currentEnd, origin + spanAxis * span);
+            AssertVector(previousStart, currentStart);
+            AssertVector(previousEnd, currentEnd);
+        }
+
+        [Test]
+        public void TheNextUpdate_MovesTheWaveAlongItsTravelAxisAndKeepsEverythingElse()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out Plane plane, out Vector3 origin,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span,
+                out _, out _, out Vector3 initialStart, out Vector3 initialEnd), Is.True);
+
+            SkipTime(0.1);
+
+            Assert.That(follower.TryGetWave(0, out double stillLatchedAt, out Plane movedPlane, out Vector3 movedOrigin,
+                out Vector3 movedTravel, out Vector3 movedSpanAxis, out float movedSpan,
+                out Vector3 previousStart, out Vector3 previousEnd,
+                out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+
+            Vector3 expectedA = ExpectedA(origin, travelAxis, latchedAt, strokeTime);
+            AssertVector(currentStart, expectedA);
+            AssertVector(currentEnd, expectedA + spanAxis * span);
+
+            // The segment it was showing is now the previous one.
+            AssertVector(previousStart, initialStart);
+            AssertVector(previousEnd, initialEnd);
+
+            // Length and the latch snapshot are untouched.
+            Assert.That(Vector3.Distance(currentStart, currentEnd), Is.EqualTo(span).Within(PositionTolerance));
+            Assert.That(stillLatchedAt, Is.EqualTo(latchedAt));
+            Assert.That(movedSpan, Is.EqualTo(span).Within(PositionTolerance));
+            AssertVector(movedPlane.normal, plane.normal);
+            Assert.That(movedPlane.distance, Is.EqualTo(plane.distance).Within(PositionTolerance));
+            AssertVector(movedOrigin, origin);
+            AssertVector(movedTravel, travelAxis);
+            AssertVector(movedSpanAxis, spanAxis);
+        }
+
+        [Test]
+        public void RepeatedUpdates_ComeFromTheLatchRatherThanAddingUp()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out Vector3 origin,
+                out Vector3 travelAxis, out _, out _, out _, out _, out _, out _), Is.True);
+
+            SkipTime(0.1);
+            double firstNow = strokeTime;
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 firstStart, out Vector3 firstEnd), Is.True);
+            AssertVector(firstStart, ExpectedA(origin, travelAxis, latchedAt, firstNow));
+
+            SkipTime(0.3);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 previousStart, out Vector3 previousEnd,
+                out Vector3 secondStart, out Vector3 secondEnd), Is.True);
+
+            AssertVector(secondStart, ExpectedA(origin, travelAxis, latchedAt, strokeTime));
+
+            // The previous segment is the one the update before was showing.
+            AssertVector(previousStart, firstStart);
+            AssertVector(previousEnd, firstEnd);
+
+            // Adding each update's travel on top of the last would have taken
+            // it much further than the elapsed time allows.
+            float analytic = (float)(SandboxSlashWaveStore.WaveSpeed * (strokeTime - latchedAt));
+            Assert.That(Vector3.Distance(origin, secondStart), Is.EqualTo(analytic).Within(1e-3f));
+            float accumulated = analytic + (float)(SandboxSlashWaveStore.WaveSpeed * (firstNow - latchedAt));
+            Assert.That(Vector3.Distance(origin, secondStart), Is.LessThan(accumulated - 0.5f));
+            Assert.That(Vector3.Distance(secondStart, secondEnd), Is.EqualTo(Vector3.Distance(firstStart, firstEnd)).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void AMissedUpdate_StillLandsTheWaveWhereTheTimeSaysItShouldBe()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out Vector3 origin,
+                out Vector3 travelAxis, out _, out _, out _, out _, out _, out _), Is.True);
+
+            // One long step instead of many short ones.
+            SkipTime(0.4);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 currentStart, out _), Is.True);
+            AssertVector(currentStart, ExpectedA(origin, travelAxis, latchedAt, strokeTime));
+        }
+
+        [Test]
+        public void AnUpdateThatLosesTracking_StillFliesTheWave()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out Vector3 origin,
+                out Vector3 travelAxis, out _, out _, out _, out _, out Vector3 beforeStart, out _), Is.True);
+
+            strokeFrameId++;
+            strokeTime += 0.1;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the gesture is reset as before");
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 afterStart, out _), Is.True);
+            Assert.That(afterStart, Is.Not.EqualTo(beforeStart));
+            AssertVector(afterStart, ExpectedA(origin, travelAxis, latchedAt, strokeTime));
+        }
+
+        [Test]
+        public void BeforeRenderDoesNotFlyTheWave()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 beforePreviousStart, out _, out Vector3 beforeStart, out Vector3 beforeEnd), Is.True);
+
+            strokeFrameId++;
+            strokeTime += 0.1;
+            Assert.That(
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                    UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 afterPreviousStart, out _, out Vector3 afterStart, out Vector3 afterEnd), Is.True);
+            AssertVector(afterStart, beforeStart);
+            AssertVector(afterEnd, beforeEnd);
+            AssertVector(afterPreviousStart, beforePreviousStart);
+        }
+
+        [Test]
+        public void InOneUpdate_TheOlderWaveFliesAndTheNewOneStaysAtItsInitialSegment()
+        {
+            SweepUntilLatch();
+            ReArmStroke();
+
+            // One sample short of the next latch.
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out double olderLatchedAt, out _, out Vector3 olderOrigin,
+                out Vector3 olderTravel, out _, out _, out _, out _, out Vector3 olderBefore, out _), Is.True);
+
+            Sweep(UprightGrip(follower), EdgeStep, 1);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 olderPreviousStart, out _, out Vector3 olderAfter, out _), Is.True);
+            Assert.That(olderAfter, Is.Not.EqualTo(olderBefore), "the wave that was already there flew");
+            AssertVector(olderAfter, ExpectedA(olderOrigin, olderTravel, olderLatchedAt, strokeTime));
+            AssertVector(olderPreviousStart, olderBefore);
+
+            Assert.That(follower.TryGetWave(1, out _, out _, out Vector3 newOrigin, out _, out Vector3 newSpanAxis,
+                out float newSpan, out Vector3 newPreviousStart, out Vector3 newPreviousEnd,
+                out Vector3 newCurrentStart, out Vector3 newCurrentEnd), Is.True);
+            AssertVector(newCurrentStart, newOrigin);
+            AssertVector(newCurrentEnd, newOrigin + newSpanAxis * newSpan);
+            AssertVector(newPreviousStart, newCurrentStart);
+            AssertVector(newPreviousEnd, newCurrentEnd);
+        }
+
+        [Test]
+        public void EachWaveFliesFromItsOwnLatch()
+        {
+            SweepUntilLatch();
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out Vector3 firstOrigin,
+                out Vector3 firstTravel, out _, out _, out _, out _, out _, out _), Is.True);
+            Assert.That(follower.TryGetWave(1, out double secondLatchedAt, out _, out Vector3 secondOrigin,
+                out Vector3 secondTravel, out _, out _, out _, out _, out _, out _), Is.True);
+            Assert.That(secondLatchedAt, Is.GreaterThan(firstLatchedAt));
+
+            SkipTime(0.2);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 firstCurrent, out _), Is.True);
+            Assert.That(follower.TryGetWave(1, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 secondCurrent, out _), Is.True);
+
+            AssertVector(firstCurrent, ExpectedA(firstOrigin, firstTravel, firstLatchedAt, strokeTime));
+            AssertVector(secondCurrent, ExpectedA(secondOrigin, secondTravel, secondLatchedAt, strokeTime));
+            Assert.That(Vector3.Distance(firstOrigin, firstCurrent),
+                Is.GreaterThan(Vector3.Distance(secondOrigin, secondCurrent)),
+                "the older wave has travelled further");
+        }
+
+        [Test]
+        public void AWaveAtExactlyItsLifetime_ExpiresInsteadOfFlying()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out Vector3 origin,
+                out Vector3 travelAxis, out _, out _, out _, out _, out _, out _), Is.True);
+
+            // Just short of the lifetime it is still there, and it has flown.
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 lastSeen, out _), Is.True);
+            AssertVector(lastSeen, ExpectedA(origin, travelAxis, latchedAt, strokeTime));
+
+            // At the lifetime it is gone rather than moved one last time.
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ATimeBeforeTheLatch_LeavesTheSegmentAlone()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _, out _,
+                out Vector3 beforePreviousStart, out _, out Vector3 beforeStart, out Vector3 beforeEnd), Is.True);
+
+            strokeFrameId++;
+            double backwards = latchedAt - 0.05;
+            follower.TryRecordSample(new BladePoseSample(strokeFrameId, backwards, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation));
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 afterPreviousStart, out _, out Vector3 afterStart, out Vector3 afterEnd), Is.True);
+            AssertVector(afterStart, beforeStart);
+            AssertVector(afterEnd, beforeEnd);
+            AssertVector(afterPreviousStart, beforePreviousStart);
+        }
+
+        [Test]
+        public void ANonFiniteTime_LeavesTheSegmentAlone()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 beforePreviousStart, out _, out Vector3 beforeStart, out Vector3 beforeEnd), Is.True);
+
+            strokeFrameId++;
+            follower.TryRecordSample(new BladePoseSample(strokeFrameId, double.NaN, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation));
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out Vector3 afterPreviousStart, out _, out Vector3 afterStart, out Vector3 afterEnd), Is.True);
+            AssertVector(afterStart, beforeStart);
+            AssertVector(afterEnd, beforeEnd);
+            AssertVector(afterPreviousStart, beforePreviousStart);
         }
 
         [Test]

@@ -13,9 +13,10 @@ namespace Zantetsu.Sandbox
     /// cut on, its origin and axes, the span it started with, the speed and
     /// lifetime it was given, and its previous and current segments -- which
     /// at latch are the same degenerate sweep. When it runs out follows from
-    /// the latch time and the lifetime, so it is worked out rather than kept.
-    /// Nothing here advances a wave; expiry is the only thing that happens to
-    /// one so far.
+    /// the latch time and the lifetime, so it is worked out rather than kept,
+    /// and so does where it has travelled to: every position comes from the
+    /// latch snapshot and the time asked about, never from adding to the last
+    /// one, so a wave that missed an update is in the right place anyway.
     ///
     /// Waves never leave: they are read back a field at a time, so no caller
     /// can hold the array or write through it.
@@ -86,6 +87,53 @@ namespace Zantetsu.Sandbox
             }
 
             count = kept;
+        }
+
+        /// <summary>
+        /// Moves every live wave to where it is at this time. A(t) comes from
+        /// the latch snapshot alone -- origin plus speed times the time since
+        /// latch, along the travel axis -- and B(t) is a span further along
+        /// the span axis, so nothing accumulates and no travelled distance is
+        /// kept. The segment it was showing becomes the previous one.
+        ///
+        /// A wave is left exactly as it was when the time is not usable for
+        /// it: not finite, before its latch, or unable to give finite ends.
+        /// Nothing is clamped, expired early, or marked as recovering.
+        /// </summary>
+        internal void Advance(double nowSeconds)
+        {
+            if (double.IsNaN(nowSeconds) || double.IsInfinity(nowSeconds))
+            {
+                return;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                double elapsed = nowSeconds - waves[i].LatchedAt;
+                if (double.IsNaN(elapsed) || double.IsInfinity(elapsed) || elapsed < 0.0)
+                {
+                    continue;
+                }
+
+                double travelDistance = waves[i].Speed * elapsed;
+                if (double.IsNaN(travelDistance) || double.IsInfinity(travelDistance)
+                    || Math.Abs(travelDistance) > float.MaxValue)
+                {
+                    continue;
+                }
+
+                Vector3 a = waves[i].WaveOrigin + waves[i].TravelAxis * (float)travelDistance;
+                Vector3 b = a + waves[i].SpanAxis * waves[i].AcceptedSpan;
+                if (!IsFinite(a) || !IsFinite(b))
+                {
+                    continue;
+                }
+
+                waves[i].PreviousSegmentStart = waves[i].CurrentSegmentStart;
+                waves[i].PreviousSegmentEnd = waves[i].CurrentSegmentEnd;
+                waves[i].CurrentSegmentStart = a;
+                waves[i].CurrentSegmentEnd = b;
+            }
         }
 
         /// <summary>
