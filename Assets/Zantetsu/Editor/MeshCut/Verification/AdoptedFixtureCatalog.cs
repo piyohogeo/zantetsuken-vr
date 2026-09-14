@@ -16,24 +16,55 @@ namespace Zantetsu.MeshCut.Verification
     public sealed class AdoptedFixture
     {
         internal AdoptedFixture(string artifactId, string sourceFixtureId, string relativePath,
-            ZcgDocument geometry)
+            string geometryPath, long geometryByteLength, string geometryContentSha256,
+            string geometryKind)
         {
             ArtifactId = artifactId;
             SourceFixtureId = sourceFixtureId;
             RelativePath = relativePath;
-            Geometry = geometry;
+            m_geometryPath = geometryPath;
+            GeometryByteLength = geometryByteLength;
+            m_geometryContentSha256 = geometryContentSha256;
+            m_geometryKind = geometryKind;
         }
+
+        readonly string m_geometryPath;
+        readonly string m_geometryContentSha256;
+        readonly string m_geometryKind;
+        ZcgDocument m_geometry;
 
         public string ArtifactId { get; }
         public string SourceFixtureId { get; }
         public string RelativePath { get; }
-        public ZcgDocument Geometry { get; }
+        public long GeometryByteLength { get; }
+
+        public ZcgDocument Geometry
+        {
+            get
+            {
+                if (m_geometry != null)
+                    return m_geometry;
+
+                byte[] bytes = File.ReadAllBytes(m_geometryPath);
+                if (bytes.LongLength != GeometryByteLength)
+                    throw new InvalidDataException("Geometry byte length mismatch: " + ArtifactId);
+                if (!string.Equals(ZcgGeometryCodec.ComputeSha256(bytes), m_geometryContentSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Geometry hash mismatch: " + ArtifactId);
+
+                ZcgDocument geometry = ZcgGeometryCodec.Read(bytes, ZcgDecodeLimits.Phase02);
+                if (!string.Equals(geometry.Kind.ToString(), m_geometryKind, StringComparison.Ordinal))
+                    throw new InvalidDataException("Geometry kind mismatch: " + ArtifactId);
+                m_geometry = geometry;
+                return m_geometry;
+            }
+        }
     }
 
     /// <summary>
-    /// Editor-only reader for the frozen public portion of the Phase 0.2 handoff.
-    /// It intentionally understands only Geometry bindings used by current harnesses;
-    /// legacy generation, selection, receipt, and Structural Slab data are not revived.
+    /// Editor-only reader for the frozen Phase 0.2 handoff. Public Synthetic and local
+    /// Licensed indexes use separate validation policies. Only Geometry bindings used by
+    /// current harnesses are exposed; generation, receipt, and Structural Slab data are not.
     /// </summary>
     public sealed class AdoptedFixtureCatalog
     {
@@ -60,17 +91,42 @@ namespace Zantetsu.MeshCut.Verification
 
         public static AdoptedFixtureCatalog Load(string repositoryRoot)
         {
+            return Load(repositoryRoot, RelativeIndexPath, ".", 1, "Synthetic", true,
+                new[]
+                {
+                    AdoptedFixtureUse.RenderCut,
+                    AdoptedFixtureUse.PhysicsCook,
+                    AdoptedFixtureUse.Correctness,
+                });
+        }
+
+        public static AdoptedFixtureCatalog LoadLicensed(string privateRepositoryRoot)
+        {
+            return Load(privateRepositoryRoot, "Working/Phase0.2/Adopted/dataset-index.json",
+                "payload", 2, "LicensedThirdParty", false,
+                new[]
+                {
+                    AdoptedFixtureUse.RenderCut,
+                    AdoptedFixtureUse.PhysicsCook,
+                });
+        }
+
+        static AdoptedFixtureCatalog Load(string repositoryRoot, string relativeIndexPath,
+            string artifactRootRelativePath, int schemaVersion, string provenanceClass,
+            bool requireEveryArtifactSelected, AdoptedFixtureUse[] requiredUses)
+        {
             if (string.IsNullOrWhiteSpace(repositoryRoot))
                 throw new ArgumentException("Repository root is required.", nameof(repositoryRoot));
 
             string indexPath = Path.GetFullPath(Path.Combine(repositoryRoot,
-                RelativeIndexPath.Replace('/', Path.DirectorySeparatorChar)));
-            string fixtureRoot = Path.GetDirectoryName(indexPath);
+                relativeIndexPath.Replace('/', Path.DirectorySeparatorChar)));
             if (!File.Exists(indexPath))
                 throw new FileNotFoundException("The adopted fixture index was not found.", indexPath);
+            string fixtureRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(indexPath),
+                artifactRootRelativePath.Replace('/', Path.DirectorySeparatorChar)));
 
             FixtureIndexDto index = JsonUtility.FromJson<FixtureIndexDto>(File.ReadAllText(indexPath));
-            if (index == null || index.SchemaVersion != 1 || string.IsNullOrEmpty(index.DatasetId))
+            if (index == null || index.SchemaVersion != schemaVersion || string.IsNullOrEmpty(index.DatasetId))
                 throw new InvalidDataException("The adopted fixture index header is invalid.");
 
             var artifacts = new Dictionary<string, AdoptedFixture>(StringComparer.Ordinal);
@@ -79,25 +135,21 @@ namespace Zantetsu.MeshCut.Verification
                 if (artifact == null || string.IsNullOrEmpty(artifact.GeometryArtifactId) ||
                     string.IsNullOrEmpty(artifact.GeometryRelativePath))
                     throw new InvalidDataException("A Geometry artifact entry is incomplete.");
-                if (artifact.ProvenanceClass != "Synthetic" || artifact.SelectionClass != "Selected")
+                if (artifact.ProvenanceClass != provenanceClass)
+                    throw new InvalidDataException("Unexpected Geometry provenance: " + artifact.GeometryArtifactId);
+                if (requireEveryArtifactSelected && artifact.SelectionClass != "Selected")
                     throw new InvalidDataException("The public adopted set must contain only selected Synthetic Geometry.");
                 if (artifacts.ContainsKey(artifact.GeometryArtifactId))
                     throw new InvalidDataException("Duplicate Geometry artifact id: " + artifact.GeometryArtifactId);
 
                 string geometryPath = ResolveContainedPath(fixtureRoot, artifact.GeometryRelativePath);
-                byte[] bytes = File.ReadAllBytes(geometryPath);
-                if (bytes.LongLength != artifact.GeometryByteLength)
-                    throw new InvalidDataException("Geometry byte length mismatch: " + artifact.GeometryArtifactId);
-                if (!string.Equals(ZcgGeometryCodec.ComputeSha256(bytes), artifact.GeometryContentSha256,
-                        StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Geometry hash mismatch: " + artifact.GeometryArtifactId);
-
-                ZcgDocument geometry = ZcgGeometryCodec.Read(bytes, ZcgDecodeLimits.Phase02);
-                if (!string.Equals(geometry.Kind.ToString(), artifact.GeometryKind, StringComparison.Ordinal))
-                    throw new InvalidDataException("Geometry kind mismatch: " + artifact.GeometryArtifactId);
-                artifacts.Add(artifact.GeometryArtifactId, new AdoptedFixture(
+                var fixture = new AdoptedFixture(
                     artifact.GeometryArtifactId, artifact.SourceFixtureId,
-                    artifact.GeometryRelativePath, geometry));
+                    artifact.GeometryRelativePath, geometryPath, artifact.GeometryByteLength,
+                    artifact.GeometryContentSha256, artifact.GeometryKind);
+                if (requireEveryArtifactSelected)
+                    _ = fixture.Geometry;
+                artifacts.Add(artifact.GeometryArtifactId, fixture);
             }
 
             var lists = new Dictionary<AdoptedFixtureUse, List<AdoptedFixture>>
@@ -118,13 +170,17 @@ namespace Zantetsu.MeshCut.Verification
                     continue;
                 if (!artifacts.TryGetValue(binding.ArtifactId, out AdoptedFixture fixture))
                     throw new InvalidDataException("Fixture binding references missing Geometry: " + binding.ArtifactId);
+                GeometryArtifactDto artifact = Array.Find(index.GeometryArtifacts,
+                    value => value.GeometryArtifactId == binding.ArtifactId);
+                if (artifact == null || artifact.SelectionClass != "Selected")
+                    throw new InvalidDataException("Fixture binding references unselected Geometry: " + binding.ArtifactId);
                 lists[use].Add(fixture);
             }
 
             var frozen = new Dictionary<AdoptedFixtureUse, AdoptedFixture[]>();
             foreach (KeyValuePair<AdoptedFixtureUse, List<AdoptedFixture>> pair in lists)
             {
-                if (pair.Value.Count == 0)
+                if (Array.IndexOf(requiredUses, pair.Key) >= 0 && pair.Value.Count == 0)
                     throw new InvalidDataException("The adopted set has no Geometry for " + pair.Key + ".");
                 frozen.Add(pair.Key, pair.Value.ToArray());
             }

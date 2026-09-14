@@ -97,6 +97,64 @@ namespace Zantetsu.Core.Tests
             }
         }
 
+        [Test]
+        public void LicensedAdoptedSet_WhenPresent_ResolvesAndRunsCurrentUses()
+        {
+            string repositoryRoot = Directory.GetParent(Application.dataPath).FullName;
+            string repositoriesRoot = Directory.GetParent(repositoryRoot).FullName;
+            string privateRepositoryRoot = Path.Combine(repositoriesRoot, "zantetsuken-assets-private");
+            string indexPath = Path.Combine(privateRepositoryRoot,
+                "Working", "Phase0.2", "Adopted", "dataset-index.json");
+            if (!File.Exists(indexPath))
+                Assert.Ignore("The optional sibling private repository is not available.");
+
+            AdoptedFixtureCatalog licensed = AdoptedFixtureCatalog.LoadLicensed(privateRepositoryRoot);
+            Assert.That(licensed.Resolve(AdoptedFixtureUse.RenderCut), Is.Not.Empty);
+            Assert.That(licensed.Resolve(AdoptedFixtureUse.PhysicsCook), Is.Not.Empty);
+            Assert.That(licensed.Resolve(AdoptedFixtureUse.Correctness), Is.Empty);
+
+            AdoptedFixture renderFixture = licensed.Resolve(AdoptedFixtureUse.RenderCut)
+                .OrderBy(value => value.GeometryByteLength).First();
+            Assert.That(renderFixture.Geometry.Kind, Is.EqualTo(ZcgGeometryKind.TriangleMesh));
+            SyntheticMesh mesh = ToSyntheticMesh(renderFixture.Geometry);
+            using (var harness = new MeshCutHarness(8 << 20))
+            {
+                CutGeometry geometry = harness.Place(mesh, renderFixture.ArtifactId, 19, 37);
+                var bounds = geometry.Bounds();
+                float3 center = (float3)(0.5 * (bounds.min + bounds.max));
+                CutRun run = harness.Cut(geometry,
+                    SyntheticGeometry.Plane(new float3(1, 0, 0), center));
+                Assert.That(run.Result.status, Is.Not.EqualTo(MeshCutStatus.InvalidInput));
+            }
+
+            AdoptedFixture cookFixture = licensed.Resolve(AdoptedFixtureUse.PhysicsCook)
+                .OrderBy(value => value.GeometryByteLength).First();
+            Assert.That(cookFixture.Geometry.Kind, Is.EqualTo(ZcgGeometryKind.ConvexSet));
+            ZcgHull hull = cookFixture.Geometry.Hulls.First();
+            var vertices = hull.Positions.Select(position =>
+                new Vector3(position.X, position.Y, position.Z)).ToArray();
+            var triangles = new List<int>();
+            foreach (uint[] face in hull.Faces)
+                for (int i = 1; i + 1 < face.Length; i++)
+                {
+                    triangles.Add(checked((int)face[0]));
+                    triangles.Add(checked((int)face[i]));
+                    triangles.Add(checked((int)face[i + 1]));
+                }
+
+            var cookMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            try
+            {
+                cookMesh.vertices = vertices;
+                cookMesh.triangles = triangles.ToArray();
+                Assert.DoesNotThrow(() => Physics.BakeMesh(cookMesh.GetEntityId(), true));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cookMesh);
+            }
+        }
+
         static SyntheticMesh ToSyntheticMesh(ZcgDocument document)
         {
             if (document.Kind != ZcgGeometryKind.TriangleMesh)
