@@ -42,6 +42,22 @@ namespace Zantetsu.Sandbox
     /// The display names the slash method the result came from. The first
     /// candidate is the only one implemented, so it is simply named here and
     /// copied along with a pin; there is nothing to choose between yet.
+    ///
+    /// The panel also steps the katana's first-candidate tuning values up and
+    /// down while playing. Those values belong to the katana: nothing here
+    /// keeps a copy, a pin does not record them, and the buttons only ever go
+    /// through the katana's own checked setters.
+    ///
+    /// Dump writes the katana's current slash numbers to the Unity console
+    /// once. It is throwaway development output for Phase 0.55 tuning: not a
+    /// trace event, not a saved format, and nothing promises it stays the same
+    /// or can be read back. Whether it stays is decided when tuning is done.
+    /// With Auto dump on latch ticked, the same readout is logged once for
+    /// each newly latched wave, while its stroke and begin are still there.
+    ///
+    /// Each recorded sample keeps the view forward it was taken with, and a
+    /// replay hands that back with the sample, so the katana's begin view
+    /// check sees the recorded head rather than wherever the head is now.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SandboxSlashPoseRecorder : MonoBehaviour
@@ -58,12 +74,23 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal const string CandidateName = "First Candidate";
 
+        // Step sizes for the tuning buttons.
+        private const float SpeedStep = 0.25f;
+        private const float DistanceStep = 0.025f;
+        private const float ScoreStep = 0.05f;
+        private const float TimeoutStep = 0.05f;
+        private const float DotStep = 0.1f;
+
         [Tooltip("The katana whose grip samples are recorded and replayed.")]
         [SerializeField] private SandboxRightHandKatana katana;
 
         // Samples as they came, except that TimestampSeconds holds the offset
         // from the first recorded sample. Allocated once.
         private readonly BladePoseSample[] samples = new BladePoseSample[Capacity];
+
+        // The view forward each sample was taken with, zero where there was
+        // none. Same capacity, allocated once.
+        private readonly Vector3[] viewForwards = new Vector3[Capacity];
         private int sampleCount;
 
         private bool recording;
@@ -94,6 +121,14 @@ namespace Zantetsu.Sandbox
 
         // Reused across draws: OnGUI runs more than once per frame.
         private readonly StringBuilder comparisonText = new StringBuilder(1024);
+        private readonly StringBuilder dumpText = new StringBuilder(2048);
+
+        [Tooltip("Log a slash dump once for each newly latched wave. Development output only.")]
+        [SerializeField] private bool autoDumpOnLatch;
+
+        // The newest wave's latch time as last seen, NaN with no wave. A new
+        // latch is the newest wave changing; an expiry leaves it alone.
+        private double lastSeenNewestLatchedAt = double.NaN;
 
         internal bool IsRecording => recording;
 
@@ -141,6 +176,15 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal bool TryAppendRecordedSample(in BladePoseSample sample)
         {
+            return TryAppendRecordedSample(sample, Vector3.zero);
+        }
+
+        /// <summary>
+        /// The same, keeping the view forward the sample was taken with. Zero
+        /// means none, and replay then skips the begin view check for it.
+        /// </summary>
+        internal bool TryAppendRecordedSample(in BladePoseSample sample, Vector3 viewForward)
+        {
             if (!recording)
             {
                 return false;
@@ -168,6 +212,7 @@ namespace Zantetsu.Sandbox
                 sample.GripPosition,
                 sample.GripRotation,
                 sample.TrackingState);
+            viewForwards[sampleCount] = viewForward;
             sampleCount++;
             lastRecordedTime = time;
 
@@ -212,7 +257,14 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal bool TryTakeNextReplaySample(long frameId, out BladePoseSample sample)
         {
+            return TryTakeNextReplaySample(frameId, out sample, out _);
+        }
+
+        /// <summary>The same, with the view forward the sample was recorded with.</summary>
+        internal bool TryTakeNextReplaySample(long frameId, out BladePoseSample sample, out Vector3 viewForward)
+        {
             sample = default;
+            viewForward = Vector3.zero;
 
             if (!replaying)
             {
@@ -226,6 +278,7 @@ namespace Zantetsu.Sandbox
             }
 
             BladePoseSample recorded = samples[replayIndex];
+            viewForward = viewForwards[replayIndex];
             replayIndex++;
             lastReplayTime = replayClockStart + recorded.TimestampSeconds;
             sample = new BladePoseSample(
@@ -480,7 +533,9 @@ namespace Zantetsu.Sandbox
         {
             if (recording)
             {
-                TryAppendRecordedSample(SandboxRightHandKatana.ReadRightHandGripSample());
+                TryAppendRecordedSample(
+                    SandboxRightHandKatana.ReadRightHandGripSample(),
+                    katana != null ? katana.CurrentViewForward : Vector3.zero);
                 return;
             }
 
@@ -488,9 +543,10 @@ namespace Zantetsu.Sandbox
             // keep the order and spacing, not wall-clock timing.
             if (replaying)
             {
-                if (TryTakeNextReplaySample(Time.frameCount, out BladePoseSample replayed) && katana != null)
+                if (TryTakeNextReplaySample(Time.frameCount, out BladePoseSample replayed, out Vector3 recordedView)
+                    && katana != null)
                 {
-                    katana.TryRecordSample(replayed);
+                    katana.TryRecordSample(replayed, recordedView);
                 }
 
                 return;
@@ -499,7 +555,17 @@ namespace Zantetsu.Sandbox
             // A shown replay result implies an assigned katana.
             if (TryTakeReplayResultTick(Time.frameCount, Time.unscaledDeltaTime, out BladePoseSample tick))
             {
-                katana.TryRecordSample(tick);
+                katana.TryRecordSample(tick, Vector3.zero);
+            }
+        }
+
+        // After every Update, so a latch made this frame -- live or replayed --
+        // is seen in the same frame, with its stroke and begin still present.
+        private void LateUpdate()
+        {
+            if (ObserveNewLatch() && autoDumpOnLatch)
+            {
+                LogSlashDump();
             }
         }
 
@@ -507,6 +573,310 @@ namespace Zantetsu.Sandbox
         {
             // Never leave the katana deaf to the controller.
             Stop();
+        }
+
+        /// <summary>
+        /// Writes a one-off readout of the katana's slash state: the tuning
+        /// values, each accepted sample's time and cut sample point, the
+        /// stroke's begin, and every live wave's latch, close and current
+        /// segment. Only reads the katana. Bounded by its fixed capacities --
+        /// at most eight accepted samples and four waves.
+        /// </summary>
+        internal void AppendSlashDump(StringBuilder text)
+        {
+            text.Append("Slash dump (development output; not a saved or stable format)\n");
+            if (katana == null)
+            {
+                text.Append("No katana assigned.\n");
+                return;
+            }
+
+            text.Append("Tuning  min speed ");
+            AppendNumber(text, katana.MinimumSpeed);
+            text.Append("  min displacement ");
+            AppendNumber(text, katana.MinimumDisplacement);
+            text.Append("  min edge lead ");
+            AppendNumber(text, katana.MinimumEdgeLeadScore);
+            text.Append("  return edge lead ");
+            AppendNumber(text, katana.ReturnStrokeEdgeLeadScore);
+            text.Append("  latch chord ");
+            AppendNumber(text, katana.LatchChordMetres);
+            text.Append("  span capture ");
+            AppendNumber(text, katana.SpanCaptureTimeoutSeconds);
+            text.Append("  begin view dot ");
+            AppendNumber(text, katana.BeginBladeAxisViewDotMinimum);
+            text.Append('\n');
+
+            Vector3 view = katana.CurrentViewForward;
+            if (view == Vector3.zero)
+            {
+                text.Append("View  no reference\n");
+            }
+            else
+            {
+                text.Append("View  forward ");
+                AppendVector(text, view);
+                text.Append("  elevation ");
+                AppendNumber(text, ElevationDegrees(view));
+                text.Append(" deg");
+                Transform shownKatana = katana.Katana;
+                if (shownKatana != null && shownKatana.gameObject.activeSelf)
+                {
+                    text.Append("  blade now ");
+                    AppendVector(text, shownKatana.forward);
+                    text.Append("  elevation ");
+                    AppendNumber(text, ElevationDegrees(shownKatana.forward));
+                    text.Append(" deg  dot ");
+                    AppendNumber(text, Vector3.Dot(shownKatana.forward, view.normalized));
+                }
+
+                text.Append('\n');
+            }
+
+            int acceptedCount = katana.AcceptedSampleCount;
+            text.Append("Accepted ").Append(acceptedCount)
+                .Append("  latch ").Append(katana.IsLatchReady ? "ready" : "waiting").Append('\n');
+            for (int i = 0; i < acceptedCount; i++)
+            {
+                if (!katana.TryGetAcceptedSample(i, out EvaluatedBladePose accepted))
+                {
+                    continue;
+                }
+
+                text.Append("  #").Append(i).Append("  t ");
+                AppendNumber(text, accepted.TimestampSeconds);
+                text.Append("  cut ");
+                AppendVector(text, accepted.CutSamplePosition);
+                text.Append('\n');
+            }
+
+            if (katana.TryGetStrokeBeginSample(out EvaluatedBladePose begin))
+            {
+                text.Append("Begin  t ");
+                AppendNumber(text, begin.TimestampSeconds);
+                text.Append("  cut ");
+                AppendVector(text, begin.CutSamplePosition);
+                text.Append("  blade axis ");
+                AppendVector(text, begin.BladeAxis);
+                text.Append("  elevation ");
+                AppendNumber(text, ElevationDegrees(begin.BladeAxis));
+                text.Append(" deg");
+                Vector3 beginView = katana.StrokeBeginViewForward;
+                if (beginView == Vector3.zero)
+                {
+                    text.Append("  view none");
+                }
+                else
+                {
+                    text.Append("  view ");
+                    AppendVector(text, beginView);
+                    text.Append("  dot ");
+                    AppendNumber(text, Vector3.Dot(begin.BladeAxis, beginView));
+                }
+
+                text.Append('\n');
+            }
+            else
+            {
+                text.Append("Begin  none\n");
+            }
+
+            int waveCount = katana.WaveCount;
+            text.Append("Waves ").Append(waveCount).Append('\n');
+            for (int i = 0; i < waveCount; i++)
+            {
+                if (!katana.TryGetWave(i, out double latchedAt, out Plane plane, out _, out Vector3 travelAxis,
+                        out Vector3 spanAxis, out float acceptedSpan, out _, out _, out Vector3 segmentStart,
+                        out Vector3 segmentEnd))
+                {
+                    continue;
+                }
+
+                text.Append("  #").Append(i).Append("  latched t ");
+                AppendNumber(text, latchedAt);
+                text.Append("  travel ");
+                AppendVector(text, travelAxis);
+                text.Append("  span axis ");
+                AppendVector(text, spanAxis);
+                text.Append("  accepted span ");
+                AppendNumber(text, acceptedSpan);
+                text.Append('\n');
+
+                if (katana.TryGetWaveSpanClose(i, out double closedAt, out Vector3 frozenOrigin, out Vector3 frozenDirection))
+                {
+                    text.Append("      closed t ");
+                    AppendNumber(text, closedAt);
+                    text.Append("  frozen guide origin ");
+                    AppendVector(text, frozenOrigin);
+                    text.Append("  direction ");
+                    AppendVector(text, frozenDirection);
+                    text.Append('\n');
+
+                    // The frozen guide against the current segment start: the
+                    // same terms the store evaluates. Shown, never fed back.
+                    text.Append("      frozen guide  r ");
+                    if (SandboxSlashWaveStore.TryEvaluateRawSpanTerms(plane.normal, segmentStart, spanAxis, frozenOrigin,
+                            frozenDirection, out float r, out float q, out float denominator))
+                    {
+                        AppendNumber(text, r);
+                        text.Append("  q ");
+                        AppendNumber(text, q);
+                        text.Append("  denominator ");
+                        text.Append(denominator.ToString("F5", CultureInfo.InvariantCulture));
+                        text.Append("  usable ").Append(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator) ? "yes" : "no");
+                    }
+                    else
+                    {
+                        text.Append("n/a (not finite)");
+                    }
+
+                    text.Append("  span-guide ");
+                    AppendNumber(text, Vector3.Angle(spanAxis, frozenDirection));
+                    text.Append(" deg  travel-guide ");
+                    AppendNumber(text, Vector3.Angle(travelAxis, frozenDirection));
+                    text.Append(" deg\n");
+                }
+                else
+                {
+                    text.Append("      open (its live guide is not kept)\n");
+                }
+
+                text.Append("      current A ");
+                AppendVector(text, segmentStart);
+                text.Append("  B ");
+                AppendVector(text, segmentEnd);
+                text.Append("  |B-A| ");
+                AppendNumber(text, Vector3.Distance(segmentStart, segmentEnd));
+                text.Append('\n');
+            }
+
+            text.Append("Raw span terms: closed waves only, from the frozen guide at the current segment start\n");
+        }
+
+        /// <summary>
+        /// Whether the katana's newest wave is one not seen by the previous
+        /// call: true once per latch, false for expiries and for a stroke that
+        /// just goes on. Only reads the katana.
+        /// </summary>
+        internal bool ObserveNewLatch()
+        {
+            int waveCount = katana != null ? katana.WaveCount : 0;
+            if (waveCount == 0
+                || !katana.TryGetWave(waveCount - 1, out double newestLatchedAt, out _, out _, out _, out _, out _,
+                    out _, out _, out _, out _))
+            {
+                lastSeenNewestLatchedAt = double.NaN;
+                return false;
+            }
+
+            if (newestLatchedAt.Equals(lastSeenNewestLatchedAt))
+            {
+                return false;
+            }
+
+            lastSeenNewestLatchedAt = newestLatchedAt;
+            return true;
+        }
+
+        /// <summary>Logs <see cref="AppendSlashDump"/> once to the Unity console.</summary>
+        internal void LogSlashDump()
+        {
+            dumpText.Clear();
+            AppendSlashDump(dumpText);
+            Debug.Log(dumpText.ToString());
+        }
+
+        // Degrees above the horizontal; zero for a zero vector.
+        private static float ElevationDegrees(Vector3 direction)
+        {
+            Vector3 unit = direction.normalized;
+            return Mathf.Asin(Mathf.Clamp(unit.y, -1f, 1f)) * Mathf.Rad2Deg;
+        }
+
+        private static void AppendNumber(StringBuilder text, double value)
+        {
+            text.Append(value.ToString("F3", CultureInfo.InvariantCulture));
+        }
+
+        private static void AppendVector(StringBuilder text, Vector3 value)
+        {
+            text.Append('(')
+                .Append(value.x.ToString("F3", CultureInfo.InvariantCulture)).Append(", ")
+                .Append(value.y.ToString("F3", CultureInfo.InvariantCulture)).Append(", ")
+                .Append(value.z.ToString("F3", CultureInfo.InvariantCulture)).Append(')');
+        }
+
+        // A value the setter refuses -- at a bound, say -- leaves the value
+        // as it was, so pressing further just does nothing.
+        private static void DrawTuningControls(SandboxRightHandKatana target)
+        {
+            int step = TuningRow("Min speed       ", target.MinimumSpeed, " m/s");
+            if (step != 0)
+            {
+                target.TrySetMinimumSpeed(Snap(target.MinimumSpeed + step * SpeedStep));
+            }
+
+            step = TuningRow("Min displacement", target.MinimumDisplacement, " m");
+            if (step != 0)
+            {
+                target.TrySetMinimumDisplacement(Snap(target.MinimumDisplacement + step * DistanceStep));
+            }
+
+            step = TuningRow("Min edge lead   ", target.MinimumEdgeLeadScore, string.Empty);
+            if (step != 0)
+            {
+                target.TrySetMinimumEdgeLeadScore(Snap(target.MinimumEdgeLeadScore + step * ScoreStep));
+            }
+
+            step = TuningRow("Return edge lead", target.ReturnStrokeEdgeLeadScore, string.Empty);
+            if (step != 0)
+            {
+                target.TrySetReturnStrokeEdgeLeadScore(Snap(target.ReturnStrokeEdgeLeadScore + step * ScoreStep));
+            }
+
+            step = TuningRow("Latch chord     ", target.LatchChordMetres, " m");
+            if (step != 0)
+            {
+                target.TrySetLatchChordMetres(Snap(target.LatchChordMetres + step * DistanceStep));
+            }
+
+            step = TuningRow("Span capture    ", target.SpanCaptureTimeoutSeconds, " s");
+            if (step != 0)
+            {
+                target.TrySetSpanCaptureTimeoutSeconds(Snap(target.SpanCaptureTimeoutSeconds + step * TimeoutStep));
+            }
+
+            step = TuningRow("Begin view dot  ", target.BeginBladeAxisViewDotMinimum, string.Empty);
+            if (step != 0)
+            {
+                target.TrySetBeginBladeAxisViewDotMinimum(Snap(target.BeginBladeAxisViewDotMinimum + step * DotStep));
+            }
+        }
+
+        // One value with - and + buttons. Returns -1, 0 or +1.
+        private static int TuningRow(string label, float value, string unit)
+        {
+            int step = 0;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label + "  " + value.ToString("F3", CultureInfo.InvariantCulture) + unit, GUILayout.Width(300f));
+            if (GUILayout.Button("-", GUILayout.Width(48f)))
+            {
+                step = -1;
+            }
+
+            if (GUILayout.Button("+", GUILayout.Width(48f)))
+            {
+                step = 1;
+            }
+
+            GUILayout.EndHorizontal();
+            return step;
+        }
+
+        // Keeps repeated steps on round values instead of drifting.
+        private static float Snap(float value)
+        {
+            return Mathf.Round(value * 1000f) / 1000f;
         }
 
         private void OnGUI()
@@ -551,7 +921,19 @@ namespace Zantetsu.Sandbox
                 ClearPin();
             }
 
+            if (GUILayout.Button("Dump"))
+            {
+                LogSlashDump();
+            }
+
+            autoDumpOnLatch = GUILayout.Toggle(autoDumpOnLatch, "Auto dump on latch");
+
             GUILayout.EndHorizontal();
+
+            if (katana != null)
+            {
+                DrawTuningControls(katana);
+            }
 
             comparisonText.Clear();
             AppendComparison(comparisonText);

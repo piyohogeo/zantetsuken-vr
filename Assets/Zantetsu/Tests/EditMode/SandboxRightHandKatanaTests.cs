@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -22,6 +23,10 @@ namespace Zantetsu.Core.Tests
     public class SandboxRightHandKatanaTests
     {
         private const string SandboxScenePath = "Assets/Scenes/Sandbox.unity";
+
+        // The span capture timeout handed to a bare wave store in tests; the
+        // katana hands in its own tuning value.
+        private const float StoreTestSpanCaptureTimeout = 0.15f;
         private const float PositionTolerance = 1e-4f;
         private const float AngleTolerance = 1e-3f;
         private const float BladeLength = 0.9f;
@@ -332,8 +337,8 @@ namespace Zantetsu.Core.Tests
         {
             for (int i = 0; i < count; i++)
             {
-                Assert.That(recorder.TryTakeNextReplaySample(i, out BladePoseSample sample), Is.True);
-                target.TryRecordSample(sample);
+                Assert.That(recorder.TryTakeNextReplaySample(i, out BladePoseSample sample, out Vector3 viewForward), Is.True);
+                target.TryRecordSample(sample, viewForward);
             }
         }
 
@@ -1744,14 +1749,14 @@ namespace Zantetsu.Core.Tests
             SandboxSlashWaveStore store = new SandboxSlashWaveStore();
             Plane plane = new Plane(Vector3.right, Vector3.zero);
 
-            Assert.That(store.TryLatch(double.NaN, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, new Vector3(float.NaN, 0f, 0f), Vector3.up, Vector3.forward, Vector3.up, 1f), Is.False);
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, float.PositiveInfinity), Is.False);
+            Assert.That(store.TryLatch(double.NaN, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, new Vector3(float.NaN, 0f, 0f), Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, float.PositiveInfinity, StoreTestSpanCaptureTimeout), Is.False);
 
             // A finite origin whose travel over the lifetime overflows.
             Assert.That(
                 store.TryLatch(0.0, plane, new Vector3(float.MaxValue, 0f, 0f), Vector3.up,
-                    new Vector3(float.MaxValue, 0f, 0f), Vector3.up, 1f),
+                    new Vector3(float.MaxValue, 0f, 0f), Vector3.up, 1f, StoreTestSpanCaptureTimeout),
                 Is.False);
 
             // Both ends have to survive the lifetime, not just A. This travel
@@ -1764,12 +1769,18 @@ namespace Zantetsu.Core.Tests
             Assert.That(float.IsFinite((aEnd + travel).x), Is.True, "the A end stays finite");
             Assert.That(float.IsFinite((bEnd + travel).x), Is.False, "the B end does not");
 
-            Assert.That(store.TryLatch(0.0, plane, aEnd, bEnd, travelAxis, Vector3.up, 1f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, aEnd, bEnd, travelAxis, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.False);
+
+            // The span capture timeout has to be positive and shorter than the lifetime.
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, float.NaN), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, 0f), Is.False);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f,
+                SandboxSlashWaveStore.WaveLifetimeSeconds), Is.False);
 
             Assert.That(store.Count, Is.EqualTo(0));
 
             // The same call with a state that stays finite does publish.
-            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f), Is.True);
+            Assert.That(store.TryLatch(0.0, plane, Vector3.zero, Vector3.up, Vector3.forward, Vector3.up, 1f, StoreTestSpanCaptureTimeout), Is.True);
             Assert.That(store.Count, Is.EqualTo(1));
         }
 
@@ -2335,7 +2346,7 @@ namespace Zantetsu.Core.Tests
             // The close is stamped with this update, not the moment the window
             // technically ran out.
             Assert.That(closedAt, Is.EqualTo(strokeTime));
-            Assert.That(closedAt, Is.GreaterThan(latchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds));
+            Assert.That(closedAt, Is.GreaterThan(latchedAt + follower.SpanCaptureTimeoutSeconds));
 
             Assert.That(follower.WaveCount, Is.EqualTo(1), "closing is not expiring");
         }
@@ -2487,8 +2498,8 @@ namespace Zantetsu.Core.Tests
 
             // Far enough on for the older wave's window but not the newer one's.
             strokeFrameId++;
-            strokeTime = firstLatchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds + 0.01;
-            Assert.That(strokeTime, Is.LessThan(secondLatchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds));
+            strokeTime = firstLatchedAt + follower.SpanCaptureTimeoutSeconds + 0.01;
+            Assert.That(strokeTime, Is.LessThan(secondLatchedAt + follower.SpanCaptureTimeoutSeconds));
             strokePosition += EdgeStep;
             Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                 UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
@@ -2682,7 +2693,7 @@ namespace Zantetsu.Core.Tests
             Vector3 beginEmitter = Vector3.zero;
             Vector3 latestEmitter = beginEmitter + spanAxis * 0.5f;
 
-            Assert.That(store.TryLatch(0.0, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, 0.5f), Is.True,
+            Assert.That(store.TryLatch(0.0, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, 0.5f, StoreTestSpanCaptureTimeout), Is.True,
                 "axes on one line are not a reason to refuse a wave");
             Assert.That(store.Count, Is.EqualTo(1));
 
@@ -3610,6 +3621,514 @@ namespace Zantetsu.Core.Tests
             recorder.Clear();
             Assert.That(recorder.PinnedCandidateName, Is.Null, "Clear drops the pinned candidate");
             Assert.That(ComparisonLine(ComparisonText(recorder), "Pinned   "), Is.EqualTo("Pinned   none"));
+        }
+
+        private void AssertProvisionalTuning()
+        {
+            Assert.That(follower.MinimumSpeed, Is.EqualTo(1.5f));
+            Assert.That(follower.MinimumDisplacement, Is.EqualTo(0.15f));
+            Assert.That(follower.MinimumEdgeLeadScore, Is.EqualTo(0.15f));
+            Assert.That(follower.ReturnStrokeEdgeLeadScore, Is.EqualTo(-0.15f));
+            Assert.That(follower.LatchChordMetres, Is.EqualTo(0.15f));
+            Assert.That(follower.SpanCaptureTimeoutSeconds, Is.EqualTo(0.15f));
+            Assert.That(follower.BeginBladeAxisViewDotMinimum, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void TuningValues_StartAtTheFormerConstants()
+        {
+            AssertProvisionalTuning();
+        }
+
+        [Test]
+        public void TuningSetters_RefuseInvalidValuesAndChangeNothing()
+        {
+            Assert.That(follower.TrySetMinimumSpeed(float.NaN), Is.False);
+            Assert.That(follower.TrySetMinimumSpeed(0f), Is.False);
+            Assert.That(follower.TrySetMinimumSpeed(SandboxRightHandKatana.GateMaximumSpeed + 1f), Is.False);
+            Assert.That(follower.TrySetMinimumDisplacement(-0.1f), Is.False);
+            Assert.That(follower.TrySetMinimumDisplacement(float.PositiveInfinity), Is.False);
+            Assert.That(follower.TrySetMinimumEdgeLeadScore(1.1f), Is.False);
+            Assert.That(follower.TrySetMinimumEdgeLeadScore(float.NaN), Is.False);
+            Assert.That(follower.TrySetReturnStrokeEdgeLeadScore(-1.1f), Is.False);
+            Assert.That(follower.TrySetLatchChordMetres(0f), Is.False);
+            Assert.That(follower.TrySetLatchChordMetres(float.NaN), Is.False);
+            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(1.1f), Is.False);
+            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(float.NaN), Is.False);
+            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(0f), Is.False);
+            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(SandboxSlashWaveStore.WaveLifetimeSeconds), Is.False,
+                "a timeout the store refuses would silently stop every wave");
+
+            AssertProvisionalTuning();
+        }
+
+        [Test]
+        public void RaisingMinimumSpeed_RejectsASweepTheDefaultAccepts()
+        {
+            // The edge sweep moves 0.06 m every 0.011 s: about 5.5 m/s.
+            Assert.That(follower.TrySetMinimumSpeed(8f), Is.True);
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+
+            // The next sample is judged with whatever the value is by then.
+            Assert.That(follower.TrySetMinimumSpeed(1.5f), Is.True);
+            Sweep(UprightGrip(follower), EdgeStep, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RaisingMinimumDisplacement_RejectsASwingTheDefaultAccepts()
+        {
+            // Nothing within the gate's 0.06 s window moves this far at 0.06 m a sample.
+            Assert.That(follower.TrySetMinimumDisplacement(0.5f), Is.True);
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+
+            Assert.That(follower.TrySetMinimumDisplacement(0.15f), Is.True);
+            Sweep(UprightGrip(follower), EdgeStep, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RaisingMinimumEdgeLeadScore_RejectsADiagonalSweepTheDefaultAccepts()
+        {
+            // 60 degrees off the edge direction: score 0.5.
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+            Quaternion upright = UprightGrip(follower);
+
+            Assert.That(follower.TrySetMinimumEdgeLeadScore(0.6f), Is.True);
+            Sweep(upright, diagonalStep, 6);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+
+            Assert.That(follower.TrySetMinimumEdgeLeadScore(0.15f), Is.True);
+            Sweep(upright, diagonalStep, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void LoweringReturnStrokeEdgeLeadScore_KeepsAMildReturnFromReArming()
+        {
+            // 120 degrees off the edge direction: score -0.5, a return by default.
+            Vector3 mildReturnStep = new Vector3(0.866f, 0.5f, 0f) * 0.06f;
+            Quaternion upright = UprightGrip(follower);
+
+            Assert.That(follower.TrySetReturnStrokeEdgeLeadScore(-0.8f), Is.True);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+
+            Sweep(upright, mildReturnStep, 8);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0), "-0.5 is not far enough onto the spine side for -0.8");
+
+            Assert.That(follower.TrySetReturnStrokeEdgeLeadScore(-0.15f), Is.True);
+            Sweep(upright, mildReturnStep, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "with the default it is a return");
+        }
+
+        [Test]
+        public void RaisingLatchChord_DelaysLatchReadyOnTheSameAcceptedSamples()
+        {
+            Quaternion upright = UprightGrip(follower);
+
+            // Seven samples reach 0.18 m of chord: ready by the default, not by 0.28 m.
+            Assert.That(follower.TrySetLatchChordMetres(0.28f), Is.True);
+            Sweep(upright, EdgeStep, 7);
+            int accepted = follower.AcceptedSampleCount;
+            Assert.That(accepted, Is.GreaterThan(1));
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+
+            // The same accepted samples, asked again: readiness follows the value.
+            Assert.That(follower.TrySetLatchChordMetres(0.15f), Is.True);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(accepted));
+            Assert.That(follower.IsLatchReady, Is.True);
+
+            Assert.That(follower.TrySetLatchChordMetres(0.28f), Is.True);
+            Assert.That(follower.IsLatchReady, Is.False);
+
+            // Sweeping on reaches the longer distance, and latches there.
+            int extraSamples = 0;
+            for (int i = 0; i < 10 && follower.WaveCount == 0; i++)
+            {
+                Sweep(upright, EdgeStep, 1);
+                extraSamples++;
+            }
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(extraSamples, Is.GreaterThan(1), "the longer distance takes more of the sweep");
+        }
+
+        [Test]
+        public void ALongerSpanCaptureTimeout_ClosesLaterWavesLaterAndLeavesLatchedWavesAlone()
+        {
+            Quaternion upright = UprightGrip(follower);
+
+            // Latched on the default 0.15 s window, before the value changes.
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+
+            Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(0.6f), Is.True);
+
+            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out double firstClosedAt, out _, out _), Is.True,
+                "a latched wave keeps the timeout it latched with");
+            Assert.That(firstClosedAt - firstLatchedAt, Is.LessThan(0.6));
+
+            // Latched after the change: still open where the old window would
+            // have closed it, closed once the new one has run.
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+            Assert.That(follower.TryGetWave(1, out double secondLatchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+
+            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(1, out _, out _, out _), Is.False);
+
+            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.45), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(1, out double secondClosedAt, out _, out _), Is.True);
+            Assert.That(secondClosedAt - secondLatchedAt, Is.GreaterThanOrEqualTo(0.6));
+        }
+
+        [Test]
+        public void ChangingATuningValue_KeepsRecordReplayAndPinComparisonWorking()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            RecordReplayableSweep(recorder);
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            // A latch distance the recorded sweep never reaches.
+            Assert.That(follower.TrySetLatchChordMetres(1f), Is.True);
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            Assert.That(follower.LatchChordMetres, Is.EqualTo(1f), "starting a replay keeps the tuning");
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            Assert.That(recorder.PinnedWaveCount, Is.EqualTo(1));
+            string text = ComparisonText(recorder);
+            StringAssert.StartsWith("Current  waves 0", ComparisonLine(text, "Current  "));
+            StringAssert.StartsWith("Pinned   waves 1", ComparisonLine(text, "Pinned   "));
+
+            // Back to the value the pin was taken with: the same recording lines up again.
+            Assert.That(follower.TrySetLatchChordMetres(0.15f), Is.True);
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+            AssertPinnedWaveMatchesCurrent(recorder, follower, 0);
+        }
+
+        // Title, tuning, view, accepted header, 8 accepted samples, begin, waves
+        // header, 4 lines for each of 4 waves, the raw span note, and the
+        // empty piece after the final newline.
+        private const int MaxSlashDumpLines = 1 + 1 + 1 + 1 + 8 + 1 + 1 + 4 * 4 + 1 + 1;
+
+        private static string SlashDumpText(SandboxSlashPoseRecorder recorder)
+        {
+            StringBuilder text = new StringBuilder();
+            recorder.AppendSlashDump(text);
+            return text.ToString();
+        }
+
+        [Test]
+        public void SlashDump_WithAClosedWave_WritesBoundedTextAndLogsWithoutThrowing()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+
+            // Far past the eight accepted slots, and on until the wave closes.
+            Sweep(UprightGrip(follower), EdgeStep, 20);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8));
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+
+            string dump = SlashDumpText(recorder);
+
+            StringAssert.StartsWith("Slash dump", dump);
+            StringAssert.Contains("Tuning  min speed 1.500", dump);
+            StringAssert.Contains("  #7  t ", dump);
+            StringAssert.DoesNotContain("  #8  t ", dump);
+            StringAssert.Contains("Begin  t ", dump);
+            StringAssert.Contains("latched t ", dump);
+            StringAssert.Contains("closed t ", dump);
+            StringAssert.Contains("frozen guide  r ", dump);
+            StringAssert.Contains("  denominator ", dump);
+            StringAssert.Contains("span-guide ", dump);
+            StringAssert.Contains("travel-guide ", dump);
+            StringAssert.Contains("current A ", dump);
+            Assert.That(dump.Split('\n').Length, Is.LessThanOrEqualTo(MaxSlashDumpLines));
+
+            LogAssert.Expect(LogType.Log, new Regex("^Slash dump"));
+            Assert.DoesNotThrow(() => recorder.LogSlashDump());
+        }
+
+        [Test]
+        public void SlashDump_WithNothingToShowOrNoKatana_DoesNotThrow()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            string empty = SlashDumpText(recorder);
+            StringAssert.Contains("Accepted 0", empty);
+            StringAssert.Contains("Begin  none", empty);
+            StringAssert.Contains("Waves 0", empty);
+            StringAssert.Contains("View  no reference", empty);
+
+            Object.DestroyImmediate(recorderObject);
+            SandboxSlashPoseRecorder unassigned = CreateRecorder(null);
+            StringAssert.Contains("No katana assigned.", SlashDumpText(unassigned));
+            LogAssert.Expect(LogType.Log, new Regex("^Slash dump"));
+            Assert.DoesNotThrow(() => unassigned.LogSlashDump());
+        }
+
+        // Sweep, with every sample handed the given view forward.
+        private void SweepViewing(Quaternion gripRotation, Vector3 step, int count, Vector3 viewForward)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                strokeFrameId++;
+                strokeTime += SampleInterval;
+                strokePosition += step;
+                Assert.That(
+                    follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition, gripRotation,
+                        BladeTrackingState.Position | BladeTrackingState.Rotation), viewForward),
+                    Is.True);
+            }
+        }
+
+        // The view reference is a private serialized field, assigned in the
+        // scene; tests set it the way the editor does.
+        private Transform GiveTheFollowerAViewFacing(Vector3 forward)
+        {
+            GameObject view = new GameObject("View");
+            view.transform.SetParent(rigObject.transform, false);
+            view.transform.rotation = Quaternion.LookRotation(forward);
+
+            SerializedObject serialized = new SerializedObject(follower);
+            SerializedProperty property = serialized.FindProperty("viewForwardReference");
+            Assert.That(property, Is.Not.Null, "the katana's view reference field is gone");
+            property.objectReferenceValue = view.transform;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            return view.transform;
+        }
+
+        [Test]
+        public void WithoutAViewReference_AStrokeBeginsAndLatchesAsBefore()
+        {
+            Assert.That(follower.CurrentViewForward, Is.EqualTo(Vector3.zero));
+
+            SweepUntilLatch();
+
+            Assert.That(follower.TryGetStrokeBeginSample(out _), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.StrokeBeginViewForward, Is.EqualTo(Vector3.zero), "no view was checked");
+        }
+
+        [Test]
+        public void ABladePointingAwayFromTheView_DoesNotBeginUntilTheSameMotionFacesIt()
+        {
+            // The upright blade points along +Z.
+            Quaternion upright = UprightGrip(follower);
+
+            // Looking along -Z: every accepted-worthy sample faces away.
+            SweepViewing(upright, EdgeStep, 7, Vector3.back);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.TryGetStrokeBeginSample(out _), Is.False);
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(7), "a refused begin resets nothing");
+            long lastRefusedFrameId = strokeFrameId;
+
+            // The same motion goes on, now facing the view.
+            SweepViewing(upright, EdgeStep, 1, Vector3.forward);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            Assert.That(begin.FrameId, Is.GreaterThan(lastRefusedFrameId));
+            Assert.That(follower.StrokeBeginViewForward, Is.EqualTo(Vector3.forward));
+
+            for (int i = 0; i < 10 && follower.WaveCount == 0; i++)
+            {
+                SweepViewing(upright, EdgeStep, 1, Vector3.forward);
+            }
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose latchedBegin), Is.True);
+            Assert.That(latchedBegin.FrameId, Is.EqualTo(begin.FrameId), "the wave latched from that begin");
+        }
+
+        [Test]
+        public void OnceBegun_LookingAwayDoesNotStopOrSplitTheStroke()
+        {
+            Quaternion upright = UprightGrip(follower);
+            SweepViewing(upright, EdgeStep, 5, Vector3.forward);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            int acceptedBefore = follower.AcceptedSampleCount;
+
+            SweepViewing(upright, EdgeStep, 2, Vector3.back);
+
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(acceptedBefore));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose stillBegin), Is.True);
+            Assert.That(stillBegin.FrameId, Is.EqualTo(begin.FrameId));
+        }
+
+        [Test]
+        public void RaisingTheBeginViewDot_RefusesABladeTheDefaultWouldBegin()
+        {
+            Quaternion upright = UprightGrip(follower);
+
+            // 45 degrees between the blade and the view: dot about 0.71.
+            Vector3 view = new Vector3(1f, 0f, 1f).normalized;
+
+            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(0.8f), Is.True);
+            SweepViewing(upright, EdgeStep, 7, view);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+
+            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(0f), Is.True);
+            SweepViewing(upright, EdgeStep, 1, view);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Replay_ChecksTheBeginAgainstTheRecordedViewNotTheLiveOne()
+        {
+            Quaternion upright = UprightGrip(follower);
+            GiveTheFollowerAViewFacing(Vector3.forward);
+            Assert.That(follower.CurrentViewForward.z, Is.EqualTo(1f).Within(PositionTolerance));
+
+            // Recorded while looking back along -Z.
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            recorder.BeginRecording();
+            double time = 3.0;
+            Vector3 position = new Vector3(0f, 1.4f, 0.3f);
+            for (int i = 0; i < 7; i++)
+            {
+                time += SampleInterval;
+                position += EdgeStep;
+                Assert.That(recorder.TryAppendRecordedSample(new BladePoseSample(0, time, position, upright,
+                    BladeTrackingState.Position | BladeTrackingState.Rotation), Vector3.back), Is.True);
+            }
+
+            recorder.Stop();
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the live view faces the blade; the recorded one did not");
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            recorder.Stop();
+
+            // The live path reads the reference, which faces the blade.
+            Sweep(upright, EdgeStep, 7);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void TheSandboxScene_ChecksBeginsAgainstTheMainCamera()
+        {
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            try
+            {
+                Scene scene = EditorSceneManager.OpenScene(SandboxScenePath, OpenSceneMode.Single);
+
+                SandboxRightHandKatana sceneFollower = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    if (sceneFollower == null)
+                    {
+                        sceneFollower = root.GetComponentInChildren<SandboxRightHandKatana>(true);
+                    }
+                }
+
+                Assert.That(sceneFollower, Is.Not.Null);
+                SerializedProperty reference = new SerializedObject(sceneFollower).FindProperty("viewForwardReference");
+                Assert.That(reference, Is.Not.Null, "the katana's view reference field is gone");
+
+                Transform view = reference.objectReferenceValue as Transform;
+                Assert.That(view, Is.Not.Null, "the katana has no view reference");
+                Assert.That(view.name, Is.EqualTo("Main Camera"));
+                Assert.That(view.GetComponent<Camera>(), Is.Not.Null);
+            }
+            finally
+            {
+                if (setup != null && setup.Length > 0)
+                {
+                    EditorSceneManager.RestoreSceneManagerSetup(setup);
+                }
+                else
+                {
+                    EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+                }
+            }
+        }
+
+        [Test]
+        public void ObserveNewLatch_ReportsEachNewWaveOnceWhileItsBeginIsStillThere()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            Quaternion upright = UprightGrip(follower);
+
+            Assert.That(recorder.ObserveNewLatch(), Is.False, "no wave yet");
+
+            SweepViewing(upright, EdgeStep, 7, Vector3.forward);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(recorder.ObserveNewLatch(), Is.True);
+            Assert.That(recorder.ObserveNewLatch(), Is.False, "the same wave is reported once");
+
+            // At the latch the begin is still there, with what its view check saw.
+            string dump = SlashDumpText(recorder);
+            StringAssert.Contains("Begin  t ", dump);
+            StringAssert.Contains("  view (", dump);
+            StringAssert.Contains("dot 1.000", dump);
+
+            SweepViewing(upright, EdgeStep, 2, Vector3.forward);
+            Assert.That(recorder.ObserveNewLatch(), Is.False, "the stroke going on is not a new latch");
+
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+            Assert.That(recorder.ObserveNewLatch(), Is.True);
+
+            SkipTime(2.0);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
+            Assert.That(recorder.ObserveNewLatch(), Is.False, "expiry is not a latch");
+        }
+
+        [Test]
+        public void RawSpanTerms_AreTheIntersectionAlongTheSpanAndTheGuide()
+        {
+            // On the x = 0 plane: the span line runs up +Y from the origin, and
+            // a guide from (0, 0, 1) heading down to z = 0 meets it at y = 1.
+            Vector3 normal = Vector3.right;
+            Vector3 guideDirection = new Vector3(0f, 1f, -1f).normalized;
+
+            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+                new Vector3(0f, 0f, 1f), guideDirection, out float r, out float q, out float denominator), Is.True);
+            Assert.That(r, Is.EqualTo(1f).Within(PositionTolerance));
+            Assert.That(q, Is.EqualTo(Mathf.Sqrt(2f)).Within(PositionTolerance));
+            Assert.That(Mathf.Abs(denominator), Is.EqualTo(Mathf.Sqrt(0.5f)).Within(PositionTolerance));
+            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.True);
+
+            // Behind the span start: finite terms, not a usable candidate.
+            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+                new Vector3(0f, 0f, 1f), new Vector3(0f, -1f, -1f).normalized, out r, out q, out denominator), Is.True);
+            Assert.That(r, Is.LessThan(0f));
+            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.False);
+
+            // Nearly parallel: the meeting point is far out, and not usable.
+            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+                new Vector3(0f, 0f, 1f), new Vector3(0f, 1f, -1e-4f).normalized, out r, out q, out denominator), Is.True);
+            Assert.That(r, Is.GreaterThan(1000f));
+            Assert.That(SandboxSlashWaveStore.IsUsableRawSpan(r, q, denominator), Is.False);
+
+            // Exactly parallel: no finite terms at all.
+            Assert.That(SandboxSlashWaveStore.TryEvaluateRawSpanTerms(normal, Vector3.zero, Vector3.up,
+                new Vector3(0f, 0f, 1f), Vector3.up, out _, out _, out _), Is.False);
         }
 
         [Test]

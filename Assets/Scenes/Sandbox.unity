@@ -1389,6 +1389,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Zantetsu.Sandbox::Zantetsu.Sandbox.SandboxRightHandKatana
   katana: {fileID: 376816764}
+  viewForwardReference: {fileID: 330585546}
   offsetPosition: {x: 0, y: 0, z: 0.02}
   offsetEulerAngles: {x: -15, y: 0, z: 0}
   bladeLength: 0.9

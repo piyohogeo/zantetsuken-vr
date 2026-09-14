@@ -80,6 +80,10 @@ namespace Zantetsu.Sandbox
     /// display only: gameplay never reads a quad's transform, and nothing
     /// here builds or edits geometry.
     ///
+    /// With a view reference assigned, a stroke only begins on an accepted
+    /// sample whose blade axis faces the view forward closely enough, so a
+    /// wind-up pointing away from where the player looks is not a begin.
+    ///
     /// Live input can be handed over: with it turned off, nothing reads the
     /// controller and a replay feeds recorded samples through the same Update
     /// path instead. Handing it over either way starts the slash state over.
@@ -116,19 +120,16 @@ namespace Zantetsu.Sandbox
         // had its chance, cleared with the stroke itself.
         private bool strokeLatchSpent;
 
-        // Provisional Phase 0.52 gate values, fixed in code on purpose: no
-        // profile, asset, scene setting or tuning UI exists for them yet.
-        private static readonly BladeEdgeGateSettings GateSettings = new BladeEdgeGateSettings(
-            0.030,  // minimum window, seconds
-            0.060,  // maximum window, seconds
-            1.5f,   // minimum speed, m/s
-            20f,    // maximum speed, m/s -- above this the motion is not a swing
-            0.15f,  // minimum cut sample displacement, m
-            0.15f); // minimum edge lead score
+        // The normalised view forward the stroke's begin was checked against,
+        // zero when it began without one. Cleared with the stroke; kept only
+        // so a development readout can show what the check saw.
+        private Vector3 strokeBeginViewForward;
 
-        // The mirror of the edge lead threshold: a motion this far onto the
-        // spine side is the return half of the stroke.
-        private const float ReturnStrokeEdgeLeadScore = -0.15f;
+        // Provisional Phase 0.52 gate values that stay fixed in code: the
+        // sample window, and the speed above which a motion is not a swing.
+        private const double GateMinimumWindowSeconds = 0.030;
+        private const double GateMaximumWindowSeconds = 0.060;
+        internal const float GateMaximumSpeed = 20f;
 
         // A derived vector shorter than this cannot be normalised into a
         // direction: a plane normal this short is a stroke with no swept area,
@@ -140,12 +141,11 @@ namespace Zantetsu.Sandbox
         // the cut sample point at 70%.
         private const float EmissionControlPointRatio = 0.5f;
 
-        // The emitter chord a stroke must have swept before it is worth
-        // latching.
-        private const float LatchChordMetres = 0.15f;
-
         [Tooltip("Katana visual root. Its local axes are the blade frame: +Z blade axis, -Y edge direction, +X side normal.")]
         [SerializeField] private Transform katana;
+
+        [Tooltip("Head transform (the Main Camera) whose forward a stroke begin is checked against. Unassigned: no begin view check.")]
+        [SerializeField] private Transform viewForwardReference;
 
         [Header("Provisional fixed grip-to-katana offset")]
         [SerializeField] private Vector3 offsetPosition = new Vector3(0f, 0f, 0.02f);
@@ -156,6 +156,35 @@ namespace Zantetsu.Sandbox
         [SerializeField] private float bladeLength = 0.9f;
 
         [SerializeField] private bool drawGizmos = true;
+
+        // First-candidate values that can be tuned while playing. They start at
+        // the provisional Phase 0.52 / 0.53 values and belong to this component
+        // alone: nothing saves them, and leaving Play Mode restores the scene's
+        // values. A change is not carried back into what already happened --
+        // the gate judges the next sample with it, the latch distance applies
+        // to a stroke that has not latched, and the span capture timeout only
+        // reaches waves latched afterwards, since each wave keeps its own.
+        [Header("First candidate tuning")]
+        [Tooltip("Minimum cut sample speed for an accepted sample, m/s.")]
+        [SerializeField] private float minimumSpeed = 1.5f;
+
+        [Tooltip("Minimum cut sample displacement across the gate window, m.")]
+        [SerializeField] private float minimumDisplacement = 0.15f;
+
+        [Tooltip("Edge lead score a motion must exceed to be accepted.")]
+        [SerializeField] private float minimumEdgeLeadScore = 0.15f;
+
+        [Tooltip("Edge lead score at or below which a rejected motion ends the stroke as its return half.")]
+        [SerializeField] private float returnStrokeEdgeLeadScore = -0.15f;
+
+        [Tooltip("Emitter chord a stroke must sweep before it latches, m.")]
+        [SerializeField] private float latchChordMetres = 0.15f;
+
+        [Tooltip("How long a newly latched wave's span keeps following the blade, s. Shorter than the wave's lifetime.")]
+        [SerializeField] private float spanCaptureTimeoutSeconds = 0.15f;
+
+        [Tooltip("A stroke only begins on a sample whose blade axis has at least this dot product with the view forward. Unused without a view reference.")]
+        [SerializeField] private float beginBladeAxisViewDotMinimum = 0f;
 
         [Header("Slash wave display")]
         [Tooltip("One display slot per wave the store can hold, placed under a world-fixed root with identity scale.")]
@@ -209,6 +238,159 @@ namespace Zantetsu.Sandbox
             }
         }
 
+        internal float MinimumSpeed => minimumSpeed;
+
+        internal float MinimumDisplacement => minimumDisplacement;
+
+        internal float MinimumEdgeLeadScore => minimumEdgeLeadScore;
+
+        internal float ReturnStrokeEdgeLeadScore => returnStrokeEdgeLeadScore;
+
+        internal float LatchChordMetres => latchChordMetres;
+
+        internal float SpanCaptureTimeoutSeconds => spanCaptureTimeoutSeconds;
+
+        internal float BeginBladeAxisViewDotMinimum => beginBladeAxisViewDotMinimum;
+
+        /// <summary>
+        /// The view forward the live path hands to the begin check: the
+        /// reference's forward, or zero -- no check -- without a reference.
+        /// </summary>
+        internal Vector3 CurrentViewForward => viewForwardReference != null ? viewForwardReference.forward : Vector3.zero;
+
+        /// <summary>
+        /// The normalised view forward the stroke's begin was checked against,
+        /// or zero with no stroke under way or a begin made without a view.
+        /// </summary>
+        internal Vector3 StrokeBeginViewForward => acceptedSampleCount > 0 ? strokeBeginViewForward : Vector3.zero;
+
+        /// <summary>
+        /// Sets the gate's minimum speed. False, changing nothing, unless it is
+        /// finite, positive and no more than the fixed maximum speed.
+        /// </summary>
+        internal bool TrySetMinimumSpeed(float value)
+        {
+            if (!IsValidMinimumSpeed(value))
+            {
+                return false;
+            }
+
+            minimumSpeed = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the gate's minimum displacement. False, changing nothing,
+        /// unless it is finite and positive.
+        /// </summary>
+        internal bool TrySetMinimumDisplacement(float value)
+        {
+            if (!IsFinitePositive(value))
+            {
+                return false;
+            }
+
+            minimumDisplacement = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the edge lead score a motion must exceed. False, changing
+        /// nothing, unless it is finite and within [-1, 1].
+        /// </summary>
+        internal bool TrySetMinimumEdgeLeadScore(float value)
+        {
+            if (!IsWithinUnitRange(value))
+            {
+                return false;
+            }
+
+            minimumEdgeLeadScore = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the score at or below which a rejected motion is a return.
+        /// False, changing nothing, unless it is finite and within [-1, 1].
+        /// </summary>
+        internal bool TrySetReturnStrokeEdgeLeadScore(float value)
+        {
+            if (!IsWithinUnitRange(value))
+            {
+                return false;
+            }
+
+            returnStrokeEdgeLeadScore = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the latch distance. False, changing nothing, unless it is
+        /// finite and positive.
+        /// </summary>
+        internal bool TrySetLatchChordMetres(float value)
+        {
+            if (!IsFinitePositive(value))
+            {
+                return false;
+            }
+
+            latchChordMetres = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the span capture timeout for waves latched from now on. False,
+        /// changing nothing, unless it is finite, positive and shorter than the
+        /// wave lifetime -- the store refuses to latch with anything else.
+        /// </summary>
+        internal bool TrySetSpanCaptureTimeoutSeconds(float value)
+        {
+            if (!IsValidSpanCaptureTimeout(value))
+            {
+                return false;
+            }
+
+            spanCaptureTimeoutSeconds = value;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets the dot product a begin's blade axis needs with the view
+        /// forward. False, changing nothing, unless it is finite and within
+        /// [-1, 1].
+        /// </summary>
+        internal bool TrySetBeginBladeAxisViewDotMinimum(float value)
+        {
+            if (!IsWithinUnitRange(value))
+            {
+                return false;
+            }
+
+            beginBladeAxisViewDotMinimum = value;
+            return true;
+        }
+
+        private static bool IsFinitePositive(float value)
+        {
+            return float.IsFinite(value) && value > 0f;
+        }
+
+        private static bool IsValidMinimumSpeed(float value)
+        {
+            return IsFinitePositive(value) && value <= GateMaximumSpeed;
+        }
+
+        private static bool IsWithinUnitRange(float value)
+        {
+            return float.IsFinite(value) && value >= -1f && value <= 1f;
+        }
+
+        private static bool IsValidSpanCaptureTimeout(float value)
+        {
+            return IsFinitePositive(value) && value < SandboxSlashWaveStore.WaveLifetimeSeconds;
+        }
+
         /// <summary>
         /// Number of poses currently in the history. Derived and read-only:
         /// the history itself never leaves this component.
@@ -234,6 +416,22 @@ namespace Zantetsu.Sandbox
             }
 
             sample = acceptedSamples[0];
+            return true;
+        }
+
+        /// <summary>
+        /// One accepted sample of the stroke under way, oldest first, or false
+        /// when the index is outside them. Read-only, for development readouts.
+        /// </summary>
+        internal bool TryGetAcceptedSample(int index, out EvaluatedBladePose sample)
+        {
+            if (index < 0 || index >= acceptedSampleCount)
+            {
+                sample = default;
+                return false;
+            }
+
+            sample = acceptedSamples[index];
             return true;
         }
 
@@ -336,7 +534,7 @@ namespace Zantetsu.Sandbox
         {
             get
             {
-                if (acceptedSampleCount < 2)
+                if (acceptedSampleCount < 2 || !IsFinitePositive(latchChordMetres))
                 {
                     return false;
                 }
@@ -349,7 +547,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 float lengthSquared = chord.sqrMagnitude;
-                return float.IsFinite(lengthSquared) && lengthSquared >= LatchChordMetres * LatchChordMetres;
+                return float.IsFinite(lengthSquared) && lengthSquared >= latchChordMetres * latchChordMetres;
             }
         }
 
@@ -545,6 +743,16 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal bool TryRecordSample(in BladePoseSample sample)
         {
+            return TryRecordSample(sample, CurrentViewForward);
+        }
+
+        /// <summary>
+        /// The same, with the view forward for the begin check handed in
+        /// instead of read from the reference: a replay hands in the one
+        /// recorded with the sample. Zero means no begin view check.
+        /// </summary>
+        internal bool TryRecordSample(in BladePoseSample sample, Vector3 viewForward)
+        {
             // Waves that have reached their expiry go first, so a latch later
             // in this same update can use the capacity they free. How many are
             // left is also how the waves already flying are told apart from one
@@ -554,7 +762,7 @@ namespace Zantetsu.Sandbox
             waveStore.RemoveExpired(sample.TimestampSeconds);
             int wavesAlreadyFlying = waveStore.Count;
 
-            bool recorded = TryRecordGestureSample(sample, out EvaluatedBladePose current);
+            bool recorded = TryRecordGestureSample(sample, viewForward, out EvaluatedBladePose current);
             TryPublishWave(sample.TimestampSeconds);
 
             // A pose the gate turned away is still a live guide, as long as it
@@ -694,7 +902,7 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        private bool TryRecordGestureSample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
+        private bool TryRecordGestureSample(in BladePoseSample sample, Vector3 viewForward, out EvaluatedBladePose evaluated)
         {
             // A sample that cannot be shown has already reset the stroke.
             if (!TryApplySample(sample, out evaluated))
@@ -710,7 +918,7 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            EvaluateGesture(evaluated);
+            EvaluateGesture(evaluated, viewForward);
             return true;
         }
 
@@ -740,22 +948,43 @@ namespace Zantetsu.Sandbox
             }
 
             strokeLatchSpent = true;
-            waveStore.TryLatch(nowSeconds, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, acceptedSpan);
+            waveStore.TryLatch(
+                nowSeconds, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, acceptedSpan, spanCaptureTimeoutSeconds);
         }
 
         // Update boundary only. Before Render never reaches here.
-        private void EvaluateGesture(in EvaluatedBladePose current)
+        private void EvaluateGesture(in EvaluatedBladePose current, Vector3 viewForward)
         {
-            if (!poseHistory.TryEvaluateLatest(GateSettings.MinimumWindowSeconds, GateSettings.MaximumWindowSeconds, out BladeMotionSample motion))
+            // Values left invalid in the Inspector decide nothing, rather than
+            // throw from the settings constructor on every update.
+            if (!IsValidMinimumSpeed(minimumSpeed)
+                || !IsFinitePositive(minimumDisplacement)
+                || !IsWithinUnitRange(minimumEdgeLeadScore)
+                || !IsWithinUnitRange(returnStrokeEdgeLeadScore)
+                || !IsWithinUnitRange(beginBladeAxisViewDotMinimum))
+            {
+                return;
+            }
+
+            if (!poseHistory.TryEvaluateLatest(GateMinimumWindowSeconds, GateMaximumWindowSeconds, out BladeMotionSample motion))
             {
                 // Not enough history to span the window yet: decide nothing.
                 return;
             }
 
-            BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(motion, GateSettings);
+            // Built from the current values each time; a value type, so this
+            // allocates nothing.
+            BladeEdgeGateSettings gateSettings = new BladeEdgeGateSettings(
+                GateMinimumWindowSeconds,
+                GateMaximumWindowSeconds,
+                minimumSpeed,
+                GateMaximumSpeed,
+                minimumDisplacement,
+                minimumEdgeLeadScore);
+            BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(motion, gateSettings);
             if (decision.IsAccepted)
             {
-                AppendAcceptedSample(current);
+                AppendAcceptedSample(current, viewForward);
                 return;
             }
 
@@ -773,14 +1002,29 @@ namespace Zantetsu.Sandbox
             // history would throw away samples for no reason.
             if (acceptedSampleCount > 0
                 && decision.Reason == BladeEdgeGateReason.EdgeLeadBelowThreshold
-                && motion.EdgeLeadScore <= ReturnStrokeEdgeLeadScore)
+                && motion.EdgeLeadScore <= returnStrokeEdgeLeadScore)
             {
                 ResetStroke();
             }
         }
 
-        private void AppendAcceptedSample(in EvaluatedBladePose pose)
+        private void AppendAcceptedSample(in EvaluatedBladePose pose, Vector3 viewForward)
         {
+            // Only a sample that would begin the stroke is checked against the
+            // view. One that fails is just not taken as the begin: this is a
+            // begin candidate update, not a stroke split -- nothing is reset,
+            // the raw history stays, and the next accepted sample of the same
+            // motion is the next candidate. Once begun, the view is not asked.
+            if (acceptedSampleCount == 0)
+            {
+                if (!PassesBeginViewCheck(pose, viewForward, out Vector3 checkedView))
+                {
+                    return;
+                }
+
+                strokeBeginViewForward = checkedView;
+            }
+
             if (acceptedSampleCount < AcceptedSampleCapacity)
             {
                 acceptedSamples[acceptedSampleCount] = pose;
@@ -793,12 +1037,30 @@ namespace Zantetsu.Sandbox
             acceptedSamples[AcceptedSampleCapacity - 1] = pose;
         }
 
+        // True when there is no usable view forward -- no check -- or when the
+        // blade axis has at least the minimum dot product with it.
+        private bool PassesBeginViewCheck(in EvaluatedBladePose pose, Vector3 viewForward, out Vector3 normalizedView)
+        {
+            normalizedView = Vector3.zero;
+
+            float lengthSquared = viewForward.sqrMagnitude;
+            if (!IsFinite(viewForward) || !float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
+            {
+                return true;
+            }
+
+            float length = Mathf.Sqrt(lengthSquared);
+            normalizedView = new Vector3(viewForward.x / length, viewForward.y / length, viewForward.z / length);
+            return Vector3.Dot(pose.BladeAxis, normalizedView) >= beginBladeAxisViewDotMinimum;
+        }
+
         // Waves are deliberately not touched here: they outlive the stroke.
         private void ResetStroke()
         {
             poseHistory.Clear();
             acceptedSampleCount = 0;
             strokeLatchSpent = false;
+            strokeBeginViewForward = Vector3.zero;
         }
 
         private bool TryApplySample(in BladePoseSample sample, out EvaluatedBladePose evaluated)

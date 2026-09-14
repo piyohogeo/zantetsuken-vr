@@ -32,14 +32,6 @@ namespace Zantetsu.Sandbox
         /// <summary>Provisional wave lifetime in seconds, fixed at latch.</summary>
         internal const float WaveLifetimeSeconds = 1.5f;
 
-        /// <summary>
-        /// Provisional span capture window in seconds, fixed at latch. After
-        /// this long the blade has finished describing the cut, so the guide
-        /// is frozen where it was and the live pose stops steering the span.
-        /// Shorter than the wave's life on purpose.
-        /// </summary>
-        internal const float SpanCaptureTimeoutSeconds = 0.15f;
-
         // Provisional near-parallel threshold on the signed denominator, which
         // for unit in-plane vectors is the sine of the angle between the span
         // axis and the guide. Below this the intersection is too far out to
@@ -292,34 +284,64 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            float denominator = Vector3.Dot(normal, Vector3.Cross(wave.SpanAxis, guideDirection));
-            if (!float.IsFinite(denominator) || Mathf.Abs(denominator) <= NearParallelDenominator)
-            {
-                return false;
-            }
-
-            Vector3 fromA = guideOrigin - a;
-            if (!IsFinite(fromA))
-            {
-                return false;
-            }
-
-            float rNumerator = Vector3.Dot(normal, Vector3.Cross(fromA, guideDirection));
-            float qNumerator = Vector3.Dot(normal, Vector3.Cross(fromA, wave.SpanAxis));
-            if (!float.IsFinite(rNumerator) || !float.IsFinite(qNumerator))
-            {
-                return false;
-            }
-
-            float r = rNumerator / denominator;
-            float q = qNumerator / denominator;
-            if (!float.IsFinite(r) || !float.IsFinite(q) || r < 0f || q < 0f)
+            if (!TryEvaluateRawSpanTerms(normal, a, wave.SpanAxis, guideOrigin, guideDirection,
+                    out float r, out float q, out float denominator)
+                || !IsUsableRawSpan(r, q, denominator))
             {
                 return false;
             }
 
             rawSpan = r;
             return true;
+        }
+
+        /// <summary>
+        /// The terms of the raw span candidate for a span line through
+        /// <paramref name="a"/> and a guide ray on a plane, without deciding
+        /// anything: r along the span axis, q along the guide, and the signed
+        /// denominator. False only when a term is not finite. The candidate
+        /// above is built from this, and development readouts show it.
+        /// </summary>
+        internal static bool TryEvaluateRawSpanTerms(
+            Vector3 planeNormal,
+            Vector3 a,
+            Vector3 spanAxis,
+            Vector3 guideOrigin,
+            Vector3 guideDirection,
+            out float r,
+            out float q,
+            out float denominator)
+        {
+            r = 0f;
+            q = 0f;
+            denominator = Vector3.Dot(planeNormal, Vector3.Cross(spanAxis, guideDirection));
+
+            Vector3 fromA = guideOrigin - a;
+            if (!float.IsFinite(denominator) || !IsFinite(fromA))
+            {
+                return false;
+            }
+
+            float rNumerator = Vector3.Dot(planeNormal, Vector3.Cross(fromA, guideDirection));
+            float qNumerator = Vector3.Dot(planeNormal, Vector3.Cross(fromA, spanAxis));
+            if (!float.IsFinite(rNumerator) || !float.IsFinite(qNumerator))
+            {
+                return false;
+            }
+
+            r = rNumerator / denominator;
+            q = qNumerator / denominator;
+            return float.IsFinite(r) && float.IsFinite(q);
+        }
+
+        /// <summary>
+        /// Whether evaluated terms make a candidate the store takes: the span
+        /// axis and guide are not near parallel, and the meeting point lies
+        /// ahead on both.
+        /// </summary>
+        internal static bool IsUsableRawSpan(float r, float q, float denominator)
+        {
+            return Mathf.Abs(denominator) > NearParallelDenominator && r >= 0f && q >= 0f;
         }
 
         // A wider span is only worth taking if the wave can still show both
@@ -367,6 +389,13 @@ namespace Zantetsu.Sandbox
         /// Publishes one wave from a latch. Returns false, changing nothing at
         /// all, when no slot is free or when the state it was handed cannot
         /// make a wave that stays finite for its whole lifetime.
+        ///
+        /// <paramref name="spanCaptureTimeoutSeconds"/> is how long the span
+        /// keeps following the blade: after that the guide is frozen where it
+        /// was and the live pose stops steering the span. It is copied into
+        /// the wave, so a later change to the caller's value only reaches
+        /// waves latched after it. It has to be positive and shorter than the
+        /// wave's lifetime.
         /// </summary>
         internal bool TryLatch(
             double nowSeconds,
@@ -375,7 +404,8 @@ namespace Zantetsu.Sandbox
             Vector3 latestEmitter,
             Vector3 travelAxis,
             Vector3 spanAxis,
-            float acceptedSpan)
+            float acceptedSpan,
+            float spanCaptureTimeoutSeconds)
         {
             if (count >= Capacity)
             {
@@ -404,8 +434,8 @@ namespace Zantetsu.Sandbox
 
             if (!float.IsFinite(WaveSpeed) || !(WaveSpeed > 0f)
                 || !float.IsFinite(WaveLifetimeSeconds) || !(WaveLifetimeSeconds > 0f)
-                || !float.IsFinite(SpanCaptureTimeoutSeconds) || !(SpanCaptureTimeoutSeconds > 0f)
-                || !(SpanCaptureTimeoutSeconds < WaveLifetimeSeconds))
+                || !float.IsFinite(spanCaptureTimeoutSeconds) || !(spanCaptureTimeoutSeconds > 0f)
+                || !(spanCaptureTimeoutSeconds < WaveLifetimeSeconds))
             {
                 return false;
             }
@@ -439,7 +469,7 @@ namespace Zantetsu.Sandbox
                 CurrentSegmentEnd = latestEmitter,
                 Speed = WaveSpeed,
                 LifetimeSeconds = WaveLifetimeSeconds,
-                SpanCaptureTimeout = SpanCaptureTimeoutSeconds,
+                SpanCaptureTimeout = spanCaptureTimeoutSeconds,
                 SpanClosedAt = double.NaN,
                 FrozenGuideOrigin = default,
                 FrozenGuideDirection = default,
