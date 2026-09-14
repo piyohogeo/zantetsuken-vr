@@ -12,7 +12,7 @@ namespace Zantetsu.Core.Tests
 
         private static BladeEdgeGateSettings DefaultSettings()
         {
-            return new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 0.15f, 0.15f);
+            return new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, 0.15f, 0.15f);
         }
 
         private static EvaluatedBladePose PoseAt(long frameId, double timestamp, Vector3 cutSamplePosition)
@@ -40,11 +40,12 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Settings_HoldValues()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 0.15f, 0.15f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, 0.15f, 0.15f);
 
             Assert.That(settings.MinimumWindowSeconds, Is.EqualTo(0.030));
             Assert.That(settings.MaximumWindowSeconds, Is.EqualTo(0.060));
             Assert.That(settings.MinimumSpeed, Is.EqualTo(1.5f));
+            Assert.That(settings.MaximumSpeed, Is.EqualTo(20f));
             Assert.That(settings.MinimumDisplacement, Is.EqualTo(0.15f));
             Assert.That(settings.MinimumEdgeLeadScore, Is.EqualTo(0.15f));
         }
@@ -52,18 +53,21 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void Settings_RejectInvalidValues()
         {
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(double.NaN, 0.060, 1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, double.PositiveInfinity, 1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.0, 0.060, 1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(-0.01, 0.060, 1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.060, 0.030, 1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, -1.5f, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, -0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, float.NaN, 0.15f, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, float.PositiveInfinity, 0.15f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 0.15f, float.NaN));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 0.15f, -1.1f));
-            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 0.15f, 1.1f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(double.NaN, 0.060, 1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, double.PositiveInfinity, 1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.0, 0.060, 1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(-0.01, 0.060, 1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.060, 0.030, 1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, -1.5f, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, -0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, float.NaN, 20f, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, float.PositiveInfinity, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, 0.15f, float.NaN));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, 0.15f, -1.1f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 20f, 0.15f, 1.1f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, float.NaN, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, float.PositiveInfinity, 0.15f, 0.15f));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new BladeEdgeGateSettings(0.030, 0.060, 1.5f, 1.4f, 0.15f, 0.15f));
         }
 
         [Test]
@@ -110,7 +114,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void SpeedBelowMinimum_IsRejected()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 2.0f, 0f, 0.15f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 2.0f, 20f, 0f, 0.15f);
             BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 1.0, new Vector3(0, 1f, 0)), out BladeMotionSample sample);
 
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, settings);
@@ -120,9 +124,39 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
+        public void SpeedAtMaximum_IsAccepted()
+        {
+            // 0.6 m over 0.030 s: exactly the 20 m/s ceiling.
+            BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 0.030, new Vector3(0, 0.6f, 0)), out BladeMotionSample sample);
+
+            Assert.That(BladeEdgeGate.Evaluate(sample, DefaultSettings()).IsAccepted, Is.True);
+        }
+
+        [Test]
+        public void SpeedAboveMaximum_IsRejected()
+        {
+            // 1.2 m over 0.030 s: 40 m/s, which no swing produces.
+            BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 0.030, new Vector3(0, 1.2f, 0)), out BladeMotionSample sample);
+
+            BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, DefaultSettings());
+
+            Assert.That(decision.IsAccepted, Is.False);
+            Assert.That(decision.Reason, Is.EqualTo(BladeEdgeGateReason.SpeedAboveMaximum));
+        }
+
+        [Test]
+        public void SpeedAboveMaximum_OutranksDisplacementAndDirection()
+        {
+            // Fast, spine-leading, and far past the ceiling -> the ceiling wins.
+            BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 0.030, new Vector3(0, -1.2f, 0)), out BladeMotionSample sample);
+
+            Assert.That(BladeEdgeGate.Evaluate(sample, DefaultSettings()).Reason, Is.EqualTo(BladeEdgeGateReason.SpeedAboveMaximum));
+        }
+
+        [Test]
         public void DisplacementBelowMinimum_IsRejected()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 2.0f, 0.15f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 20f, 2.0f, 0.15f);
             BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 1.0, new Vector3(0, 1f, 0)), out BladeMotionSample sample);
 
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, settings);
@@ -134,7 +168,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void NoLateralMotion_IsRejected()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 0f, 0.15f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 20f, 0f, 0.15f);
             BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 1.0, new Vector3(1f, 0, 0)), out BladeMotionSample sample);
 
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, settings);
@@ -146,7 +180,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void EdgeScoreBelowThreshold_IsRejected()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 0f, 0.5f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 20f, 0f, 0.5f);
             BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 1.0, new Vector3(0, 0, 1f)), out BladeMotionSample sample);
 
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, settings);
@@ -158,7 +192,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void EdgeScoreEqualToThreshold_IsRejected()
         {
-            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 0f, 0f);
+            BladeEdgeGateSettings settings = new BladeEdgeGateSettings(0.01, 1.0, 0f, 20f, 0f, 0f);
             BladeMotionEvaluator.TryEvaluate(PoseAt(1, 0.0, Vector3.zero), PoseAt(2, 1.0, new Vector3(0, 0, 1f)), out BladeMotionSample sample);
 
             BladeEdgeGateDecision decision = BladeEdgeGate.Evaluate(sample, settings);

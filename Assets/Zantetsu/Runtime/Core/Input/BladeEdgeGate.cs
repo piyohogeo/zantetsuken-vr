@@ -18,6 +18,7 @@ namespace Zantetsu.Core.Input
         /// <item>Window lower bound (<see cref="BladeEdgeGateReason.WindowTooShort"/>)</item>
         /// <item>Window upper bound (<see cref="BladeEdgeGateReason.WindowTooLong"/>)</item>
         /// <item>Minimum speed (<see cref="BladeEdgeGateReason.SpeedBelowMinimum"/>)</item>
+        /// <item>Maximum speed (<see cref="BladeEdgeGateReason.SpeedAboveMaximum"/>)</item>
         /// <item>Minimum displacement (<see cref="BladeEdgeGateReason.DisplacementBelowMinimum"/>)</item>
         /// <item>Lateral motion presence (<see cref="BladeEdgeGateReason.NoLateralMotion"/>)</item>
         /// <item>Edge lead score (<see cref="BladeEdgeGateReason.EdgeLeadBelowThreshold"/>)</item>
@@ -43,6 +44,11 @@ namespace Zantetsu.Core.Input
             if (sample.Speed < settings.MinimumSpeed)
             {
                 return new BladeEdgeGateDecision(BladeEdgeGateReason.SpeedBelowMinimum);
+            }
+
+            if (sample.Speed > settings.MaximumSpeed)
+            {
+                return new BladeEdgeGateDecision(BladeEdgeGateReason.SpeedAboveMaximum);
             }
 
             if (DisplacementLength(sample.CutSampleDisplacement) < settings.MinimumDisplacement)

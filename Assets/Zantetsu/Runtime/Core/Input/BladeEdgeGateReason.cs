@@ -12,8 +12,9 @@ namespace Zantetsu.Core.Input
         WindowTooShort = 2,
         WindowTooLong = 3,
         SpeedBelowMinimum = 4,
-        DisplacementBelowMinimum = 5,
-        NoLateralMotion = 6,
-        EdgeLeadBelowThreshold = 7,
+        SpeedAboveMaximum = 5,
+        DisplacementBelowMinimum = 6,
+        NoLateralMotion = 7,
+        EdgeLeadBelowThreshold = 8,
     }
 }

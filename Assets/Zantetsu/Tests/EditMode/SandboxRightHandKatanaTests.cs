@@ -24,10 +24,22 @@ namespace Zantetsu.Core.Tests
         private const float PositionTolerance = 1e-4f;
         private const float AngleTolerance = 1e-3f;
         private const float BladeLength = 0.9f;
+        // 11 ms rather than 10: three intervals are 33 ms, clear of the 30 ms
+        // window floor, so accumulated double rounding cannot drop a span just
+        // under the boundary and silently skip a whole sweep.
+        private const double SampleInterval = 0.011;
+
+        // 0.06 m per step is about 5.5 m/s: past the 1.5 m/s floor, well under
+        // the 20 m/s ceiling, and 0.18 m across the shortest window.
+        private static readonly Vector3 EdgeStep = new Vector3(0f, -0.06f, 0f);
 
         private GameObject rigObject;
         private GameObject katanaObject;
         private SandboxRightHandKatana follower;
+
+        private long strokeFrameId;
+        private double strokeTime;
+        private Vector3 strokePosition;
 
         [SetUp]
         public void SetUp()
@@ -36,6 +48,10 @@ namespace Zantetsu.Core.Tests
             katanaObject = new GameObject("Katana");
             follower = rigObject.AddComponent<SandboxRightHandKatana>();
             follower.Katana = katanaObject.transform;
+
+            strokeFrameId = 0;
+            strokeTime = 0.0;
+            strokePosition = new Vector3(0f, 1.4f, 0.3f);
         }
 
         [UnityTearDown]
@@ -97,6 +113,46 @@ namespace Zantetsu.Core.Tests
         {
             Assert.That(Vector3.Distance(actual, expected), Is.LessThan(PositionTolerance),
                 "expected " + expected.ToString("F5") + " but was " + actual.ToString("F5"));
+        }
+
+        // Cancels the fixed grip-to-katana offset, so the katana's blade frame
+        // lands on the world axes: blade axis +Z, edge direction -Y, side
+        // normal +X. Moving the grip along -Y is then an edge-leading sweep.
+        private static Quaternion UprightGrip(SandboxRightHandKatana target)
+        {
+            return Quaternion.Inverse(target.GripToKatanaOffset.rotation);
+        }
+
+        // The same katana rolled over: the edge now points +Y.
+        private static Quaternion FlippedGrip(SandboxRightHandKatana target)
+        {
+            return Quaternion.Euler(0f, 0f, 180f) * Quaternion.Inverse(target.GripToKatanaOffset.rotation);
+        }
+
+        private static void RecordSweep(
+            SandboxRightHandKatana target,
+            Quaternion gripRotation,
+            Vector3 step,
+            int count,
+            ref long frameId,
+            ref double time,
+            ref Vector3 position)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                frameId++;
+                time += SampleInterval;
+                position += step;
+                Assert.That(
+                    target.TryRecordSample(new BladePoseSample(frameId, time, position, gripRotation,
+                        BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                    Is.True);
+            }
+        }
+
+        private void Sweep(Quaternion gripRotation, Vector3 step, int count)
+        {
+            RecordSweep(follower, gripRotation, step, count, ref strokeFrameId, ref strokeTime, ref strokePosition);
         }
 
         private void AssertKatanaShows(Vector3 gripPosition, Quaternion gripRotation)
@@ -229,7 +285,7 @@ namespace Zantetsu.Core.Tests
         // lifecycle is checked there. No frame is allowed to pass between the
         // toggles and the assertions, so Update never interferes.
         [UnityTest]
-        public IEnumerator ReEnabling_HidesTheKatanaAndResetsTheHistoryUntilTheNextValidGripPose()
+        public IEnumerator ReEnabling_HidesTheKatanaAndDropsTheStrokeUntilTheNextValidGripPose()
         {
             yield return new EnterPlayMode();
 
@@ -238,16 +294,17 @@ namespace Zantetsu.Core.Tests
             SandboxRightHandKatana playModeFollower = rig.AddComponent<SandboxRightHandKatana>();
             playModeFollower.Katana = katana.transform;
 
-            Vector3 gripPosition = new Vector3(0.4f, 1.1f, 0.35f);
-            Quaternion gripRotation = Quaternion.Euler(12f, 34f, 56f);
             Pose offset = playModeFollower.GripToKatanaOffset;
 
-            Assert.That(playModeFollower.TryRecordSample(Tracked(gripPosition, gripRotation)), Is.True);
-            Assert.That(playModeFollower.TryRecordSample(
-                new BladePoseSample(8, 1.26, gripPosition + new Vector3(0.05f, 0f, 0f), gripRotation,
-                    BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            long frameId = 0;
+            double time = 0.0;
+            Vector3 position = new Vector3(0.4f, 1.1f, 0.35f);
+            RecordSweep(playModeFollower, UprightGrip(playModeFollower), EdgeStep, 5,
+                ref frameId, ref time, ref position);
+
             Assert.That(katana.activeSelf, Is.True);
-            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(2));
+            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(5));
+            Assert.That(playModeFollower.AcceptedSampleCount, Is.GreaterThan(0));
 
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
@@ -256,12 +313,16 @@ namespace Zantetsu.Core.Tests
             Assert.That(katana.activeSelf, Is.False, "A disabled component must not leave the katana on screen.");
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
                 "A disabled component must not keep the history it was building.");
+            Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
+                "A disabled component must not keep the stroke it was building.");
 
             playModeFollower.enabled = true;
             Assert.That(katana.activeSelf, Is.False,
                 "A re-enabled component must not show the pose it was following before.");
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
                 "A re-enabled component must not carry the history from before it was disabled.");
+            Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
+                "A re-enabled component must not carry the stroke from before it was disabled.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
@@ -271,6 +332,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(katana.activeSelf, Is.True);
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(1),
                 "Following resumes as a new history, not a continuation of the old one.");
+            Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
+                "One pose cannot span a window, so no stroke is under way yet.");
             AssertVector(katana.transform.position, nextPosition + nextRotation * offset.position);
             Assert.That(Quaternion.Angle(katana.transform.rotation, nextRotation * offset.rotation),
                 Is.LessThan(AngleTolerance));
@@ -491,6 +554,231 @@ namespace Zantetsu.Core.Tests
             // The next Update starts a fresh history rather than continuing.
             Assert.That(follower.TryRecordSample(TrackedAt(5, 0.03, new Vector3(0.3f, 1f, 0f))), Is.True);
             Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void EdgeLeadingSweep_IsAcceptedAndItsFirstSampleIsTheStrokeBegin()
+        {
+            // Three intervals are the shortest window the gate accepts, so the
+            // fourth sample is the first one that can be judged at all.
+            Sweep(UprightGrip(follower), EdgeStep, 3);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+
+            Sweep(UprightGrip(follower), EdgeStep, 1);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            Assert.That(begin.FrameId, Is.EqualTo(strokeFrameId));
+        }
+
+        [Test]
+        public void ContinuingTheSameSweep_DoesNotReplaceTheStrokeBegin()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 4);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+
+            Sweep(UprightGrip(follower), EdgeStep, 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(5));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose stillBegin), Is.True);
+            Assert.That(stillBegin.FrameId, Is.EqualTo(begin.FrameId));
+        }
+
+        [Test]
+        public void DiagonalSweep_IsAcceptedWhenTheScoreClearsTheThreshold()
+        {
+            // 60 degrees off the edge direction: score 0.5, above the 0.15 gate.
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+
+            Sweep(UprightGrip(follower), diagonalStep, 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void SpineLeadingSweep_IsNotAcceptedAndKeepsTheRawHistory()
+        {
+            Sweep(UprightGrip(follower), -EdgeStep, 8);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.TryGetStrokeBeginSample(out _), Is.False);
+
+            // With no stroke under way there is no return half to end, so the
+            // raw history is only rejected from, never wiped.
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void ReturnSweep_DropsTheAcceptedSamplesAndTheRawHistoryOnTheSameSample()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+
+            bool reArmed = false;
+            for (int i = 0; i < 12 && !reArmed; i++)
+            {
+                Sweep(upright, -EdgeStep, 1);
+                if (follower.AcceptedSampleCount == 0)
+                {
+                    reArmed = true;
+                    Assert.That(follower.RecordedPoseCount, Is.EqualTo(0),
+                        "the raw history goes with the accepted samples, on the same sample");
+                }
+            }
+
+            Assert.That(reArmed, Is.True, "a return sweep must re-arm the stroke");
+        }
+
+        [Test]
+        public void ReturnSweepOnTheSameBlade_ReArmsWithoutBeingAccepted()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose firstBegin), Is.True);
+
+            // Same blade orientation, opposite direction: the spine leads.
+            Sweep(upright, -EdgeStep, 8);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.TryGetStrokeBeginSample(out _), Is.False);
+            long lastReturnFrameId = strokeFrameId;
+
+            // Roll the katana over and sweep the same way again: now the edge
+            // leads, so this begins a new stroke.
+            Sweep(FlippedGrip(follower), -EdgeStep, 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose newBegin), Is.True);
+            Assert.That(newBegin.FrameId, Is.GreaterThan(lastReturnFrameId));
+            Assert.That(newBegin.FrameId, Is.Not.EqualTo(firstBegin.FrameId));
+        }
+
+        [Test]
+        public void TooFewSamplesForTheWindow_NeitherAcceptsNorReArms()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 3);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(3), "the raw history is kept");
+        }
+
+        [Test]
+        public void TooSmallADisplacement_NeitherAcceptsNorReArms()
+        {
+            // Fast enough, but only 0.09 m across the shortest window.
+            Sweep(UprightGrip(follower), new Vector3(0f, -0.03f, 0f), 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(4), "the raw history is kept");
+        }
+
+        [Test]
+        public void SlowingDownMidSweep_DoesNotReArm()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            int acceptedBefore = follower.AcceptedSampleCount;
+
+            // Same direction, far too slow to be a swing: nothing is decided.
+            Sweep(upright, new Vector3(0f, -0.001f, 0f), 8);
+
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThanOrEqualTo(acceptedBefore));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose stillBegin), Is.True);
+            Assert.That(stillBegin.FrameId, Is.EqualTo(begin.FrameId));
+        }
+
+        [Test]
+        public void ImpossibleSpeed_DropsTheRawHistoryAndTheStroke()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+
+            // A 1.5 m jump in one step is not a swing.
+            Sweep(upright, new Vector3(0f, -1.5f, 0f), 1);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+
+            // One sample alone cannot span a window, so nothing is accepted yet.
+            Sweep(upright, EdgeStep, 1);
+
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AcceptedSamples_StayWithinTheFixedCapacity()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 4);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+
+            // Twenty more accepted samples for eight slots.
+            Sweep(upright, EdgeStep, 20);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose stillBegin), Is.True);
+            Assert.That(stillBegin.FrameId, Is.EqualTo(begin.FrameId),
+                "the begin sample survives the capacity limit");
+        }
+
+        [Test]
+        public void TrackingLossOnUpdate_DropsTheStroke()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AfterTrackingLoss_ANewSweepBeginsANewStroke()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 5);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose firstBegin), Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            long lossFrameId = strokeFrameId;
+
+            // One pose after the gap cannot span a window.
+            Sweep(upright, EdgeStep, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+
+            // Enough poses recorded after the gap, and the stroke starts again.
+            Sweep(upright, EdgeStep, 3);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose newBegin), Is.True);
+            Assert.That(newBegin.FrameId, Is.GreaterThan(lossFrameId),
+                "the new stroke begins after the gap, not before it");
+            Assert.That(newBegin.FrameId, Is.Not.EqualTo(firstBegin.FrameId));
+        }
+
+        [Test]
+        public void TrackingLossOnBeforeRender_DropsTheStroke()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.GreaterThan(0));
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryApplySample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
         }
 
         [Test]

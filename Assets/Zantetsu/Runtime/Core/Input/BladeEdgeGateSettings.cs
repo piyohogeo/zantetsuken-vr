@@ -11,6 +11,7 @@ namespace Zantetsu.Core.Input
         public readonly double MinimumWindowSeconds;
         public readonly double MaximumWindowSeconds;
         public readonly float MinimumSpeed;
+        public readonly float MaximumSpeed;
         public readonly float MinimumDisplacement;
         public readonly float MinimumEdgeLeadScore;
 
@@ -18,6 +19,7 @@ namespace Zantetsu.Core.Input
             double minimumWindowSeconds,
             double maximumWindowSeconds,
             float minimumSpeed,
+            float maximumSpeed,
             float minimumDisplacement,
             float minimumEdgeLeadScore)
         {
@@ -46,6 +48,11 @@ namespace Zantetsu.Core.Input
                 throw new ArgumentOutOfRangeException(nameof(minimumSpeed));
             }
 
+            if (!float.IsFinite(maximumSpeed) || maximumSpeed < minimumSpeed)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maximumSpeed), "Maximum speed must be finite and at least the minimum speed.");
+            }
+
             if (!float.IsFinite(minimumDisplacement) || minimumDisplacement < 0f)
             {
                 throw new ArgumentOutOfRangeException(nameof(minimumDisplacement));
@@ -59,39 +66,9 @@ namespace Zantetsu.Core.Input
             MinimumWindowSeconds = minimumWindowSeconds;
             MaximumWindowSeconds = maximumWindowSeconds;
             MinimumSpeed = minimumSpeed;
+            MaximumSpeed = maximumSpeed;
             MinimumDisplacement = minimumDisplacement;
             MinimumEdgeLeadScore = minimumEdgeLeadScore;
-        }
-
-        internal static bool IsValid(in BladeEdgeGateSettings settings)
-        {
-            if (double.IsNaN(settings.MinimumWindowSeconds) || double.IsInfinity(settings.MinimumWindowSeconds)
-                || double.IsNaN(settings.MaximumWindowSeconds) || double.IsInfinity(settings.MaximumWindowSeconds))
-            {
-                return false;
-            }
-
-            if (!(settings.MinimumWindowSeconds > 0.0) || !(settings.MaximumWindowSeconds >= settings.MinimumWindowSeconds))
-            {
-                return false;
-            }
-
-            if (!float.IsFinite(settings.MinimumSpeed) || settings.MinimumSpeed < 0f)
-            {
-                return false;
-            }
-
-            if (!float.IsFinite(settings.MinimumDisplacement) || settings.MinimumDisplacement < 0f)
-            {
-                return false;
-            }
-
-            if (!float.IsFinite(settings.MinimumEdgeLeadScore) || settings.MinimumEdgeLeadScore < -1f || settings.MinimumEdgeLeadScore > 1f)
-            {
-                return false;
-            }
-
-            return true;
         }
     }
 }
