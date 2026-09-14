@@ -158,15 +158,14 @@ namespace Zantetsu.Sandbox
         [SerializeField] private bool drawGizmos = true;
 
         // First-candidate values that can be tuned while playing. They start at
-        // the provisional Phase 0.52 / 0.53 values and belong to this component
-        // alone: nothing saves them, and leaving Play Mode restores the scene's
-        // values. A change is not carried back into what already happened --
+        // the Phase 0.55 observation candidates and belong to this component
+        // alone. A change is not carried back into what already happened --
         // the gate judges the next sample with it, the latch distance applies
         // to a stroke that has not latched, and the span capture timeout only
         // reaches waves latched afterwards, since each wave keeps its own.
         [Header("First candidate tuning")]
         [Tooltip("Minimum cut sample speed for an accepted sample, m/s.")]
-        [SerializeField] private float minimumSpeed = 1.5f;
+        [SerializeField] private float minimumSpeed = 3.5f;
 
         [Tooltip("Minimum cut sample displacement across the gate window, m.")]
         [SerializeField] private float minimumDisplacement = 0.15f;
@@ -178,13 +177,13 @@ namespace Zantetsu.Sandbox
         [SerializeField] private float returnStrokeEdgeLeadScore = -0.15f;
 
         [Tooltip("Emitter chord a stroke must sweep before it latches, m.")]
-        [SerializeField] private float latchChordMetres = 0.15f;
+        [SerializeField] private float latchChordMetres = 0.35f;
 
         [Tooltip("How long a newly latched wave's span keeps following the blade, s. Shorter than the wave's lifetime.")]
-        [SerializeField] private float spanCaptureTimeoutSeconds = 0.15f;
+        [SerializeField] private float spanCaptureTimeoutSeconds = 0.25f;
 
         [Tooltip("A stroke only begins on a sample whose blade axis has at least this dot product with the view forward. Unused without a view reference.")]
-        [SerializeField] private float beginBladeAxisViewDotMinimum = 0f;
+        [SerializeField] private float beginBladeAxisViewDotMinimum = 0.5f;
 
         [Header("Slash wave display")]
         [Tooltip("One display slot per wave the store can hold, placed under a world-fixed root with identity scale.")]

@@ -35,9 +35,9 @@ namespace Zantetsu.Core.Tests
         // under the boundary and silently skip a whole sweep.
         private const double SampleInterval = 0.011;
 
-        // 0.06 m per step is about 5.5 m/s: past the 1.5 m/s floor, well under
-        // the 20 m/s ceiling, and 0.18 m across the shortest window.
-        private static readonly Vector3 EdgeStep = new Vector3(0f, -0.06f, 0f);
+        // 0.12 m per step is about 10.9 m/s: past the tuned 3.5 m/s floor,
+        // well under the 20 m/s ceiling, and 0.36 m across the shortest window.
+        private static readonly Vector3 EdgeStep = new Vector3(0f, -0.12f, 0f);
 
         private GameObject rigObject;
         private GameObject katanaObject;
@@ -904,7 +904,7 @@ namespace Zantetsu.Core.Tests
         public void DiagonalSweep_IsAcceptedWhenTheScoreClearsTheThreshold()
         {
             // 60 degrees off the edge direction: score 0.5, above the 0.15 gate.
-            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.12f;
 
             Sweep(UprightGrip(follower), diagonalStep, 4);
 
@@ -1138,7 +1138,7 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void DiagonalSweep_YieldsAFinitePlaneCandidate()
         {
-            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.12f;
 
             Sweep(UprightGrip(follower), diagonalStep, 6);
 
@@ -1220,7 +1220,7 @@ namespace Zantetsu.Core.Tests
 
             // Leave the swept plane while still leading with the edge. The
             // newest sample can only reach the result through the last slot.
-            Sweep(upright, new Vector3(0.06f, -0.06f, 0f), 2);
+            Sweep(upright, new Vector3(0.12f, -0.12f, 0f), 2);
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8));
             Assert.That(follower.TryGetSourceSlashPlaneCandidate(out Plane after), Is.True);
@@ -1289,10 +1289,10 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void LatchReady_WaitsUntilTheEmitterChordReachesTheLatchDistance()
         {
-            // 0.052 m per sample: the shortest window still clears the gate's
-            // 0.15 m displacement, and the chord grows one step per accepted
-            // sample, so the 0.15 m latch distance falls between two of them.
-            Vector3 step = new Vector3(0f, -0.052f, 0f);
+            // 0.12 m per sample: the shortest window clears the gate's 0.15 m
+            // displacement, and the chord grows one step per accepted sample,
+            // so the 0.35 m latch distance falls between two of them.
+            Vector3 step = new Vector3(0f, -0.12f, 0f);
             Quaternion upright = UprightGrip(follower);
 
             Sweep(upright, step, 5);
@@ -1302,12 +1302,12 @@ namespace Zantetsu.Core.Tests
             Sweep(upright, step, 1);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
             Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float shortSpan), Is.True);
-            Assert.That(shortSpan, Is.LessThan(0.15f));
+            Assert.That(shortSpan, Is.LessThan(0.35f));
             Assert.That(follower.IsLatchReady, Is.False, "two steps of chord are still short");
 
             Sweep(upright, step, 1);
             Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float longSpan), Is.True);
-            Assert.That(longSpan, Is.GreaterThanOrEqualTo(0.15f));
+            Assert.That(longSpan, Is.GreaterThanOrEqualTo(0.35f));
             Assert.That(follower.IsLatchReady, Is.True, "three steps of chord reach the latch distance");
         }
 
@@ -1373,7 +1373,7 @@ namespace Zantetsu.Core.Tests
         {
             // Down and forward along the blade: movement along the blade adds
             // nothing to the plane normal but tilts the emitter chord.
-            Vector3 step = new Vector3(0f, -0.06f, 0.03f);
+            Vector3 step = new Vector3(0f, -0.12f, 0.03f);
 
             Sweep(UprightGrip(follower), step, 7);
 
@@ -1529,7 +1529,7 @@ namespace Zantetsu.Core.Tests
             // lateral motion the gate wants, so both are accepted, but the
             // movement between accepted samples is parallel to the blade axis
             // and contributes no plane normal.
-            Sweep(upright, new Vector3(0f, 0f, 0.10f), 2);
+            Sweep(upright, new Vector3(0f, 0f, 0.20f), 2);
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
             Assert.That(follower.IsLatchReady, Is.True, "the emitter chord is past the latch distance");
@@ -2324,7 +2324,7 @@ namespace Zantetsu.Core.Tests
                 out Vector3 spanAxis, out float initialSpan, out _, out _, out _, out _), Is.True);
 
             // One pose a capture window later: it steers the span and closes it.
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.3), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
                 out _, out _, out Vector3 currentStart, out Vector3 currentEnd), Is.True);
@@ -2358,7 +2358,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(0, out double latchedAt, out Plane plane, out Vector3 origin,
                 out Vector3 travelAxis, out Vector3 spanAxis, out _, out _, out _, out _, out _), Is.True);
 
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
 
             Assert.That(follower.TryGetWave(0, out double latchedAtAfter, out Plane planeAfter, out Vector3 originAfter,
@@ -2375,7 +2375,7 @@ namespace Zantetsu.Core.Tests
         public void AfterClosing_TheCurrentPoseNoLongerTouchesTheFrozenGuide()
         {
             SweepUntilLatch();
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out double closedAt, out Vector3 frozenOrigin,
                 out Vector3 frozenDirection), Is.True);
 
@@ -2398,7 +2398,7 @@ namespace Zantetsu.Core.Tests
             // Close with the blade tilted, so the frozen guide is not parallel
             // to the travel axis and the intersection keeps moving outward.
             Quaternion tilted = Quaternion.Euler(45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
-            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float atClose,
                 out _, out _, out Vector3 startAtClose, out _), Is.True);
@@ -2423,7 +2423,7 @@ namespace Zantetsu.Core.Tests
             // Tilted the other way, the frozen intersection lands behind A, so
             // every later candidate is refused.
             Quaternion tilted = Quaternion.Euler(-45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
-            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float atClose,
                 out _, out _, out Vector3 startAtClose, out _), Is.True);
@@ -2445,7 +2445,7 @@ namespace Zantetsu.Core.Tests
 
             // The capture window runs out on an update with no usable pose.
             strokeFrameId++;
-            strokeTime += 0.2;
+            strokeTime += 0.3;
             Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False,
                 "there was no guide to freeze");
@@ -2462,7 +2462,7 @@ namespace Zantetsu.Core.Tests
             SweepUntilLatch();
 
             strokeFrameId++;
-            strokeTime += 0.2;
+            strokeTime += 0.3;
             Assert.That(
                 follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                     UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
@@ -2508,7 +2508,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWaveSpanClose(1, out _, out _, out _), Is.False);
 
             // And on again for the newer one.
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.3), Is.True);
 
             Assert.That(follower.TryGetWaveSpanClose(1, out double secondClosedAt, out _, out _), Is.True);
             Assert.That(secondClosedAt, Is.GreaterThan(firstClosedAt));
@@ -2521,7 +2521,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _, out _,
                 out _, out _, out _, out _), Is.True);
 
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
 
@@ -2660,7 +2660,7 @@ namespace Zantetsu.Core.Tests
         {
             // Down and forward along the blade, so the emitter chord is not
             // perpendicular to the travel axis.
-            Sweep(UprightGrip(follower), new Vector3(0f, -0.06f, 0.03f), 7);
+            Sweep(UprightGrip(follower), new Vector3(0f, -0.12f, 0.03f), 7);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
 
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out Vector3 travelAxis, out Vector3 spanAxis,
@@ -2869,7 +2869,7 @@ namespace Zantetsu.Core.Tests
             SweepUntilLatch();
 
             Quaternion tilted = Quaternion.Euler(45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
-            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
             float widthAtClose = waveVisuals[0].localScale.x;
 
@@ -3120,7 +3120,7 @@ namespace Zantetsu.Core.Tests
         public void Diagnostics_WithAClosedWave_ShowWhenItsSpanClosed()
         {
             SweepUntilLatch();
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
 
             StringBuilder text = new StringBuilder();
@@ -3623,21 +3623,21 @@ namespace Zantetsu.Core.Tests
             Assert.That(ComparisonLine(ComparisonText(recorder), "Pinned   "), Is.EqualTo("Pinned   none"));
         }
 
-        private void AssertProvisionalTuning()
+        private void AssertDefaultTuning()
         {
-            Assert.That(follower.MinimumSpeed, Is.EqualTo(1.5f));
+            Assert.That(follower.MinimumSpeed, Is.EqualTo(3.5f));
             Assert.That(follower.MinimumDisplacement, Is.EqualTo(0.15f));
             Assert.That(follower.MinimumEdgeLeadScore, Is.EqualTo(0.15f));
             Assert.That(follower.ReturnStrokeEdgeLeadScore, Is.EqualTo(-0.15f));
-            Assert.That(follower.LatchChordMetres, Is.EqualTo(0.15f));
-            Assert.That(follower.SpanCaptureTimeoutSeconds, Is.EqualTo(0.15f));
-            Assert.That(follower.BeginBladeAxisViewDotMinimum, Is.EqualTo(0f));
+            Assert.That(follower.LatchChordMetres, Is.EqualTo(0.35f));
+            Assert.That(follower.SpanCaptureTimeoutSeconds, Is.EqualTo(0.25f));
+            Assert.That(follower.BeginBladeAxisViewDotMinimum, Is.EqualTo(0.5f));
         }
 
         [Test]
-        public void TuningValues_StartAtTheFormerConstants()
+        public void TuningValues_StartAtThePhase055ObservationCandidates()
         {
-            AssertProvisionalTuning();
+            AssertDefaultTuning();
         }
 
         [Test]
@@ -3659,21 +3659,21 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(SandboxSlashWaveStore.WaveLifetimeSeconds), Is.False,
                 "a timeout the store refuses would silently stop every wave");
 
-            AssertProvisionalTuning();
+            AssertDefaultTuning();
         }
 
         [Test]
         public void RaisingMinimumSpeed_RejectsASweepTheDefaultAccepts()
         {
-            // The edge sweep moves 0.06 m every 0.011 s: about 5.5 m/s.
-            Assert.That(follower.TrySetMinimumSpeed(8f), Is.True);
+            // The edge sweep moves 0.12 m every 0.011 s: about 10.9 m/s.
+            Assert.That(follower.TrySetMinimumSpeed(14f), Is.True);
             Sweep(UprightGrip(follower), EdgeStep, 7);
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
             Assert.That(follower.WaveCount, Is.EqualTo(0));
 
             // The next sample is judged with whatever the value is by then.
-            Assert.That(follower.TrySetMinimumSpeed(1.5f), Is.True);
+            Assert.That(follower.TrySetMinimumSpeed(3.5f), Is.True);
             Sweep(UprightGrip(follower), EdgeStep, 1);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
         }
@@ -3681,8 +3681,8 @@ namespace Zantetsu.Core.Tests
         [Test]
         public void RaisingMinimumDisplacement_RejectsASwingTheDefaultAccepts()
         {
-            // Nothing within the gate's 0.06 s window moves this far at 0.06 m a sample.
-            Assert.That(follower.TrySetMinimumDisplacement(0.5f), Is.True);
+            // Nothing within the gate's 0.06 s window moves this far at 0.12 m a sample.
+            Assert.That(follower.TrySetMinimumDisplacement(1.0f), Is.True);
             Sweep(UprightGrip(follower), EdgeStep, 7);
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
@@ -3697,7 +3697,7 @@ namespace Zantetsu.Core.Tests
         public void RaisingMinimumEdgeLeadScore_RejectsADiagonalSweepTheDefaultAccepts()
         {
             // 60 degrees off the edge direction: score 0.5.
-            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.06f;
+            Vector3 diagonalStep = new Vector3(0.866f, -0.5f, 0f) * 0.12f;
             Quaternion upright = UprightGrip(follower);
 
             Assert.That(follower.TrySetMinimumEdgeLeadScore(0.6f), Is.True);
@@ -3713,7 +3713,7 @@ namespace Zantetsu.Core.Tests
         public void LoweringReturnStrokeEdgeLeadScore_KeepsAMildReturnFromReArming()
         {
             // 120 degrees off the edge direction: score -0.5, a return by default.
-            Vector3 mildReturnStep = new Vector3(0.866f, 0.5f, 0f) * 0.06f;
+            Vector3 mildReturnStep = new Vector3(0.866f, 0.5f, 0f) * 0.12f;
             Quaternion upright = UprightGrip(follower);
 
             Assert.That(follower.TrySetReturnStrokeEdgeLeadScore(-0.8f), Is.True);
@@ -3733,8 +3733,8 @@ namespace Zantetsu.Core.Tests
         {
             Quaternion upright = UprightGrip(follower);
 
-            // Seven samples reach 0.18 m of chord: ready by the default, not by 0.28 m.
-            Assert.That(follower.TrySetLatchChordMetres(0.28f), Is.True);
+            // Seven samples reach 0.36 m of chord: ready by the default, not by 0.50 m.
+            Assert.That(follower.TrySetLatchChordMetres(0.50f), Is.True);
             Sweep(upright, EdgeStep, 7);
             int accepted = follower.AcceptedSampleCount;
             Assert.That(accepted, Is.GreaterThan(1));
@@ -3742,11 +3742,11 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.WaveCount, Is.EqualTo(0));
 
             // The same accepted samples, asked again: readiness follows the value.
-            Assert.That(follower.TrySetLatchChordMetres(0.15f), Is.True);
+            Assert.That(follower.TrySetLatchChordMetres(0.35f), Is.True);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(accepted));
             Assert.That(follower.IsLatchReady, Is.True);
 
-            Assert.That(follower.TrySetLatchChordMetres(0.28f), Is.True);
+            Assert.That(follower.TrySetLatchChordMetres(0.50f), Is.True);
             Assert.That(follower.IsLatchReady, Is.False);
 
             // Sweeping on reaches the longer distance, and latches there.
@@ -3773,7 +3773,7 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(follower.TrySetSpanCaptureTimeoutSeconds(0.6f), Is.True);
 
-            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out double firstClosedAt, out _, out _), Is.True,
                 "a latched wave keeps the timeout it latched with");
             Assert.That(firstClosedAt - firstLatchedAt, Is.LessThan(0.6));
@@ -3786,7 +3786,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(1, out double secondLatchedAt, out _, out _, out _, out _, out _,
                 out _, out _, out _, out _), Is.True);
 
-            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(upright, EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(1, out _, out _, out _), Is.False);
 
             Assert.That(RecordPose(upright, EdgeStep * 4f, 0.45), Is.True);
@@ -3820,7 +3820,7 @@ namespace Zantetsu.Core.Tests
             StringAssert.StartsWith("Pinned   waves 1", ComparisonLine(text, "Pinned   "));
 
             // Back to the value the pin was taken with: the same recording lines up again.
-            Assert.That(follower.TrySetLatchChordMetres(0.15f), Is.True);
+            Assert.That(follower.TrySetLatchChordMetres(0.35f), Is.True);
             Assert.That(recorder.TryBeginReplay(50.0), Is.True);
             ReplayInto(recorder, follower, recorder.RecordedSampleCount);
             Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
@@ -3848,13 +3848,13 @@ namespace Zantetsu.Core.Tests
             Sweep(UprightGrip(follower), EdgeStep, 20);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(8));
             Assert.That(follower.WaveCount, Is.EqualTo(1));
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.3), Is.True);
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
 
             string dump = SlashDumpText(recorder);
 
             StringAssert.StartsWith("Slash dump", dump);
-            StringAssert.Contains("Tuning  min speed 1.500", dump);
+            StringAssert.Contains("Tuning  min speed 3.500", dump);
             StringAssert.Contains("  #7  t ", dump);
             StringAssert.DoesNotContain("  #8  t ", dump);
             StringAssert.Contains("Begin  t ", dump);
@@ -3990,7 +3990,7 @@ namespace Zantetsu.Core.Tests
             SweepViewing(upright, EdgeStep, 7, view);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
 
-            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(0f), Is.True);
+            Assert.That(follower.TrySetBeginBladeAxisViewDotMinimum(0.5f), Is.True);
             SweepViewing(upright, EdgeStep, 1, view);
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
         }
