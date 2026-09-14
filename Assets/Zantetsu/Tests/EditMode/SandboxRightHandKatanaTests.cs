@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -2945,6 +2946,121 @@ namespace Zantetsu.Core.Tests
 
             SkipTime(0.05);
             Assert.That(follower.WaveCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void TheSandboxScene_HasOneDiagnosticsOverlayReadingTheKatana()
+        {
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            try
+            {
+                Scene scene = EditorSceneManager.OpenScene(SandboxScenePath, OpenSceneMode.Single);
+
+                List<SandboxSlashDiagnosticsOverlay> overlays = new List<SandboxSlashDiagnosticsOverlay>();
+                SandboxRightHandKatana sceneFollower = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    overlays.AddRange(root.GetComponentsInChildren<SandboxSlashDiagnosticsOverlay>(true));
+                    if (sceneFollower == null)
+                    {
+                        sceneFollower = root.GetComponentInChildren<SandboxRightHandKatana>(true);
+                    }
+                }
+
+                Assert.That(overlays.Count, Is.EqualTo(1), "exactly one diagnostics overlay");
+                Assert.That(sceneFollower, Is.Not.Null);
+
+                // The reference is a private serialized field set in the scene.
+                SerializedProperty reference = new SerializedObject(overlays[0]).FindProperty("katana");
+                Assert.That(reference, Is.Not.Null, "the overlay's katana field is gone");
+                Assert.That(reference.objectReferenceValue, Is.SameAs(sceneFollower));
+            }
+            finally
+            {
+                if (setup != null && setup.Length > 0)
+                {
+                    EditorSceneManager.RestoreSceneManagerSetup(setup);
+                }
+                else
+                {
+                    EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+                }
+            }
+        }
+
+        [Test]
+        public void Diagnostics_WithNoKatanaAssigned_StillWrites()
+        {
+            StringBuilder text = new StringBuilder();
+
+            Assert.DoesNotThrow(() => SandboxSlashDiagnosticsOverlay.AppendDiagnostics(text, null));
+            Assert.That(text.ToString(), Does.Contain("No SandboxRightHandKatana assigned"));
+        }
+
+        [Test]
+        public void Diagnostics_WithNoWaves_ShowTheTrackingAndStrokeState()
+        {
+            StringBuilder text = new StringBuilder();
+            SandboxSlashDiagnosticsOverlay.AppendDiagnostics(text, follower);
+            string shown = text.ToString();
+
+            Assert.That(shown, Does.Contain("Katana"));
+            Assert.That(shown, Does.Contain("recorded 0"));
+            Assert.That(shown, Does.Contain("accepted 0"));
+            Assert.That(shown, Does.Contain("Latch         waiting"));
+            Assert.That(shown, Does.Contain("Stroke begin  no"));
+            Assert.That(shown, Does.Contain("Plane         no"));
+            Assert.That(shown, Does.Contain("Frame         no"));
+            Assert.That(shown, Does.Contain("Waves         0 / " + SandboxSlashWaveStore.Capacity));
+            Assert.That(shown, Does.Not.Contain("#0"));
+        }
+
+        [Test]
+        public void Diagnostics_WithAWave_ShowItsLatchSpanAndSegmentWithoutChangingAnything()
+        {
+            SweepUntilLatch();
+            int accepted = follower.AcceptedSampleCount;
+            int recorded = follower.RecordedPoseCount;
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 currentStart, out _), Is.True);
+
+            StringBuilder text = new StringBuilder();
+            SandboxSlashDiagnosticsOverlay.AppendDiagnostics(text, follower);
+            string shown = text.ToString();
+
+            Assert.That(shown, Does.Contain("Latch         ready"));
+            Assert.That(shown, Does.Contain("Frame         yes  span"));
+            Assert.That(shown, Does.Contain("Waves         1 / " + SandboxSlashWaveStore.Capacity));
+            Assert.That(shown, Does.Contain("#0"));
+            Assert.That(shown, Does.Contain("latched"));
+            Assert.That(shown, Does.Contain("open"));
+            Assert.That(shown, Does.Contain(" A ("));
+            Assert.That(shown, Does.Contain(" B ("));
+
+            // Reading is all it does.
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(accepted));
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(recorded));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
+                out _, out _, out Vector3 currentStartAfter, out _), Is.True);
+            Assert.That(spanAfter, Is.EqualTo(span));
+            AssertVector(currentStartAfter, currentStart);
+        }
+
+        [Test]
+        public void Diagnostics_WithAClosedWave_ShowWhenItsSpanClosed()
+        {
+            SweepUntilLatch();
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+
+            StringBuilder text = new StringBuilder();
+            SandboxSlashDiagnosticsOverlay.AppendDiagnostics(text, follower);
+            string shown = text.ToString();
+
+            Assert.That(shown, Does.Contain("#0"));
+            Assert.That(shown, Does.Contain("closed at"));
+            Assert.That(shown, Does.Not.Contain("open"));
         }
 
         [Test]
