@@ -38,6 +38,10 @@ namespace Zantetsu.Sandbox
     /// gameplay never does, nothing is judged or adopted from it, and it is
     /// never saved. A pin survives Stop and a new replay, and goes with Clear
     /// or a new recording.
+    ///
+    /// The display names the slash method the result came from. The first
+    /// candidate is the only one implemented, so it is simply named here and
+    /// copied along with a pin; there is nothing to choose between yet.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SandboxSlashPoseRecorder : MonoBehaviour
@@ -47,6 +51,12 @@ namespace Zantetsu.Sandbox
         /// Link mode.
         /// </summary>
         internal const int Capacity = 512;
+
+        /// <summary>
+        /// Name of the slash method the katana runs: the first candidate, and
+        /// the only one implemented.
+        /// </summary>
+        internal const string CandidateName = "First Candidate";
 
         [Tooltip("The katana whose grip samples are recorded and replayed.")]
         [SerializeField] private SandboxRightHandKatana katana;
@@ -74,6 +84,7 @@ namespace Zantetsu.Sandbox
         private int pinnedWaveCount;
         private int pinnedAcceptedSampleCount;
         private bool pinnedLatchReady;
+        private string pinnedCandidateName;
         private readonly double[] pinnedLatchedAt = new double[SandboxSlashWaveStore.Capacity];
         private readonly float[] pinnedAcceptedSpan = new float[SandboxSlashWaveStore.Capacity];
         private readonly bool[] pinnedSpanClosed = new bool[SandboxSlashWaveStore.Capacity];
@@ -106,6 +117,9 @@ namespace Zantetsu.Sandbox
         internal int PinnedAcceptedSampleCount => pinnedAcceptedSampleCount;
 
         internal bool PinnedLatchReady => pinnedLatchReady;
+
+        /// <summary>The candidate the pinned result came from; null without a pin.</summary>
+        internal string PinnedCandidateName => pinnedCandidateName;
 
         /// <summary>
         /// Starts a fresh recording, ending any replay first. A pin taken from
@@ -311,6 +325,7 @@ namespace Zantetsu.Sandbox
             pinnedWaveCount = pinned;
             pinnedAcceptedSampleCount = katana.AcceptedSampleCount;
             pinnedLatchReady = katana.IsLatchReady;
+            pinnedCandidateName = CandidateName;
             hasPin = true;
             return true;
         }
@@ -322,6 +337,7 @@ namespace Zantetsu.Sandbox
             pinnedWaveCount = 0;
             pinnedAcceptedSampleCount = 0;
             pinnedLatchReady = false;
+            pinnedCandidateName = null;
         }
 
         /// <summary>
@@ -365,6 +381,8 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal void AppendComparison(StringBuilder text)
         {
+            text.Append("Candidate  ").Append(CandidateName).Append(" (only implemented option)\n");
+
             text.Append("Current  ");
             if (katana == null)
             {
@@ -373,7 +391,7 @@ namespace Zantetsu.Sandbox
             else
             {
                 int waveCount = katana.WaveCount;
-                AppendResultHeader(text, waveCount, katana.AcceptedSampleCount, katana.IsLatchReady);
+                AppendResultHeader(text, waveCount, katana.AcceptedSampleCount, katana.IsLatchReady, CandidateName);
                 for (int i = 0; i < waveCount; i++)
                 {
                     if (!katana.TryGetWave(i, out double latchedAt, out _, out _, out _, out _, out float acceptedSpan,
@@ -394,7 +412,7 @@ namespace Zantetsu.Sandbox
                 return;
             }
 
-            AppendResultHeader(text, pinnedWaveCount, pinnedAcceptedSampleCount, pinnedLatchReady);
+            AppendResultHeader(text, pinnedWaveCount, pinnedAcceptedSampleCount, pinnedLatchReady, pinnedCandidateName);
             for (int i = 0; i < pinnedWaveCount; i++)
             {
                 if (TryGetPinnedWave(i, out double latchedAt, out float acceptedSpan, out bool closed,
@@ -405,11 +423,13 @@ namespace Zantetsu.Sandbox
             }
         }
 
-        private static void AppendResultHeader(StringBuilder text, int waveCount, int acceptedSampleCount, bool latchReady)
+        private static void AppendResultHeader(
+            StringBuilder text, int waveCount, int acceptedSampleCount, bool latchReady, string candidateName)
         {
             text.Append("waves ").Append(waveCount)
                 .Append("  accepted ").Append(acceptedSampleCount)
-                .Append("  latch ").Append(latchReady ? "ready" : "waiting").Append('\n');
+                .Append("  latch ").Append(latchReady ? "ready" : "waiting")
+                .Append("  (").Append(candidateName).Append(")\n");
         }
 
         private static void AppendWave(

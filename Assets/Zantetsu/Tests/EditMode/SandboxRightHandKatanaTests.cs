@@ -3530,6 +3530,88 @@ namespace Zantetsu.Core.Tests
             StringAssert.Contains("Pinned   waves 1", after);
         }
 
+        // The one line of a comparison that starts with the given prefix.
+        private static string ComparisonLine(string text, string prefix)
+        {
+            string found = null;
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.StartsWith(prefix))
+                {
+                    Assert.That(found, Is.Null, "more than one line starts with \"" + prefix + "\"");
+                    found = line;
+                }
+            }
+
+            Assert.That(found, Is.Not.Null, "no line starts with \"" + prefix + "\"");
+            return found;
+        }
+
+        [Test]
+        public void TheComparison_NamesTheFirstCandidateAsCurrentWithoutAPin()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+
+            string text = ComparisonText(recorder);
+
+            Assert.That(ComparisonLine(text, "Candidate  "), Is.EqualTo("Candidate  First Candidate (only implemented option)"));
+            StringAssert.EndsWith("(First Candidate)", ComparisonLine(text, "Current  "));
+            Assert.That(ComparisonLine(text, "Pinned   "), Is.EqualTo("Pinned   none"), "no pin means no candidate on the pinned side");
+            Assert.That(recorder.PinnedCandidateName, Is.Null);
+        }
+
+        [Test]
+        public void PinCurrent_CopiesTheCandidateName()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            Assert.That(recorder.PinnedCandidateName, Is.EqualTo("First Candidate"));
+            string pinnedLine = ComparisonLine(ComparisonText(recorder), "Pinned   ");
+            StringAssert.StartsWith("Pinned   waves 1", pinnedLine);
+            StringAssert.EndsWith("(First Candidate)", pinnedLine);
+        }
+
+        [Test]
+        public void ThePinnedCandidateName_SurvivesAReplay()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            RecordReplayableSweep(recorder);
+            SweepUntilLatch();
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+
+            Assert.That(recorder.TryBeginReplay(50.0), Is.True);
+            StringAssert.EndsWith("(First Candidate)", ComparisonLine(ComparisonText(recorder), "Pinned   "));
+
+            ReplayInto(recorder, follower, recorder.RecordedSampleCount);
+            Assert.That(recorder.TryTakeNextReplaySample(999, out _), Is.False);
+
+            Assert.That(recorder.PinnedCandidateName, Is.EqualTo("First Candidate"));
+            string text = ComparisonText(recorder);
+            StringAssert.EndsWith("(First Candidate)", ComparisonLine(text, "Current  "));
+            StringAssert.EndsWith("(First Candidate)", ComparisonLine(text, "Pinned   "));
+        }
+
+        [Test]
+        public void ThePinnedCandidateName_GoesWithClearAndANewRecording()
+        {
+            SandboxSlashPoseRecorder recorder = CreateRecorder(follower);
+            SweepUntilLatch();
+
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+            recorder.BeginRecording();
+            Assert.That(recorder.PinnedCandidateName, Is.Null, "a new recording drops the pinned candidate");
+            Assert.That(ComparisonLine(ComparisonText(recorder), "Pinned   "), Is.EqualTo("Pinned   none"));
+            recorder.Stop();
+
+            Assert.That(recorder.TryPinCurrent(), Is.True);
+            recorder.Clear();
+            Assert.That(recorder.PinnedCandidateName, Is.Null, "Clear drops the pinned candidate");
+            Assert.That(ComparisonLine(ComparisonText(recorder), "Pinned   "), Is.EqualTo("Pinned   none"));
+        }
+
         [Test]
         public void ReplayingARecordingWithATrackingGap_RefillsTheWindowAfterIt()
         {
