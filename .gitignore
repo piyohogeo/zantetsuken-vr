@@ -41,5 +41,6 @@ sysinfo.txt
 
 # Licensed third-party assets are kept outside the public repository
 Assets/Licensed/
+Assets/Licensed.meta
 Assets/ThirdPartyPrivate/
 
