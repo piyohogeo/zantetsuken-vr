@@ -41,6 +41,9 @@ namespace Zantetsu.Core.Tests
         private double strokeTime;
         private Vector3 strokePosition;
 
+        private GameObject waveVisualRoot;
+        private Transform[] waveVisuals;
+
         [SetUp]
         public void SetUp()
         {
@@ -66,6 +69,13 @@ namespace Zantetsu.Core.Tests
 
             // A test that opens the sandbox scene or enters Play Mode destroys
             // these along with the scene they were created in.
+            if (waveVisualRoot != null)
+            {
+                Object.DestroyImmediate(waveVisualRoot);
+            }
+
+            waveVisuals = null;
+
             if (katanaObject != null)
             {
                 Object.DestroyImmediate(katanaObject);
@@ -230,6 +240,74 @@ namespace Zantetsu.Core.Tests
                 follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
                     UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
                 Is.True);
+        }
+
+        // The display slots live in a private serialized field, assigned in the
+        // scene. Tests reach it the way the editor does rather than asking the
+        // component for an accessor it has no other use for.
+        private const string WaveVisualsField = "waveVisuals";
+
+        private static void AssignWaveVisuals(SandboxRightHandKatana target, Transform[] visuals)
+        {
+            SerializedObject serialized = new SerializedObject(target);
+            SerializedProperty property = serialized.FindProperty(WaveVisualsField);
+            Assert.That(property, Is.Not.Null, "the display slot field is gone");
+            property.arraySize = visuals.Length;
+            for (int i = 0; i < visuals.Length; i++)
+            {
+                property.GetArrayElementAtIndex(i).objectReferenceValue = visuals[i];
+            }
+
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static int ReadWaveVisualCount(SandboxRightHandKatana target)
+        {
+            SerializedObject serialized = new SerializedObject(target);
+            SerializedProperty property = serialized.FindProperty(WaveVisualsField);
+            Assert.That(property, Is.Not.Null, "the display slot field is gone");
+            return property.arraySize;
+        }
+
+        private static Transform ReadWaveVisual(SandboxRightHandKatana target, int index)
+        {
+            SerializedObject serialized = new SerializedObject(target);
+            SerializedProperty property = serialized.FindProperty(WaveVisualsField);
+            Assert.That(property, Is.Not.Null, "the display slot field is gone");
+            Assert.That(index, Is.InRange(0, property.arraySize - 1));
+            return property.GetArrayElementAtIndex(index).objectReferenceValue as Transform;
+        }
+
+        // Four display slots under a world-fixed root with identity scale, the
+        // way the sandbox scene places them.
+        private void GiveTheFollowerWaveVisuals()
+        {
+            waveVisualRoot = new GameObject("Slash Wave VFX");
+            waveVisualRoot.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            waveVisualRoot.transform.localScale = Vector3.one;
+
+            waveVisuals = new Transform[SandboxSlashWaveStore.Capacity];
+            GameObject template = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            Mesh sharedMesh = template.GetComponent<MeshFilter>().sharedMesh;
+            Material sharedMaterial = template.GetComponent<MeshRenderer>().sharedMaterial;
+            Object.DestroyImmediate(template);
+
+            for (int i = 0; i < waveVisuals.Length; i++)
+            {
+                GameObject slot = new GameObject("Slash Wave " + i, typeof(MeshFilter), typeof(MeshRenderer));
+                slot.transform.SetParent(waveVisualRoot.transform, false);
+                slot.GetComponent<MeshFilter>().sharedMesh = sharedMesh;
+                slot.GetComponent<MeshRenderer>().sharedMaterial = sharedMaterial;
+                slot.SetActive(false);
+                waveVisuals[i] = slot.transform;
+            }
+
+            AssignWaveVisuals(follower, waveVisuals);
+        }
+
+        private static void AssertVisualIsHidden(Transform visual)
+        {
+            Assert.That(visual.gameObject.activeSelf, Is.False, visual.name + " should be hidden");
         }
 
         // The signed in-plane cross product 19.1.5.1 writes as cross2_N.
@@ -457,9 +535,16 @@ namespace Zantetsu.Core.Tests
             Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
             Assert.That(playModeFollower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.True);
 
+            GameObject visualRoot = new GameObject("Slash Wave VFX");
+            GameObject visual = new GameObject("Slash Wave 0");
+            visual.transform.SetParent(visualRoot.transform, false);
+            visual.SetActive(false);
+            AssignWaveVisuals(playModeFollower, new[] { visual.transform, null, null, null });
+
             RecordSweep(playModeFollower, UprightGrip(playModeFollower), EdgeStep, 3,
                 ref frameId, ref time, ref position);
             Assert.That(playModeFollower.WaveCount, Is.EqualTo(1), "the stroke latched a wave");
+            Assert.That(visual.activeSelf, Is.True, "and it is on screen");
 
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
@@ -468,6 +553,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(katana.activeSelf, Is.False, "A disabled component must not leave the katana on screen.");
             Assert.That(playModeFollower.WaveCount, Is.EqualTo(0),
                 "A disabled component ends the waves it owns.");
+            Assert.That(visual.activeSelf, Is.False, "and takes their display with them.");
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
                 "A disabled component must not keep the history it was building.");
             Assert.That(playModeFollower.AcceptedSampleCount, Is.EqualTo(0),
@@ -487,6 +573,8 @@ namespace Zantetsu.Core.Tests
                 "The slash frame goes with the stroke it was derived from.");
             Assert.That(playModeFollower.WaveCount, Is.EqualTo(0),
                 "A re-enabled component does not carry waves across the gap.");
+            Assert.That(visual.activeSelf, Is.False,
+                "and shows nothing until it has a wave again.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
@@ -2568,6 +2656,295 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.WaveCount, Is.EqualTo(0));
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
                 out _, out _, out _, out _), Is.False, "an expired wave has no sweep to evaluate");
+        }
+
+        [Test]
+        public void TheSandboxScene_HasFourHiddenWaveSlotsSharingOneMeshAndMaterial()
+        {
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            try
+            {
+                Scene scene = EditorSceneManager.OpenScene(SandboxScenePath, OpenSceneMode.Single);
+
+                SandboxRightHandKatana sceneFollower = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    SandboxRightHandKatana candidate = root.GetComponentInChildren<SandboxRightHandKatana>(true);
+                    if (candidate != null)
+                    {
+                        sceneFollower = candidate;
+                        break;
+                    }
+                }
+
+                Assert.That(sceneFollower, Is.Not.Null);
+                Assert.That(sceneFollower.Katana, Is.Not.Null);
+
+                Assert.That(ReadWaveVisualCount(sceneFollower), Is.EqualTo(SandboxSlashWaveStore.Capacity),
+                    "there is one display slot per wave the store can hold");
+
+                Transform displayRoot = null;
+                Mesh sharedMesh = null;
+                Material sharedMaterial = null;
+                for (int i = 0; i < SandboxSlashWaveStore.Capacity; i++)
+                {
+                    Transform slot = ReadWaveVisual(sceneFollower, i);
+                    Assert.That(slot, Is.Not.Null, "display slot " + i + " is not assigned");
+                    Assert.That(slot.gameObject.activeSelf, Is.False, "display slot " + i + " is not hidden");
+
+                    // It must not hang off the katana, which disappears with
+                    // tracking while the waves carry on.
+                    Assert.That(slot.IsChildOf(sceneFollower.Katana), Is.False,
+                        "display slot " + i + " is under the katana");
+
+                    Assert.That(slot.GetComponentInChildren<Collider>(true), Is.Null,
+                        "display slot " + i + " has a collider");
+
+                    MeshFilter filter = slot.GetComponent<MeshFilter>();
+                    MeshRenderer renderer = slot.GetComponent<MeshRenderer>();
+                    Assert.That(filter, Is.Not.Null);
+                    Assert.That(renderer, Is.Not.Null);
+
+                    if (i == 0)
+                    {
+                        displayRoot = slot.parent;
+                        sharedMesh = filter.sharedMesh;
+                        sharedMaterial = renderer.sharedMaterial;
+
+                        Assert.That(displayRoot, Is.Not.Null, "the slots have no root");
+                        Assert.That(displayRoot.parent, Is.Null, "the display root is not a scene root");
+                        AssertVector(displayRoot.position, Vector3.zero);
+                        Assert.That(Quaternion.Angle(displayRoot.rotation, Quaternion.identity), Is.LessThan(AngleTolerance));
+                        AssertVector(displayRoot.localScale, Vector3.one);
+
+                        Assert.That(sharedMesh, Is.Not.Null);
+                        Assert.That(sharedMaterial, Is.Not.Null);
+                        Assert.That(sharedMaterial.shader.name, Is.EqualTo("Universal Render Pipeline/Unlit"));
+                        Assert.That(sharedMaterial.GetFloat("_Cull"),
+                            Is.EqualTo((float)UnityEngine.Rendering.CullMode.Off),
+                            "the slash wave material is not double sided");
+                    }
+                    else
+                    {
+                        Assert.That(slot.parent, Is.SameAs(displayRoot), "slot " + i + " is under another root");
+                        Assert.That(filter.sharedMesh, Is.SameAs(sharedMesh), "slot " + i + " uses another mesh");
+                        Assert.That(renderer.sharedMaterial, Is.SameAs(sharedMaterial), "slot " + i + " uses another material");
+                    }
+                }
+            }
+            finally
+            {
+                if (setup != null && setup.Length > 0)
+                {
+                    EditorSceneManager.RestoreSceneManagerSetup(setup);
+                }
+                else
+                {
+                    EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+                }
+            }
+        }
+
+        [Test]
+        public void ALatchedWave_IsShownOnTheFirstSlotWhereItsSegmentIs()
+        {
+            GiveTheFollowerWaveVisuals();
+
+            SweepUntilLatch();
+
+            Assert.That(waveVisuals[0].gameObject.activeSelf, Is.True);
+            for (int i = 1; i < waveVisuals.Length; i++)
+            {
+                AssertVisualIsHidden(waveVisuals[i]);
+            }
+
+            Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out Vector3 spanAxis,
+                out float span, out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+
+            Transform visual = waveVisuals[0];
+            AssertVector(visual.position, (segmentStart + segmentEnd) * 0.5f);
+            AssertVector(visual.right, spanAxis);
+            AssertVector(visual.forward, plane.normal);
+            AssertVector(visual.up, Vector3.Cross(plane.normal, spanAxis).normalized);
+            Assert.That(visual.localScale.x, Is.EqualTo(span).Within(PositionTolerance));
+            Assert.That(visual.localScale.y, Is.EqualTo(0.35f).Within(PositionTolerance));
+            Assert.That(visual.localScale.z, Is.EqualTo(1f).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void TheVisual_FollowsTheWaveAsItFliesAndWidens()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+            Vector3 positionAtLatch = waveVisuals[0].position;
+            float widthAtLatch = waveVisuals[0].localScale.x;
+
+            SkipTime(0.05);
+            Assert.That(waveVisuals[0].position, Is.Not.EqualTo(positionAtLatch), "the visual travelled");
+            Assert.That(waveVisuals[0].localScale.x, Is.EqualTo(widthAtLatch).Within(PositionTolerance));
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 3f, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+            Assert.That(span, Is.GreaterThan(widthAtLatch));
+            Assert.That(waveVisuals[0].localScale.x, Is.EqualTo(span).Within(PositionTolerance));
+            AssertVector(waveVisuals[0].position, (segmentStart + segmentEnd) * 0.5f);
+        }
+
+        [Test]
+        public void AfterTheSpanCloses_TheVisualStillFollowsTheFrozenResult()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+
+            Quaternion tilted = Quaternion.Euler(45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+            float widthAtClose = waveVisuals[0].localScale.x;
+
+            strokeFrameId++;
+            strokeTime += 0.05;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+            Assert.That(span, Is.GreaterThan(widthAtClose));
+            Assert.That(waveVisuals[0].gameObject.activeSelf, Is.True);
+            Assert.That(waveVisuals[0].localScale.x, Is.EqualTo(span).Within(PositionTolerance));
+            AssertVector(waveVisuals[0].position, (segmentStart + segmentEnd) * 0.5f);
+        }
+
+        [Test]
+        public void LosingTracking_HidesTheKatanaButNotTheWave()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+            Vector3 before = waveVisuals[0].position;
+
+            strokeFrameId++;
+            strokeTime += 0.05;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(katanaObject.activeSelf, Is.False, "the katana goes");
+            Assert.That(waveVisuals[0].gameObject.activeSelf, Is.True, "the wave does not");
+            Assert.That(waveVisuals[0].position, Is.Not.EqualTo(before), "and it keeps flying");
+        }
+
+        [Test]
+        public void TwoWaves_AreShownOnTwoSlots()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+
+            for (int i = 0; i < 2; i++)
+            {
+                Assert.That(follower.TryGetWave(i, out _, out _, out _, out _, out _, out _,
+                    out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+                Assert.That(waveVisuals[i].gameObject.activeSelf, Is.True, "slot " + i + " should be shown");
+                AssertVector(waveVisuals[i].position, (segmentStart + segmentEnd) * 0.5f);
+            }
+
+            AssertVisualIsHidden(waveVisuals[2]);
+            AssertVisualIsHidden(waveVisuals[3]);
+        }
+
+        [Test]
+        public void WhenAWaveExpires_TheTailSlotIsHiddenAndTheRestReseat()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+            Assert.That(waveVisuals[1].gameObject.activeSelf, Is.True);
+
+            // Long enough for the first wave and not the second.
+            strokeFrameId++;
+            strokeTime = firstLatchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "the older wave expired");
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out _,
+                out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
+
+            // The survivor moved down to slot 0, and the tail slot went out.
+            Assert.That(waveVisuals[0].gameObject.activeSelf, Is.True);
+            AssertVector(waveVisuals[0].position, (segmentStart + segmentEnd) * 0.5f);
+            AssertVisualIsHidden(waveVisuals[1]);
+            AssertVisualIsHidden(waveVisuals[2]);
+            AssertVisualIsHidden(waveVisuals[3]);
+        }
+
+        [Test]
+        public void BeforeRenderDoesNotMoveTheWaveVisual()
+        {
+            GiveTheFollowerWaveVisuals();
+            SweepUntilLatch();
+            Vector3 position = waveVisuals[0].position;
+            Quaternion rotation = waveVisuals[0].rotation;
+            Vector3 scale = waveVisuals[0].localScale;
+
+            strokeFrameId++;
+            strokeTime += 0.05;
+            Assert.That(
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition + EdgeStep * 4f,
+                    UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+
+            AssertVector(waveVisuals[0].position, position);
+            Assert.That(Quaternion.Angle(waveVisuals[0].rotation, rotation), Is.LessThan(AngleTolerance));
+            AssertVector(waveVisuals[0].localScale, scale);
+        }
+
+        [Test]
+        public void ManyUpdates_ReuseTheSameMeshAndMaterialUntouched()
+        {
+            GiveTheFollowerWaveVisuals();
+            MeshFilter filter = waveVisuals[0].GetComponent<MeshFilter>();
+            MeshRenderer renderer = waveVisuals[0].GetComponent<MeshRenderer>();
+            Mesh mesh = filter.sharedMesh;
+            Material material = renderer.sharedMaterial;
+            int vertexCount = mesh.vertexCount;
+            int indexCount = (int)mesh.GetIndexCount(0);
+
+            SweepUntilLatch();
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+            }
+
+            Assert.That(filter.sharedMesh, Is.SameAs(mesh));
+            Assert.That(renderer.sharedMaterial, Is.SameAs(material));
+            Assert.That(mesh.vertexCount, Is.EqualTo(vertexCount));
+            Assert.That((int)mesh.GetIndexCount(0), Is.EqualTo(indexCount));
+
+            for (int i = 0; i < waveVisuals.Length; i++)
+            {
+                Assert.That(waveVisuals[i].GetComponent<MeshFilter>().sharedMesh, Is.SameAs(mesh));
+                Assert.That(waveVisuals[i].GetComponent<MeshRenderer>().sharedMaterial, Is.SameAs(material));
+            }
+        }
+
+        [Test]
+        public void WithoutAnyWaveVisuals_TheWaveLogicIsUnchanged()
+        {
+            // No slots assigned at all.
+            SweepUntilLatch();
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(span, Is.GreaterThan(0f));
+
+            SkipTime(0.05);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
         }
 
         [Test]

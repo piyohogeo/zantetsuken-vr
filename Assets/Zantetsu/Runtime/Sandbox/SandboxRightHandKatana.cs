@@ -37,6 +37,11 @@ namespace Zantetsu.Sandbox
     /// the span. A shown sample the history itself refuses -- a timestamp that
     /// does not move forward -- empties it too.
     ///
+    /// The waves are shown through a fixed set of quads placed in the scene,
+    /// one per slot the store has, synced at the end of each update from the
+    /// store's current indices. They are display only: gameplay never reads
+    /// a quad's transform, and nothing here builds or edits geometry.
+    ///
     /// Gesture acceptance lives here too, on the Update boundary only: the
     /// span the history reports is run through <see cref="BladeEdgeGate"/>,
     /// and a pose that passes becomes an accepted sample. The first accepted
@@ -66,8 +71,8 @@ namespace Zantetsu.Sandbox
     /// carries the waves forward, and leaves them otherwise alone. Every pose
     /// this component can show and record is offered to those waves as a live
     /// guide, whether or not the gate accepted it into the stroke.
-    /// Only disabling the component ends the waves it owns. A stroke gets one
-    /// chance to latch -- if the store was full at that moment, that stroke
+    /// Only disabling the component ends the waves it owns, taking their
+    /// display with them. A stroke gets one chance to latch -- if the store was full at that moment, that stroke
     /// does not get another when a slot later frees up.
     ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
@@ -142,6 +147,16 @@ namespace Zantetsu.Sandbox
         [SerializeField] private float bladeLength = 0.9f;
 
         [SerializeField] private bool drawGizmos = true;
+
+        [Header("Slash wave display")]
+        [Tooltip("One display slot per wave the store can hold, placed under a world-fixed root with identity scale.")]
+        [SerializeField] private Transform[] waveVisuals = new Transform[SandboxSlashWaveStore.Capacity];
+        // Assigned in the scene and only ever read from here; a slot left
+        // unassigned simply shows nothing.
+
+        // Provisional height of a wave quad in metres, fixed in code: display
+        // only, and no part of the gameplay sweep.
+        private const float WaveVisualHeight = 0.35f;
 
         /// <summary>Katana visual root driven by the grip pose.</summary>
         internal Transform Katana
@@ -512,7 +527,131 @@ namespace Zantetsu.Sandbox
                 recorded ? EmitterPosition(current) : Vector3.zero,
                 recorded ? current.BladeAxis : Vector3.zero);
 
+            // Last, so a wave latched or expired in this update is shown or
+            // hidden in it too. Slots follow the store's current indices, so
+            // there is no second bookkeeping to fall out of step after the
+            // store compacts.
+            SyncWaveVisuals();
+
             return recorded;
+        }
+
+        private void SyncWaveVisuals()
+        {
+            if (waveVisuals == null)
+            {
+                return;
+            }
+
+            int liveWaves = waveStore.Count;
+            for (int i = 0; i < waveVisuals.Length; i++)
+            {
+                Transform visual = waveVisuals[i];
+                if (visual == null)
+                {
+                    continue;
+                }
+
+                if (i >= liveWaves
+                    || !TryGetWaveVisualPlacement(i, out Vector3 center, out Quaternion rotation, out Vector3 scale))
+                {
+                    HideVisual(visual);
+                    continue;
+                }
+
+                visual.SetPositionAndRotation(center, rotation);
+                visual.localScale = scale;
+                if (!visual.gameObject.activeSelf)
+                {
+                    visual.gameObject.SetActive(true);
+                }
+            }
+        }
+
+        // The quad that shows one wave: centred on its current segment, lying
+        // in its plane, as wide as the accepted span. A wave whose plane,
+        // axes or segment cannot give that is simply not shown -- nothing is
+        // clamped or substituted, and this placement is never what gameplay
+        // reads.
+        private bool TryGetWaveVisualPlacement(int index, out Vector3 center, out Quaternion rotation, out Vector3 scale)
+        {
+            center = default;
+            rotation = Quaternion.identity;
+            scale = Vector3.one;
+
+            if (!waveStore.TryGetWave(index, out _, out Plane plane, out _, out _, out Vector3 spanAxis,
+                    out float acceptedSpan, out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd))
+            {
+                return false;
+            }
+
+            Vector3 normal = plane.normal;
+            if (!IsFinite(normal) || !IsFinite(spanAxis) || !IsFinite(segmentStart) || !IsFinite(segmentEnd)
+                || !float.IsFinite(acceptedSpan))
+            {
+                return false;
+            }
+
+            Vector3 inPlaneUp = Vector3.Cross(normal, spanAxis);
+            if (!IsFinite(inPlaneUp))
+            {
+                return false;
+            }
+
+            float upLengthSquared = inPlaneUp.sqrMagnitude;
+            if (!float.IsFinite(upLengthSquared) || upLengthSquared <= MinDerivedVectorLengthSquared)
+            {
+                return false;
+            }
+
+            float normalLengthSquared = normal.sqrMagnitude;
+            if (!float.IsFinite(normalLengthSquared) || normalLengthSquared <= MinDerivedVectorLengthSquared)
+            {
+                return false;
+            }
+
+            float upLength = Mathf.Sqrt(upLengthSquared);
+            inPlaneUp = new Vector3(inPlaneUp.x / upLength, inPlaneUp.y / upLength, inPlaneUp.z / upLength);
+            if (!IsFinite(inPlaneUp))
+            {
+                return false;
+            }
+
+            center = (segmentStart + segmentEnd) * 0.5f;
+            if (!IsFinite(center))
+            {
+                return false;
+            }
+
+            // Local Z is the plane normal and local Y the in-plane up, which
+            // leaves local X on the span axis.
+            rotation = Quaternion.LookRotation(normal, inPlaneUp);
+            scale = new Vector3(acceptedSpan, WaveVisualHeight, 1f);
+            return true;
+        }
+
+        private void HideAllWaveVisuals()
+        {
+            if (waveVisuals == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < waveVisuals.Length; i++)
+            {
+                if (waveVisuals[i] != null)
+                {
+                    HideVisual(waveVisuals[i]);
+                }
+            }
+        }
+
+        private static void HideVisual(Transform visual)
+        {
+            if (visual.gameObject.activeSelf)
+            {
+                visual.gameObject.SetActive(false);
+            }
         }
 
         private bool TryRecordGestureSample(in BladePoseSample sample, out EvaluatedBladePose evaluated)
@@ -695,6 +834,7 @@ namespace Zantetsu.Sandbox
             Hide();
             ResetStroke();
             waveStore.Clear();
+            HideAllWaveVisuals();
             Application.onBeforeRender += ApplyGripPoseForRender;
         }
 
@@ -704,6 +844,7 @@ namespace Zantetsu.Sandbox
             Hide();
             ResetStroke();
             waveStore.Clear();
+            HideAllWaveVisuals();
         }
 
         private void Hide()
