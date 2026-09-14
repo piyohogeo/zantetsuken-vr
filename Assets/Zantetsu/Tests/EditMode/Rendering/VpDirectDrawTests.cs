@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Unity.Collections;
 using UnityEditor;
@@ -14,7 +15,8 @@ namespace Zantetsu.Rendering.Tests
     /// <summary>
     /// Stage 1 VP draw (DESIGN 4.5.5): the VP shader compiles with its colour and shadow caster passes, a Direct
     /// non-indexed draw rendered by the pipeline into a small render texture colours the pixels of its index range's
-    /// triangles, so the drawn shape follows the index buffer order and the range start, the draw casts a shadow onto a
+    /// triangles, so the drawn shape follows the index buffer order and the range start, one range draws at several
+    /// transforms and each of several ranges in one pool draws where it is selected, the draw casts a shadow onto a
     /// Unity mesh, and it receives the main light shadow of a Unity mesh. Coverage is counted per region of the image,
     /// not compared per pixel.
     /// </summary>
@@ -105,11 +107,34 @@ namespace Zantetsu.Rendering.Tests
             return mesh;
         }
 
+        private Mesh Triangle(Vector3 a, Vector3 b, Vector3 c)
+        {
+            Mesh mesh = Track(new Mesh());
+            mesh.SetVertices(new[] { a, b, c });
+            mesh.SetNormals(new[] { Vector3.back, Vector3.back, Vector3.back });
+            mesh.SetTriangles(new[] { 0, 1, 2 }, 0);
+            return mesh;
+        }
+
         /// <summary>
         /// Uploads the mesh once, draws [indexStart, indexStart + indexCount) of it at each transform (identity when none
         /// is given) with one property block, and counts the green pixels in each half.
         /// </summary>
         private (int left, int right) Coverage(Mesh mesh, int indexStart, int indexCount, params Matrix4x4[] objectToWorlds)
+        {
+            return DrawAndCount(
+                new[] { mesh },
+                ranges => (objectToWorlds.Length > 0 ? objectToWorlds : new[] { Matrix4x4.identity })
+                    .Select(objectToWorld => (new VpGeometryRange(ranges[0].vertexStart, ranges[0].vertexCount, indexStart, indexCount), objectToWorld)));
+        }
+
+        /// <summary>
+        /// Appends the meshes in order to one pool, uploads it once, issues the draws chosen from their ranges with one
+        /// property block, and counts the green pixels in each half.
+        /// </summary>
+        private (int left, int right) DrawAndCount(
+            Mesh[] meshes,
+            Func<VpGeometryRange[], IEnumerable<(VpGeometryRange range, Matrix4x4 objectToWorld)>> draws)
         {
             Material material = VpMaterial(Color.green);
             RenderTexture target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32));
@@ -122,11 +147,15 @@ namespace Zantetsu.Rendering.Tests
             using (var pool = new VpCpuGeometryPool(16, 16, Allocator.Persistent))
             using (var buffers = new VpGpuGeometryBuffers(16, 16))
             {
-                Assert.That(pool.TryAppend(mesh, out VpGeometryRange whole), Is.True);
+                var ranges = new VpGeometryRange[meshes.Length];
+                for (int i = 0; i < meshes.Length; i++)
+                {
+                    Assert.That(pool.TryAppend(meshes[i], out ranges[i]), Is.True, "mesh " + i);
+                }
+
                 Assert.That(buffers.TryUpload(pool), Is.True);
-                var range = new VpGeometryRange(whole.vertexStart, whole.vertexCount, indexStart, indexCount);
                 var properties = new MaterialPropertyBlock();
-                foreach (Matrix4x4 objectToWorld in objectToWorlds.Length > 0 ? objectToWorlds : new[] { Matrix4x4.identity })
+                foreach ((VpGeometryRange range, Matrix4x4 objectToWorld) in draws(ranges))
                 {
                     VpDirectDraw.Render(
                         material,
@@ -326,6 +355,38 @@ namespace Zantetsu.Rendering.Tests
 
             Assert.That(left, Is.GreaterThan(CoveredPixels), "draw in place");
             Assert.That(right, Is.GreaterThan(CoveredPixels), "draw moved right");
+        }
+
+        [Test]
+        public void TwoRangesInOnePool_AreEachDrawnWhereSelected()
+        {
+            // A left triangle and a right triangle appended as two ranges of one pool and one upload.
+            Mesh[] meshes =
+            {
+                Triangle(Positions[0], Positions[1], Positions[2]),
+                Triangle(Positions[3], Positions[4], Positions[5]),
+            };
+            VpGeometryRange[] appended = null;
+
+            (int left, int right) firstOnly = DrawAndCount(meshes, ranges =>
+            {
+                appended = ranges;
+                return new[] { (ranges[0], Matrix4x4.identity) };
+            });
+            (int left, int right) secondOnly = DrawAndCount(meshes, ranges => new[] { (ranges[1], Matrix4x4.identity) });
+            (int left, int right) both = DrawAndCount(meshes, ranges => new[] { (ranges[0], Matrix4x4.identity), (ranges[1], Matrix4x4.identity) });
+
+            Assert.That(
+                new[] { appended[0].vertexStart, appended[0].indexStart, appended[1].vertexStart, appended[1].indexStart },
+                Is.EqualTo(new[] { 0, 0, 3, 3 }),
+                "the second range follows the first in the one pool");
+            Assert.That(new[] { appended[0].indexCount, appended[1].indexCount }, Is.EqualTo(new[] { 3, 3 }));
+            Assert.That(firstOnly.left, Is.GreaterThan(CoveredPixels), "first range: left");
+            Assert.That(firstOnly.right, Is.Zero, "first range: right");
+            Assert.That(secondOnly.left, Is.Zero, "second range: left");
+            Assert.That(secondOnly.right, Is.GreaterThan(CoveredPixels), "second range: right");
+            Assert.That(both.left, Is.GreaterThan(CoveredPixels), "both ranges: left");
+            Assert.That(both.right, Is.GreaterThan(CoveredPixels), "both ranges: right");
         }
 
         [Test]

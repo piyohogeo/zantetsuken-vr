@@ -31,6 +31,9 @@ namespace Zantetsu.Core.Tests
         private const string VpShaderName = "Zantetsu/VP Unlit";
         private const string VpMeshDisplayScriptPath = "Assets/Zantetsu/Runtime/Rendering/VpMeshDisplay.cs";
         private const string VpSharedMeshDisplayScriptPath = "Assets/Zantetsu/Runtime/Rendering/VpSharedMeshDisplay.cs";
+        private const string VpMultiMeshDisplayScriptPath = "Assets/Zantetsu/Runtime/Rendering/VpMultiMeshDisplay.cs";
+        private const string MultiProbeName = "VP Multi Geometry Probe";
+        private static readonly string[] MultiProbeCategories = { "Character", "Vehicle" };
         private const int SubsetInstancesPerCategory = 2;
         private static readonly string[] SubsetCategories = { "Character", "Vehicle" };
 
@@ -96,6 +99,18 @@ namespace Zantetsu.Core.Tests
             return meshByGameObject
                 .Where(pair => gameObjectNames.ContainsKey(pair.Key))
                 .ToDictionary(pair => gameObjectNames[pair.Key], pair => pair.Value);
+        }
+
+        // Every saved mesh reference of the one component of the script, in serialized order, read from the scene file.
+        private static List<string> AllMeshReferencesInSceneFile(string scriptPath)
+        {
+            string scriptGuid = AssetDatabase.AssetPathToGUID(scriptPath);
+            Assert.That(scriptGuid, Is.Not.Empty, scriptPath);
+            string[] documents = Regex.Split(File.ReadAllText(SandboxScenePath), @"^--- ", RegexOptions.Multiline)
+                .Where(document => document.StartsWith("!u!114 ") && document.Contains("guid: " + scriptGuid + ","))
+                .ToArray();
+            Assert.That(documents, Has.Length.EqualTo(1), "one saved " + Path.GetFileNameWithoutExtension(scriptPath));
+            return Regex.Matches(documents[0], @"mesh: (\{[^}]*\})").Cast<Match>().Select(match => match.Groups[1].Value).ToList();
         }
 
         private Transform UnityMeshDisplay()
@@ -244,6 +259,86 @@ namespace Zantetsu.Core.Tests
                     Assert.That(instances[i].lossyScale, Is.Not.EqualTo(instances[j].lossyScale), pair + " differ in scale");
                 }
             }
+        }
+
+        [Test]
+        public void TheMultiGeometryProbe_DrawsEachLicensedMeshAtItsOwnGroupOfChildTransforms()
+        {
+            Transform display = UnityMeshDisplay();
+            Transform[] probes = display.GetComponentsInChildren<Transform>(true).Where(t => t.name == MultiProbeName).ToArray();
+            Assert.That(probes, Has.Length.EqualTo(1), "one multi geometry probe");
+            Transform probe = probes[0];
+            Assert.That(probe.parent, Is.SameAs(display), "the probe sits directly under the Unity mesh display");
+            Assert.That(display.Find(AdoptedGridName).GetComponentsInChildren<MeshFilter>(true), Is.Not.Empty, "the Unity mesh adopted grid stays");
+            Assert.That(display.Find(SubsetName), Is.Not.Null, "the VP adopted subset stays");
+            Assert.That(display.Find(SharedProbeName), Is.Not.Null, "the VP shared geometry probe stays");
+
+            VpMultiMeshDisplay multi = probe.GetComponent<VpMultiMeshDisplay>();
+            Assert.That(multi, Is.Not.Null, "the probe root holds the multi display");
+            Assert.That(multi.enabled, Is.True);
+            Assert.That(probe.GetComponentsInChildren<VpMultiMeshDisplay>(true), Has.Length.EqualTo(1), "one multi display");
+            Assert.That(probe.GetComponentsInChildren<VpSharedMeshDisplay>(true), Is.Empty, "no shared displays");
+            Assert.That(probe.GetComponentsInChildren<VpMeshDisplay>(true), Is.Empty, "no per-instance displays");
+            Assert.That(probe.GetComponentsInChildren<Renderer>(true), Is.Empty, "no Unity renderers");
+            Assert.That(probe.GetComponentsInChildren<MeshFilter>(true), Is.Empty, "no mesh filters");
+            Assert.That(probe.GetComponentsInChildren<Collider>(true), Is.Empty, "display only");
+
+            var serialized = new SerializedObject(multi);
+            Assert.That(serialized.FindProperty("shader").objectReferenceValue, Is.SameAs(Shader.Find(VpShaderName)), "the probe uses the VP shader");
+            SerializedProperty groups = serialized.FindProperty("groups");
+            Assert.That(groups.arraySize, Is.EqualTo(MultiProbeCategories.Length), "one group per mesh");
+            List<string> savedReferences = AllMeshReferencesInSceneFile(VpMultiMeshDisplayScriptPath);
+            Assert.That(savedReferences, Has.Count.EqualTo(MultiProbeCategories.Length), "one saved mesh reference per group");
+
+            var groupTransforms = new List<Transform>();
+            for (int g = 0; g < MultiProbeCategories.Length; g++)
+            {
+                string category = MultiProbeCategories[g];
+                LicensedDisplayMesh entry = LicensedDisplayMeshes.Selection.Single(selected => selected.Category == category);
+                StringAssert.Contains("fileID: 4300000,", savedReferences[g], category + " group references a mesh asset");
+                StringAssert.Contains("guid: " + LicensedDisplayMeshes.GuidFor(entry) + ",", savedReferences[g], category + " group references the " + category + " mesh");
+
+                SerializedProperty group = groups.GetArrayElementAtIndex(g);
+                Object mesh = group.FindPropertyRelative("mesh").objectReferenceValue;
+                Mesh asset = AssetDatabase.LoadAssetAtPath<Mesh>(LicensedDisplayMeshes.AssetPathFor(entry));
+                if (asset == null)
+                {
+                    // Not generated in this checkout: the reference resolves to nothing and the group draws nothing.
+                    Assert.That(mesh == null, Is.True, category + " group has no mesh to show");
+                }
+                else
+                {
+                    Assert.That(mesh, Is.SameAs(asset), category + " group shows the generated " + category + " mesh");
+                }
+
+                var instances = (Transform)group.FindPropertyRelative("instances").objectReferenceValue;
+                Assert.That(instances, Is.Not.Null, category + " group has an instances transform");
+                Assert.That(instances.parent, Is.SameAs(probe), category + " instances sit directly under the probe");
+                Assert.That(instances.GetComponents<Component>(), Has.Length.EqualTo(1), instances.name + " carries a transform only");
+                Assert.That(instances.childCount, Is.GreaterThanOrEqualTo(2), category + " is drawn at two or more transforms");
+                groupTransforms.Add(instances);
+
+                Transform[] children = instances.Cast<Transform>().ToArray();
+                foreach (Transform child in children)
+                {
+                    Assert.That(child.GetComponents<Component>(), Has.Length.EqualTo(1), child.name + " carries a transform only");
+                    Assert.That(child.gameObject.activeSelf, Is.True, child.name + " is active");
+                }
+
+                for (int i = 0; i < children.Length; i++)
+                {
+                    for (int j = i + 1; j < children.Length; j++)
+                    {
+                        bool sameTransform = children[i].position == children[j].position
+                            && children[i].rotation == children[j].rotation
+                            && children[i].lossyScale == children[j].lossyScale;
+                        Assert.That(sameTransform, Is.False, children[i].name + " and " + children[j].name + " are placed differently");
+                    }
+                }
+            }
+
+            Assert.That(groupTransforms.Distinct().Count(), Is.EqualTo(groupTransforms.Count), "each group has its own instances");
+            Assert.That(probe.childCount, Is.EqualTo(groupTransforms.Count), "the probe holds only its groups");
         }
     }
 }
