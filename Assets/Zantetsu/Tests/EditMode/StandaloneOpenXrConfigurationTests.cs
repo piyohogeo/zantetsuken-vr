@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.XR.Management;
 using UnityEngine.XR.Management;
 using UnityEngine.XR.OpenXR;
@@ -66,6 +67,15 @@ namespace Zantetsu.Core.Tests
         public void Standalone_StereoRenderingPath_IsInstancing()
         {
             Assert.That(PlayerSettings.stereoRenderingPath, Is.EqualTo(StereoRenderingPath.Instancing));
+        }
+
+        [Test]
+        public void Standalone_ScriptingBackend_IsIl2Cpp()
+        {
+            Assert.That(
+                PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone),
+                Is.EqualTo(ScriptingImplementation.IL2CPP),
+                "The Quest Link player is built with IL2CPP, so the editor has to be configured for it.");
         }
 
         [Test]
