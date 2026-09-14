@@ -444,6 +444,20 @@ namespace Zantetsu.Sandbox
                 out currentSegmentEnd);
         }
 
+        /// <summary>
+        /// When one live wave's span closed and the guide it froze then, or
+        /// false while it is still open. The store itself never leaves this
+        /// component.
+        /// </summary>
+        internal bool TryGetWaveSpanClose(
+            int index,
+            out double spanClosedAt,
+            out Vector3 frozenGuideOrigin,
+            out Vector3 frozenGuideDirection)
+        {
+            return waveStore.TryGetWaveSpanClose(index, out spanClosedAt, out frozenGuideOrigin, out frozenGuideDirection);
+        }
+
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>
         internal Pose GripToKatanaOffset => new Pose(offsetPosition, Quaternion.Euler(offsetEulerAngles));
 

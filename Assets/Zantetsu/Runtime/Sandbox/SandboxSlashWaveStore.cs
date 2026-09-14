@@ -32,6 +32,14 @@ namespace Zantetsu.Sandbox
         /// <summary>Provisional wave lifetime in seconds, fixed at latch.</summary>
         internal const float WaveLifetimeSeconds = 1.5f;
 
+        /// <summary>
+        /// Provisional span capture window in seconds, fixed at latch. After
+        /// this long the blade has finished describing the cut, so the guide
+        /// is frozen where it was and the live pose stops steering the span.
+        /// Shorter than the wave's life on purpose.
+        /// </summary>
+        internal const float SpanCaptureTimeoutSeconds = 0.15f;
+
         // Provisional near-parallel threshold on the signed denominator, which
         // for unit in-plane vectors is the sine of the angle between the span
         // axis and the guide. Below this the intersection is too far out to
@@ -55,6 +63,13 @@ namespace Zantetsu.Sandbox
             public Vector3 CurrentSegmentEnd;
             public float Speed;
             public float LifetimeSeconds;
+            public float SpanCaptureTimeout;
+
+            // NaN until the span closes; there is no separate open/closed flag
+            // to keep in step with it.
+            public double SpanClosedAt;
+            public Vector3 FrozenGuideOrigin;
+            public Vector3 FrozenGuideDirection;
         }
 
         private readonly Wave[] waves = new Wave[Capacity];
@@ -117,6 +132,12 @@ namespace Zantetsu.Sandbox
         /// is taken -- so the accepted span is a running maximum and never
         /// shrinks. A rejected candidate costs the wave nothing: it still flies.
         ///
+        /// A wave whose capture window has run out freezes the guide it was
+        /// given in that update and stops looking at the current pose; the
+        /// update it closes on still keeps the candidate that guide produced.
+        /// Closing does not end the wave or fix its span: the frozen guide goes
+        /// on giving candidates, and a wider one is still taken.
+        ///
         /// A wave is left exactly as it was when the time is not usable for it:
         /// not finite, before its latch, behind where the wave has already
         /// travelled to, or unable to give finite ends. Nothing is clamped,
@@ -165,11 +186,38 @@ namespace Zantetsu.Sandbox
                     continue;
                 }
 
+                // While the span is open the current pose steers it; once
+                // closed the guide frozen at that moment does, and the current
+                // pose is ignored. Either way the guide is projected once and
+                // the candidate evaluated once.
+                bool hasCandidate = false;
+                float rawSpan = 0f;
+                if (double.IsNaN(waves[i].SpanClosedAt))
+                {
+                    if (hasGuide
+                        && TryProjectGuide(waves[i], guideEmitter, guideBladeAxis,
+                            out Vector3 liveOrigin, out Vector3 liveDirection))
+                    {
+                        hasCandidate = TryEvaluateRawSpanCandidate(waves[i], a, liveOrigin, liveDirection, out rawSpan);
+
+                        // Closing keeps this update's live candidate; it just
+                        // stops later updates from taking a new guide.
+                        if (elapsed >= waves[i].SpanCaptureTimeout)
+                        {
+                            waves[i].FrozenGuideOrigin = liveOrigin;
+                            waves[i].FrozenGuideDirection = liveDirection;
+                            waves[i].SpanClosedAt = nowSeconds;
+                        }
+                    }
+                }
+                else
+                {
+                    hasCandidate = TryEvaluateRawSpanCandidate(
+                        waves[i], a, waves[i].FrozenGuideOrigin, waves[i].FrozenGuideDirection, out rawSpan);
+                }
+
                 float acceptedSpan = waves[i].AcceptedSpan;
-                if (hasGuide
-                    && TryEvaluateRawSpanCandidate(waves[i], a, guideEmitter, guideBladeAxis, out float rawSpan)
-                    && rawSpan > acceptedSpan
-                    && CanCarrySpan(waves[i], a, rawSpan))
+                if (hasCandidate && rawSpan > acceptedSpan && CanCarrySpan(waves[i], a, rawSpan))
                 {
                     acceptedSpan = rawSpan;
                 }
@@ -191,16 +239,20 @@ namespace Zantetsu.Sandbox
         // 19.1.5.1's first candidate: where the fixed span line through A meets
         // the live guide ray. The signed denominator is what the division uses;
         // only its magnitude decides whether the two are too near parallel.
-        private static bool TryEvaluateRawSpanCandidate(
+        // The emission control point and blade tip direction put onto this
+        // wave's plane: the guide it sees. Done once per wave per update and
+        // shared by the candidate and the freeze.
+        private static bool TryProjectGuide(
             in Wave wave,
-            Vector3 a,
             Vector3 guideEmitter,
             Vector3 guideBladeAxis,
-            out float rawSpan)
+            out Vector3 guideOrigin,
+            out Vector3 guideDirection)
         {
-            rawSpan = 0f;
+            guideOrigin = default;
+            guideDirection = default;
 
-            if (!IsFinite(guideEmitter) || !IsFinite(guideBladeAxis) || !IsFinite(a))
+            if (!IsFinite(guideEmitter) || !IsFinite(guideBladeAxis))
             {
                 return false;
             }
@@ -211,13 +263,31 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            Vector3 guideOrigin = wave.SourceSlashPlane.ClosestPointOnPlane(guideEmitter);
+            guideOrigin = wave.SourceSlashPlane.ClosestPointOnPlane(guideEmitter);
             if (!IsFinite(guideOrigin))
             {
                 return false;
             }
 
-            if (!TryProjectDirectionOntoPlane(guideBladeAxis, normal, out Vector3 guideDirection))
+            return TryProjectDirectionOntoPlane(guideBladeAxis, normal, out guideDirection);
+        }
+
+        private static bool TryEvaluateRawSpanCandidate(
+            in Wave wave,
+            Vector3 a,
+            Vector3 guideOrigin,
+            Vector3 guideDirection,
+            out float rawSpan)
+        {
+            rawSpan = 0f;
+
+            if (!IsFinite(a) || !IsFinite(guideOrigin) || !IsFinite(guideDirection))
+            {
+                return false;
+            }
+
+            Vector3 normal = wave.SourceSlashPlane.normal;
+            if (!IsFinite(normal) || !float.IsFinite(wave.SourceSlashPlane.distance))
             {
                 return false;
             }
@@ -333,7 +403,9 @@ namespace Zantetsu.Sandbox
             }
 
             if (!float.IsFinite(WaveSpeed) || !(WaveSpeed > 0f)
-                || !float.IsFinite(WaveLifetimeSeconds) || !(WaveLifetimeSeconds > 0f))
+                || !float.IsFinite(WaveLifetimeSeconds) || !(WaveLifetimeSeconds > 0f)
+                || !float.IsFinite(SpanCaptureTimeoutSeconds) || !(SpanCaptureTimeoutSeconds > 0f)
+                || !(SpanCaptureTimeoutSeconds < WaveLifetimeSeconds))
             {
                 return false;
             }
@@ -367,6 +439,10 @@ namespace Zantetsu.Sandbox
                 CurrentSegmentEnd = latestEmitter,
                 Speed = WaveSpeed,
                 LifetimeSeconds = WaveLifetimeSeconds,
+                SpanCaptureTimeout = SpanCaptureTimeoutSeconds,
+                SpanClosedAt = double.NaN,
+                FrozenGuideOrigin = default,
+                FrozenGuideDirection = default,
             };
             count++;
             return true;
@@ -416,6 +492,33 @@ namespace Zantetsu.Sandbox
             previousSegmentEnd = wave.PreviousSegmentEnd;
             currentSegmentStart = wave.CurrentSegmentStart;
             currentSegmentEnd = wave.CurrentSegmentEnd;
+            return true;
+        }
+
+        /// <summary>
+        /// The moment a wave's span closed and the guide it froze then, by
+        /// value. False while the span is still open, or for an index outside
+        /// the live waves -- whether it is closed is only ever the presence of
+        /// that moment.
+        /// </summary>
+        internal bool TryGetWaveSpanClose(
+            int index,
+            out double spanClosedAt,
+            out Vector3 frozenGuideOrigin,
+            out Vector3 frozenGuideDirection)
+        {
+            spanClosedAt = 0.0;
+            frozenGuideOrigin = default;
+            frozenGuideDirection = default;
+
+            if (index < 0 || index >= count || double.IsNaN(waves[index].SpanClosedAt))
+            {
+                return false;
+            }
+
+            spanClosedAt = waves[index].SpanClosedAt;
+            frozenGuideOrigin = waves[index].FrozenGuideOrigin;
+            frozenGuideDirection = waves[index].FrozenGuideDirection;
             return true;
         }
 

@@ -2065,10 +2065,18 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(1, out _, out Plane secondPlane, out _, out _, out Vector3 secondSpanAxis,
                 out float secondSpan, out _, out _, out Vector3 secondStart, out Vector3 secondEnd), Is.True);
 
-            // One pose, but each wave measures it from its own A along its own
-            // span axis, so the two spans are not the same number.
-            Assert.That(firstSpan, Is.EqualTo(firstStart.y - CurrentGuideOrigin(firstPlane).y).Within(1e-3f));
-            Assert.That(secondSpan, Is.EqualTo(secondStart.y - CurrentGuideOrigin(secondPlane).y).Within(1e-3f));
+            // One pose, but each wave measures from its own A along its own
+            // span axis -- and against the guide that wave is actually using,
+            // which for one past its capture window is the frozen one.
+            Vector3 firstGuide = follower.TryGetWaveSpanClose(0, out _, out Vector3 firstFrozen, out _)
+                ? firstFrozen
+                : CurrentGuideOrigin(firstPlane);
+            Vector3 secondGuide = follower.TryGetWaveSpanClose(1, out _, out Vector3 secondFrozen, out _)
+                ? secondFrozen
+                : CurrentGuideOrigin(secondPlane);
+
+            Assert.That(firstSpan, Is.EqualTo(firstStart.y - firstGuide.y).Within(1e-3f));
+            Assert.That(secondSpan, Is.EqualTo(secondStart.y - secondGuide.y).Within(1e-3f));
             AssertVector(firstEnd, firstStart + firstSpanAxis * firstSpan);
             AssertVector(secondEnd, secondStart + secondSpanAxis * secondSpan);
         }
@@ -2107,6 +2115,243 @@ namespace Zantetsu.Core.Tests
             AssertVector(previousEndAfter, previousEnd);
             AssertVector(currentStartAfter, currentStart);
             AssertVector(currentEndAfter, currentEnd);
+        }
+
+        [Test]
+        public void BeforeTheCaptureWindowRunsOut_TheSpanStaysOpenOnTheLiveGuide()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float initialSpan,
+                out _, out _, out _, out _), Is.True);
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False, "the span is still open");
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(span, Is.GreaterThan(initialSpan), "the live guide still steers it");
+        }
+
+        [Test]
+        public void TheCaptureWindowCloses_AfterTakingThatUpdatesLiveCandidate()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out Plane plane, out _, out _,
+                out Vector3 spanAxis, out float initialSpan, out _, out _, out _, out _), Is.True);
+
+            // One pose a capture window later: it steers the span and closes it.
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out Vector3 currentStart, out Vector3 currentEnd), Is.True);
+            Assert.That(span, Is.GreaterThan(initialSpan), "this update's live candidate was not lost");
+
+            Vector3 expectedOrigin = CurrentGuideOrigin(plane);
+            Vector3 expectedDirection = Vector3.ProjectOnPlane(katanaObject.transform.forward, plane.normal).normalized;
+            Assert.That(span, Is.EqualTo(currentStart.y - expectedOrigin.y).Within(1e-3f));
+            AssertVector(currentEnd, currentStart + spanAxis * span);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out double closedAt, out Vector3 frozenOrigin,
+                out Vector3 frozenDirection), Is.True);
+            AssertVector(frozenOrigin, expectedOrigin);
+            AssertVector(frozenDirection, expectedDirection);
+            Assert.That(frozenDirection.magnitude, Is.EqualTo(1f).Within(PositionTolerance));
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(frozenOrigin)), Is.LessThan(PositionTolerance));
+            Assert.That(Mathf.Abs(Vector3.Dot(frozenDirection, plane.normal)), Is.LessThan(PositionTolerance));
+
+            // The close is stamped with this update, not the moment the window
+            // technically ran out.
+            Assert.That(closedAt, Is.EqualTo(strokeTime));
+            Assert.That(closedAt, Is.GreaterThan(latchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds));
+
+            Assert.That(follower.WaveCount, Is.EqualTo(1), "closing is not expiring");
+        }
+
+        [Test]
+        public void ClosingKeepsTheLatchSnapshot()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out Plane plane, out Vector3 origin,
+                out Vector3 travelAxis, out Vector3 spanAxis, out _, out _, out _, out _, out _), Is.True);
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+
+            Assert.That(follower.TryGetWave(0, out double latchedAtAfter, out Plane planeAfter, out Vector3 originAfter,
+                out Vector3 travelAfter, out Vector3 spanAxisAfter, out _, out _, out _, out _, out _), Is.True);
+            Assert.That(latchedAtAfter, Is.EqualTo(latchedAt));
+            AssertVector(planeAfter.normal, plane.normal);
+            Assert.That(planeAfter.distance, Is.EqualTo(plane.distance).Within(PositionTolerance));
+            AssertVector(originAfter, origin);
+            AssertVector(travelAfter, travelAxis);
+            AssertVector(spanAxisAfter, spanAxis);
+        }
+
+        [Test]
+        public void AfterClosing_TheCurrentPoseNoLongerTouchesTheFrozenGuide()
+        {
+            SweepUntilLatch();
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 4f, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out double closedAt, out Vector3 frozenOrigin,
+                out Vector3 frozenDirection), Is.True);
+
+            // Move and turn the katana somewhere else entirely.
+            Quaternion turned = Quaternion.Euler(0f, 90f, 30f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Assert.That(RecordPose(turned, new Vector3(0.4f, 0.3f, -0.2f), SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out double closedAtAfter, out Vector3 originAfter,
+                out Vector3 directionAfter), Is.True);
+            Assert.That(closedAtAfter, Is.EqualTo(closedAt));
+            AssertVector(originAfter, frozenOrigin);
+            AssertVector(directionAfter, frozenDirection);
+        }
+
+        [Test]
+        public void AfterClosing_TheFrozenGuideCanStillWidenTheSpan()
+        {
+            SweepUntilLatch();
+
+            // Close with the blade tilted, so the frozen guide is not parallel
+            // to the travel axis and the intersection keeps moving outward.
+            Quaternion tilted = Quaternion.Euler(45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float atClose,
+                out _, out _, out Vector3 startAtClose, out _), Is.True);
+
+            // Lose tracking: there is no live guide left, and none is needed.
+            strokeFrameId++;
+            strokeTime += 0.05;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float afterLoss,
+                out _, out _, out Vector3 startAfter, out Vector3 endAfter), Is.True);
+            Assert.That(startAfter, Is.Not.EqualTo(startAtClose), "the wave kept flying");
+            Assert.That(afterLoss, Is.GreaterThan(atClose), "the frozen guide kept widening it");
+            AssertVector(endAfter, startAfter + spanAxis * afterLoss);
+        }
+
+        [Test]
+        public void AfterClosing_ASmallerOrInvalidFrozenCandidateHoldsTheSpan()
+        {
+            SweepUntilLatch();
+
+            // Tilted the other way, the frozen intersection lands behind A, so
+            // every later candidate is refused.
+            Quaternion tilted = Quaternion.Euler(-45f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Assert.That(RecordPose(tilted, EdgeStep, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float atClose,
+                out _, out _, out Vector3 startAtClose, out _), Is.True);
+
+            SkipTime(0.05);
+            SkipTime(0.05);
+
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float afterwards,
+                out _, out _, out Vector3 startAfter, out Vector3 endAfter), Is.True);
+            Assert.That(afterwards, Is.EqualTo(atClose), "the accepted span is still a running maximum");
+            Assert.That(startAfter, Is.Not.EqualTo(startAtClose), "and the wave still flies");
+            AssertVector(endAfter, startAfter + spanAxis * afterwards);
+        }
+
+        [Test]
+        public void WithNoGuideAtTheTimeout_TheSpanClosesOnTheNextUsableUpdate()
+        {
+            SweepUntilLatch();
+
+            // The capture window runs out on an update with no usable pose.
+            strokeFrameId++;
+            strokeTime += 0.2;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False,
+                "there was no guide to freeze");
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out double closedAt, out _, out _), Is.True);
+            Assert.That(closedAt, Is.EqualTo(strokeTime), "it closed on the update that had one");
+        }
+
+        [Test]
+        public void BeforeRenderDoesNotCloseTheSpan()
+        {
+            SweepUntilLatch();
+
+            strokeFrameId++;
+            strokeTime += 0.2;
+            Assert.That(
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                    UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void ANewlyLatchedWave_IsOpenAndUnevaluated()
+        {
+            SweepUntilLatch();
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float frameSpan), Is.True);
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(span, Is.EqualTo(frameSpan).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void EachWaveClosesOnItsOwnCaptureWindow()
+        {
+            SweepUntilLatch();
+            ReArmStroke();
+            SweepUntilLatch();
+            Assert.That(follower.WaveCount, Is.EqualTo(2));
+            Assert.That(follower.TryGetWave(0, out double firstLatchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(follower.TryGetWave(1, out double secondLatchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+            Assert.That(secondLatchedAt, Is.GreaterThan(firstLatchedAt));
+
+            // Far enough on for the older wave's window but not the newer one's.
+            strokeFrameId++;
+            strokeTime = firstLatchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds + 0.01;
+            Assert.That(strokeTime, Is.LessThan(secondLatchedAt + SandboxSlashWaveStore.SpanCaptureTimeoutSeconds));
+            strokePosition += EdgeStep;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(0, out double firstClosedAt, out _, out _), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(1, out _, out _, out _), Is.False);
+
+            // And on again for the newer one.
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.2), Is.True);
+
+            Assert.That(follower.TryGetWaveSpanClose(1, out double secondClosedAt, out _, out _), Is.True);
+            Assert.That(secondClosedAt, Is.GreaterThan(firstClosedAt));
+        }
+
+        [Test]
+        public void AClosedWaveStillExpiresOnItsLifetimeAndNotBefore()
+        {
+            SweepUntilLatch();
+            Assert.That(follower.TryGetWave(0, out double latchedAt, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _), Is.True);
+
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.2), Is.True);
+            Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds - 0.001;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(1));
+
+            strokeFrameId++;
+            strokeTime = latchedAt + SandboxSlashWaveStore.WaveLifetimeSeconds;
+            Assert.That(follower.TryRecordSample(new BladePoseSample(strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
+            Assert.That(follower.WaveCount, Is.EqualTo(0));
         }
 
         [Test]
