@@ -12,7 +12,11 @@
         "Zantetsu.ConvexCut",
         "Unity.Mathematics",
         "Zantetsu.MeshCut",
-        "Zantetsu.MeshCut.Verification"
+        "Zantetsu.MeshCut.Verification",
+        "Zantetsu.Sandbox",
+        "Unity.XR.Management",
+        "Unity.XR.Management.Editor",
+        "Unity.XR.OpenXR"
     ],
     "includePlatforms": [
         "Editor"

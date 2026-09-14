@@ -13,8 +13,8 @@ namespace Zantetsu.Core.Tests
     public class WorldPhysicsBootstrapTests
     {
         private const string ProfileAssetPath = "Assets/Zantetsu/Settings/WorldPhysicsProfile.asset";
-        private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
-        private const string SampleSceneName = "SampleScene";
+        private const string SandboxScenePath = "Assets/Scenes/Sandbox.unity";
+        private const string SandboxSceneName = "Sandbox";
         private const float GravityTolerance = 1e-4f;
 
         [UnityTearDown]
@@ -84,15 +84,15 @@ namespace Zantetsu.Core.Tests
         }
 
         [UnityTest]
-        public IEnumerator SampleScene_EnterPlayMode_AppliesGravity()
+        public IEnumerator SandboxScene_EnterPlayMode_AppliesGravity()
         {
             yield return new EnterPlayMode();
 
-            // SampleScene is loaded in Play Mode (not Edit Mode), so the editor's
+            // The Sandbox scene is loaded in Play Mode (not Edit Mode), so the editor's
             // scene setup is left untouched. Capture the gravity before the
             // bootstrap applies the profile, and restore it afterwards.
             Vector3 originalGravity = Physics.gravity;
-            SceneManager.LoadScene(SampleSceneName);
+            SceneManager.LoadScene(SandboxSceneName);
             yield return null;
 
             Assert.That(Physics.gravity.x, Is.EqualTo(0f).Within(GravityTolerance));
@@ -105,12 +105,12 @@ namespace Zantetsu.Core.Tests
         }
 
         [Test]
-        public void SampleScene_HasSingleBootstrapReferencingStandardProfile()
+        public void SandboxScene_HasSingleBootstrapReferencingStandardProfile()
         {
             SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
             try
             {
-                Scene scene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+                Scene scene = EditorSceneManager.OpenScene(SandboxScenePath, OpenSceneMode.Single);
                 List<WorldPhysicsBootstrap> bootstraps = new List<WorldPhysicsBootstrap>();
                 foreach (GameObject root in scene.GetRootGameObjects())
                 {
