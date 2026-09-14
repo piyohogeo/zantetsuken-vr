@@ -17,7 +17,8 @@ namespace Zantetsu.Rendering.Tests
     /// non-indexed draw rendered by the pipeline into a small render texture colours the pixels of its index range's
     /// triangles, so the drawn shape follows the index buffer order and the range start, one range draws at several
     /// transforms, each of several ranges in one pool draws where it is selected, one range holding two disconnected
-    /// parts draws both parts in one draw, the draw casts a shadow onto a
+    /// parts draws both parts in one draw, buffers grown to hold an appended range draw it and the earlier one, the
+    /// draw casts a shadow onto a
     /// Unity mesh, and it receives the main light shadow of a Unity mesh. Coverage is counted per region of the image,
     /// not compared per pixel.
     /// </summary>
@@ -460,6 +461,99 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(left, Is.GreaterThan(CoveredPixels), "left part");
                 Assert.That(right, Is.GreaterThan(CoveredPixels), "right part");
                 Assert.That(between, Is.Zero, "background stays between the parts");
+            }
+        }
+
+        private Camera FrontCamera(string name, RenderTexture target)
+        {
+            Camera camera = TestCamera(name, target);
+            camera.transform.position = new Vector3(0f, 0f, -5f);
+            camera.orthographicSize = 1f;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 20f;
+            return camera;
+        }
+
+        private static (int left, int right) GreenHalves(Color32[] pixels)
+        {
+            int left = 0;
+            int right = 0;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].g > 64 && pixels[i].r < 64)
+                {
+                    if (i % Size < Size / 2)
+                    {
+                        left++;
+                    }
+                    else
+                    {
+                        right++;
+                    }
+                }
+            }
+
+            return (left, right);
+        }
+
+        /// <summary>Draws the ranges from the buffers' active pair with one property block into a camera of its own and counts the green halves.</summary>
+        private (int left, int right) RenderRanges(Material material, VpGpuGeometryBuffers buffers, string name, params VpGeometryRange[] ranges)
+        {
+            RenderTexture target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32));
+            Camera camera = FrontCamera("VP Growth Test Camera " + name, target);
+            var properties = new MaterialPropertyBlock();
+            foreach (VpGeometryRange range in ranges)
+            {
+                VpDirectDraw.Render(
+                    material,
+                    properties,
+                    buffers,
+                    range,
+                    Matrix4x4.identity,
+                    new Bounds(Vector3.zero, Vector3.one * 4f),
+                    0,
+                    camera);
+            }
+
+            return GreenHalves(RenderAndRead(camera, target));
+        }
+
+        [Test]
+        public void GrownBuffers_DrawTheEarlierRangeAndTheAppendedOne()
+        {
+            Mesh leftMesh = Triangle(Positions[0], Positions[1], Positions[2]);
+            Mesh rightMesh = Triangle(Positions[3], Positions[4], Positions[5]);
+            Material material = VpMaterial(Color.green);
+
+            using (var pool = new VpCpuGeometryPool(6, 6, Allocator.Persistent))
+            using (var buffers = new VpGpuGeometryBuffers(3, 3))
+            {
+                Assert.That(pool.TryAppend(leftMesh, out VpGeometryRange leftRange), Is.True);
+                Assert.That(buffers.TryUpload(pool), Is.True, "the first geometry fits the small buffers");
+                (int left, int right) beforeGrowth = RenderRanges(material, buffers, "before", leftRange);
+                Assert.That(beforeGrowth.left, Is.GreaterThan(CoveredPixels), "small buffers: left");
+                Assert.That(beforeGrowth.right, Is.Zero, "small buffers: right");
+
+                GraphicsBuffer smallVertices = buffers.VertexBuffer;
+                GraphicsBuffer smallIndices = buffers.IndexBuffer;
+
+                Assert.That(pool.TryAppend(rightMesh, out VpGeometryRange rightRange), Is.True);
+                Assert.That(buffers.TryUpload(pool), Is.False, "the second geometry does not fit the small buffers");
+
+                // The last draw that uses the small buffers has been submitted and rendered: grow at this draw boundary.
+                Assert.That(buffers.TryGrow(pool, 6, 6), Is.True);
+
+                Assert.That(buffers.VertexBuffer, Is.Not.SameAs(smallVertices), "the active vertex buffer is the grown one");
+                Assert.That(buffers.IndexBuffer, Is.Not.SameAs(smallIndices), "the active index buffer is the grown one");
+                Assert.That(smallVertices.IsValid() && smallIndices.IsValid(), Is.True, "the replaced buffers stay valid right after the switch");
+                Assert.That(
+                    new[] { leftRange.vertexStart, leftRange.indexStart, rightRange.vertexStart, rightRange.indexStart },
+                    Is.EqualTo(new[] { 0, 0, 3, 3 }),
+                    "ranges keep their offsets");
+
+                (int left, int right) afterGrowth = RenderRanges(material, buffers, "after", leftRange, rightRange);
+                Assert.That(afterGrowth.left, Is.GreaterThan(CoveredPixels), "grown buffers: earlier range");
+                Assert.That(afterGrowth.right, Is.GreaterThan(CoveredPixels), "grown buffers: appended range");
             }
         }
 
