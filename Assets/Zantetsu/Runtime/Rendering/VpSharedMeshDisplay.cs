@@ -4,12 +4,13 @@ using UnityEngine;
 namespace Zantetsu.Rendering
 {
     /// <summary>
-    /// Shows one mesh through the Stage 1 VP path (DESIGN 4.5.5): while enabled, the mesh lives in its own CPU pool
-    /// and GPU buffers and is drawn once per frame with <see cref="VpDirectDraw"/> at this transform. Meant for a few
-    /// meshes; it has no shared pool or growth.
+    /// Shows one mesh through the Stage 1 VP path at each of its active child transforms (DESIGN 4.5.1 / 4.5.5): while
+    /// enabled, the mesh is converted and uploaded once into this component's CPU pool and GPU buffers, and that one
+    /// geometry range is drawn once per child per frame with <see cref="VpDirectDraw"/>. The children carry transforms
+    /// only. The geometry is shared within this component; there is no registry across components, culling or growth.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class VpMeshDisplay : MonoBehaviour
+    public sealed class VpSharedMeshDisplay : MonoBehaviour
     {
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
@@ -26,7 +27,7 @@ namespace Zantetsu.Rendering
         private void OnEnable()
         {
             // A mesh reference that resolves to nothing, such as a licensed mesh not generated in this checkout, shows
-            // nothing, as a MeshFilter would.
+            // nothing and creates nothing, as a MeshFilter would.
             if (mesh == null)
             {
                 return;
@@ -34,7 +35,7 @@ namespace Zantetsu.Rendering
 
             if (shader == null)
             {
-                Debug.LogError(name + ": VpMeshDisplay needs a shader.", this);
+                Debug.LogError(name + ": VpSharedMeshDisplay needs a shader.", this);
                 return;
             }
 
@@ -66,15 +67,24 @@ namespace Zantetsu.Rendering
                 return;
             }
 
-            Matrix4x4 objectToWorld = transform.localToWorldMatrix;
-            VpDirectDraw.Render(
-                _material,
-                _properties,
-                _buffers,
-                _range,
-                objectToWorld,
-                VpDirectDraw.WorldBounds(mesh.bounds, objectToWorld),
-                gameObject.layer);
+            // One property block, reused only within this component while issuing the draws sequentially.
+            foreach (Transform instance in transform)
+            {
+                if (!instance.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+
+                Matrix4x4 objectToWorld = instance.localToWorldMatrix;
+                VpDirectDraw.Render(
+                    _material,
+                    _properties,
+                    _buffers,
+                    _range,
+                    objectToWorld,
+                    VpDirectDraw.WorldBounds(mesh.bounds, objectToWorld),
+                    instance.gameObject.layer);
+            }
         }
 
         private void OnDisable()

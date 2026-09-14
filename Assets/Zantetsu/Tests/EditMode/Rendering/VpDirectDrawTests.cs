@@ -105,8 +105,11 @@ namespace Zantetsu.Rendering.Tests
             return mesh;
         }
 
-        /// <summary>Renders [indexStart, indexStart + indexCount) of the mesh and counts the green pixels in each half.</summary>
-        private (int left, int right) Coverage(Mesh mesh, int indexStart, int indexCount)
+        /// <summary>
+        /// Uploads the mesh once, draws [indexStart, indexStart + indexCount) of it at each transform (identity when none
+        /// is given) with one property block, and counts the green pixels in each half.
+        /// </summary>
+        private (int left, int right) Coverage(Mesh mesh, int indexStart, int indexCount, params Matrix4x4[] objectToWorlds)
         {
             Material material = VpMaterial(Color.green);
             RenderTexture target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32));
@@ -122,15 +125,19 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(pool.TryAppend(mesh, out VpGeometryRange whole), Is.True);
                 Assert.That(buffers.TryUpload(pool), Is.True);
                 var range = new VpGeometryRange(whole.vertexStart, whole.vertexCount, indexStart, indexCount);
-                VpDirectDraw.Render(
-                    material,
-                    new MaterialPropertyBlock(),
-                    buffers,
-                    range,
-                    Matrix4x4.identity,
-                    new Bounds(Vector3.zero, Vector3.one * 4f),
-                    0,
-                    camera);
+                var properties = new MaterialPropertyBlock();
+                foreach (Matrix4x4 objectToWorld in objectToWorlds.Length > 0 ? objectToWorlds : new[] { Matrix4x4.identity })
+                {
+                    VpDirectDraw.Render(
+                        material,
+                        properties,
+                        buffers,
+                        range,
+                        objectToWorld,
+                        new Bounds(Vector3.zero, Vector3.one * 4f),
+                        0,
+                        camera);
+                }
 
                 Color32[] pixels = RenderAndRead(camera, target);
                 int left = 0;
@@ -303,6 +310,22 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(firstOfRightFirst.right, Is.GreaterThan(CoveredPixels), "right-first, first triangle: right");
             Assert.That(secondOfLeftFirst.left, Is.Zero, "left-first, second triangle: left");
             Assert.That(secondOfLeftFirst.right, Is.GreaterThan(CoveredPixels), "left-first, second triangle: right");
+        }
+
+        [Test]
+        public void OneUploadedRange_DrawnAtTwoTransforms_AppearsAtBoth()
+        {
+            // Only the left triangle's range, drawn in place and moved right by one unit, from one upload and one
+            // property block.
+            (int left, int right) = Coverage(
+                TwoTriangles(0, 1, 2, 3, 4, 5),
+                0,
+                3,
+                Matrix4x4.identity,
+                Matrix4x4.Translate(new Vector3(1f, 0f, 0f)));
+
+            Assert.That(left, Is.GreaterThan(CoveredPixels), "draw in place");
+            Assert.That(right, Is.GreaterThan(CoveredPixels), "draw moved right");
         }
 
         [Test]

@@ -50,5 +50,16 @@ namespace Zantetsu.Rendering
             };
             Graphics.RenderPrimitives(renderParams, MeshTopology.Triangles, range.indexCount);
         }
+
+        /// <summary>The world axis-aligned box around local bounds placed by the transform, for a draw's culling bounds.</summary>
+        public static Bounds WorldBounds(Bounds local, Matrix4x4 objectToWorld)
+        {
+            Vector3 e = local.extents;
+            var extents = new Vector3(
+                Mathf.Abs(objectToWorld.m00) * e.x + Mathf.Abs(objectToWorld.m01) * e.y + Mathf.Abs(objectToWorld.m02) * e.z,
+                Mathf.Abs(objectToWorld.m10) * e.x + Mathf.Abs(objectToWorld.m11) * e.y + Mathf.Abs(objectToWorld.m12) * e.z,
+                Mathf.Abs(objectToWorld.m20) * e.x + Mathf.Abs(objectToWorld.m21) * e.y + Mathf.Abs(objectToWorld.m22) * e.z);
+            return new Bounds(objectToWorld.MultiplyPoint3x4(local.center), extents * 2f);
+        }
     }
 }
