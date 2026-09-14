@@ -6,7 +6,6 @@ using NUnit.Framework;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
-using Zantetsu.Core.Geometry;
 using Zantetsu.MeshCut;
 using Zantetsu.MeshCut.Verification;
 

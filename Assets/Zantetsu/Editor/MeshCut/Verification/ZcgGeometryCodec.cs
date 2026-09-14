@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 
-namespace Zantetsu.Core.Geometry
+namespace Zantetsu.MeshCut.Verification
 {
     public enum ZcgGeometryKind : byte
     {
@@ -13,7 +13,7 @@ namespace Zantetsu.Core.Geometry
 
     public readonly struct ZcgPosition
     {
-        public ZcgPosition(float x, float y, float z) { X = x; Y = y; Z = z; }
+        internal ZcgPosition(float x, float y, float z) { X = x; Y = y; Z = z; }
         public float X { get; }
         public float Y { get; }
         public float Z { get; }
@@ -21,7 +21,7 @@ namespace Zantetsu.Core.Geometry
 
     public readonly struct ZcgTriangle
     {
-        public ZcgTriangle(uint i0, uint i1, uint i2) { I0 = i0; I1 = i1; I2 = i2; }
+        internal ZcgTriangle(uint i0, uint i1, uint i2) { I0 = i0; I1 = i1; I2 = i2; }
         public uint I0 { get; }
         public uint I1 { get; }
         public uint I2 { get; }
@@ -29,7 +29,7 @@ namespace Zantetsu.Core.Geometry
 
     public sealed class ZcgHull
     {
-        public ZcgHull(ZcgPosition[] positions, uint[][] faces)
+        internal ZcgHull(ZcgPosition[] positions, uint[][] faces)
         {
             Positions = positions ?? throw new ArgumentNullException(nameof(positions));
             Faces = faces ?? throw new ArgumentNullException(nameof(faces));
@@ -63,9 +63,9 @@ namespace Zantetsu.Core.Geometry
         public ZcgHull[] Hulls { get; }
     }
 
-    public readonly struct ZcgDecodeLimits
+    internal readonly struct ZcgDecodeLimits
     {
-        public ZcgDecodeLimits(int maximumFileBytes, int maximumTrianglePositions,
+        private ZcgDecodeLimits(int maximumFileBytes, int maximumTrianglePositions,
             int maximumTriangles, int maximumHulls, int maximumPositionsPerHull)
         {
             MaximumFileBytes = maximumFileBytes;
@@ -81,16 +81,16 @@ namespace Zantetsu.Core.Geometry
         public int MaximumHulls { get; }
         public int MaximumPositionsPerHull { get; }
 
-        public static ZcgDecodeLimits Phase02 => new ZcgDecodeLimits(
+        internal static ZcgDecodeLimits Phase02 => new ZcgDecodeLimits(
             32 * 1024 * 1024, 200000, 200000, 1, 255);
     }
 
     /// <summary>Bounded ZCG v1 reader, canonical reserializer, and shared numeric gates.</summary>
-    public static class ZcgGeometryCodec
+    internal static class ZcgGeometryCodec
     {
         private const int HeaderSize = 16;
 
-        public static ZcgDocument Read(byte[] data, ZcgDecodeLimits limits,
+        internal static ZcgDocument Read(byte[] data, ZcgDecodeLimits limits,
             double absoluteEpsilonMeters = 0.000001, double relativeEpsilon = 0.000001)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
@@ -120,7 +120,7 @@ namespace Zantetsu.Core.Geometry
             return document;
         }
 
-        public static byte[] WriteCanonical(ZcgDocument document)
+        private static byte[] WriteCanonical(ZcgDocument document)
         {
             if (document == null) throw new ArgumentNullException(nameof(document));
             using (MemoryStream payload = new MemoryStream())
@@ -168,7 +168,7 @@ namespace Zantetsu.Core.Geometry
             }
         }
 
-        public static string ComputeSha256(byte[] data)
+        internal static string ComputeSha256(byte[] data)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
             using (SHA256 algorithm = SHA256.Create())
