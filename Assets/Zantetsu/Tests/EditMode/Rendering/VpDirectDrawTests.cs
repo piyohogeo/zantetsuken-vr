@@ -16,7 +16,8 @@ namespace Zantetsu.Rendering.Tests
     /// Stage 1 VP draw (DESIGN 4.5.5): the VP shader compiles with its colour and shadow caster passes, a Direct
     /// non-indexed draw rendered by the pipeline into a small render texture colours the pixels of its index range's
     /// triangles, so the drawn shape follows the index buffer order and the range start, one range draws at several
-    /// transforms and each of several ranges in one pool draws where it is selected, the draw casts a shadow onto a
+    /// transforms, each of several ranges in one pool draws where it is selected, one range holding two disconnected
+    /// parts draws both parts in one draw, the draw casts a shadow onto a
     /// Unity mesh, and it receives the main light shadow of a Unity mesh. Coverage is counted per region of the image,
     /// not compared per pixel.
     /// </summary>
@@ -387,6 +388,79 @@ namespace Zantetsu.Rendering.Tests
             Assert.That(secondOnly.right, Is.GreaterThan(CoveredPixels), "second range: right");
             Assert.That(both.left, Is.GreaterThan(CoveredPixels), "both ranges: left");
             Assert.That(both.right, Is.GreaterThan(CoveredPixels), "both ranges: right");
+        }
+
+        [Test]
+        public void TwoDisconnectedParts_DrawAsOneContiguousRangeInOneDraw()
+        {
+            // One fixed mesh, one submesh: a left and a right triangle that share no vertex. Nothing detects or lists
+            // the parts; the mesh is appended once, uploaded once and its one range is drawn once.
+            Mesh mesh = TwoTriangles(0, 1, 2, 3, 4, 5);
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.That(mesh.vertexCount, Is.EqualTo(6));
+            Assert.That(mesh.GetIndexCount(0), Is.EqualTo(6u));
+
+            Material material = VpMaterial(Color.green);
+            RenderTexture target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32));
+            Camera camera = TestCamera("VP Disconnected Range Test Camera", target);
+            camera.transform.position = new Vector3(0f, 0f, -5f);
+            camera.orthographicSize = 1f;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 20f;
+
+            using (var pool = new VpCpuGeometryPool(6, 6, Allocator.Persistent))
+            using (var buffers = new VpGpuGeometryBuffers(6, 6))
+            {
+                Assert.That(pool.TryAppend(mesh, out VpGeometryRange range), Is.True, "the whole mesh is appended once");
+                Assert.That(
+                    new[] { range.vertexStart, range.vertexCount, range.indexStart, range.indexCount },
+                    Is.EqualTo(new[] { 0, 6, 0, 6 }),
+                    "one range of six vertices and six indices");
+                Assert.That(pool.IndexCount, Is.EqualTo(range.indexStart + range.indexCount), "the pool holds this one range only");
+                Assert.That(pool.Indices.ToArray(), Is.EqualTo(new uint[] { 0, 1, 2, 3, 4, 5 }), "both parts lie in one unsplit index range");
+                Assert.That(buffers.TryUpload(pool), Is.True, "one upload");
+
+                VpDirectDraw.Render(
+                    material,
+                    new MaterialPropertyBlock(),
+                    buffers,
+                    range,
+                    Matrix4x4.identity,
+                    new Bounds(Vector3.zero, Vector3.one * 4f),
+                    0,
+                    camera);
+                Color32[] pixels = RenderAndRead(camera, target);
+
+                // The parts end at x = -0.1 and start at x = +0.1; at 32 pixels per unit, columns 30-33 lie between them.
+                int left = 0;
+                int right = 0;
+                int between = 0;
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    if (pixels[i].g <= 64 || pixels[i].r >= 64)
+                    {
+                        continue;
+                    }
+
+                    int column = i % Size;
+                    if (column >= 30 && column <= 33)
+                    {
+                        between++;
+                    }
+                    else if (column < Size / 2)
+                    {
+                        left++;
+                    }
+                    else
+                    {
+                        right++;
+                    }
+                }
+
+                Assert.That(left, Is.GreaterThan(CoveredPixels), "left part");
+                Assert.That(right, Is.GreaterThan(CoveredPixels), "right part");
+                Assert.That(between, Is.Zero, "background stays between the parts");
+            }
         }
 
         [Test]
