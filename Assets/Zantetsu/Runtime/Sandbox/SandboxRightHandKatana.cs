@@ -54,8 +54,10 @@ namespace Zantetsu.Sandbox
     /// every reset listed above drop both, but none of it hides the katana: a
     /// pose that can be shown is still shown.
     ///
-    /// The stroke's source slash plane candidate is derived from the accepted
-    /// samples on demand rather than stored, so it lives and dies with them.
+    /// The stroke's source slash plane candidate, whether it has swept far
+    /// enough to latch, and its first-candidate slash frame are all derived
+    /// from the accepted samples on demand rather than stored, so they live
+    /// and die with them.
     ///
     /// The sandbox scene keeps the XR Origin at the world origin with a Floor
     /// tracking origin, so device poses are already world-space poses.
@@ -97,9 +99,19 @@ namespace Zantetsu.Sandbox
         // spine side is the return half of the stroke.
         private const float ReturnStrokeEdgeLeadScore = -0.15f;
 
-        // A summed plane normal shorter than this is a stroke with no swept
-        // area to speak of, not a plane.
-        private const float MinPlaneNormalLengthSquared = 1e-12f;
+        // A derived vector shorter than this cannot be normalised into a
+        // direction: a plane normal this short is a stroke with no swept area,
+        // and a frame axis this short has no direction to report.
+        private const float MinDerivedVectorLengthSquared = 1e-12f;
+
+        // Provisional Phase 0.53 values, fixed in code like the gate's.
+        // The emission control point sits halfway along the blade, apart from
+        // the cut sample point at 70%.
+        private const float EmissionControlPointRatio = 0.5f;
+
+        // The emitter chord a stroke must have swept before it is worth
+        // latching.
+        private const float LatchChordMetres = 0.15f;
 
         [Tooltip("Katana visual root. Its local axes are the blade frame: +Z blade axis, -Y edge direction, +X side normal.")]
         [SerializeField] private Transform katana;
@@ -200,7 +212,7 @@ namespace Zantetsu.Sandbox
             }
 
             float lengthSquared = sum.sqrMagnitude;
-            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinPlaneNormalLengthSquared)
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
             {
                 return false;
             }
@@ -238,6 +250,147 @@ namespace Zantetsu.Sandbox
         private static bool IsFinite(Vector3 v)
         {
             return float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+        }
+
+        /// <summary>
+        /// Whether the stroke has swept far enough to be worth latching:
+        /// the emitter chord from its begin sample to its newest one has
+        /// reached the latch distance. Derived on demand, so it goes the
+        /// moment the accepted samples do, and it says nothing about whether
+        /// a plane or a frame can be derived -- bringing those together is a
+        /// later concern.
+        /// </summary>
+        internal bool IsLatchReady
+        {
+            get
+            {
+                if (acceptedSampleCount < 2)
+                {
+                    return false;
+                }
+
+                Vector3 chord = EmitterPosition(acceptedSamples[acceptedSampleCount - 1])
+                    - EmitterPosition(acceptedSamples[0]);
+                if (!IsFinite(chord))
+                {
+                    return false;
+                }
+
+                float lengthSquared = chord.sqrMagnitude;
+                return float.IsFinite(lengthSquared) && lengthSquared >= LatchChordMetres * LatchChordMetres;
+            }
+        }
+
+        /// <summary>
+        /// The stroke's first-candidate slash frame, per 19.1.5.1: the source
+        /// slash plane, the begin and newest emitter points projected onto it,
+        /// the travel axis (the begin sample's blade tip direction projected
+        /// onto the plane), the span axis along the emitter chord, and that
+        /// chord's length as the initial span. The two axes are reported as
+        /// they come out; they are not orthogonalised.
+        ///
+        /// False when there are fewer than two accepted samples, when no plane
+        /// can be derived, or when any projection or normalisation degenerates.
+        /// Nothing is stored: like the plane, the frame lives and dies with the
+        /// accepted samples.
+        /// </summary>
+        internal bool TryGetSlashFrameCandidate(
+            out Plane plane,
+            out Vector3 beginEmitter,
+            out Vector3 latestEmitter,
+            out Vector3 travelAxis,
+            out Vector3 spanAxis,
+            out float span)
+        {
+            plane = default;
+            beginEmitter = default;
+            latestEmitter = default;
+            travelAxis = default;
+            spanAxis = default;
+            span = 0f;
+
+            if (acceptedSampleCount < 2)
+            {
+                return false;
+            }
+
+            if (!TryGetSourceSlashPlaneCandidate(out Plane candidate))
+            {
+                return false;
+            }
+
+            EvaluatedBladePose begin = acceptedSamples[0];
+            Vector3 projectedBegin = candidate.ClosestPointOnPlane(EmitterPosition(begin));
+            Vector3 projectedLatest = candidate.ClosestPointOnPlane(EmitterPosition(acceptedSamples[acceptedSampleCount - 1]));
+            if (!IsFinite(projectedBegin) || !IsFinite(projectedLatest))
+            {
+                return false;
+            }
+
+            if (!TryProjectOntoPlane(begin.BladeAxis, candidate.normal, out Vector3 travel))
+            {
+                return false;
+            }
+
+            Vector3 chord = projectedLatest - projectedBegin;
+            if (!IsFinite(chord))
+            {
+                return false;
+            }
+
+            float chordLengthSquared = chord.sqrMagnitude;
+            if (!float.IsFinite(chordLengthSquared) || chordLengthSquared <= MinDerivedVectorLengthSquared)
+            {
+                return false;
+            }
+
+            float chordLength = Mathf.Sqrt(chordLengthSquared);
+            if (!float.IsFinite(chordLength) || !(chordLength > 0f))
+            {
+                return false;
+            }
+
+            Vector3 chordDirection = new Vector3(chord.x / chordLength, chord.y / chordLength, chord.z / chordLength);
+            if (!IsFinite(chordDirection))
+            {
+                return false;
+            }
+
+            plane = candidate;
+            beginEmitter = projectedBegin;
+            latestEmitter = projectedLatest;
+            travelAxis = travel;
+            spanAxis = chordDirection;
+            span = chordLength;
+            return true;
+        }
+
+        // The emission control point, halfway along the blade. Derived from the
+        // pose rather than stored alongside it.
+        private Vector3 EmitterPosition(in EvaluatedBladePose pose)
+        {
+            return pose.KatanaPose.position + pose.BladeAxis * (bladeLength * EmissionControlPointRatio);
+        }
+
+        private static bool TryProjectOntoPlane(Vector3 direction, Vector3 normal, out Vector3 result)
+        {
+            result = default;
+
+            Vector3 inPlane = direction - Vector3.Dot(direction, normal) * normal;
+            if (!IsFinite(inPlane))
+            {
+                return false;
+            }
+
+            float lengthSquared = inPlane.sqrMagnitude;
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= MinDerivedVectorLengthSquared)
+            {
+                return false;
+            }
+
+            float length = Mathf.Sqrt(lengthSquared);
+            result = new Vector3(inPlane.x / length, inPlane.y / length, inPlane.z / length);
+            return IsFinite(result);
         }
 
         /// <summary>The single provisional fixed grip-to-katana offset.</summary>

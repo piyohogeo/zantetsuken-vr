@@ -155,6 +155,40 @@ namespace Zantetsu.Core.Tests
             RecordSweep(follower, gripRotation, step, count, ref strokeFrameId, ref strokeTime, ref strokePosition);
         }
 
+        // Every slash frame the component reports as a success must satisfy
+        // this: finite throughout, both emitters on the plane, both axes unit
+        // vectors lying in the plane, and the span equal to the emitter chord.
+        private static void AssertValidSlashFrame(
+            Plane plane, Vector3 beginEmitter, Vector3 latestEmitter, Vector3 travelAxis, Vector3 spanAxis, float span)
+        {
+            AssertFinitePlane(plane);
+            AssertFiniteVector(beginEmitter, "begin emitter");
+            AssertFiniteVector(latestEmitter, "latest emitter");
+            AssertFiniteVector(travelAxis, "travel axis");
+            AssertFiniteVector(spanAxis, "span axis");
+            Assert.That(float.IsFinite(span), Is.True, "span is not finite");
+
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(beginEmitter)), Is.LessThan(PositionTolerance),
+                "the begin emitter is off the plane");
+            Assert.That(Mathf.Abs(plane.GetDistanceToPoint(latestEmitter)), Is.LessThan(PositionTolerance),
+                "the latest emitter is off the plane");
+
+            Assert.That(travelAxis.magnitude, Is.EqualTo(1f).Within(PositionTolerance), "travel axis is not unit length");
+            Assert.That(spanAxis.magnitude, Is.EqualTo(1f).Within(PositionTolerance), "span axis is not unit length");
+            Assert.That(Mathf.Abs(Vector3.Dot(travelAxis, plane.normal)), Is.LessThan(PositionTolerance),
+                "travel axis is not in the plane");
+            Assert.That(Mathf.Abs(Vector3.Dot(spanAxis, plane.normal)), Is.LessThan(PositionTolerance),
+                "span axis is not in the plane");
+
+            Assert.That(span, Is.EqualTo(Vector3.Distance(beginEmitter, latestEmitter)).Within(PositionTolerance));
+            Assert.That(span, Is.GreaterThan(0f));
+        }
+
+        private static void AssertFiniteVector(Vector3 v, string what)
+        {
+            Assert.That(float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z), Is.True, what + " is not finite");
+        }
+
         // Every plane the component reports as a success must satisfy this.
         private static void AssertFinitePlane(Plane plane)
         {
@@ -322,6 +356,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(5));
             Assert.That(playModeFollower.AcceptedSampleCount, Is.GreaterThan(0));
             Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.True);
+            Assert.That(playModeFollower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.True);
 
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
@@ -342,6 +377,9 @@ namespace Zantetsu.Core.Tests
                 "A re-enabled component must not carry the stroke from before it was disabled.");
             Assert.That(playModeFollower.TryGetSourceSlashPlaneCandidate(out _), Is.False,
                 "The plane candidate goes with the stroke it was derived from.");
+            Assert.That(playModeFollower.IsLatchReady, Is.False);
+            Assert.That(playModeFollower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False,
+                "The slash frame goes with the stroke it was derived from.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
@@ -973,6 +1011,243 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(reArmed, Is.True, "a return sweep must re-arm the stroke");
             Assert.That(follower.TryGetSourceSlashPlaneCandidate(out _), Is.False);
+        }
+
+        [Test]
+        public void WithFewerThanTwoAcceptedSamples_ThereIsNoLatchOrFrame()
+        {
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+
+            Sweep(UprightGrip(follower), EdgeStep, 4);
+
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(1));
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void LatchReady_WaitsUntilTheEmitterChordReachesTheLatchDistance()
+        {
+            // 0.052 m per sample: the shortest window still clears the gate's
+            // 0.15 m displacement, and the chord grows one step per accepted
+            // sample, so the 0.15 m latch distance falls between two of them.
+            Vector3 step = new Vector3(0f, -0.052f, 0f);
+            Quaternion upright = UprightGrip(follower);
+
+            Sweep(upright, step, 5);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(2));
+            Assert.That(follower.IsLatchReady, Is.False, "one step of chord is short of the latch distance");
+
+            Sweep(upright, step, 1);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(3));
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float shortSpan), Is.True);
+            Assert.That(shortSpan, Is.LessThan(0.15f));
+            Assert.That(follower.IsLatchReady, Is.False, "two steps of chord are still short");
+
+            Sweep(upright, step, 1);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out float longSpan), Is.True);
+            Assert.That(longSpan, Is.GreaterThanOrEqualTo(0.15f));
+            Assert.That(follower.IsLatchReady, Is.True, "three steps of chord reach the latch distance");
+        }
+
+        [Test]
+        public void TheEmitterComesFromHalfwayAlongTheBladeNotTheCutSamplePoint()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 6);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out _, out Vector3 beginEmitter, out _, out _, out _, out _), Is.True);
+
+            AssertVector(beginEmitter, begin.KatanaPose.position + begin.BladeAxis * (BladeLength * 0.5f));
+
+            // The cut sample point sits at 70%, a fifth of a blade further on.
+            Assert.That(Vector3.Distance(beginEmitter, begin.CutSamplePosition),
+                Is.EqualTo(BladeLength * 0.2f).Within(PositionTolerance));
+        }
+
+        [Test]
+        public void SlashFrameCandidate_IsFiniteAndLivesInThePlane()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out Plane plane, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span), Is.True);
+
+            AssertValidSlashFrame(plane, beginEmitter, latestEmitter, travelAxis, spanAxis, span);
+        }
+
+        [Test]
+        public void SpanAxisPointsFromTheBeginEmitterToTheLatest()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out _, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out _, out Vector3 spanAxis, out float span), Is.True);
+
+            AssertVector(beginEmitter + spanAxis * span, latestEmitter);
+            Assert.That(Vector3.Dot(spanAxis, latestEmitter - beginEmitter), Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void TravelAxisPointsAlongTheBeginSampleBladeTipDirection()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+            Assert.That(follower.TryGetStrokeBeginSample(out EvaluatedBladePose begin), Is.True);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out Plane plane, out _, out _, out Vector3 travelAxis, out _, out _), Is.True);
+
+            Assert.That(Vector3.Dot(travelAxis, begin.BladeAxis), Is.GreaterThan(0f));
+
+            // The blade axis of this sweep already lies in the plane, so the
+            // projection leaves it alone.
+            Assert.That(Mathf.Abs(Vector3.Dot(begin.BladeAxis, plane.normal)), Is.LessThan(PositionTolerance));
+            AssertVector(travelAxis, begin.BladeAxis);
+        }
+
+        [Test]
+        public void ASweepAlongTheBladeGivesNonOrthogonalAxesAndIsStillValid()
+        {
+            // Down and forward along the blade: movement along the blade adds
+            // nothing to the plane normal but tilts the emitter chord.
+            Vector3 step = new Vector3(0f, -0.06f, 0.03f);
+
+            Sweep(UprightGrip(follower), step, 7);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out Plane plane, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span), Is.True);
+
+            AssertValidSlashFrame(plane, beginEmitter, latestEmitter, travelAxis, spanAxis, span);
+            Assert.That(Mathf.Abs(Vector3.Dot(spanAxis, travelAxis)), Is.GreaterThan(0.1f),
+                "the axes are not orthogonalised");
+        }
+
+        [Test]
+        public void MovingAndRotatingTheWholeStroke_MovesTheSlashFrameWithIt()
+        {
+            Quaternion rotation = Quaternion.Euler(23f, 41f, 17f);
+            Vector3 translation = new Vector3(-2.5f, 0.75f, 4f);
+            Vector3 origin = strokePosition;
+
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out Plane plane, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span), Is.True);
+            Assert.That(follower.IsLatchReady, Is.True);
+
+            GameObject movedRig = new GameObject("Moved Rig");
+            GameObject movedKatana = new GameObject("Moved Katana");
+            try
+            {
+                SandboxRightHandKatana moved = movedRig.AddComponent<SandboxRightHandKatana>();
+                moved.Katana = movedKatana.transform;
+
+                long frameId = 0;
+                double time = 0.0;
+                Vector3 position = rotation * origin + translation;
+                RecordSweep(moved, rotation * UprightGrip(moved), rotation * EdgeStep, 7,
+                    ref frameId, ref time, ref position);
+
+                Assert.That(moved.TryGetSlashFrameCandidate(
+                    out Plane movedPlane, out Vector3 movedBegin, out Vector3 movedLatest,
+                    out Vector3 movedTravel, out Vector3 movedSpanAxis, out float movedSpan), Is.True);
+
+                AssertValidSlashFrame(movedPlane, movedBegin, movedLatest, movedTravel, movedSpanAxis, movedSpan);
+                AssertVector(movedPlane.normal, rotation * plane.normal);
+                AssertVector(movedBegin, rotation * beginEmitter + translation);
+                AssertVector(movedLatest, rotation * latestEmitter + translation);
+                AssertVector(movedTravel, rotation * travelAxis);
+                AssertVector(movedSpanAxis, rotation * spanAxis);
+                Assert.That(movedSpan, Is.EqualTo(span).Within(PositionTolerance));
+                Assert.That(moved.IsLatchReady, Is.True);
+            }
+            finally
+            {
+                Object.DestroyImmediate(movedKatana);
+                Object.DestroyImmediate(movedRig);
+            }
+        }
+
+        [Test]
+        public void BeforeRenderDisplayUpdate_DoesNotMoveTheSlashFrame()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 7);
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out _, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travelAxis, out Vector3 spanAxis, out float span), Is.True);
+            bool latchReady = follower.IsLatchReady;
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(
+                follower.TryApplySample(new BladePoseSample(strokeFrameId, strokeTime,
+                    strokePosition + new Vector3(0.2f, 0.1f, 0f), upright,
+                    BladeTrackingState.Position | BladeTrackingState.Rotation)),
+                Is.True);
+
+            Assert.That(follower.TryGetSlashFrameCandidate(
+                out _, out Vector3 afterBegin, out Vector3 afterLatest,
+                out Vector3 afterTravel, out Vector3 afterSpanAxis, out float afterSpan), Is.True);
+
+            AssertVector(afterBegin, beginEmitter);
+            AssertVector(afterLatest, latestEmitter);
+            AssertVector(afterTravel, travelAxis);
+            AssertVector(afterSpanAxis, spanAxis);
+            Assert.That(afterSpan, Is.EqualTo(span).Within(PositionTolerance));
+            Assert.That(follower.IsLatchReady, Is.EqualTo(latchReady));
+        }
+
+        [Test]
+        public void TrackingLossOnUpdate_RemovesTheLatchAndTheFrame()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+            Assert.That(follower.IsLatchReady, Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryRecordSample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void TrackingLossOnBeforeRender_RemovesTheLatchAndTheFrame()
+        {
+            Sweep(UprightGrip(follower), EdgeStep, 7);
+            Assert.That(follower.IsLatchReady, Is.True);
+
+            strokeFrameId++;
+            strokeTime += SampleInterval;
+            Assert.That(follower.TryApplySample(UntrackedAt(strokeFrameId, strokeTime)), Is.False);
+
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
+        }
+
+        [Test]
+        public void ReturnSweep_RemovesTheLatchAndTheFrame()
+        {
+            Quaternion upright = UprightGrip(follower);
+            Sweep(upright, EdgeStep, 7);
+            Assert.That(follower.IsLatchReady, Is.True);
+
+            bool reArmed = false;
+            for (int i = 0; i < 12 && !reArmed; i++)
+            {
+                Sweep(upright, -EdgeStep, 1);
+                reArmed = follower.AcceptedSampleCount == 0;
+            }
+
+            Assert.That(reArmed, Is.True, "a return sweep must re-arm the stroke");
+            Assert.That(follower.IsLatchReady, Is.False);
+            Assert.That(follower.TryGetSlashFrameCandidate(out _, out _, out _, out _, out _, out _), Is.False);
         }
 
         [Test]
