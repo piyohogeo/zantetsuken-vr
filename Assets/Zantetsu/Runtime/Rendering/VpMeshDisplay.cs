@@ -25,9 +25,16 @@ namespace Zantetsu.Rendering
 
         private void OnEnable()
         {
-            if (mesh == null || shader == null)
+            // A mesh reference that resolves to nothing, such as a licensed mesh not generated in this checkout, shows
+            // nothing, as a MeshFilter would.
+            if (mesh == null)
             {
-                Debug.LogError(name + ": VpMeshDisplay needs a mesh and a shader.", this);
+                return;
+            }
+
+            if (shader == null)
+            {
+                Debug.LogError(name + ": VpMeshDisplay needs a shader.", this);
                 return;
             }
 
