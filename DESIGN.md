@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・観測／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-09-13 |
+| 最終更新 | 2026-09-14 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -1098,7 +1098,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-134 | Mob計画方式の研究後採用 | 移動・Animation計画、保持・更新・AI LODの具体方式は先行独立研究後に人間が選定し、Phase 4.70で20章の意味契約へ接続する。方式未決の間は固定計画による接続検証を進められるが、製品計画機能の完了とはしない | 人間承認済み、2026-09-13。同じSeedからの計画再生成・経路hash一致とMob計画固有の無割当保証を外す |
 | D-135 | NPC Pose Table一本化 | 製品RuntimeのCurrent／Futureを19.3のリターゲット済み骨Pose Tableと共通評価へ統一する。対象時刻と明示入力を正本とし、オンライン代替Backend・方式再比較を要求しない。品質・容量・費用は本体で確認する | 人間承認済み、2026-09-13。方式統一のため追加費用を引き受け、高速化を保証しない |
 | D-136 | IK／Pose Layer scope | 初期予測対象NPCのLook、腕／Foot IK、左右反転等のオンラインPose補正はCurrent／Future双方で対象外とする。導入は別の設計変更とし、将来入力Schemaを先行させない。実測Controller姿勢によるプレイヤー腕IKは別scopeとする | D-009を置換。T-018付き確定 |
-| D-138 | 短時間NVENC確認 | Phase 0.11は21.15の実際に使用するCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離で完了する | 人間承認済み。固定録画条件・内部方式・試験階層を維持する義務を外し、進行中実装はそのまま完了できる |
+| D-138 | 短時間NVENC確認 | Phase 0.11は21.15の実際に使用するCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離で完了する | 完了、2026-09-14。固定録画条件・内部方式・試験階層を維持する義務を外す |
 | D-148 | Phase 0.2の凍結 | 採用する少数Geometryと用途対応だけを引き継ぎ、10.2.2に従いmergeして利用できる時点で完了する | 人間承認済み。旧quota・網羅性・形式互換・同一手順の再生成を維持する義務を外す |
 | D-149 | 剛体Local Plane実姿勢リベース | 19.5.1の自由飛行剛体だけ、予測Pose差の一致判定を世代・前提と実姿勢での面誤差Gateへ置き換える。攻撃SourceSlashPlaneは不変、命中前の仮Local Planeを命中時に一度だけ採用／Fallback確定し、7.6の受付判定と、受付済みのTemporary／Provisional／Stable／Finalへ共通使用する。面採否と受付判定はMesh／Collider Readyから独立し、未完成だけを理由に切断位置を変更しない。対象ごとの面差と固定点近似の未検出差を許容するが、Actor pose／速度を予測または命中Snapshotへ戻さず、自前B-repの包含・支持安全・世代検証を維持する | 確定。4.2／19.1／19.5の姿勢一致規則に対する限定例外。D-046のMob／Skinned契約は変更しない。O(1)直接予測式の標準採用とは独立 |
 | D-159 | 可変長Trace導入 | Phase 0.12～0.14で21.16のWriter、Paged History、保存／読込みを段階導入する | 確定。旧形式の読込み維持は要求せず、実行時の所有権・非待機・容量境界は維持する |
@@ -1278,7 +1278,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 | --- | --- | --- | --- |
 | Phase 0 | 非VR基盤・観測（完了済み） | 固定Unity環境、非VR観測、Profiler／Traceと対応Capture | 必要な性能と因果関係・Frame相関を確認でき、観測資源をboundedに管理しCapture失敗をGameplayへ拡大しない。形式変更だけで再実行・再承認しない |
 | Phase 0.1 | Capture非同期化（完了済み） | Main Threadを長時間待たせないCapture処理 | 21.15の非同期・容量・資源寿命・故障分離を引き継ぐ。Encoder、Worker、保存・通知形式、検証方法は実装詳細とし、今回の改訂で作り直さない |
-| Phase 0.11 | 短時間NVENC確認 | 対応環境のGPU画像から短い映像を生成する非同期Capture | 21.15のCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離を満たす。既存の承認済み方式で完了でき、固定fps・Frame数・時間・試験階層は要求しない |
+| Phase 0.11 | 短時間NVENC確認（完了済み） | 対応環境のGPU画像から短い映像を生成する非同期Capture | 21.15のCapture経路での複数Frame確認と、非待機・容量・寿命・故障分離を満たす。固定fps・Frame数・時間・試験階層は要求しない |
 | Phase 0.12 | 可変長Trace Writer | D-159と21.16のprivate Writer、producer専用固定容量Payload／Runtime Index Ring、固定Event mask、bounded Drain、stop／join後の単純sealを同一移行系列の内部backendとして実装する | 通常writeに共有locked RMWと実行中allocationがなく、payloadコピー完了後だけRuntime Indexが公開される。lane FIFO、wrap、Index／Payload容量不足、oversize Drop、固定件数Drain、最終Drainを検証し、現行WriterとCPU時間、copy byte、allocation、Dropを比較する。Release既定の切替と旧経路削除はまだ行わない |
 | Phase 0.13 | MemoryBounded Paged Trace History | ProfileでPage size／Page数／総容量を決めてRun開始前に確保するPayload Page列、Pageごとの`CommittedByteCount`、History全体の64 bit `CommittedRecordCount`を0.12 backendへ追加する。History Index、Page状態enum、live Snapshotを持たない | 21.16.3の最大record全体のPage収容条件とProducer Lane容量条件を開始前に確認する。record全体を単一Pageへ書いた後だけcommit値を進め、Page末尾不足、History満杯、確保不能を待機や拡張なしでReject／Dropできる。停止後Viewは全record配列を生成しない。Release既定はまだ切り替えない |
 | Phase 0.14 | 可変長Trace保存・読込みと切替 | 21.16.4のboundedな保存・読込みを接続する | 記録の相関と不完全性を維持し、全record配列を作らず保存・読込みできる。Release既定の採用と製品接続先がない場合の完了条件は21.16.1に従い、置換済み旧経路を削除できる。形式・旧Reader・Goldenの維持は要求しない |
