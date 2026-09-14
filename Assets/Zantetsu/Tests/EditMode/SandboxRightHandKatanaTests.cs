@@ -71,6 +71,28 @@ namespace Zantetsu.Core.Tests
             return Sample(position, rotation, BladeTrackingState.Position | BladeTrackingState.Rotation);
         }
 
+        private static BladePoseSample TrackedAt(long frameId, double timestampSeconds, Vector3 position)
+        {
+            return new BladePoseSample(frameId, timestampSeconds, position, Quaternion.identity,
+                BladeTrackingState.Position | BladeTrackingState.Rotation);
+        }
+
+        private static BladePoseSample UntrackedAt(long frameId, double timestampSeconds)
+        {
+            return new BladePoseSample(frameId, timestampSeconds, Vector3.zero, Quaternion.identity, BladeTrackingState.None);
+        }
+
+        // Frames 1..count at 0.00, 0.01, ... seconds, moving along +X.
+        private void RecordValidSequence(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Assert.That(follower.TryRecordSample(TrackedAt(i + 1, 0.01 * i, new Vector3(0.1f * i, 1f, 0f))), Is.True);
+            }
+
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(count));
+        }
+
         private static void AssertVector(Vector3 actual, Vector3 expected)
         {
             Assert.That(Vector3.Distance(actual, expected), Is.LessThan(PositionTolerance),
@@ -207,7 +229,7 @@ namespace Zantetsu.Core.Tests
         // lifecycle is checked there. No frame is allowed to pass between the
         // toggles and the assertions, so Update never interferes.
         [UnityTest]
-        public IEnumerator ReEnabling_HidesTheKatanaUntilTheNextValidGripPose()
+        public IEnumerator ReEnabling_HidesTheKatanaAndResetsTheHistoryUntilTheNextValidGripPose()
         {
             yield return new EnterPlayMode();
 
@@ -220,25 +242,35 @@ namespace Zantetsu.Core.Tests
             Quaternion gripRotation = Quaternion.Euler(12f, 34f, 56f);
             Pose offset = playModeFollower.GripToKatanaOffset;
 
-            Assert.That(playModeFollower.TryApplySample(Tracked(gripPosition, gripRotation)), Is.True);
+            Assert.That(playModeFollower.TryRecordSample(Tracked(gripPosition, gripRotation)), Is.True);
+            Assert.That(playModeFollower.TryRecordSample(
+                new BladePoseSample(8, 1.26, gripPosition + new Vector3(0.05f, 0f, 0f), gripRotation,
+                    BladeTrackingState.Position | BladeTrackingState.Rotation)), Is.True);
             Assert.That(katana.activeSelf, Is.True);
+            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(2));
 
             Vector3 applied = katana.transform.position;
             Quaternion appliedRotation = katana.transform.rotation;
 
             playModeFollower.enabled = false;
             Assert.That(katana.activeSelf, Is.False, "A disabled component must not leave the katana on screen.");
+            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
+                "A disabled component must not keep the history it was building.");
 
             playModeFollower.enabled = true;
             Assert.That(katana.activeSelf, Is.False,
                 "A re-enabled component must not show the pose it was following before.");
+            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(0),
+                "A re-enabled component must not carry the history from before it was disabled.");
             AssertVector(katana.transform.position, applied);
             Assert.That(Quaternion.Angle(katana.transform.rotation, appliedRotation), Is.LessThan(AngleTolerance));
 
             Vector3 nextPosition = new Vector3(0.1f, 1.0f, 0.2f);
             Quaternion nextRotation = Quaternion.Euler(0f, 45f, 0f);
-            Assert.That(playModeFollower.TryApplySample(Tracked(nextPosition, nextRotation)), Is.True);
+            Assert.That(playModeFollower.TryRecordSample(Tracked(nextPosition, nextRotation)), Is.True);
             Assert.That(katana.activeSelf, Is.True);
+            Assert.That(playModeFollower.RecordedPoseCount, Is.EqualTo(1),
+                "Following resumes as a new history, not a continuation of the old one.");
             AssertVector(katana.transform.position, nextPosition + nextRotation * offset.position);
             Assert.That(Quaternion.Angle(katana.transform.rotation, nextRotation * offset.rotation),
                 Is.LessThan(AngleTolerance));
@@ -350,6 +382,115 @@ namespace Zantetsu.Core.Tests
             // horizontal and turns the blade axis toward world +X.
             AssertVector(katana.right, Vector3.back);
             Assert.That(katana.forward.x, Is.GreaterThan(0.9f));
+        }
+
+        // The recorded span's numbers are BladePoseWindow's and
+        // BladeMotionEvaluator's contract; here only the count matters.
+        [Test]
+        public void ValidSampleSequence_AccumulatesInTheHistory()
+        {
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(follower.TryRecordSample(TrackedAt(i + 1, 0.01 * i, new Vector3(0.1f * i, 1f, 0f))), Is.True);
+                Assert.That(follower.RecordedPoseCount, Is.EqualTo(i + 1));
+            }
+        }
+
+        [TestCase(BladeTrackingState.Position)]
+        [TestCase(BladeTrackingState.Rotation)]
+        [TestCase(BladeTrackingState.None)]
+        public void PartiallyTrackedSample_EmptiesTheHistory(BladeTrackingState state)
+        {
+            RecordValidSequence(3);
+
+            Assert.That(
+                follower.TryRecordSample(new BladePoseSample(10, 0.03, new Vector3(1f, 1f, 1f), Quaternion.identity, state)),
+                Is.False);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void NonFiniteSample_EmptiesTheHistory()
+        {
+            RecordValidSequence(3);
+
+            Assert.That(follower.TryRecordSample(TrackedAt(10, 0.03, new Vector3(float.NaN, 1f, 0f))), Is.False);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void TimestampThatDoesNotMoveForward_EmptiesTheHistoryButStillShowsThePose()
+        {
+            RecordValidSequence(3);
+
+            Vector3 position = new Vector3(0.5f, 1f, 0.2f);
+            Assert.That(follower.TryRecordSample(TrackedAt(10, 0.005, position)), Is.False);
+
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+            AssertKatanaShows(position, Quaternion.identity);
+        }
+
+        [Test]
+        public void AfterTrackingLoss_TheFirstValidSampleStartsANewHistoryOfOne()
+        {
+            RecordValidSequence(3);
+            Assert.That(follower.TryRecordSample(UntrackedAt(10, 0.03)), Is.False);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0));
+
+            Assert.That(follower.TryRecordSample(TrackedAt(11, 0.04, new Vector3(1f, 1f, 0f))), Is.True);
+
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1),
+                "A single pose cannot span the tracking gap it follows.");
+        }
+
+        [Test]
+        public void AfterTrackingLoss_TheHistoryRebuildsFromSamplesRecordedAfterRecovery()
+        {
+            RecordValidSequence(3);
+            Assert.That(follower.TryRecordSample(UntrackedAt(10, 0.03)), Is.False);
+
+            Assert.That(follower.TryRecordSample(TrackedAt(11, 0.04, new Vector3(1f, 1f, 0f))), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+
+            Assert.That(follower.TryRecordSample(TrackedAt(12, 0.05, new Vector3(1.1f, 1f, 0f))), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void BeforeRenderDisplayUpdate_DoesNotAppendASecondSampleForTheSameFrame()
+        {
+            Assert.That(follower.TryRecordSample(TrackedAt(1, 0.0, new Vector3(0f, 1f, 0f))), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+
+            Vector3 renderPosition = new Vector3(0.05f, 1f, 0f);
+            Assert.That(follower.TryApplySample(TrackedAt(1, 0.004, renderPosition)), Is.True);
+
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
+            AssertKatanaShows(renderPosition, Quaternion.identity);
+        }
+
+        // A tracking gap that falls between two Updates is only ever seen by
+        // Before Render. It must still break the span.
+        [Test]
+        public void BeforeRenderTrackingLoss_EmptiesTheHistoryAndTheNextUpdateRestartsAtOne()
+        {
+            RecordValidSequence(3);
+
+            // A usable Before Render sample shows but never appends.
+            Assert.That(follower.TryApplySample(TrackedAt(4, 0.025, new Vector3(0.25f, 1f, 0f))), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(3), "Before Render must not append.");
+
+            // An unusable one marks the gap.
+            Assert.That(follower.TryApplySample(UntrackedAt(4, 0.028)), Is.False);
+            Assert.That(katanaObject.activeSelf, Is.False, "An unusable pose must still be hidden.");
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(0),
+                "A tracking loss seen on Before Render must empty the history.");
+
+            // The next Update starts a fresh history rather than continuing.
+            Assert.That(follower.TryRecordSample(TrackedAt(5, 0.03, new Vector3(0.3f, 1f, 0f))), Is.True);
+            Assert.That(follower.RecordedPoseCount, Is.EqualTo(1));
         }
 
         [Test]
