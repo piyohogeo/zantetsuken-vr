@@ -421,5 +421,65 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(storage.VertexCount, Is.EqualTo(3), "its vertices stay committed");
             }
         }
+
+        /// <summary>
+        /// Registering a geometry together with its first display instance is one step or none. It is what a caller
+        /// that cannot undo a registration needs: a registration given back retires the geometry's index range, so a
+        /// refusal has to leave the geometry registered nowhere and published still.
+        /// </summary>
+        [Test]
+        public void AGeometryAndItsFirstInstance_AreTakenTogetherOrNotAtAll()
+        {
+            using (var storage = new VpCpuGeometryStorage(64, 64, 8, 16, 16, Allocator.Persistent))
+            {
+                var table = new VpGeometryReferenceTable(storage, 4, 1);
+                VpStoredGeometry first = Append(storage, Quad());
+                VpStoredGeometry second = Append(storage, Quad());
+
+                Assert.That(
+                    table.TryRegisterGeometryWithDisplayInstance(first, out VpGeometryReference geometry, out VpDisplayInstanceReference instance),
+                    Is.True,
+                    "both slots were free");
+                AssertLive(table, geometry, first, 1, "the registered geometry");
+                Assert.That(table.TryGetDisplayInstanceGeometry(instance, out VpGeometryReference owner), Is.True, "the instance");
+                Assert.That(owner, Is.EqualTo(geometry), "references the geometry it was taken with");
+                AssertCounts(table, 1, 1, "after the pair was taken");
+
+                // no instance slot left, so the second geometry must not be registered either
+                Assert.That(
+                    table.TryRegisterGeometryWithDisplayInstance(second, out VpGeometryReference refused, out VpDisplayInstanceReference refusedInstance),
+                    Is.False,
+                    "no room to show it");
+                Assert.That(refused, Is.EqualTo(default(VpGeometryReference)), "no geometry token");
+                Assert.That(refusedInstance, Is.EqualTo(default(VpDisplayInstanceReference)), "no instance token");
+                AssertCounts(table, 1, 1, "after the refusal");
+                AssertIndexState(storage, second, VpIndexRangeState.Published, QuadIndices, QuadIndices, "the refused geometry");
+
+                // it is still the caller's: whoever holds it can register and retire it as before
+                Assert.That(table.TryRegisterGeometry(second, out VpGeometryReference alone), Is.True, "registered on its own");
+                Assert.That(table.TryRetireGeometry(alone), Is.True, "and retired by whoever did that");
+
+                // the rules of the single-step registration are the rules of the two steps
+                Assert.That(table.TryRegisterGeometryWithDisplayInstance(first, out _, out _), Is.False, "a geometry already registered");
+                AssertCounts(table, 1, 1, "after the duplicate was refused");
+            }
+        }
+
+        /// <summary>No geometry slot free refuses in the same way: nothing registered, nothing shown, nothing retired.</summary>
+        [Test]
+        public void TheSingleStepRegistration_RefusesWithoutAGeometrySlotToo()
+        {
+            using (var storage = new VpCpuGeometryStorage(64, 64, 8, 16, 16, Allocator.Persistent))
+            {
+                var table = new VpGeometryReferenceTable(storage, 1, 4);
+                VpStoredGeometry first = Append(storage, Quad());
+                VpStoredGeometry second = Append(storage, Quad());
+                Assert.That(table.TryRegisterGeometryWithDisplayInstance(first, out _, out _), Is.True, "the first");
+
+                Assert.That(table.TryRegisterGeometryWithDisplayInstance(second, out _, out _), Is.False, "the second");
+                AssertCounts(table, 1, 1, "after the refusal");
+                AssertIndexState(storage, second, VpIndexRangeState.Published, QuadIndices, QuadIndices, "the refused geometry");
+            }
+        }
     }
 }

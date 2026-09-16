@@ -111,32 +111,13 @@ namespace Zantetsu.Rendering
         public bool TryRegisterGeometry(VpStoredGeometry geometry, out VpGeometryReference reference)
         {
             reference = default;
-            if (!_storage.IsGeometryConsistent(geometry)
-                || !_storage.TryGetIndexState(geometry.indexRange, out VpIndexRangeState state, out _, out _)
-                || state != VpIndexRangeState.Published
-                || IsRegistered(geometry.indexRange))
+            if (!CanRegister(geometry) || !TryFindGeometrySlot(out int slot))
             {
                 return false;
             }
 
-            for (int s = 0; s < _geometries.Length; s++)
-            {
-                ref GeometrySlot slot = ref _geometries[s];
-                if (slot.live || slot.generation == _lastGeneration)
-                {
-                    continue;
-                }
-
-                slot.live = true;
-                slot.generation = checked(slot.generation + 1);
-                slot.geometry = geometry;
-                slot.liveInstanceCount = 0;
-                LiveGeometryCount++;
-                reference = new VpGeometryReference(_tableId, s, slot.generation);
-                return true;
-            }
-
-            return false;
+            reference = TakeGeometrySlot(slot, geometry);
+            return true;
         }
 
         /// <summary>
@@ -146,29 +127,47 @@ namespace Zantetsu.Rendering
         public bool TryAddDisplayInstance(VpGeometryReference geometry, out VpDisplayInstanceReference instance)
         {
             instance = default;
-            if (!IsLive(geometry))
+            if (!IsLive(geometry) || !TryFindInstanceSlot(out int slot))
             {
                 return false;
             }
 
-            for (int s = 0; s < _instances.Length; s++)
-            {
-                ref InstanceSlot slot = ref _instances[s];
-                if (slot.live || slot.generation == _lastGeneration)
-                {
-                    continue;
-                }
+            instance = TakeInstanceSlot(slot, geometry.slot);
+            return true;
+        }
 
-                slot.live = true;
-                slot.generation = checked(slot.generation + 1);
-                slot.geometrySlot = geometry.slot;
-                _geometries[geometry.slot].liveInstanceCount++;
-                LiveDisplayInstanceCount++;
-                instance = new VpDisplayInstanceReference(_tableId, s, slot.generation);
-                return true;
+        /// <summary>
+        /// Registers a stored geometry and adds its first display instance together, or does neither: both slots are
+        /// found before either is taken, so a table with room to register the geometry but no room to show it refuses
+        /// having registered nothing.
+        /// <para>
+        /// This is what a caller that cannot undo a registration needs, and giving a registration back is not an undo:
+        /// <see cref="TryRetireGeometry"/> retires the geometry's index range in the storage. So on success this table
+        /// takes over that responsibility — retiring the geometry here is what retires its range, once — and on a
+        /// refusal nothing is registered and nothing is retired: the geometry stays the caller's, still Published in the
+        /// storage, and it is the caller who decides what becomes of it.
+        /// </para>
+        /// Returns false with default tokens under every condition <see cref="TryRegisterGeometry"/> states, and also
+        /// when no usable instance slot is free.
+        /// </summary>
+        public bool TryRegisterGeometryWithDisplayInstance(
+            VpStoredGeometry geometry,
+            out VpGeometryReference reference,
+            out VpDisplayInstanceReference instance)
+        {
+            reference = default;
+            instance = default;
+            if (!CanRegister(geometry)
+                || !TryFindGeometrySlot(out int geometrySlot)
+                || !TryFindInstanceSlot(out int instanceSlot))
+            {
+                return false;
             }
 
-            return false;
+            // Both slots are in hand; nothing below can fail.
+            reference = TakeGeometrySlot(geometrySlot, geometry);
+            instance = TakeInstanceSlot(instanceSlot, geometrySlot);
+            return true;
         }
 
         /// <summary>Ends a live display instance's reference once. Its geometry stays live, even when this was its last instance.</summary>
@@ -248,6 +247,70 @@ namespace Zantetsu.Rendering
                 && (uint)instance.slot < (uint)_instances.Length
                 && _instances[instance.slot].live
                 && _instances[instance.slot].generation == instance.generation;
+        }
+
+        /// <summary>What a geometry has to be for this table to register it, short of a slot being free.</summary>
+        private bool CanRegister(VpStoredGeometry geometry)
+        {
+            return _storage.IsGeometryConsistent(geometry)
+                && _storage.TryGetIndexState(geometry.indexRange, out VpIndexRangeState state, out _, out _)
+                && state == VpIndexRangeState.Published
+                && !IsRegistered(geometry.indexRange);
+        }
+
+        // The one rule for choosing a slot, kept in one place: a slot is usable while it is not live and its generation
+        // has not reached the last one. Finding and taking are separate so that a caller needing two slots can find
+        // both before taking either.
+        private bool TryFindGeometrySlot(out int slot)
+        {
+            for (int s = 0; s < _geometries.Length; s++)
+            {
+                if (!_geometries[s].live && _geometries[s].generation != _lastGeneration)
+                {
+                    slot = s;
+                    return true;
+                }
+            }
+
+            slot = -1;
+            return false;
+        }
+
+        private bool TryFindInstanceSlot(out int slot)
+        {
+            for (int s = 0; s < _instances.Length; s++)
+            {
+                if (!_instances[s].live && _instances[s].generation != _lastGeneration)
+                {
+                    slot = s;
+                    return true;
+                }
+            }
+
+            slot = -1;
+            return false;
+        }
+
+        private VpGeometryReference TakeGeometrySlot(int slot, VpStoredGeometry geometry)
+        {
+            ref GeometrySlot taken = ref _geometries[slot];
+            taken.live = true;
+            taken.generation = checked(taken.generation + 1);
+            taken.geometry = geometry;
+            taken.liveInstanceCount = 0;
+            LiveGeometryCount++;
+            return new VpGeometryReference(_tableId, slot, taken.generation);
+        }
+
+        private VpDisplayInstanceReference TakeInstanceSlot(int slot, int geometrySlot)
+        {
+            ref InstanceSlot taken = ref _instances[slot];
+            taken.live = true;
+            taken.generation = checked(taken.generation + 1);
+            taken.geometrySlot = geometrySlot;
+            _geometries[geometrySlot].liveInstanceCount++;
+            LiveDisplayInstanceCount++;
+            return new VpDisplayInstanceReference(_tableId, slot, taken.generation);
         }
 
         private bool IsRegistered(VpIndexRangeHandle indexRange)
