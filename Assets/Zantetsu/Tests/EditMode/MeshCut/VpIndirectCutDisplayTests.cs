@@ -1082,5 +1082,95 @@ namespace Zantetsu.MeshCut.Tests
                 }
             }
         }
+
+        /// <summary>The same plane written in world space, for a geometry placed by <paramref name="localToWorld"/>.</summary>
+        private static float4 ToWorld(float4 localPlane, Matrix4x4 localToWorld)
+        {
+            Vector4 world = localToWorld.inverse.transpose * new Vector4(localPlane.x, localPlane.y, localPlane.z, localPlane.w);
+            return new float4(world.x, world.y, world.z, world.w);
+        }
+
+        /// <summary>
+        /// A world plane converted for the target reaches the same cut as the local plane it came from: the same target
+        /// is chosen, both sides are produced, three geometries end up shown, and the sibling is untouched. The two runs
+        /// are not required to produce identical triangle lists — that is not a contract this makes — so what is
+        /// compared is the choice, the outcome, the shape of the result and what was kept.
+        /// </summary>
+        [Test]
+        public void AWorldPlaneConvertedForTheTarget_ReachesTheSameCut()
+        {
+            Prepared prepared = BuildPrepared();
+            var placement = Matrix4x4.TRS(new Vector3(6f, -3f, 1f), Quaternion.Euler(0f, 75f, 15f), new Vector3(1.5f, 2f, 0.5f));
+
+            float4 localPlane = default;
+            var outcomes = new VpIndirectCutOutcome[2];
+            var shownCounts = new int[2];
+            var bothProduced = new bool[2];
+            var siblingKept = new bool[2];
+
+            for (int run = 0; run < 2; run++)
+            {
+                string label = run == 0 ? "the local plane" : "the converted world plane";
+                using (VpCpuGeometryStorage storage = NewStorage())
+                {
+                    var table = new VpGeometryReferenceTable(storage, 8, 8);
+                    VpStoredGeometry parent = Append(storage, prepared);
+                    Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, label + ": create");
+                    using (display)
+                    {
+                        Assert.That(display.TryRequestCut(CrossingPlane()), Is.True, label + ": the first request");
+                        BeginNextFrame(display);
+                        Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), label + ": the first cut");
+
+                        // the target is the second of the two, placed somewhere of its own
+                        Assert.That(display.TrySetTransform(1, placement), Is.True);
+                        BeginNextFrame(display);
+                        Assert.That(display.GetShownTransform(1), Is.EqualTo(placement), label + ": the placement took effect");
+                        VpStoredGeometry target = display.GetShownGeometry(1);
+                        ShownSnapshot sibling = ShownSnapshot.Of(storage, display, 0);
+
+                        float4 plane;
+                        if (run == 0)
+                        {
+                            plane = PlaneThroughShown(display, 1);
+                            localPlane = plane;
+                        }
+                        else
+                        {
+                            // the same plane, written in world for that placement, and read back for the target
+                            float4 worldPlane = ToWorld(localPlane, placement);
+                            Assert.That(VpCutPlane.TryWorldToGeometryLocal(worldPlane, placement, out plane), Is.True, label + ": convert");
+                            Assert.That(
+                                math.distance(math.normalize(plane.xyz), math.normalize(localPlane.xyz)),
+                                Is.LessThan(1e-4f),
+                                label + ": the normal came back");
+                        }
+
+                        Assert.That(display.TryRequestCut(target, plane), Is.True, label + ": the second request");
+                        BeginNextFrame(display);
+                        VpIndirectCutResult result = display.LastCutResult;
+
+                        outcomes[run] = result.outcome;
+                        shownCounts[run] = display.ShownCount;
+                        bothProduced[run] = result.cut.positive.IsProduced && result.cut.negative.IsProduced;
+                        siblingKept[run] = display.IndexOfShown(sibling.geometry) == 0;
+
+                        Assert.That(result.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), label + ": the second cut");
+                        Assert.That(result.cut.kernel.crossingTriangles, Is.GreaterThan(0), label + ": the plane really crosses the target");
+                        sibling.AssertUnchangedAt(storage, display, 0, label + ": the sibling");
+                        Assert.That(IndexState(storage, target), Is.EqualTo(VpIndexRangeState.Free), label + ": only the target was retired");
+                        Assert.That(display.GetShownTransform(1), Is.EqualTo(placement), label + ": the sides keep the target's placement");
+                        Assert.That(display.GetShownTransform(2), Is.EqualTo(placement));
+                    }
+                }
+            }
+
+            Assert.That(outcomes[1], Is.EqualTo(outcomes[0]), "the same outcome either way");
+            Assert.That(outcomes[0], Is.EqualTo(VpIndirectCutOutcome.Swapped));
+            Assert.That(shownCounts[1], Is.EqualTo(shownCounts[0]), "the same number shown");
+            Assert.That(shownCounts[0], Is.EqualTo(3));
+            Assert.That(bothProduced, Is.All.True, "both sides produced in both runs");
+            Assert.That(siblingKept, Is.All.True, "and the sibling kept its place in both runs");
+        }
     }
 }
