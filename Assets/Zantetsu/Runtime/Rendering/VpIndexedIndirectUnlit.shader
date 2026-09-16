@@ -63,6 +63,13 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // Instanced stereo, otherwise 1.
             uint _VpInstanceMultiplier;
 
+            // The cut surface colour (DESIGN 5.3), set globally for every VP draw at once rather than per material:
+            // the debug switch is one switch for everything, not one per object. They are declared outside
+            // UnityPerMaterial because they are global constants, not material properties.
+            half4 _VpCutSurfaceColor;
+            half4 _VpCutSurfaceDebugColor;
+            float _VpCutSurfaceDebug;
+
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
@@ -93,6 +100,10 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
                 float2 uv : TEXCOORD2;
+
+                // The stored uv0 as it is, before the material's UV transform. The cap marker is read from this and
+                // never from `uv`, so _BaseMap_ST cannot turn a cap into a surface or the other way round.
+                float2 rawUv : TEXCOORD3;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -137,6 +148,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 output.normalWS = mul((float3x3)objectToWorld, vertex.normal);
                 output.positionWS = positionWS;
                 output.uv = TRANSFORM_TEX(vertex.uv0, _BaseMap);
+                output.rawUv = vertex.uv0;
                 return output;
             }
 
@@ -144,7 +156,20 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
                 half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
                 half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
-                half3 base = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
+
+                // DESIGN 5.3: the marker is the raw uv0, read before the material's UV transform and before any
+                // sampling. A cap takes the cut surface colour and neither the texture nor the material's own colour;
+                // everything else is unchanged. The chosen colour then goes through the same shading as before.
+                half3 base;
+                if (input.rawUv.x < 0.0)
+                {
+                    base = _VpCutSurfaceDebug > 0.0 ? _VpCutSurfaceDebugColor.rgb : _VpCutSurfaceColor.rgb;
+                }
+                else
+                {
+                    base = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
+                }
+
                 return half4(base * (0.5 + 0.5 * facing * shadow), 1.0);
             }
             ENDHLSL

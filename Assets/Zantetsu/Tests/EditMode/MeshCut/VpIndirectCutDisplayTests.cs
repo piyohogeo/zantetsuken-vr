@@ -1172,5 +1172,50 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(bothProduced, Is.All.True, "both sides produced in both runs");
             Assert.That(siblingKept, Is.All.True, "and the sibling kept its place in both runs");
         }
+
+        /// <summary>
+        /// Changing the cut surface colour, or its one debug switch, transfers nothing. The display's own counts are
+        /// what is checked: comparing buffer contents would not show this, since writing the same bytes again leaves
+        /// them looking identical.
+        /// </summary>
+        [Test]
+        public void ChangingTheCutSurfaceColour_TransfersNothing()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), "the cut");
+
+                    VpCutSurfaceColour.State before = VpCutSurfaceColour.Capture();
+                    try
+                    {
+                        int vertexTransfers = display.VertexTransfers;
+                        int indexTransfers = display.IndexTransfers;
+                        int commandUploads = display.CommandUploads;
+
+                        VpCutSurfaceColour.SetDebugEnabled(!VpCutSurfaceColour.DebugEnabled);
+                        VpCutSurfaceColour.SetColours(Color.magenta, Color.cyan);
+                        BeginNextFrame(display);
+                        display.Render(0);
+
+                        Assert.That(display.VertexTransfers, Is.EqualTo(vertexTransfers), "no vertex transfer");
+                        Assert.That(display.IndexTransfers, Is.EqualTo(indexTransfers), "no index transfer");
+                        Assert.That(display.CommandUploads, Is.EqualTo(commandUploads), "and no command upload");
+                        Assert.That(display.ShownCount, Is.EqualTo(2), "with the display unchanged");
+                    }
+                    finally
+                    {
+                        VpCutSurfaceColour.Restore(before);
+                    }
+                }
+            }
+        }
     }
 }
