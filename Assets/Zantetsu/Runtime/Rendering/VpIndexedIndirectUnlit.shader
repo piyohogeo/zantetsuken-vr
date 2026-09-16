@@ -5,10 +5,15 @@
 // the global vertex number and addresses _VpVertices directly (checked by the EditMode tests with a range whose index and
 // vertex starts differ). The colour matches "Zantetsu/VP Indirect Unlit". There is no ShadowCaster pass; the batch's
 // shadow call casts shadows with "Zantetsu/VP Indexed Indirect Shadow Caster".
+// An opaque base texture is sampled with the vertex uv0 and multiplied into the colour. It is the one texture this
+// pass has: no normal map, no transparency, no alpha clipping, and no attempt to stand in for an arbitrary URP
+// material. Leaving _BaseMap unset gives Unity's default white texture, so a caller that sets only a colour sees
+// exactly what it saw before this was added.
 Shader "Zantetsu/VP Indexed Indirect Unlit"
 {
     Properties
     {
+        [MainTexture] _BaseMap("Base Map", 2D) = "white" {}
         [MainColor] _BaseColor("Color", Color) = (1, 1, 1, 1)
     }
 
@@ -58,7 +63,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             // Instanced stereo, otherwise 1.
             uint _VpInstanceMultiplier;
 
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+
             CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
                 half4 _BaseColor;
             CBUFFER_END
 
@@ -83,6 +92,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 float4 positionCS : SV_POSITION;
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
+                float2 uv : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -126,6 +136,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, vertex.normal);
                 output.positionWS = positionWS;
+                output.uv = TRANSFORM_TEX(vertex.uv0, _BaseMap);
                 return output;
             }
 
@@ -133,7 +144,8 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             {
                 half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
                 half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
-                return half4(_BaseColor.rgb * (0.5 + 0.5 * facing * shadow), 1.0);
+                half3 base = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
+                return half4(base * (0.5 + 0.5 * facing * shadow), 1.0);
             }
             ENDHLSL
         }
