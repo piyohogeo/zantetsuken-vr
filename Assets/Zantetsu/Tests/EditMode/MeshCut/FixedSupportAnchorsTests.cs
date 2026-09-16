@@ -8,10 +8,9 @@ namespace Zantetsu.MeshCut.Tests
     /// <summary>
     /// The distribution of an owner's fixed support anchors across a cut plane (DESIGN 7.1), on synthetic points only.
     /// Anchors here belong to an owner and to nothing else: no shape, convex or cell appears in this fixture, and
-    /// points outside any plausible body are used on purpose to show that membership is never required. The last few
-    /// tests hand the distribution to the existing <see cref="LogicalCutLedger"/> through a harness, to check where a
-    /// prepared distribution may and may not be applied — that is a harness connection, not the product's own
-    /// publication.
+    /// points outside any plausible body are used on purpose to show that membership is never required. This is the
+    /// distribution on its own; where a prepared distribution may and may not be applied is the ledger's, and
+    /// <c>LogicalCutLedgerTests</c> checks it through the product's own entrances.
     /// </summary>
     public class FixedSupportAnchorsTests
     {
@@ -386,133 +385,6 @@ namespace Zantetsu.MeshCut.Tests
             // fixity from the result is about this distribution; fixity of the owner is about the list
             Assert.That(result.IsPositiveFixed, Is.True);
             Assert.That(FixedSupportAnchors.IsFixed(positive.Count), Is.True, "the owner is fixed by everything its set holds");
-        }
-
-        // ----- harness connection to the existing logical core -------------------------------------------------
-        //
-        // A tiny stand-in for what will later hold an owner's anchors. It is a test fixture, not a product boundary:
-        // the ledger knows nothing about it, and nothing here is added to LogicalCutLedger.
-
-        private sealed class AnchorHarness
-        {
-            private readonly Dictionary<int, List<float3>> _byOwner = new Dictionary<int, List<float3>>();
-
-            public void Set(LogicalFragmentId owner, params float3[] anchors)
-            {
-                _byOwner[owner.value] = new List<float3>(anchors);
-            }
-
-            public List<float3> Of(LogicalFragmentId owner)
-            {
-                return _byOwner.TryGetValue(owner.value, out List<float3> anchors) ? anchors : new List<float3>();
-            }
-
-            public bool Has(LogicalFragmentId owner) => _byOwner.ContainsKey(owner.value);
-
-            /// <summary>Prepares a distribution, unpublished: nobody is given these sets until a cut is published.</summary>
-            public bool Prepare(LogicalFragmentId source, float4 plane, float epsilon, out List<float3> positive, out List<float3> negative)
-            {
-                positive = new List<float3>();
-                negative = new List<float3>();
-                return FixedSupportAnchors.TryDistribute(Of(source), plane, epsilon, positive, negative, out _);
-            }
-
-            /// <summary>Only a published cut's children take the prepared sets.</summary>
-            public void Publish(LogicalFragmentId positiveChild, List<float3> positive, LogicalFragmentId negativeChild, List<float3> negative)
-            {
-                _byOwner[positiveChild.value] = positive;
-                _byOwner[negativeChild.value] = negative;
-            }
-        }
-
-        [Test]
-        public void AHarness_AppliesADistributionOnlyWhenTheCutIsPublished()
-        {
-            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(4));
-            var harness = new AnchorHarness();
-            LogicalFragmentId source = ledger.AddFragment();
-            var high = new float3(0f, 4f, 0f);
-            var onPlane = new float3(1f, 0f, 1f);
-            harness.Set(source, high, onPlane);
-
-            // admission first; only then is a distribution prepared
-            Assert.That(ledger.Admit(source, k_plane, true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
-            Assert.That(harness.Prepare(source, k_plane, 0.01f, out List<float3> positive, out List<float3> negative), Is.True);
-            Assert.That(positive, Is.EquivalentTo(new[] { high, onPlane }), "the on-plane anchor goes to both sides");
-            Assert.That(negative, Is.EquivalentTo(new[] { onPlane }));
-
-            Assert.That(ledger.Publish(cut, out LogicalFragmentId positiveChild, out LogicalFragmentId negativeChild), Is.EqualTo(LogicalCutResultOutcome.Applied));
-            harness.Publish(positiveChild, positive, negativeChild, negative);
-
-            Assert.That(harness.Of(positiveChild), Is.EquivalentTo(new[] { high, onPlane }), "the positive child is fixed");
-            Assert.That(harness.Of(negativeChild), Is.EquivalentTo(new[] { onPlane }), "and so is the negative one");
-            Assert.That(FixedSupportAnchors.IsFixed(harness.Of(positiveChild).Count), Is.True);
-            Assert.That(FixedSupportAnchors.IsFixed(harness.Of(negativeChild).Count), Is.True);
-            Assert.That(harness.Of(source), Is.EquivalentTo(new[] { high, onPlane }), "the source's own set was never modified");
-        }
-
-        [Test]
-        public void ANoOpOrASkippedRequest_LeavesTheAnchorsAsTheyWere()
-        {
-            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(1));
-            var harness = new AnchorHarness();
-            LogicalFragmentId source = ledger.AddFragment();
-            LogicalFragmentId other = ledger.AddFragment();
-            var anchor = new float3(0f, 4f, 0f);
-            harness.Set(source, anchor);
-            harness.Set(other, new float3(0f, -4f, 0f));
-
-            // a one-sided no-op never reaches the distribution
-            Assert.That(ledger.Admit(source, k_plane, false, out _), Is.EqualTo(LogicalCutAdmission.NoOp));
-            Assert.That(harness.Of(source), Is.EqualTo(new List<float3> { anchor }), "a no-op changes no anchor set");
-
-            // nor does a request skipped because the source is already active, or because the budget is full
-            Assert.That(ledger.Admit(source, k_plane, true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
-            Assert.That(ledger.Admit(source, k_plane, true, out _), Is.EqualTo(LogicalCutAdmission.SourceActive));
-            Assert.That(ledger.Admit(other, k_plane, true, out _), Is.EqualTo(LogicalCutAdmission.Full));
-            Assert.That(harness.Of(source), Is.EqualTo(new List<float3> { anchor }), "a skipped request changes nothing either");
-            Assert.That(harness.Of(other), Is.EqualTo(new List<float3> { new float3(0f, -4f, 0f) }));
-
-            // and the admitted one, once published, does change the children only
-            harness.Prepare(source, k_plane, 0.01f, out List<float3> positive, out List<float3> negative);
-            ledger.Publish(cut, out LogicalFragmentId positiveChild, out LogicalFragmentId negativeChild);
-            harness.Publish(positiveChild, positive, negativeChild, negative);
-            Assert.That(harness.Of(positiveChild), Is.EqualTo(new List<float3> { anchor }));
-            Assert.That(harness.Of(negativeChild), Is.Empty, "the negative child inherited nothing and is dynamic");
-            Assert.That(FixedSupportAnchors.IsFixed(harness.Of(negativeChild).Count), Is.False);
-            Assert.That(harness.Of(other), Is.EqualTo(new List<float3> { new float3(0f, -4f, 0f) }), "the other owner is untouched throughout");
-        }
-
-        [Test]
-        public void AnAbortOrAStaleResult_PublishesNoPreparedDistribution()
-        {
-            var ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(4));
-            var harness = new AnchorHarness();
-            LogicalFragmentId aborted = ledger.AddFragment();
-            LogicalFragmentId stale = ledger.AddFragment();
-            var anchor = new float3(0f, 4f, 0f);
-            harness.Set(aborted, anchor);
-            harness.Set(stale, anchor);
-
-            // prepared, then the final fails: nothing is handed to any child
-            Assert.That(ledger.Admit(aborted, k_plane, true, out CutOperationId abortedCut), Is.EqualTo(LogicalCutAdmission.Admitted));
-            Assert.That(harness.Prepare(aborted, k_plane, 0.01f, out List<float3> abortedPositive, out _), Is.True);
-            Assert.That(abortedPositive, Is.EqualTo(new List<float3> { anchor }), "a distribution was prepared");
-            Assert.That(ledger.Abort(abortedCut), Is.EqualTo(LogicalCutResultOutcome.Applied));
-            Assert.That(ledger.TryGetOperation(abortedCut, out LogicalCutOperation abortedOperation), Is.True);
-            Assert.That(abortedOperation.positive.IsSet || abortedOperation.negative.IsSet, Is.False, "there is no child to hand it to");
-            Assert.That(harness.Of(aborted), Is.EqualTo(new List<float3> { anchor }), "and the retired source keeps its own set unchanged");
-
-            // prepared, then the result turns out stale: likewise nothing is published
-            Assert.That(ledger.Admit(stale, k_plane, true, out CutOperationId staleCut), Is.EqualTo(LogicalCutAdmission.Admitted));
-            Assert.That(harness.Prepare(stale, k_plane, 0.01f, out List<float3> stalePositive, out _), Is.True);
-            Assert.That(stalePositive, Is.EqualTo(new List<float3> { anchor }));
-            ledger.NoteOwnershipChanged(stale);
-            Assert.That(ledger.Publish(staleCut, out LogicalFragmentId positiveChild, out LogicalFragmentId negativeChild), Is.EqualTo(LogicalCutResultOutcome.Stale));
-            Assert.That(positiveChild.IsSet || negativeChild.IsSet, Is.False, "no children were published");
-            Assert.That(harness.Has(new LogicalFragmentId(ledger.FragmentCount + 1)), Is.False, "and no set was written for an unpublished id");
-            Assert.That(harness.Of(stale), Is.EqualTo(new List<float3> { anchor }), "the source is still live with its set intact");
-            Assert.That(ledger.IsCurrentTarget(stale), Is.True);
         }
 
         private static int CountOf(List<float3> points, float3 wanted)

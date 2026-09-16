@@ -89,6 +89,37 @@ namespace Zantetsu.MeshCut
         /// duplicate, a late arrival after a terminal state, or a geometry notice for a cut never published.
         /// </summary>
         NotActive,
+
+        /// <summary>
+        /// Not applied and nothing changed: the cut's anchor distribution was never prepared, so there is nothing to
+        /// hand the children. An unprepared distribution is never read as "this owner had no anchors" (DESIGN 7.1) —
+        /// the caller prepares it and publishes again.
+        /// </summary>
+        AnchorsNotPrepared,
+    }
+
+    /// <summary>
+    /// What preparing an admitted cut's anchor distribution decided. Only <see cref="Prepared"/> leaves a
+    /// distribution the publication can hand on; neither of the others changes any anchor set, and neither is a
+    /// reason on its own to retire a source — infeasibility is Abort's to declare and lost authority is found as
+    /// Stale when the result arrives.
+    /// </summary>
+    public enum AnchorPreparationOutcome
+    {
+        /// <summary>
+        /// A distribution is prepared and waiting for publication. Also the answer for an operation that was already
+        /// prepared: the existing distribution stands, unchanged, whatever epsilon the second call passed.
+        /// </summary>
+        Prepared,
+
+        /// <summary>The operation is unknown, or is not admitted — already published, ended, or never issued.</summary>
+        OperationNotActive,
+
+        /// <summary>
+        /// The distribution itself was refused (see the result's own status): the operation stays unprepared and
+        /// nothing else changed.
+        /// </summary>
+        DistributionRefused,
     }
 
     /// <summary>
