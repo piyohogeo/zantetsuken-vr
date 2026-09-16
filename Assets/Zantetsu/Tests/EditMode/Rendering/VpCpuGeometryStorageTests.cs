@@ -173,25 +173,28 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void TheConstructor_SetsTheCapacitiesAndRejectsNegativeOnes()
         {
-            using (var storage = new VpCpuGeometryStorage(100, 200, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 200, 4, 8, Allocator.Persistent))
             {
                 Assert.That(storage.VertexCapacity, Is.EqualTo(100));
                 Assert.That(storage.VertexCount, Is.Zero);
                 Assert.That(storage.Vertices.Length, Is.Zero);
                 Assert.That(storage.IndexCapacity, Is.EqualTo(200));
                 Assert.That(storage.IndexDescriptorCapacity, Is.EqualTo(4));
+                Assert.That(storage.SubmeshCapacity, Is.EqualTo(8));
+                Assert.That(storage.SubmeshCount, Is.Zero);
             }
 
-            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(-1, 200, 4, Allocator.Persistent), "vertices");
-            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(100, -1, 4, Allocator.Persistent), "indices");
-            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(100, 200, -1, Allocator.Persistent), "descriptors");
+            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(-1, 200, 4, 8, Allocator.Persistent), "vertices");
+            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(100, -1, 4, 8, Allocator.Persistent), "indices");
+            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(100, 200, -1, 8, Allocator.Persistent), "descriptors");
+            Assert.Throws<ArgumentOutOfRangeException>(() => new VpCpuGeometryStorage(100, 200, 4, -1, Allocator.Persistent), "submeshes");
         }
 
         [Test]
         public void AppendingOneMesh_StoresItsVerticesAndPublishesItsIndices()
         {
             Mesh cube = BuiltIn("Cube.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 100, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 100, 4, 8, Allocator.Persistent))
             {
                 VpStoredGeometry geometry = Append(storage, cube);
 
@@ -208,7 +211,7 @@ namespace Zantetsu.Rendering.Tests
         {
             Mesh quad = BuiltIn("Quad.fbx");
             Mesh cube = BuiltIn("Cube.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 100, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 100, 4, 8, Allocator.Persistent))
             {
                 VpStoredGeometry first = Append(storage, quad);
                 VpStoredGeometry second = Append(storage, cube);
@@ -228,7 +231,7 @@ namespace Zantetsu.Rendering.Tests
         {
             Mesh quad = BuiltIn("Quad.fbx");
             Mesh mesh = TwoSubMeshMesh();
-            using (var storage = new VpCpuGeometryStorage(100, 100, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 100, 4, 8, Allocator.Persistent))
             {
                 Append(storage, quad);
 
@@ -244,7 +247,7 @@ namespace Zantetsu.Rendering.Tests
         public void RetiredIndexSpace_IsReusedWhileVerticesKeepAppending()
         {
             Mesh quad = BuiltIn("Quad.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, 8, Allocator.Persistent))
             {
                 VpStoredGeometry first = Append(storage, quad);
                 VpStoredGeometry second = Append(storage, quad);
@@ -271,7 +274,7 @@ namespace Zantetsu.Rendering.Tests
             // rejected mesh's index range and descriptor were both returned.
             Mesh quad = BuiltIn("Quad.fbx");
             Mesh rejected = RejectedAfterReserving(kind);
-            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, 8, Allocator.Persistent))
             {
                 Append(storage, quad);
 
@@ -287,7 +290,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void TooFewFreeVertices_RejectTheMeshWithoutChangingAnything()
         {
-            using (var storage = new VpCpuGeometryStorage(CubeVertices + QuadVertices - 1, 100, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(CubeVertices + QuadVertices - 1, 100, 4, 8, Allocator.Persistent))
             {
                 Append(storage, BuiltIn("Cube.fbx"));
 
@@ -302,7 +305,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void TooFewFreeIndices_RejectTheMeshWithoutChangingAnything()
         {
-            using (var storage = new VpCpuGeometryStorage(100, CubeIndices + QuadIndices - 1, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, CubeIndices + QuadIndices - 1, 4, 8, Allocator.Persistent))
             {
                 Append(storage, BuiltIn("Cube.fbx"));
 
@@ -318,7 +321,7 @@ namespace Zantetsu.Rendering.Tests
         public void TooFewDescriptors_RejectTheMeshWithoutChangingAnything()
         {
             Mesh quad = BuiltIn("Quad.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 100, 1, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 100, 1, 8, Allocator.Persistent))
             {
                 VpStoredGeometry cube = Append(storage, BuiltIn("Cube.fbx"));
 
@@ -335,7 +338,7 @@ namespace Zantetsu.Rendering.Tests
         public void ANullMesh_IsRejectedWithoutChangingAnything()
         {
             Mesh quad = BuiltIn("Quad.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 2 * QuadIndices, 2, 8, Allocator.Persistent))
             {
                 Append(storage, quad);
 
@@ -371,7 +374,7 @@ namespace Zantetsu.Rendering.Tests
         public void AHeldIndexLease_KeepsReadingWhileTheRangeRetires()
         {
             Mesh quad = BuiltIn("Quad.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, 100, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, 100, 2, 8, Allocator.Persistent))
             {
                 VpStoredGeometry geometry = Append(storage, quad);
                 uint[] expected = Rebased(quad.triangles, 0);
@@ -396,7 +399,7 @@ namespace Zantetsu.Rendering.Tests
         {
             // One descriptor and one quad's indices, so the second quad reuses the descriptor, lease slot and index space.
             Mesh quad = BuiltIn("Quad.fbx");
-            using (var storage = new VpCpuGeometryStorage(100, QuadIndices, 1, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(100, QuadIndices, 1, 8, Allocator.Persistent))
             {
                 VpStoredGeometry old = Append(storage, quad);
                 Assert.That(storage.TryAcquireIndexReadLease(old.indexRange, out VpIndexReadLease oldLease, out _), Is.True);
@@ -420,7 +423,7 @@ namespace Zantetsu.Rendering.Tests
         public void AfterDispose_OperationsThrowAndDisposingAgainDoesNothing()
         {
             Mesh quad = BuiltIn("Quad.fbx");
-            var storage = new VpCpuGeometryStorage(100, 100, 2, Allocator.Persistent);
+            var storage = new VpCpuGeometryStorage(100, 100, 2, 8, Allocator.Persistent);
             VpStoredGeometry geometry = Append(storage, quad);
             Assert.That(storage.TryAcquireIndexReadLease(geometry.indexRange, out VpIndexReadLease lease, out _), Is.True);
 

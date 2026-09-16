@@ -103,16 +103,15 @@ namespace Zantetsu.Rendering
         public int LiveDisplayInstanceCount { get; private set; }
 
         /// <summary>
-        /// Registers a stored geometry of the storage. Returns false with a default token when its vertices are not
-        /// committed in the storage, its index range is not Published there or is already registered in this table, or no
-        /// usable geometry slot is free.
+        /// Registers a stored geometry of the storage. Returns false with a default token when the storage does not own
+        /// a consistent geometry of that description — its vertices or submesh descriptors are not committed there, or a
+        /// geometry without a topology mapping claims topology vertices — when its index range is not Published there or
+        /// is already registered in this table, or when no usable geometry slot is free.
         /// </summary>
         public bool TryRegisterGeometry(VpStoredGeometry geometry, out VpGeometryReference reference)
         {
             reference = default;
-            if (geometry.vertexStart < 0
-                || geometry.vertexCount < 0
-                || (long)geometry.vertexStart + geometry.vertexCount > _storage.VertexCount
+            if (!_storage.IsGeometryConsistent(geometry)
                 || !_storage.TryGetIndexState(geometry.indexRange, out VpIndexRangeState state, out _, out _)
                 || state != VpIndexRangeState.Published
                 || IsRegistered(geometry.indexRange))

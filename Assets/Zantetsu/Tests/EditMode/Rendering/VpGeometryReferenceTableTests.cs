@@ -107,7 +107,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void TheConstructor_SetsTheCapacitiesAndRejectsInvalidArguments()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 3, 5);
                 Assert.That(table.GeometryCapacity, Is.EqualTo(3));
@@ -124,8 +124,8 @@ namespace Zantetsu.Rendering.Tests
         public void AStorage_TakesOnlyOneReferenceTable()
         {
             Mesh quad = Quad();
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
-            using (var otherStorage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
+            using (var otherStorage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 // Invalid constructions are rejected before the storage is claimed.
                 Assert.Throws<ArgumentOutOfRangeException>(() => new VpGeometryReferenceTable(storage, -1, 1), "negative geometry capacity");
@@ -155,7 +155,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void ASharedGeometry_OutlivesItsInstancesUntilRetiredExplicitlyOnce()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 2, 4);
                 VpStoredGeometry stored = Append(storage, Quad());
@@ -203,7 +203,7 @@ namespace Zantetsu.Rendering.Tests
         {
             // Room for one quad's indices only, so the next geometry fits only in the retired geometry's space.
             Mesh quad = Quad();
-            using (var storage = new VpCpuGeometryStorage(16, QuadIndices, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, QuadIndices, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 2);
                 VpStoredGeometry oldStored = Append(storage, quad);
@@ -241,8 +241,8 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void RegistrationOfTheSameOrAnUnpublishedIndexRange_IsRejected()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 32, 4, Allocator.Persistent))
-            using (var other = new VpCpuGeometryStorage(16, 32, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 32, 4, 8, Allocator.Persistent))
+            using (var other = new VpCpuGeometryStorage(16, 32, 4, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 4, 4);
                 VpStoredGeometry stored = Append(storage, Quad());
@@ -258,8 +258,10 @@ namespace Zantetsu.Rendering.Tests
                              (default(VpStoredGeometry), "default"),
                              (foreign, "another storage's geometry"),
                              (retired, "a retired index range"),
-                             (new VpStoredGeometry(storage.VertexCount - 1, 2, unregistered.indexRange), "uncommitted vertices"),
-                             (new VpStoredGeometry(-1, QuadVertices, unregistered.indexRange), "negative vertex start"),
+                             (new VpStoredGeometry(storage.VertexCount - 1, 2, unregistered.indexRange, false, 0, 0, 0), "uncommitted vertices"),
+                             (new VpStoredGeometry(-1, QuadVertices, unregistered.indexRange, false, 0, 0, 0), "negative vertex start"),
+                             (new VpStoredGeometry(unregistered.vertexStart, unregistered.vertexCount, unregistered.indexRange, false, 0, 0, storage.SubmeshCount + 1), "submeshes beyond the committed ones"),
+                             (new VpStoredGeometry(unregistered.vertexStart, unregistered.vertexCount, unregistered.indexRange, false, 1, unregistered.submeshStart, unregistered.submeshCount), "topology vertices without a mapping"),
                          })
                 {
                     Assert.That(table.TryRegisterGeometry(candidate, out VpGeometryReference rejected), Is.False, label);
@@ -275,7 +277,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void AnIndexRangeRetiredOutsideTheTable_LeavesTheGeometryLiveAndItsRetirementRefused()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 1);
                 VpStoredGeometry stored = Append(storage, Quad());
@@ -292,7 +294,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void FullTables_RejectGeometriesAndInstancesWithoutChangingAnything()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 4, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 2);
                 VpStoredGeometry stored = Append(storage, Quad());
@@ -316,8 +318,8 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void DefaultAndForeignTokens_AreRejectedWithoutChangingAnything()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
-            using (var otherStorage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
+            using (var otherStorage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 1);
                 var other = new VpGeometryReferenceTable(otherStorage, 1, 1);
@@ -350,7 +352,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void ReusedSlots_RejectTheTokensOfTheirEarlierUses()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 4, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 1);
                 VpStoredGeometry oldStored = Append(storage, Quad());
@@ -379,7 +381,7 @@ namespace Zantetsu.Rendering.Tests
         public void SlotsAtTheLastGeneration_AreNotUsedAgainAndTheirTokensStayRejected()
         {
             // One generation per slot: each slot is used up after its first use.
-            using (var storage = new VpCpuGeometryStorage(16, 16, 4, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 4, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 1, 1);
                 VpGeometryReference geometry = Register(table, Append(storage, Quad()));
@@ -399,7 +401,7 @@ namespace Zantetsu.Rendering.Tests
         [Test]
         public void AGeometryWithAnEmptyIndexRange_GoesThroughTheSameLifetime()
         {
-            using (var storage = new VpCpuGeometryStorage(16, 16, 2, Allocator.Persistent))
+            using (var storage = new VpCpuGeometryStorage(16, 16, 2, 8, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 1, 2);
                 VpStoredGeometry stored = Append(storage, EmptyTriangles());
