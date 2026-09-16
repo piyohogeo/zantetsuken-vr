@@ -130,7 +130,7 @@ namespace Zantetsu.MeshCut.Tests
 
         private static VpCpuGeometryStorage NewStorage(int indexCapacity = 256, int descriptorCapacity = 4)
         {
-            return new VpCpuGeometryStorage(256, indexCapacity, descriptorCapacity, 16, Allocator.Persistent);
+            return new VpCpuGeometryStorage(256, indexCapacity, descriptorCapacity, 16, 16, Allocator.Persistent);
         }
 
         private static VpStoredGeometry Append(VpCpuGeometryStorage storage, Prepared prepared)

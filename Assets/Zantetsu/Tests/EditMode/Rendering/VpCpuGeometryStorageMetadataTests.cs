@@ -62,7 +62,7 @@ namespace Zantetsu.Rendering.Tests
 
         private static VpCpuGeometryStorage NewStorage(int vertexCapacity = 64, int indexCapacity = 64, int descriptorCapacity = 4, int submeshCapacity = 8)
         {
-            return new VpCpuGeometryStorage(vertexCapacity, indexCapacity, descriptorCapacity, submeshCapacity, Allocator.Persistent);
+            return new VpCpuGeometryStorage(vertexCapacity, indexCapacity, descriptorCapacity, submeshCapacity, 16, Allocator.Persistent);
         }
 
         private static VpStoredGeometry AppendPrepared(VpCpuGeometryStorage storage)
@@ -390,7 +390,7 @@ namespace Zantetsu.Rendering.Tests
                 VpStoredGeometry b = AppendPrepared(storage);
                 var table = new VpGeometryReferenceTable(storage, 4, 4);
 
-                var mixed = new VpStoredGeometry(b.vertexStart, b.vertexCount, a.indexRange, b.hasTopology, b.topologyVertexCount, b.submeshStart, b.submeshCount);
+                var mixed = new VpStoredGeometry(b.vertexStart, b.vertexCount, a.indexRange, b.hasTopology, b.topologyVertexCount, b.submeshStart, b.submeshCount, b.blockStart, b.blockCount);
 
                 AssertNoMetadata(storage, mixed, "A's index handle with B's ranges");
                 Assert.That(table.TryRegisterGeometry(mixed, out VpGeometryReference reference), Is.False, "registration");
@@ -406,6 +406,8 @@ namespace Zantetsu.Rendering.Tests
         [TestCase("submesh count")]
         [TestCase("topology dropped")]
         [TestCase("topology count")]
+        [TestCase("block start")]
+        [TestCase("block count")]
         public void ADescriptionAlteredWithinTheStorage_IsRefused(string kind)
         {
             using (VpCpuGeometryStorage storage = NewStorage())
@@ -419,22 +421,28 @@ namespace Zantetsu.Rendering.Tests
                 switch (kind)
                 {
                     case "vertex start":
-                        altered = new VpStoredGeometry(b.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount);
+                        altered = new VpStoredGeometry(b.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount, a.blockStart, a.blockCount);
                         break;
                     case "vertex count":
-                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount - 1, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount);
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount - 1, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount, a.blockStart, a.blockCount);
                         break;
                     case "submesh start":
-                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, b.submeshStart, a.submeshCount);
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, b.submeshStart, a.submeshCount, a.blockStart, a.blockCount);
                         break;
                     case "submesh count":
-                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount - 1);
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount - 1, a.blockStart, a.blockCount);
                         break;
                     case "topology dropped":
-                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, false, 0, a.submeshStart, a.submeshCount);
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, false, 0, a.submeshStart, a.submeshCount, a.blockStart, a.blockCount);
+                        break;
+                    case "topology count":
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount - 1, a.submeshStart, a.submeshCount, a.blockStart, a.blockCount);
+                        break;
+                    case "block start":
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount, b.blockStart, a.blockCount);
                         break;
                     default:
-                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount - 1, a.submeshStart, a.submeshCount);
+                        altered = new VpStoredGeometry(a.vertexStart, a.vertexCount, a.indexRange, a.hasTopology, a.topologyVertexCount, a.submeshStart, a.submeshCount, a.blockStart, a.blockCount + 1);
                         break;
                 }
 
@@ -457,7 +465,7 @@ namespace Zantetsu.Rendering.Tests
                 VpStoredGeometry current = AppendPrepared(storage);
 
                 AssertNoMetadata(storage, old, "the earlier registration");
-                var oldRangesNewHandle = new VpStoredGeometry(old.vertexStart, old.vertexCount, current.indexRange, old.hasTopology, old.topologyVertexCount, old.submeshStart, old.submeshCount);
+                var oldRangesNewHandle = new VpStoredGeometry(old.vertexStart, old.vertexCount, current.indexRange, old.hasTopology, old.topologyVertexCount, old.submeshStart, old.submeshCount, old.blockStart, old.blockCount);
                 AssertNoMetadata(storage, oldRangesNewHandle, "the new handle with the earlier ranges");
                 Assert.That(Topology(storage, current), Is.EqualTo(PreparedTopology()), "the current append reads");
                 Assert.That(SubmeshesOf(storage, current), Is.EqualTo(PreparedSubmeshes()), "and its submeshes read");

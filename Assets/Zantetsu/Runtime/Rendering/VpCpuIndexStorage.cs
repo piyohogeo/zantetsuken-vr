@@ -79,6 +79,18 @@ namespace Zantetsu.Rendering
             return _allocator.TryPublish(handle, publishedCount);
         }
 
+        /// <inheritdoc cref="VpIndexRangeAllocator.TryPublishSplit"/>
+        public bool TryPublishSplit(
+            VpIndexRangeHandle handle,
+            int firstCount,
+            int secondCount,
+            out VpIndexRangeHandle first,
+            out VpIndexRangeHandle second)
+        {
+            ThrowIfDisposed();
+            return _allocator.TryPublishSplit(handle, firstCount, secondCount, out first, out second);
+        }
+
         /// <summary>Reserved → Free; the space is reusable at once and write views of it must no longer be used.</summary>
         public bool TryCancelReservation(VpIndexRangeHandle handle)
         {

@@ -12,13 +12,14 @@ namespace Zantetsu.MeshCut
     /// held. Acquiring takes the read lease on the geometry's published index range; disposing returns it exactly once.
     /// <para>
     /// The two index numberings stay apart. The values inside the index view are global vertex numbers into the
-    /// storage's committed vertices, so the vertex view is the whole committed array and a topology range's
-    /// <see cref="RenderTopologyRange.vertexBase"/> is the geometry's vertex start. A
-    /// <see cref="MeshCutIndexRange.indexStart"/>, by contrast, is a position inside the index view handed to the
-    /// kernel, which is exactly the leased range: a submesh therefore starts at its own
-    /// <see cref="VpGeometrySubmesh.indexOffset"/>, and the physical position of the range inside the storage's index
-    /// buffer is never added to it. The submesh order is kept, so the kernel's output ranges line up with the source
-    /// material mapping one for one; the material index itself is not part of the kernel's input.
+    /// storage's committed vertices, so the vertex view is the whole committed array and the topology map is one range
+    /// per vertex block of the geometry — for a geometry a cut produced, its parent's blocks and the block the cut
+    /// appended, each at its own <see cref="RenderTopologyRange.vertexBase"/>, so a child can be cut again without any
+    /// vertex or mapping entry being copied. A <see cref="MeshCutIndexRange.indexStart"/>, by contrast, is a position
+    /// inside the index view handed to the kernel, which is exactly the leased range: a submesh therefore starts at its
+    /// own <see cref="VpGeometrySubmesh.indexOffset"/>, and the physical position of the range inside the storage's
+    /// index buffer is never added to it. The submesh order is kept, so the kernel's output ranges line up with the
+    /// source material mapping one for one; the material index itself is not part of the kernel's input.
     /// </para>
     /// <para>
     /// The kernel's result is read in those same two numberings. When a side reports reusesInput, the geometry was
@@ -39,7 +40,7 @@ namespace Zantetsu.MeshCut
         private readonly VpStoredGeometry _geometry;
         private readonly VpIndexReadLease _lease;
         private readonly NativeArray<uint>.ReadOnly _indices;
-        private readonly NativeArray<int>.ReadOnly _topologyOfVertex;
+        private readonly NativeArray<VpGeometryVertexBlock>.ReadOnly _blocks;
         private readonly int _topologyVertexCount;
         private NativeArray<MeshCutIndexRange> _ranges;
         private NativeArray<RenderTopologyRange> _topologyRanges;
@@ -50,7 +51,7 @@ namespace Zantetsu.MeshCut
             VpStoredGeometry geometry,
             VpIndexReadLease lease,
             NativeArray<uint>.ReadOnly indices,
-            NativeArray<int>.ReadOnly topologyOfVertex,
+            NativeArray<VpGeometryVertexBlock>.ReadOnly blocks,
             int topologyVertexCount,
             NativeArray<MeshCutIndexRange> ranges,
             NativeArray<RenderTopologyRange> topologyRanges)
@@ -59,7 +60,7 @@ namespace Zantetsu.MeshCut
             _geometry = geometry;
             _lease = lease;
             _indices = indices;
-            _topologyOfVertex = topologyOfVertex;
+            _blocks = blocks;
             _topologyVertexCount = topologyVertexCount;
             _ranges = ranges;
             _topologyRanges = topologyRanges;
@@ -71,23 +72,29 @@ namespace Zantetsu.MeshCut
         /// <summary>One kernel range per submesh of the geometry, in the geometry's submesh order.</summary>
         public int RangeCount => _ranges.IsCreated ? _ranges.Length : 0;
 
+        /// <summary>The number of vertex blocks the topology map is made of: the geometry's own and every inherited one.</summary>
+        public int TopologyRangeCount => _topologyRanges.IsCreated ? _topologyRanges.Length : 0;
+
         /// <summary>The length of the leased index view the ranges address.</summary>
         public int IndexViewLength => _indices.Length;
+
+        /// <summary>The topology vertex id space of the geometry; ids a cut creates start here.</summary>
+        public int TopologyVertexCount => _topologyVertexCount;
 
         public bool IsDisposed => _disposed;
 
         /// <summary>
-        /// Takes the geometry's index read lease and prepares its kernel ranges, one per submesh in submesh order.
-        /// Returns false with a null adapter, holding no lease and having allocated nothing, when the storage is null,
-        /// the geometry is not one the storage owns (default, foreign, stale, or a description that does not match its
-        /// own append), it was appended without a topology mapping, it has no submesh or no index, or its index range is
-        /// not Published — which covers a range that is Retiring or Free.
+        /// Takes the geometry's index read lease and prepares its kernel ranges, one per submesh in submesh order, and
+        /// its topology ranges, one per vertex block. Returns false with a null adapter, holding no lease and having
+        /// allocated nothing, when the storage is null, the geometry is not one the storage owns (default, foreign,
+        /// stale, or a description that does not match its own append), it has no topology mapping, it has no submesh
+        /// or no index, or its index range is not Published — which covers a range that is Retiring or Free.
         /// </summary>
         public static bool TryAcquire(VpCpuGeometryStorage storage, VpStoredGeometry geometry, out VpStorageCutInput input)
         {
             input = null;
             if (storage == null
-                || !storage.TryGetTopology(geometry, out NativeArray<int>.ReadOnly topologyOfVertex, out int topologyVertexCount)
+                || !storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out int topologyVertexCount)
                 || !storage.TryGetSubmeshes(geometry, out NativeArray<VpGeometrySubmesh>.ReadOnly submeshes)
                 || !storage.TryGetIndexState(geometry.indexRange, out _, out _, out int publishedIndexCount))
             {
@@ -96,7 +103,7 @@ namespace Zantetsu.MeshCut
 
             // Nothing here invents a range: one kernel range per submesh, so a geometry with no submesh or no index is
             // refused rather than given a range of its own. Refused before the lease, so none is taken.
-            if (submeshes.Length == 0 || publishedIndexCount == 0)
+            if (submeshes.Length == 0 || publishedIndexCount == 0 || blocks.Length == 0)
             {
                 return false;
             }
@@ -112,7 +119,7 @@ namespace Zantetsu.MeshCut
             try
             {
                 ranges = new NativeArray<MeshCutIndexRange>(submeshes.Length, Allocator.Persistent);
-                topologyRanges = new NativeArray<RenderTopologyRange>(1, Allocator.Persistent);
+                topologyRanges = new NativeArray<RenderTopologyRange>(blocks.Length, Allocator.Persistent);
                 for (int s = 0; s < submeshes.Length; s++)
                 {
                     VpGeometrySubmesh submesh = submeshes[s];
@@ -121,7 +128,7 @@ namespace Zantetsu.MeshCut
                 }
 
                 // Last: once this returns, the adapter owns the lease and both arrays.
-                input = new VpStorageCutInput(storage, geometry, lease, indices, topologyOfVertex, topologyVertexCount, ranges, topologyRanges);
+                input = new VpStorageCutInput(storage, geometry, lease, indices, blocks, topologyVertexCount, ranges, topologyRanges);
                 return true;
             }
             catch
@@ -156,14 +163,20 @@ namespace Zantetsu.MeshCut
             }
 
             NativeArray<VpRenderVertex>.ReadOnly vertices = _storage.Vertices;
+            NativeArray<int>.ReadOnly topologyOfVertex = _storage.TopologyOfVertex;
+            int* topologyBase = (int*)topologyOfVertex.GetUnsafeReadOnlyPtr();
             MeshCutIndexRange* ranges = (MeshCutIndexRange*)_ranges.GetUnsafePtr();
             RenderTopologyRange* topologyRanges = (RenderTopologyRange*)_topologyRanges.GetUnsafePtr();
-            topologyRanges[0] = new RenderTopologyRange
+            for (int b = 0; b < _blocks.Length; b++)
             {
-                vertexBase = (uint)_geometry.vertexStart,
-                count = _geometry.vertexCount,
-                topologyVertex = (int*)_topologyOfVertex.GetUnsafeReadOnlyPtr(),
-            };
+                VpGeometryVertexBlock block = _blocks[b];
+                topologyRanges[b] = new RenderTopologyRange
+                {
+                    vertexBase = (uint)block.vertexStart,
+                    count = block.vertexCount,
+                    topologyVertex = topologyBase + block.vertexStart,
+                };
+            }
 
             input = new MeshCutInput
             {
@@ -176,7 +189,7 @@ namespace Zantetsu.MeshCut
                 topology = new RenderCutTopologyMap
                 {
                     ranges = topologyRanges,
-                    rangeCount = 1,
+                    rangeCount = _topologyRanges.Length,
                     topologyVertexCount = _topologyVertexCount,
                 },
                 plane = plane,

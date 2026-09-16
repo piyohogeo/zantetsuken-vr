@@ -48,7 +48,7 @@ namespace Zantetsu.MeshCut.Tests
 
         private static VpCpuGeometryStorage NewStorage()
         {
-            return new VpCpuGeometryStorage(64, 64, 4, 8, Allocator.Persistent);
+            return new VpCpuGeometryStorage(64, 64, 4, 8, 16, Allocator.Persistent);
         }
 
         [Test]

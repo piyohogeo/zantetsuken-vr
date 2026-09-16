@@ -120,6 +120,71 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        /// <summary>
+        /// Reserved → Published as the two ranges of one reservation: its first <paramref name="firstCount"/> indices
+        /// and the <paramref name="secondCount"/> that follow them, for a cut that wrote both sides into one run
+        /// (DESIGN 4.5.6). The unused tail is freed at once, and each published part is an ordinary range with its own
+        /// descriptor, lease counter and retirement. A part with no index gets neither range nor descriptor, so an
+        /// empty side is not given an owner; the handle passed in carries the first non-empty part. The second part's
+        /// descriptor is registered before anything is published, so either both parts are published or nothing is and
+        /// the reservation is left Reserved for the caller to cancel. Fails, changing nothing, when the handle's range
+        /// is not Reserved, a count is negative, or the two together exceed the reservation. When both counts are 0 the
+        /// reservation is simply cancelled and both handles come back default.
+        /// </summary>
+        public bool TryPublishSplit(
+            VpIndexRangeHandle handle,
+            int firstCount,
+            int secondCount,
+            out VpIndexRangeHandle first,
+            out VpIndexRangeHandle second)
+        {
+            first = default;
+            second = default;
+            if (!_table.TryGetState(handle, out VpIndexRangeState state, out int indexStart, out int indexCount)
+                || state != VpIndexRangeState.Reserved
+                || firstCount < 0
+                || secondCount < 0
+                || (long)firstCount + secondCount > indexCount)
+            {
+                return false;
+            }
+
+            if (firstCount == 0 && secondCount == 0)
+            {
+                return TryCancelReservation(handle);
+            }
+
+            // The one step that can fail comes before every publish: once past it, both parts are published.
+            bool bothUsed = firstCount > 0 && secondCount > 0;
+            if (bothUsed && !_table.TryReserve(indexStart + firstCount, secondCount, out second))
+            {
+                return false;
+            }
+
+            if (bothUsed)
+            {
+                _table.TryPublish(handle, firstCount);
+                _table.TryPublish(second);
+                first = handle;
+            }
+            else
+            {
+                // One side only: it owns the used prefix through the descriptor already registered.
+                _table.TryPublish(handle, firstCount + secondCount);
+                if (firstCount > 0)
+                {
+                    first = handle;
+                }
+                else
+                {
+                    second = handle;
+                }
+            }
+
+            AddFreeRange(indexStart + firstCount + secondCount, indexCount - firstCount - secondCount);
+            return true;
+        }
+
         /// <summary>Reserved → Free; the space is reusable at once.</summary>
         public bool TryCancelReservation(VpIndexRangeHandle handle)
         {
