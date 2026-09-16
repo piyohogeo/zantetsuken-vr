@@ -150,10 +150,16 @@ namespace Zantetsu.MeshCut
         // frame a test means is the frame both BeginFrame and Render see.
         private readonly Func<int> _frameSource;
 
-        // Room for the parent and for both sides, taken once: neither the first upload nor the swap has to grow it.
-        private readonly List<Shown> _shown = new List<Shown>(2);
+        // What is shown, and the list the next arrangement is built in. Room for both is taken before a cut begins and
+        // never during the swap, which is a reference exchange: once the children are on the GPU, nothing can fail.
+        private List<Shown> _shown = new List<Shown>(4);
+        private List<Shown> _spare = new List<Shown>(4);
 
         private bool _pendingCut;
+
+        // The geometry the held request is for, kept as the geometry itself. A position in the shown list would mean
+        // something else by the time the request is applied; this cannot come to mean a different geometry.
+        private VpStoredGeometry _pendingTarget;
         private float4 _pendingPlane;
         private VpStorageCutOptions _pendingOptions;
         private bool _instancesOutstanding;
@@ -390,21 +396,77 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
-            if (_pendingCut || _shown.Count != 1)
+            if (_shown.Count != 1)
             {
                 return false;
             }
 
-            _pendingCut = true;
-            _pendingPlane = plane;
-            _pendingOptions = options;
-            return true;
+            return TryRequestCut(_shown[0].geometry, plane, options);
         }
 
         /// <summary>The request with the cut's default options.</summary>
         public bool TryRequestCut(float4 plane)
         {
             return TryRequestCut(plane, default);
+        }
+
+        /// <summary>
+        /// Holds a cut of <paramref name="target"/>, which must be one of the geometries on screen now. The target is
+        /// remembered as the geometry it is, so the request cannot come to mean a different one: when the frame opens,
+        /// the display looks for that same geometry among what it shows, and refuses the cut if it is no longer there.
+        /// Everything else on screen is left alone by the cut that follows.
+        /// <para>
+        /// <paramref name="plane"/> is in the target's own coordinates — the space the stored vertices are in — not in
+        /// world space, and the display's transform is not applied to it. One request is held at a time.
+        /// </para>
+        /// Returns false when a request is already waiting, or when the target is not one of the shown geometries.
+        /// </summary>
+        public bool TryRequestCut(VpStoredGeometry target, float4 plane, in VpStorageCutOptions options)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (_pendingCut || IndexOfShown(target) < 0)
+            {
+                return false;
+            }
+
+            _pendingCut = true;
+            _pendingTarget = target;
+            _pendingPlane = plane;
+            _pendingOptions = options;
+            return true;
+        }
+
+        /// <summary>The targeted request with the cut's default options.</summary>
+        public bool TryRequestCut(VpStoredGeometry target, float4 plane)
+        {
+            return TryRequestCut(target, plane, default);
+        }
+
+        /// <summary>The geometry the held request is for; false with a default when nothing is waiting.</summary>
+        public bool TryGetPendingTarget(out VpStoredGeometry target)
+        {
+            ThrowIfDisposed();
+            target = _pendingCut ? _pendingTarget : default;
+            return _pendingCut;
+        }
+
+        /// <summary>
+        /// Where <paramref name="geometry"/> is among the shown geometries, or -1. Identity is the published index
+        /// range: the storage hands out one registration per range, so two shown geometries never share one.
+        /// </summary>
+        public int IndexOfShown(VpStoredGeometry geometry)
+        {
+            ThrowIfDisposed();
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (_shown[i].geometry.indexRange.Equals(geometry.indexRange))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>
@@ -515,6 +577,10 @@ namespace Zantetsu.MeshCut
             }
 
             _shown.Clear();
+
+            // The other list holds nothing of its own - an arrangement that was taken up is in _shown now, and one that
+            // was abandoned was reclaimed - but it is emptied so that nothing is held on to after this.
+            _spare.Clear();
             _batch.Dispose();
             _buffers.Dispose();
         }
@@ -530,7 +596,8 @@ namespace Zantetsu.MeshCut
             if (_pendingCut)
             {
                 _pendingCut = false;
-                VpIndirectCutResult result = ApplyCut(_pendingPlane, _pendingOptions);
+                VpIndirectCutResult result = ApplyCut(_pendingTarget, _pendingPlane, _pendingOptions);
+                _pendingTarget = default;
                 LastCutResult = result;
 
                 // The swap is the only outcome that rewrote the commands, and it wrote them from the transforms as they
@@ -549,20 +616,29 @@ namespace Zantetsu.MeshCut
             }
         }
 
-        private VpIndirectCutResult ApplyCut(float4 plane, VpStorageCutOptions options)
+        private VpIndirectCutResult ApplyCut(VpStoredGeometry target, float4 plane, VpStorageCutOptions options)
         {
-            Shown parent = _shown[0];
+            // The target is looked for by its own identity, not by where it sat when the request was made: whatever has
+            // happened since, this cut is either of that geometry or of nothing.
+            int targetIndex = IndexOfShown(target);
+            if (targetIndex < 0)
+            {
+                return new VpIndirectCutResult(VpIndirectCutOutcome.CutRefused, default, _shown.Count, 0, 0, 0, 0, 0);
+            }
+
+            Shown subject = _shown[targetIndex];
             var cut = default(VpStorageCutResult);
 
-            // The room to hold both sides, the children made from them and the list they are drawn from is taken here:
-            // before the lease, before the cut, while no side exists yet. From the moment the cut publishes one, every
-            // path out of this call has to be able to give it back, and a path with an allocation still ahead of it is
-            // not one. After the cut these are only written into.
+            // The room to hold both sides, the children made from them, and the arrangement that would replace what is
+            // shown, is taken here: before the lease, before the cut, while no side exists yet. From the moment the cut
+            // publishes one, every path out of this call has to be able to give it back, and a path with an allocation
+            // still ahead of it is not one. After the cut these are only written into.
             var sides = new VpStorageCutSide[2];
             var prepared = new Shown[2];
-            var candidates = new List<Shown>(2);
+            EnsureRoom(_shown.Count + 1);
+            _spare.Clear();
 
-            if (!VpStorageCutInput.TryAcquire(_storage, parent.geometry, out VpStorageCutInput input))
+            if (!VpStorageCutInput.TryAcquire(_storage, subject.geometry, out VpStorageCutInput input))
             {
                 return new VpIndirectCutResult(VpIndirectCutOutcome.CutRefused, cut, _shown.Count, 0, 0, 0, 0, 0);
             }
@@ -597,18 +673,30 @@ namespace Zantetsu.MeshCut
             bool touchedGpu = false;
             try
             {
-                if (!TryPrepareSides(sides, parent.objectToWorld, prepared))
+                if (!TryPrepareSides(sides, subject, prepared))
                 {
+                    _spare.Clear();
                     Reclaim(sides, prepared);
                     return new VpIndirectCutResult(
                         VpIndirectCutOutcome.DisplayPreparationFailed, cut, _shown.Count, appended, 0, 0, 0, 0);
                 }
 
-                foreach (Shown child in prepared)
+                // The arrangement that would replace what is shown: every other geometry exactly as it is, in its own
+                // order, with the target's place taken by the sides it became. Built in the room reserved above.
+                for (int i = 0; i < _shown.Count; i++)
                 {
-                    if (child != null)
+                    if (i != targetIndex)
                     {
-                        candidates.Add(child);
+                        _spare.Add(_shown[i]);
+                        continue;
+                    }
+
+                    foreach (Shown child in prepared)
+                    {
+                        if (child != null)
+                        {
+                            _spare.Add(child);
+                        }
                     }
                 }
 
@@ -620,6 +708,7 @@ namespace Zantetsu.MeshCut
                     if (!VpStoredGeometryTransfer.TryUploadCommittedVertices(
                             _storage, _buffers.VertexBuffer, verticesBefore, appended, out transferredVertices))
                     {
+                        _spare.Clear();
                         Reclaim(sides, prepared);
                         return new VpIndirectCutResult(
                             VpIndirectCutOutcome.DisplayPreparationFailed, cut, _shown.Count, appended, 0, 0, 0, 0);
@@ -629,7 +718,8 @@ namespace Zantetsu.MeshCut
                     VertexTransfers++;
                 }
 
-                // One transfer for both sides: they are one contiguous run in the storage and go across as one.
+                // One transfer for both sides: they are one contiguous run in the storage and go across as one. What
+                // the other geometries already have in the buffers is not written again.
                 touchedGpu = true;
                 if (!VpStoredGeometryTransfer.TryUploadPublishedIndexRun(
                         _storage,
@@ -638,6 +728,7 @@ namespace Zantetsu.MeshCut
                         cut.negative.geometry.indexRange,
                         out transferredIndices))
                 {
+                    _spare.Clear();
                     Reclaim(sides, prepared);
                     return new VpIndirectCutResult(
                         VpIndirectCutOutcome.DisplayPreparationFailed, cut, _shown.Count, appended, vertexTransfers, 0, transferredVertices, 0);
@@ -646,26 +737,26 @@ namespace Zantetsu.MeshCut
                 indexTransfers = 1;
                 IndexTransfers++;
 
-                // The children's commands go across while the parent is still the one shown, so a refusal here leaves
-                // the display exactly as it was: the batch keeps the parent's commands, and the parent's own vertices
-                // and indices were never written over - the cut only ever wrote past them.
-                if (!TryUploadCommandsFor(candidates))
+                // The whole arrangement's commands go across while the display still shows the old one, so a refusal
+                // here leaves it exactly as it was: the batch keeps what it had, and nothing already shown was written
+                // over - the cut only ever wrote past it.
+                if (!TryUploadCommandsFor(_spare))
                 {
+                    _spare.Clear();
                     Reclaim(sides, prepared);
                     return new VpIndirectCutResult(
                         VpIndirectCutOutcome.DisplayPreparationFailed, cut, _shown.Count, appended,
                         vertexTransfers, indexTransfers, transferredVertices, transferredIndices);
                 }
 
-                // Only now, with the GPU holding the children, does the display change hands. The list was given room
-                // for two at construction, so nothing here can fail.
-                _shown.Clear();
-                foreach (Shown child in candidates)
-                {
-                    _shown.Add(child);
-                }
-
-                ReleaseRegistration(parent);
+                // Only now, with the GPU holding the new arrangement, does the display change hands - by exchanging the
+                // two lists, which needs nothing. The target alone is retired; every other geometry keeps its
+                // registration, its indices, its materials and its transform.
+                List<Shown> previous = _shown;
+                _shown = _spare;
+                _spare = previous;
+                _spare.Clear();
+                ReleaseRegistration(subject);
                 return new VpIndirectCutResult(
                     VpIndirectCutOutcome.Swapped, cut, _shown.Count, 0,
                     vertexTransfers, indexTransfers, transferredVertices, transferredIndices);
@@ -674,6 +765,7 @@ namespace Zantetsu.MeshCut
             {
                 // The published sides are given back whatever went wrong. What was already written to the GPU cannot
                 // be, so if the update had begun this display stops drawing and updating and waits to be disposed.
+                _spare.Clear();
                 Reclaim(sides, prepared);
                 if (touchedGpu)
                 {
@@ -684,14 +776,39 @@ namespace Zantetsu.MeshCut
             }
         }
 
+        /// <summary>Makes sure both lists can hold <paramref name="count"/> entries, so that the swap needs nothing.</summary>
+        private void EnsureRoom(int count)
+        {
+            if (_shown.Capacity < count)
+            {
+                _shown.Capacity = count;
+            }
+
+            if (_spare.Capacity < count)
+            {
+                _spare.Capacity = count;
+            }
+        }
+
         /// <summary>
         /// Prepares both produced sides: their commands at the positions their indices occupy in the storage, their
         /// materials, the capacities they need, and finally their registrations. Each side's record exists before its
         /// registration is taken, so a taken registration is recorded at once and none is ever left untracked.
         /// </summary>
-        private bool TryPrepareSides(VpStorageCutSide[] sides, Matrix4x4 objectToWorld, Shown[] prepared)
+        private bool TryPrepareSides(VpStorageCutSide[] sides, Shown subject, Shown[] prepared)
         {
+            // What the whole arrangement would need, not only the new sides: everything else stays on screen and keeps
+            // its commands, so they are part of what has to fit.
             int commandTotal = 0;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                if (!ReferenceEquals(_shown[i], subject))
+                {
+                    commandTotal += _shown[i].commands.Length;
+                }
+            }
+
+            int producedCommands = 0;
             for (int i = 0; i < sides.Length; i++)
             {
                 if (!sides[i].IsProduced)
@@ -707,15 +824,18 @@ namespace Zantetsu.MeshCut
                 prepared[i] = new Shown
                 {
                     geometry = sides[i].geometry,
-                    objectToWorld = objectToWorld,
+
+                    // The sides take the place of what they were cut from, so they take its placement too.
+                    objectToWorld = subject.objectToWorld,
                     commands = commands,
                     commandMaterials = materials,
                 };
 
-                commandTotal += commands.Length;
+                producedCommands += commands.Length;
             }
 
-            if (commandTotal == 0 || commandTotal > _batch.CommandCapacity || commandTotal > _batch.InstanceCapacity)
+            commandTotal += producedCommands;
+            if (producedCommands == 0 || commandTotal > _batch.CommandCapacity || commandTotal > _batch.InstanceCapacity)
             {
                 return false;
             }

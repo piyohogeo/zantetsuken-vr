@@ -692,5 +692,395 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.TryRetireIndices(parent.indexRange), Is.True, "and its retirement is still the caller's to make");
             }
         }
+
+        /// <summary>
+        /// The plane the storage tests cut a child with: it crosses the positive side of <see cref="CrossingPlane"/>
+        /// over this same shape, so the second cut really is a cut.
+        /// </summary>
+        private static float4 ChildPlane()
+        {
+            float3 n = math.normalize(new float3(0.81f, -0.23f, 0.54f));
+            return new float4(n, -math.dot(n, new float3(0.0313f, 0.6217f, -0.0119f)));
+        }
+
+        /// <summary>
+        /// Everything about one shown geometry that a cut of a different one must not disturb — the geometry, its
+        /// placement, its commands and materials, and **the indices themselves**, read out under the geometry's own
+        /// lease. Comparing the handles and the command ranges alone would not notice the index list being rewritten
+        /// under the same range, which is exactly what "the sibling is untouched" has to mean.
+        /// <para>
+        /// The copy this takes is the test's own. It says nothing about the product path, which transfers the storage's
+        /// memory where it lies and makes no array of its own.
+        /// </para>
+        /// </summary>
+        private sealed class ShownSnapshot
+        {
+            public VpStoredGeometry geometry;
+            public Matrix4x4 objectToWorld;
+            public VpIndirectCommand[] commands;
+            public Material[] materials;
+            public uint[] indices;
+
+            public static ShownSnapshot Of(VpCpuGeometryStorage storage, VpIndirectCutDisplay display, int index)
+            {
+                var commands = new VpIndirectCommand[display.GetShownCommandCount(index)];
+                var materials = new Material[commands.Length];
+                for (int c = 0; c < commands.Length; c++)
+                {
+                    commands[c] = display.GetShownCommand(index, c);
+                    materials[c] = display.GetShownCommandMaterial(index, c);
+                }
+
+                VpStoredGeometry geometry = display.GetShownGeometry(index);
+                return new ShownSnapshot
+                {
+                    geometry = geometry,
+                    objectToWorld = display.GetShownTransform(index),
+                    commands = commands,
+                    materials = materials,
+                    indices = ReadIndices(storage, geometry),
+                };
+            }
+
+            public void AssertUnchangedAt(VpCpuGeometryStorage storage, VpIndirectCutDisplay display, int index, string label)
+            {
+                Assert.That(display.GetShownGeometry(index).indexRange, Is.EqualTo(geometry.indexRange), label + ": geometry");
+                Assert.That(display.GetShownTransform(index), Is.EqualTo(objectToWorld), label + ": transform");
+                Assert.That(display.GetShownCommandCount(index), Is.EqualTo(commands.Length), label + ": command count");
+                for (int c = 0; c < commands.Length; c++)
+                {
+                    VpIndirectCommand now = display.GetShownCommand(index, c);
+                    Assert.That(now.range.indexStart, Is.EqualTo(commands[c].range.indexStart), label + ": command " + c + " start");
+                    Assert.That(now.range.indexCount, Is.EqualTo(commands[c].range.indexCount), label + ": command " + c + " count");
+                    Assert.That(display.GetShownCommandMaterial(index, c), Is.SameAs(materials[c]), label + ": command " + c + " material");
+                }
+
+                Assert.That(ReadIndices(storage, display.GetShownGeometry(index)), Is.EqualTo(indices), label + ": the index list itself");
+            }
+
+            /// <summary>The geometry's published indices, copied out under its own read lease and the lease returned.</summary>
+            private static uint[] ReadIndices(VpCpuGeometryStorage storage, VpStoredGeometry geometry)
+            {
+                Assert.That(
+                    storage.TryAcquireIndexReadLease(geometry.indexRange, out VpIndexReadLease lease, out NativeArray<uint>.ReadOnly view),
+                    Is.True,
+                    "lease the indices");
+                var copy = new uint[view.Length];
+                for (int i = 0; i < copy.Length; i++)
+                {
+                    copy[i] = view[i];
+                }
+
+                Assert.That(storage.TryReleaseIndexReadLease(lease), Is.True, "release the lease");
+                return copy;
+            }
+        }
+
+        /// <summary>
+        /// A plane through the middle of one shown geometry, across its widest extent, in that geometry's own
+        /// coordinates. Taken from the geometry's own bounds, so it crosses it rather than missing it — which is what
+        /// lets a test choose any shown geometry as the target and still be cutting something.
+        /// </summary>
+        private static float4 PlaneThroughShown(VpIndirectCutDisplay display, int index)
+        {
+            Bounds bounds = display.GetShownCommand(index, 0).localBounds;
+            for (int c = 1; c < display.GetShownCommandCount(index); c++)
+            {
+                bounds.Encapsulate(display.GetShownCommand(index, c).localBounds);
+            }
+
+            Vector3 size = bounds.size;
+            float3 axis = size.x >= size.y && size.x >= size.z
+                ? new float3(1, 0, 0)
+                : size.y >= size.z ? new float3(0, 1, 0) : new float3(0, 0, 1);
+
+            // Just off the middle, so that no vertex sits exactly on the plane.
+            float3 point = (float3)bounds.center + axis * (0.0137f * math.max(0.001f, math.length((float3)size) * 0.25f));
+            return new float4(axis, -math.dot(axis, point));
+        }
+
+        /// <summary>
+        /// The whole scenario: one geometry becomes two, and then the chosen one of those two becomes two more, leaving
+        /// three on screen. The sibling nobody chose is not touched by any of it — same geometry, same indices, same
+        /// materials, same placement, same registration.
+        /// </summary>
+        [Test]
+        public void ASelectedChild_IsCutAgainWhileItsSiblingIsKept()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                var placement = Matrix4x4.TRS(new Vector3(3f, -2f, 5f), Quaternion.Euler(20f, 40f, 60f), new Vector3(2f, 0.5f, 1.5f));
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display, placement), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True, "the first request");
+                    BeginNextFrame(display);
+                    Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), "the first cut");
+                    Assert.That(display.ShownCount, Is.EqualTo(2), "two after the first");
+
+                    VpStoredGeometry target = display.GetShownGeometry(0);
+                    ShownSnapshot sibling = ShownSnapshot.Of(storage, display, 1);
+                    int verticesBefore = storage.VertexCount;
+
+                    // the request names the geometry, and that is what comes back
+                    Assert.That(display.TryRequestCut(target, ChildPlane()), Is.True, "the second request");
+                    Assert.That(display.TryGetPendingTarget(out VpStoredGeometry pending), Is.True, "a target is waiting");
+                    Assert.That(pending.indexRange, Is.EqualTo(target.indexRange), "and it is the geometry that was asked for");
+
+                    BeginNextFrame(display);
+                    VpIndirectCutResult result = display.LastCutResult;
+                    Assert.That(result.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), "the second cut");
+                    Assert.That(result.cut.kernel.crossingTriangles, Is.GreaterThan(0), "the second plane really cuts");
+                    Assert.That(display.ShownCount, Is.EqualTo(3), "the sibling and the two new sides");
+
+                    // the two new sides took the target's place, in its position in the list
+                    (int firstStart, int firstCount) = IndexPlace(storage, result.cut.positive.geometry);
+                    (int secondStart, int secondCount) = IndexPlace(storage, result.cut.negative.geometry);
+                    Assert.That(display.GetShownGeometry(0).indexRange, Is.EqualTo(result.cut.positive.geometry.indexRange), "the positive grandchild");
+                    Assert.That(display.GetShownGeometry(1).indexRange, Is.EqualTo(result.cut.negative.geometry.indexRange), "the negative grandchild");
+                    Assert.That(display.GetShownCommand(0, 0).range.indexStart, Is.EqualTo(firstStart), "its commands address the storage's own position");
+                    Assert.That(display.GetShownCommand(1, 0).range.indexStart, Is.EqualTo(secondStart));
+                    Assert.That(display.GetShownTransform(0), Is.EqualTo(placement), "and they inherit what they were cut from");
+                    Assert.That(display.GetShownTransform(1), Is.EqualTo(placement));
+
+                    // the sibling nobody chose is exactly as it was, and still registered
+                    sibling.AssertUnchangedAt(storage, display, 2, "the sibling");
+                    Assert.That(IndexState(storage, sibling.geometry), Is.EqualTo(VpIndexRangeState.Published), "the sibling's range");
+                    Assert.That(IndexState(storage, target), Is.EqualTo(VpIndexRangeState.Free), "only the target was retired");
+                    Assert.That(table.LiveGeometryCount, Is.EqualTo(3), "the sibling and the two new sides");
+                    Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(3));
+
+                    // the transfers are the cut's own, and no more
+                    Assert.That(result.vertexTransfers, Is.EqualTo(1), "one vertex transfer");
+                    Assert.That(result.transferredVertices, Is.EqualTo(storage.VertexCount - verticesBefore), "of the appended vertices only");
+                    Assert.That(result.indexTransfers, Is.EqualTo(1), "one index transfer");
+                    Assert.That(secondStart, Is.EqualTo(firstStart + firstCount), "the two sides are one contiguous run");
+                    Assert.That(result.transferredIndices, Is.EqualTo(firstCount + secondCount), "covering exactly that run");
+                }
+            }
+        }
+
+        /// <summary>A geometry the display does not show — the retired parent, say — is not a target.</summary>
+        [Test]
+        public void ARequestForAGeometryThatIsNotShown_IsRefused()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.IndexOfShown(parent), Is.Zero, "the parent is what is shown");
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.ShownCount, Is.EqualTo(2));
+
+                    Assert.That(display.IndexOfShown(parent), Is.EqualTo(-1), "the parent is no longer shown");
+                    Assert.That(display.TryRequestCut(parent, ChildPlane()), Is.False, "so it cannot be the target");
+                    Assert.That(display.HasPendingCut, Is.False, "and nothing is waiting");
+                    Assert.That(display.TryGetPendingTarget(out VpStoredGeometry none), Is.False);
+                    Assert.That(none, Is.EqualTo(default(VpStoredGeometry)));
+
+                    // the plain request needs exactly one shown geometry, and there are two
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.False, "no target to infer");
+                }
+            }
+        }
+
+        /// <summary>A second cut that misses costs nothing: the child is lent back and the display is untouched.</summary>
+        [Test]
+        public void ACutOfAChildThatMisses_TransfersNothing()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.ShownCount, Is.EqualTo(2));
+
+                    ShownSnapshot first = ShownSnapshot.Of(storage, display, 0);
+                    ShownSnapshot second = ShownSnapshot.Of(storage, display, 1);
+                    int vertexTransfers = display.VertexTransfers;
+                    int indexTransfers = display.IndexTransfers;
+                    int commandUploads = display.CommandUploads;
+                    int liveGeometries = table.LiveGeometryCount;
+
+                    Assert.That(display.TryRequestCut(display.GetShownGeometry(0), MissingPlane(true)), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.KeptParent));
+
+                    Assert.That(display.ShownCount, Is.EqualTo(2), "still the two children");
+                    first.AssertUnchangedAt(storage, display, 0, "the target");
+                    second.AssertUnchangedAt(storage, display, 1, "the sibling");
+                    Assert.That(display.VertexTransfers, Is.EqualTo(vertexTransfers), "no vertex transfer");
+                    Assert.That(display.IndexTransfers, Is.EqualTo(indexTransfers), "no index transfer");
+                    Assert.That(display.CommandUploads, Is.EqualTo(commandUploads), "and no command upload");
+                    Assert.That(table.LiveGeometryCount, Is.EqualTo(liveGeometries), "nothing registered or retired");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A second cut that will not fit refuses before any transfer, and both children stay on screen with everything
+        /// they had. The sides it had published are given back.
+        /// </summary>
+        [Test]
+        public void AShortageAtTheSecondCut_KeepsBothChildren()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+
+                // Room for the two children's four commands, but not for the six three geometries would need.
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display, null, 4, 4), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.ShownCount, Is.EqualTo(2), "the first cut fits");
+
+                    ShownSnapshot first = ShownSnapshot.Of(storage, display, 0);
+                    ShownSnapshot second = ShownSnapshot.Of(storage, display, 1);
+                    int vertexTransfers = display.VertexTransfers;
+                    int indexTransfers = display.IndexTransfers;
+                    int commandUploads = display.CommandUploads;
+
+                    Assert.That(display.TryRequestCut(display.GetShownGeometry(0), ChildPlane()), Is.True);
+                    BeginNextFrame(display);
+                    VpIndirectCutResult result = display.LastCutResult;
+
+                    Assert.That(result.outcome, Is.EqualTo(VpIndirectCutOutcome.DisplayPreparationFailed));
+                    Assert.That(result.cut.status, Is.EqualTo(VpStorageCutStatus.Ok), "the cut itself succeeded");
+                    Assert.That(result.vertexTransfers, Is.Zero, "no transfer was begun");
+                    Assert.That(result.indexTransfers, Is.Zero);
+                    Assert.That(display.VertexTransfers, Is.EqualTo(vertexTransfers), "the display's counts are unchanged");
+                    Assert.That(display.IndexTransfers, Is.EqualTo(indexTransfers));
+                    Assert.That(display.CommandUploads, Is.EqualTo(commandUploads));
+
+                    Assert.That(display.ShownCount, Is.EqualTo(2), "both children are still shown");
+                    first.AssertUnchangedAt(storage, display, 0, "the target");
+                    second.AssertUnchangedAt(storage, display, 1, "the sibling");
+                    Assert.That(IndexState(storage, first.geometry), Is.EqualTo(VpIndexRangeState.Published), "the target's range");
+                    Assert.That(IndexState(storage, result.cut.positive.geometry), Is.EqualTo(VpIndexRangeState.Free), "the positive side was given back");
+                    Assert.That(IndexState(storage, result.cut.negative.geometry), Is.EqualTo(VpIndexRangeState.Free), "and the negative");
+                    Assert.That(table.LiveGeometryCount, Is.EqualTo(2), "only the two children are registered");
+                    Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(2));
+                    Assert.That(result.appendedVerticesKept, Is.GreaterThan(0), "the appended vertices stay, and are reported");
+                }
+            }
+        }
+
+        /// <summary>Three shown geometries are given back once each, and the ranges they held are retired once.</summary>
+        [Test]
+        public void AfterTwoCuts_EverythingIsGivenBackOnce()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, "create");
+
+                Assert.That(display.TryRequestCut(CrossingPlane()), Is.True);
+                BeginNextFrame(display);
+                Assert.That(display.TryRequestCut(display.GetShownGeometry(0), ChildPlane()), Is.True);
+                BeginNextFrame(display);
+                Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped));
+                Assert.That(display.ShownCount, Is.EqualTo(3));
+
+                var shown = new VpStoredGeometry[3];
+                for (int i = 0; i < 3; i++)
+                {
+                    shown[i] = display.GetShownGeometry(i);
+                }
+
+                Assert.That(table.LiveGeometryCount, Is.EqualTo(3));
+                display.Dispose();
+                Assert.That(table.LiveGeometryCount, Is.Zero, "every registration is back");
+                Assert.That(table.LiveDisplayInstanceCount, Is.Zero, "every instance is back");
+                for (int i = 0; i < 3; i++)
+                {
+                    Assert.That(storage.TryRetireIndices(shown[i].indexRange), Is.False, "shown " + i + " was already retired");
+                }
+
+                display.Dispose();
+                Assert.That(table.LiveGeometryCount, Is.Zero, "disposing again gives nothing back twice");
+            }
+        }
+
+        /// <summary>
+        /// The target is whichever geometry was named, not the first one, and the sides take **its** placement, not the
+        /// first one's. The two are given different transforms first, so an implementation that always cut the head of
+        /// the list, or always inherited the head's transform, could not pass this.
+        /// </summary>
+        [Test]
+        public void ATargetThatIsNotTheFirst_IsCutAndItsOwnTransformIsInherited()
+        {
+            Prepared prepared = BuildPrepared();
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                VpStoredGeometry parent = Append(storage, prepared);
+                Assert.That(TryCreate(storage, table, parent, out VpIndirectCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryRequestCut(CrossingPlane()), Is.True, "the first request");
+                    BeginNextFrame(display);
+                    Assert.That(display.LastCutResult.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), "the first cut");
+                    Assert.That(display.ShownCount, Is.EqualTo(2));
+
+                    // the two are placed differently, and the frame after that is where it takes effect
+                    var firstPlacement = Matrix4x4.TRS(new Vector3(-4f, 1f, 2f), Quaternion.Euler(10f, 0f, 0f), Vector3.one);
+                    var targetPlacement = Matrix4x4.TRS(new Vector3(6f, -3f, 1f), Quaternion.Euler(0f, 75f, 15f), new Vector3(1.5f, 2f, 0.5f));
+                    Assert.That(firstPlacement, Is.Not.EqualTo(targetPlacement), "the two placements differ");
+                    Assert.That(display.TrySetTransform(0, firstPlacement), Is.True);
+                    Assert.That(display.TrySetTransform(1, targetPlacement), Is.True);
+                    BeginNextFrame(display);
+                    Assert.That(display.HasPendingTransform, Is.False, "both placements were applied");
+                    Assert.That(display.GetShownTransform(0), Is.EqualTo(firstPlacement));
+                    Assert.That(display.GetShownTransform(1), Is.EqualTo(targetPlacement));
+
+                    // the second geometry is the target, and the plane comes from its own extent so that it crosses it
+                    VpStoredGeometry target = display.GetShownGeometry(1);
+                    ShownSnapshot sibling = ShownSnapshot.Of(storage, display, 0);
+                    float4 plane = PlaneThroughShown(display, 1);
+                    Assert.That(display.TryRequestCut(target, plane), Is.True, "the second request");
+                    Assert.That(display.TryGetPendingTarget(out VpStoredGeometry pending), Is.True);
+                    Assert.That(pending.indexRange, Is.EqualTo(target.indexRange), "the target is the one that was named");
+
+                    BeginNextFrame(display);
+                    VpIndirectCutResult result = display.LastCutResult;
+                    Assert.That(result.outcome, Is.EqualTo(VpIndirectCutOutcome.Swapped), "the second cut");
+                    Assert.That(result.cut.kernel.crossingTriangles, Is.GreaterThan(0), "the plane really crosses the target");
+                    Assert.That(display.ShownCount, Is.EqualTo(3));
+
+                    // the sides took the target's place in the list, and the target's placement with it
+                    Assert.That(display.GetShownGeometry(1).indexRange, Is.EqualTo(result.cut.positive.geometry.indexRange), "the positive side");
+                    Assert.That(display.GetShownGeometry(2).indexRange, Is.EqualTo(result.cut.negative.geometry.indexRange), "the negative side");
+                    Assert.That(display.GetShownTransform(1), Is.EqualTo(targetPlacement), "the positive side inherits the target's placement");
+                    Assert.That(display.GetShownTransform(2), Is.EqualTo(targetPlacement), "and so does the negative");
+                    Assert.That(display.GetShownTransform(1), Is.Not.EqualTo(firstPlacement), "not the first geometry's");
+
+                    // and the one nobody chose is untouched, indices included
+                    sibling.AssertUnchangedAt(storage, display, 0, "the sibling");
+                    Assert.That(IndexState(storage, sibling.geometry), Is.EqualTo(VpIndexRangeState.Published), "the sibling's range");
+                    Assert.That(IndexState(storage, target), Is.EqualTo(VpIndexRangeState.Free), "only the target was retired");
+                    Assert.That(table.LiveGeometryCount, Is.EqualTo(3));
+                    Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(3));
+                }
+            }
+        }
     }
 }
