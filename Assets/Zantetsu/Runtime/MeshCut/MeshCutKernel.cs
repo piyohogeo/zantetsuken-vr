@@ -1,6 +1,7 @@
 using System;
 using Unity.Burst;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut
 {
@@ -22,8 +23,7 @@ namespace Zantetsu.MeshCut
     /// face's own render vertices, keyed by (node, render pair): a smooth edge yields one new render vertex, a seam
     /// edge one per side, and no seam side is ever mixed. Caps get their own render vertices (hard edge to the
     /// surface) with the plane normal signed by the winding of the cap triangle that uses them (one per node, side
-    /// and sign; the logical topology stays one vertex per node), the fixed cap UV marker of 5.3 and the plane U
-    /// axis as tangent.
+    /// and sign; the logical topology stays one vertex per node) and the fixed cap UV marker of 5.3.
     ///
     /// Output (DESIGN 4.5.3 / 4.5.6). Existing vertices are referenced by their global numbers; only new render
     /// vertices are appended from the head of the one new-vertex reservation, shared by both sides. New indices are
@@ -547,7 +547,7 @@ namespace Zantetsu.MeshCut
                         // The cap faces the cycle's own winding in the plane basis (the surface's directed boundary, reversed),
                         // never the plane side: a reversed input gets a reversed cap. A triangle whose projected winding opposes
                         // the cycle's (a fold of a combinatorial cap over a retraced contour) takes render vertices of its own
-                        // sign, so its normal and tangent frame follow its winding (DESIGN 6.4) while the logical topology keeps
+                        // sign, so its normal follows its winding (DESIGN 6.4) while the logical topology keeps
                         // one vertex per node; a degenerate triangle takes the cycle's sign.
                         sbyte cycleSign = (sbyte)(MeshCutCap.SignedArea2(in context, cycle, k) >= 0 ? 1 : -1);
                         int* auxRecord = l.arena.Take<int>(math.max(1, 2 * cap.auxCount));
@@ -621,34 +621,28 @@ namespace Zantetsu.MeshCut
             if (K > 0)
             {
                 float3 nrm = input.plane.xyz;
-                float3 seed = math.abs(nrm.x) < 0.9f ? new float3(1, 0, 0) : new float3(0, 1, 0);
-                float3 axisU = math.cross(seed, nrm);
-                axisU *= 1f / math.length(axisU);
                 for (int i = 0; i < newVertexCount; i++)
                 {
                     NewVertex rec = l.records[i];
-                    RenderVertex v;
+                    VpRenderVertex v;
                     if (rec.kind == 0)
                     {
-                        RenderVertex a = input.vertices[rec.rLo], b = input.vertices[rec.rHi];
+                        VpRenderVertex a = input.vertices[rec.rLo], b = input.vertices[rec.rHi];
                         float f = rec.f, w = 1f - f;
+                        float3 aNormal = a.normal, bNormal = b.normal;
+                        float2 aUv = a.uv0, bUv = b.uv0;
                         v.position = l.nodes[rec.node].position;
-                        float3 nn = w * a.normal + f * b.normal;
-                        v.normal = Renormalize(nn, new float3(0, 1, 0));
-                        v.uv0 = w * a.uv0 + f * b.uv0;
-                        float3 tt = w * a.tangent.xyz + f * b.tangent.xyz;
-                        v.tangent = new float4(Renormalize(tt, new float3(1, 0, 0)), a.tangent.w);
+                        v.normal = Renormalize(w * aNormal + f * bNormal, new float3(0, 1, 0));
+                        v.uv0 = w * aUv + f * bUv;
                         output.newVertexTopology[i] = topoBase + rec.node;
                     }
                     else
                     {
-                        // normal along the winding of the triangles that use this vertex; tangent = the plane U axis with
-                        // w = +1 on both signs, so the bitangent w * (N x T) follows the normal and the frame is right-handed
-                        // on the face of each triangle's own winding
+                        // normal along the winding of the triangles that use this vertex, so each triangle presents the
+                        // face of its own winding (DESIGN 6.4)
                         v.position = rec.kind == 1 ? l.nodes[rec.node].position : rec.position;
                         v.normal = rec.sign >= 0 ? nrm : -nrm;
                         v.uv0 = RenderCutMarker.CapUv;
-                        v.tangent = new float4(axisU, 1f);
                         output.newVertexTopology[i] = rec.kind == 1 ? topoBase + rec.node : topoBase + nodeCount + rec.node;
                     }
                     output.newVertices[i] = v;

@@ -1,13 +1,14 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.Verification
 {
     /// <summary>A generated geometry in local numbering: render vertices, indices (3 per triangle, grouped by submesh) and the topology id of each render vertex.</summary>
     public sealed class SyntheticMesh
     {
-        public RenderVertex[] Vertices;
+        public VpRenderVertex[] Vertices;
         public uint[] Indices;
         public int[] TopologyOfVertex;
         public int TopologyVertexCount;
@@ -67,9 +68,9 @@ namespace Zantetsu.MeshCut.Verification
 
         /// <summary>
         /// Builds the render vertices. Without seams every logical vertex is one render vertex with a smooth normal.
-        /// With seams, corner attributes (crease-limited smoothed normal, planar or cylindrical UV, a perpendicular
-        /// tangent) are deduplicated per logical vertex by exact equality into render vertices; the corner -> render
-        /// mapping becomes the index buffer and the render -> logical mapping the topology map.
+        /// With seams, corner attributes (crease-limited smoothed normal, planar or cylindrical UV) are deduplicated
+        /// per logical vertex by exact equality into render vertices; the corner -> render mapping becomes the index
+        /// buffer and the render -> logical mapping the topology map.
         /// </summary>
         public SyntheticMesh Finish(AttributeOptions o = null)
         {
@@ -179,15 +180,11 @@ namespace Zantetsu.MeshCut.Verification
             }
 
             int R = renderLogical.Count;
-            mesh.Vertices = new RenderVertex[R];
+            mesh.Vertices = new VpRenderVertex[R];
             mesh.TopologyOfVertex = new int[R];
             for (int r = 0; r < R; r++)
             {
-                float3 n = renderN[r];
-                float3 reference = math.abs(n.y) < 0.9f ? new float3(0, 1, 0) : new float3(1, 0, 0);
-                float3 tangent = math.cross(reference, n);
-                tangent = math.lengthsq(tangent) > 1e-20f ? math.normalize(tangent) : new float3(1, 0, 0);
-                mesh.Vertices[r] = new RenderVertex { position = Positions[renderLogical[r]], normal = n, uv0 = renderUv[r], tangent = new float4(tangent, 1f) };
+                mesh.Vertices[r] = new VpRenderVertex { position = Positions[renderLogical[r]], normal = renderN[r], uv0 = renderUv[r] };
                 mesh.TopologyOfVertex[r] = renderLogical[r];
             }
             mesh.TopologyVertexCount = V;

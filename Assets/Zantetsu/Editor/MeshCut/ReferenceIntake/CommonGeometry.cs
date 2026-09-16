@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.ReferenceIntake
 {
@@ -25,17 +26,17 @@ namespace Zantetsu.MeshCut.ReferenceIntake
     }
 
     /// <summary>
-    /// Managed common geometry of one FBX object before any pool placement: render vertices in the kernel's layout,
-    /// triangle indices grouped by submesh, and for every render vertex the FBX control point it belongs to (the
-    /// logical topology the cut kernel keys on, DESIGN 6.2). Attribute seams are separate render vertices of one
-    /// control point and are kept as the file defines them. The instance owns its arrays; nothing here references an
-    /// importer, a Unity asset, an allocator or a GPU resource.
+    /// Managed common geometry of one FBX object before any pool placement: render vertices in the one common 32 byte
+    /// layout (<see cref="VpRenderVertex"/>: position, normal, uv0), triangle indices grouped by submesh, and for every
+    /// render vertex the FBX control point it belongs to (the logical topology the cut kernel keys on, DESIGN 6.2).
+    /// Attribute seams are separate render vertices of one control point and are kept as the file defines them. The
+    /// instance owns its arrays; nothing here references an importer, a Unity asset, an allocator or a GPU resource.
     /// </summary>
     public sealed class PreparedCommonGeometry
     {
         public string Name;
         public CommonGeometryBasis Basis;
-        public RenderVertex[] Vertices;
+        public VpRenderVertex[] Vertices;
         public uint[] Indices;
         /// <summary>Per render vertex: the FBX control point (topology vertex) it belongs to.</summary>
         public int[] TopologyOfVertex;
@@ -74,9 +75,8 @@ namespace Zantetsu.MeshCut.ReferenceIntake
     /// The fixed change of basis between the FBX file's coordinates and Unity's, and back. It is one reflection (X is
     /// negated), so it is its own inverse: applying it twice returns the original data and plane. Because a reflection
     /// has determinant -1, every triangle's corner order is reversed so the surface keeps facing the same way; normals
-    /// and tangent directions are reflected with the positions; the tangent handedness sign flips because the
-    /// bitangent cross(normal, tangent) picks up the determinant. UVs, topology ids, render-vertex identity (seams),
-    /// index-to-submesh assignment, submesh order and material mapping are unchanged. Nothing about the input decides
+    /// are reflected with the positions. UVs, topology ids, render-vertex identity (seams), index-to-submesh
+    /// assignment, submesh order and material mapping are unchanged. Nothing about the input decides
     /// the direction of the change: no signed volume, bounds or match rate is consulted, no vertex is welded and no
     /// attribute is recomputed. An input with an undefined basis or a structural problem is rejected before any output
     /// is allocated; the input is never modified; a new instance owning new arrays is returned.
@@ -87,7 +87,6 @@ namespace Zantetsu.MeshCut.ReferenceIntake
 
         public static float3 Point(float3 p) => p * k_reflect;
         public static float3 Direction(float3 d) => d * k_reflect;
-        public static float4 Tangent(float4 t) => new float4(t.xyz * k_reflect, -t.w);
         /// <summary>A plane n.p + w = 0 keeps w: the reflection is orthogonal, so (Rn).(Rp) = n.p.</summary>
         public static float4 Plane(float4 plane) => new float4(plane.xyz * k_reflect, plane.w);
 
@@ -109,11 +108,11 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             if (problems.Count > 0) throw new ArgumentException("geometry rejected: " + string.Join("; ", problems), nameof(source));
             CommonGeometryBasis basis = Other(source.Basis);
 
-            var vertices = new RenderVertex[source.Vertices.Length];
+            var vertices = new VpRenderVertex[source.Vertices.Length];
             for (int i = 0; i < vertices.Length; i++)
             {
-                RenderVertex v = source.Vertices[i];
-                vertices[i] = new RenderVertex { position = Point(v.position), normal = Direction(v.normal), uv0 = v.uv0, tangent = Tangent(v.tangent) };
+                VpRenderVertex v = source.Vertices[i];
+                vertices[i] = new VpRenderVertex { position = Point(v.position), normal = Direction(v.normal), uv0 = v.uv0 };
             }
             var indices = new uint[source.Indices.Length];
             for (int t = 0; t < indices.Length; t += 3)
@@ -182,7 +181,7 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             {
                 Name = g.ModelName,
                 Basis = CommonGeometryBasis.FbxFile,
-                Vertices = (RenderVertex[])mesh.Vertices.Clone(),
+                Vertices = (VpRenderVertex[])mesh.Vertices.Clone(),
                 Indices = (uint[])mesh.Indices.Clone(),
                 TopologyOfVertex = (int[])mesh.TopologyOfVertex.Clone(),
                 TopologyVertexCount = mesh.TopologyVertexCount,

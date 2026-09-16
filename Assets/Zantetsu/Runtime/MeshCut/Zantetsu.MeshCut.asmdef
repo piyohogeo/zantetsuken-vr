@@ -2,6 +2,7 @@
     "name": "Zantetsu.MeshCut",
     "rootNamespace": "Zantetsu.MeshCut",
     "references": [
+        "Zantetsu.Rendering",
         "Unity.Burst",
         "Unity.Mathematics",
         "Unity.Collections"

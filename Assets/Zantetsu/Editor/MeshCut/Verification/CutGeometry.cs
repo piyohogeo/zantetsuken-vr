@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.Verification
 {
@@ -22,7 +23,7 @@ namespace Zantetsu.MeshCut.Verification
     /// <summary>The managed pool arrays a family of geometries addresses; grown in place by the harness as cuts append blocks.</summary>
     public sealed class PoolArrays
     {
-        public RenderVertex[] Vertices = Array.Empty<RenderVertex>();
+        public VpRenderVertex[] Vertices = Array.Empty<VpRenderVertex>();
         public uint[] Indices = Array.Empty<uint>();
     }
 
@@ -30,7 +31,7 @@ namespace Zantetsu.MeshCut.Verification
     {
         public string Name;
         public PoolArrays Pool;
-        public RenderVertex[] Vertices => Pool.Vertices;
+        public VpRenderVertex[] Vertices => Pool.Vertices;
         public uint[] Indices => Pool.Indices;
         public readonly List<MeshCutIndexRange> Ranges = new List<MeshCutIndexRange>();
         public readonly List<TopologyBlock> Topology = new List<TopologyBlock>();
@@ -68,7 +69,7 @@ namespace Zantetsu.MeshCut.Verification
         public (double3 min, double3 max) Bounds()
         {
             double3 mn = new double3(double.MaxValue), mx = new double3(double.MinValue);
-            foreach (uint v in ReferencedVertices()) { double3 p = Vertices[v].position; mn = math.min(mn, p); mx = math.max(mx, p); }
+            foreach (uint v in ReferencedVertices()) { double3 p = (float3)Vertices[v].position; mn = math.min(mn, p); mx = math.max(mx, p); }
             return (mn, mx);
         }
 
@@ -83,7 +84,7 @@ namespace Zantetsu.MeshCut.Verification
             double sum = 0.0;
             foreach (var (a, b, c, _) in Triangles())
             {
-                double3 pa = Vertices[a].position, pb = Vertices[b].position, pc = Vertices[c].position;
+                double3 pa = (float3)Vertices[a].position, pb = (float3)Vertices[b].position, pc = (float3)Vertices[c].position;
                 sum += 0.5 * math.length(math.cross(pb - pa, pc - pa));
             }
             return sum;

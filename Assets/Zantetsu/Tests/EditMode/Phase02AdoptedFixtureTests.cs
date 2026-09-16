@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Zantetsu.MeshCut;
 using Zantetsu.MeshCut.Verification;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.Core.Tests
 {
@@ -160,7 +161,7 @@ namespace Zantetsu.Core.Tests
                 throw new ArgumentException("A RenderCutInput must be a TriangleMesh.", nameof(document));
             var mesh = new SyntheticMesh
             {
-                Vertices = new RenderVertex[document.Positions.Length],
+                Vertices = new VpRenderVertex[document.Positions.Length],
                 Indices = new uint[document.Triangles.Length * 3],
                 TopologyOfVertex = new int[document.Positions.Length],
                 TopologyVertexCount = document.Positions.Length,
@@ -168,12 +169,11 @@ namespace Zantetsu.Core.Tests
             for (int i = 0; i < document.Positions.Length; i++)
             {
                 ZcgPosition position = document.Positions[i];
-                mesh.Vertices[i] = new RenderVertex
+                mesh.Vertices[i] = new VpRenderVertex
                 {
                     position = new float3(position.X, position.Y, position.Z),
                     normal = new float3(0, 1, 0),
                     uv0 = float2.zero,
-                    tangent = new float4(1, 0, 0, 1),
                 };
                 mesh.TopologyOfVertex[i] = i;
             }

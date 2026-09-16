@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
 using Zantetsu.MeshCut.Verification;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.ReferenceIntake
 {
@@ -33,11 +34,14 @@ namespace Zantetsu.MeshCut.ReferenceIntake
     /// <summary>
     /// Turns an FBX file into cut-kernel inputs the way DESIGN 6.2 requires: the logical topology is the file's own
     /// control-point index (Blender's logical vertex), so UV / normal / material seams are attribute splits of one
-    /// topology vertex and never a positional weld; per-corner normals, UVs and tangents are deduplicated per control
-    /// point into render vertices exactly as the probe's exporter did; materials become submesh ranges. Positions are
-    /// converted to metres from the file's unit scale; model transforms are expected to be identity (the export bakes
-    /// them) and are reported as a note otherwise. Nothing is repaired or guessed: a polygon that is not a triangle is
-    /// fan-triangulated and counted, and every deviation is recorded for the run.
+    /// topology vertex and never a positional weld; per-corner normals and UVs are deduplicated per control point
+    /// into render vertices. The render vertex is the common 32 byte vertex (position, normal, uv0), so the file's
+    /// tangents are read only to record whether it carries any and take no part in vertex identity: two corners that
+    /// differ only in tangent are one render vertex.
+    /// Materials become submesh ranges. Positions are converted to metres from the file's unit scale; model transforms
+    /// are expected to be identity (the export bakes them) and are reported as a note otherwise. Nothing is repaired or
+    /// guessed: a polygon that is not a triangle is fan-triangulated and counted, and every deviation is recorded for
+    /// the run.
     /// </summary>
     public static class FbxGeometryImport
     {
@@ -144,8 +148,8 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             // layers (per polygon vertex, direct or index-to-direct)
             double[] normals = ReadLayer(geometry, "LayerElementNormal", "Normals", "NormalsIndex", out g.NormalMapping, polygonIndex.Length, 3);
             double[] uvs = ReadLayer(geometry, "LayerElementUV", "UV", "UVIndex", out g.UvMapping, polygonIndex.Length, 2);
+            // read for the record only: the tangent takes no part in vertex identity and is not stored
             double[] tangents = ReadLayer(geometry, "LayerElementTangent", "Tangents", "TangentsIndex", out g.TangentMapping, polygonIndex.Length, 3);
-            double[] binormals = ReadLayer(geometry, "LayerElementBinormal", "Binormals", "BinormalsIndex", out _, polygonIndex.Length, 3);
             g.HasUv = uvs != null; g.HasTangent = tangents != null;
             if (normals == null) g.Notes.Add("no per-corner normals; smooth normals are not synthesized (the kernel input needs the file's own)");
 
@@ -163,8 +167,8 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             }
 
             // corners -> render vertices, deduplicated per control point by exact attribute equality
-            var renderOfKey = new Dictionary<(int, float3, float2, float4), uint>();
-            var renderVertices = new List<RenderVertex>();
+            var renderOfKey = new Dictionary<(int, float3, float2), uint>();
+            var renderVertices = new List<VpRenderVertex>();
             var renderTopology = new List<int>();
             var triangles = new List<(uint a, uint b, uint c, int material)>();
             int loop = 0;
@@ -178,29 +182,12 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                     int v = poly[k];
                     float3 n = normals != null ? Normalize(new float3((float)normals[3 * loop], (float)normals[3 * loop + 1], (float)normals[3 * loop + 2]), new float3(0, 1, 0)) : new float3(0, 1, 0);
                     float2 uv = uvs != null ? new float2((float)uvs[2 * loop], (float)uvs[2 * loop + 1]) : float2.zero;
-                    float4 t;
-                    if (tangents != null)
-                    {
-                        float3 tt = Normalize(new float3((float)tangents[3 * loop], (float)tangents[3 * loop + 1], (float)tangents[3 * loop + 2]), new float3(1, 0, 0));
-                        float w = 1f;
-                        if (binormals != null)
-                        {
-                            float3 bb = new float3((float)binormals[3 * loop], (float)binormals[3 * loop + 1], (float)binormals[3 * loop + 2]);
-                            w = math.dot(math.cross(n, tt), bb) < 0f ? -1f : 1f;
-                        }
-                        t = new float4(tt, w);
-                    }
-                    else
-                    {
-                        float3 reference = math.abs(n.y) < 0.9f ? new float3(0, 1, 0) : new float3(1, 0, 0);
-                        t = new float4(Normalize(math.cross(reference, n), new float3(1, 0, 0)), 1f);
-                    }
-                    var key = (v, n, uv, t);
+                    var key = (v, n, uv);
                     if (!renderOfKey.TryGetValue(key, out uint r))
                     {
                         r = (uint)renderVertices.Count;
                         renderOfKey.Add(key, r);
-                        renderVertices.Add(new RenderVertex { position = positions[v], normal = n, uv0 = uv, tangent = t });
+                        renderVertices.Add(new VpRenderVertex { position = positions[v], normal = n, uv0 = uv });
                         renderTopology.Add(v);
                     }
                     corner[k] = r;

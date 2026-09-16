@@ -5,6 +5,7 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.Verification
 {
@@ -59,7 +60,7 @@ namespace Zantetsu.MeshCut.Verification
 
         public MeshCutHarness(int arenaBytes = 96 << 20) { m_arena = new GuardedArena(arenaBytes); }
 
-        static readonly RenderVertex k_filler = new RenderVertex { position = new float3(float.NaN), normal = new float3(9, 9, 9), uv0 = new float2(-7, -7), tangent = new float4(0, 0, 0, 0) };
+        static readonly VpRenderVertex k_filler = new VpRenderVertex { position = new float3(float.NaN), normal = new float3(9, 9, 9), uv0 = new float2(-7, -7) };
 
         /// <summary>Places a synthetic mesh at explicit vertex / index offsets of the pool (unused slots hold a filler pattern).</summary>
         public CutGeometry Place(SyntheticMesh mesh, string name, uint vertexOffset, uint indexOffset)
@@ -82,7 +83,7 @@ namespace Zantetsu.MeshCut.Verification
         void GrowVertices(int length)
         {
             if (Pool.Vertices.Length >= length) return;
-            var a = new RenderVertex[length];
+            var a = new VpRenderVertex[length];
             Array.Copy(Pool.Vertices, a, Pool.Vertices.Length);
             for (int i = Pool.Vertices.Length; i < length; i++) a[i] = k_filler;
             Pool.Vertices = a;
@@ -121,7 +122,7 @@ namespace Zantetsu.MeshCut.Verification
 
             // capacity query needs the vertex / index views; the views are built with room for the reservation
             // First a provisional input over a minimal view to query capacity (the query reads only the geometry).
-            var probeVB = m_arena.Alloc<RenderVertex>("probe.vb", poolV);
+            var probeVB = m_arena.Alloc<VpRenderVertex>("probe.vb", poolV);
             var probeIB = m_arena.Alloc<uint>("probe.ib", poolI);
             for (int i = 0; i < poolV; i++) probeVB[i] = Pool.Vertices[i];
             for (int i = 0; i < poolI; i++) probeIB[i] = Pool.Indices[i];
@@ -144,7 +145,7 @@ namespace Zantetsu.MeshCut.Verification
             // the real views: pool, gap, reservation, tail
             int vbLength = (int)newVertexBase + vertexCap + (int)opt.VertexGap;
             int ibLength = (int)newIndexBase + indexCap + (int)opt.IndexGap;
-            var vb = m_arena.Alloc<RenderVertex>("vb", vbLength);
+            var vb = m_arena.Alloc<VpRenderVertex>("vb", vbLength);
             var ib = m_arena.Alloc<uint>("ib", ibLength);
             for (int i = 0; i < poolV; i++) vb[i] = Pool.Vertices[i];
             for (int i = 0; i < poolI; i++) ib[i] = Pool.Indices[i];
@@ -188,13 +189,13 @@ namespace Zantetsu.MeshCut.Verification
             {
                 for (int i = 0; i < poolV; i++) if (!Same(vb[i], Pool.Vertices[i])) { LastUnrelatedChanges.Add("vertex " + i + " (existing pool) changed"); break; }
                 for (int i = 0; i < poolI; i++) if (ib[i] != Pool.Indices[i]) { LastUnrelatedChanges.Add("index " + i + " (existing pool) changed"); break; }
-                CheckFilled((byte*)(vb + poolV), (int)opt.VertexGap * sizeof(RenderVertex), opt.Fill, "vertex gap before the reservation");
+                CheckFilled((byte*)(vb + poolV), (int)opt.VertexGap * sizeof(VpRenderVertex), opt.Fill, "vertex gap before the reservation");
                 CheckFilled((byte*)(ib + poolI), (int)opt.IndexGap * sizeof(uint), opt.Fill, "index gap before the reservation");
-                CheckFilled((byte*)(vb + newVertexBase + vertexCap), (int)opt.VertexGap * sizeof(RenderVertex), opt.Fill, "vertex tail after the reservation");
+                CheckFilled((byte*)(vb + newVertexBase + vertexCap), (int)opt.VertexGap * sizeof(VpRenderVertex), opt.Fill, "vertex tail after the reservation");
                 CheckFilled((byte*)(ib + newIndexBase + indexCap), (int)opt.IndexGap * sizeof(uint), opt.Fill, "index tail after the reservation");
                 if (result.status == MeshCutStatus.Ok)
                 {
-                    CheckFilled((byte*)(vb + newVertexBase + result.newVertexCount), (vertexCap - result.newVertexCount) * sizeof(RenderVertex), opt.Fill, "unused vertex reservation tail");
+                    CheckFilled((byte*)(vb + newVertexBase + result.newVertexCount), (vertexCap - result.newVertexCount) * sizeof(VpRenderVertex), opt.Fill, "unused vertex reservation tail");
                     CheckFilled((byte*)(ib + newIndexBase + result.newIndexCount), (indexCap - result.newIndexCount) * sizeof(uint), opt.Fill, "unused index reservation tail");
                 }
             }
@@ -251,7 +252,7 @@ namespace Zantetsu.MeshCut.Verification
             }
             var ranges = m_arena.Alloc<MeshCutIndexRange>("input.ranges", g.Ranges.Count);
             for (int i = 0; i < g.Ranges.Count; i++) ranges[i] = g.Ranges[i];
-            var probeVB = m_arena.Alloc<RenderVertex>("probe.vb", poolV);
+            var probeVB = m_arena.Alloc<VpRenderVertex>("probe.vb", poolV);
             var probeIB = m_arena.Alloc<uint>("probe.ib", poolI);
             for (int i = 0; i < poolV; i++) probeVB[i] = Pool.Vertices[i];
             for (int i = 0; i < poolI; i++) probeIB[i] = Pool.Indices[i];
@@ -272,7 +273,7 @@ namespace Zantetsu.MeshCut.Verification
                 totalV += caps[k].newVertices + 8; totalI += caps[k].newIndices + 8;
             }
             int vbLength = poolV + 8 + totalV, ibLength = poolI + 8 + totalI;
-            var vb = m_arena.Alloc<RenderVertex>("vb", vbLength);
+            var vb = m_arena.Alloc<VpRenderVertex>("vb", vbLength);
             var ib = m_arena.Alloc<uint>("ib", ibLength);
             for (int i = 0; i < poolV; i++) vb[i] = Pool.Vertices[i];
             for (int i = 0; i < poolI; i++) ib[i] = Pool.Indices[i];
@@ -347,14 +348,14 @@ namespace Zantetsu.MeshCut.Verification
             for (int i = 0; i < bytes; i++) if (p[i] != fill) { LastUnrelatedChanges.Add(what + " was written"); return; }
         }
 
-        static bool Same(RenderVertex a, RenderVertex b) =>
-            UnsafeUtility.MemCmp(&a, &b, sizeof(RenderVertex)) == 0;
+        static bool Same(VpRenderVertex a, VpRenderVertex b) =>
+            UnsafeUtility.MemCmp(&a, &b, sizeof(VpRenderVertex)) == 0;
 
-        static ulong HashInput(RenderVertex* vb, int vbCount, uint* ib, int ibCount, RenderTopologyRange* blocks, CutGeometry g)
+        static ulong HashInput(VpRenderVertex* vb, int vbCount, uint* ib, int ibCount, RenderTopologyRange* blocks, CutGeometry g)
         {
             ulong h = 14695981039346656037UL;
             void Mix(byte* p, long n) { for (long i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211UL; } }
-            Mix((byte*)vb, (long)vbCount * sizeof(RenderVertex));
+            Mix((byte*)vb, (long)vbCount * sizeof(VpRenderVertex));
             Mix((byte*)ib, (long)ibCount * sizeof(uint));
             for (int b = 0; b < g.Topology.Count; b++) Mix((byte*)blocks[b].topologyVertex, (long)blocks[b].count * 4);
             return h;
@@ -365,7 +366,7 @@ namespace Zantetsu.MeshCut.Verification
         {
             ulong h = 14695981039346656037UL;
             void Mix(byte* p, long n) { for (long i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211UL; } }
-            fixed (RenderVertex* v = Pool.Vertices) Mix((byte*)(v + run.NewVertexBase), (long)run.NewVertexCount * sizeof(RenderVertex));
+            fixed (VpRenderVertex* v = Pool.Vertices) Mix((byte*)(v + run.NewVertexBase), (long)run.NewVertexCount * sizeof(VpRenderVertex));
             fixed (uint* idx = Pool.Indices) Mix((byte*)(idx + run.Result.positive.indexStart), (long)run.Result.newIndexCount * sizeof(uint));
             foreach (int t in run.NewVertexTopology ?? Array.Empty<int>()) { h ^= (uint)t; h *= 1099511628211UL; }
             foreach (var r in run.OutputRanges) { h ^= r.indexStart; h *= 1099511628211UL; h ^= (uint)r.indexCount; h *= 1099511628211UL; }

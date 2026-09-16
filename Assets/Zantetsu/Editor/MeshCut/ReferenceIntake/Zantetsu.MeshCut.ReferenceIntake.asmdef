@@ -3,6 +3,7 @@
     "rootNamespace": "Zantetsu.MeshCut.ReferenceIntake",
     "references": [
         "Zantetsu.MeshCut",
+        "Zantetsu.Rendering",
         "Zantetsu.MeshCut.Verification",
         "Unity.Mathematics",
         "Unity.Collections",

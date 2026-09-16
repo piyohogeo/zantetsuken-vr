@@ -1,4 +1,5 @@
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut
 {
@@ -57,7 +58,7 @@ namespace Zantetsu.MeshCut
     /// </summary>
     public unsafe struct MeshCutInput
     {
-        public RenderVertex* vertices;
+        public VpRenderVertex* vertices;
         /// <summary>Element count of the vertex view (byte size is computed in 64 bit; the count itself fits an int).</summary>
         public int vertexViewLength;
         public uint* indices;
@@ -76,7 +77,7 @@ namespace Zantetsu.MeshCut
     /// </summary>
     public unsafe struct MeshCutOutput
     {
-        public RenderVertex* newVertices;
+        public VpRenderVertex* newVertices;
         /// <summary>Global vertex number of newVertices[0]; new indices reference newVertexBase + i.</summary>
         public uint newVertexBase;
         public int newVertexCapacity;

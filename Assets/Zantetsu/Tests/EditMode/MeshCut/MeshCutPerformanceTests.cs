@@ -8,6 +8,7 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Zantetsu.MeshCut.Verification;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.Tests
 {
@@ -137,7 +138,7 @@ namespace Zantetsu.MeshCut.Tests
     /// </summary>
     public sealed unsafe class KernelBench : IDisposable
     {
-        NativeArray<RenderVertex> m_vb;
+        NativeArray<VpRenderVertex> m_vb;
         NativeArray<uint> m_ib;
         NativeArray<int> m_topo, m_outTopo;
         NativeArray<byte> m_scratch;
@@ -159,22 +160,22 @@ namespace Zantetsu.MeshCut.Tests
             m_blocks[0] = new RenderTopologyRange { vertexBase = 0, count = V, topologyVertex = (int*)m_topo.GetUnsafePtr() };
             // generous reservations for any plane (the bound of the capacity query is 12K + 2 aux vertices, 3(T + 6K + 4 aux) indices)
             int vCap = 12 * (I / 3) + 4096, iCap = 3 * (I / 3 + 6 * (I / 3)) + 4096;
-            m_vb = new NativeArray<RenderVertex>(V + vCap, Allocator.Persistent);
+            m_vb = new NativeArray<VpRenderVertex>(V + vCap, Allocator.Persistent);
             m_ib = new NativeArray<uint>(I + iCap, Allocator.Persistent);
-            NativeArray<RenderVertex>.Copy(mesh.Vertices, m_vb, V); NativeArray<uint>.Copy(mesh.Indices, m_ib, I);
+            NativeArray<VpRenderVertex>.Copy(mesh.Vertices, m_vb, V); NativeArray<uint>.Copy(mesh.Indices, m_ib, I);
             m_outTopo = new NativeArray<int>(vCap, Allocator.Persistent);
             m_outRanges = new NativeArray<MeshCutIndexRange>(2 * m_ranges.Length, Allocator.Persistent);
             m_scratch = new NativeArray<byte>(512 * (2 * (I / 3)) + (1 << 20) + 16 * mesh.TopologyVertexCount, Allocator.Persistent);
             m_input = new MeshCutInput
             {
-                vertices = (RenderVertex*)m_vb.GetUnsafePtr(), vertexViewLength = m_vb.Length, indices = (uint*)m_ib.GetUnsafePtr(), indexViewLength = m_ib.Length,
+                vertices = (VpRenderVertex*)m_vb.GetUnsafePtr(), vertexViewLength = m_vb.Length, indices = (uint*)m_ib.GetUnsafePtr(), indexViewLength = m_ib.Length,
                 ranges = (MeshCutIndexRange*)m_ranges.GetUnsafePtr(), rangeCount = m_ranges.Length,
                 topology = new RenderCutTopologyMap { ranges = (RenderTopologyRange*)m_blocks.GetUnsafePtr(), rangeCount = 1, topologyVertexCount = mesh.TopologyVertexCount },
                 plane = new float4(0, 1, 0, 0),
             };
             m_output = new MeshCutOutput
             {
-                newVertices = (RenderVertex*)m_vb.GetUnsafePtr() + V, newVertexBase = (uint)V, newVertexCapacity = vCap,
+                newVertices = (VpRenderVertex*)m_vb.GetUnsafePtr() + V, newVertexBase = (uint)V, newVertexCapacity = vCap,
                 newVertexTopology = (int*)m_outTopo.GetUnsafePtr(),
                 newIndices = (uint*)m_ib.GetUnsafePtr() + I, newIndexBase = (uint)I, newIndexCapacity = iCap,
                 outputRanges = (MeshCutIndexRange*)m_outRanges.GetUnsafePtr(),

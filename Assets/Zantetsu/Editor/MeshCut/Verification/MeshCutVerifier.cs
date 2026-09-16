@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Unity.Mathematics;
+using Zantetsu.Rendering;
 
 namespace Zantetsu.MeshCut.Verification
 {
@@ -125,9 +126,9 @@ namespace Zantetsu.MeshCut.Verification
             var auxIds = new HashSet<int>();   // an auxiliary vertex has one topology id and up to two render vertices (one per winding sign)
             for (int i = 0; i < newCount; i++)
             {
-                RenderVertex v = input.Vertices[run.NewVertexBase + (uint)i];
+                VpRenderVertex v = input.Vertices[run.NewVertexBase + (uint)i];
                 if (!IsFinite(v)) r.Fail("new vertex " + i + " has a non-finite attribute");
-                double d = math.dot((double3)plane.xyz, (double3)v.position) + plane.w;
+                double d = math.dot((double3)plane.xyz, (double3)(float3)v.position) + plane.w;
                 if (Math.Abs(d) > planeTol) r.Fail("new vertex " + i + " is off the plane by " + Num(Math.Abs(d)));
                 int t = newTopo[i] - topoBase;
                 if (t < 0) r.Fail("new vertex " + i + " has topology id " + newTopo[i] + " below the new id space");
@@ -408,8 +409,8 @@ namespace Zantetsu.MeshCut.Verification
                             int jLo = Array.IndexOf(ft, lo), jHi = Array.IndexOf(ft, hi);
                             if (jLo < 0 || jHi < 0) { ok = false; break; }
                             double param = reference.EdgeParams.TryGetValue(key, out double p) ? p : run.NodeParams[node];
-                            RenderVertex outV = g.Vertices[v];
-                            RenderVertex vLo = input.Vertices[fr[jLo]], vHi = input.Vertices[fr[jHi]];
+                            VpRenderVertex outV = g.Vertices[v];
+                            VpRenderVertex vLo = input.Vertices[fr[jLo]], vHi = input.Vertices[fr[jHi]];
                             if (!InterpolationMatches(vLo, vHi, param, outV, tol, out why)) { ok = false; break; }
                         }
                         if (ok) { matched = true; break; }
@@ -422,14 +423,12 @@ namespace Zantetsu.MeshCut.Verification
         static bool SameCycle(uint a, uint b, uint c, uint x, uint y, uint z) =>
             (a == x && b == y && c == z) || (a == y && b == z && c == x) || (a == z && b == x && c == y);
 
-        static bool InterpolationMatches(RenderVertex lo, RenderVertex hi, double t, RenderVertex outV, double tol, out string why)
+        static bool InterpolationMatches(VpRenderVertex lo, VpRenderVertex hi, double t, VpRenderVertex outV, double tol, out string why)
         {
             why = null;
             double u = lo.uv0.x + (hi.uv0.x - lo.uv0.x) * t, v = lo.uv0.y + (hi.uv0.y - lo.uv0.y) * t;
             if (Math.Abs(u - outV.uv0.x) > tol || Math.Abs(v - outV.uv0.y) > tol) { why = "uv"; return false; }
             if (!DirectionMatches(lo.normal, hi.normal, t, outV.normal, tol)) { why = "normal"; return false; }
-            if (!DirectionMatches(lo.tangent.xyz, hi.tangent.xyz, t, outV.tangent.xyz, tol)) { why = "tangent"; return false; }
-            if (Math.Abs(lo.tangent.w - outV.tangent.w) > tol) { why = "tangent.w"; return false; }
             return true;
         }
 
@@ -464,7 +463,7 @@ namespace Zantetsu.MeshCut.Verification
                 foreach (int node in loop)
                 {
                     int sv = nodeSlotVertex[node];
-                    float3 p = sv >= 0 ? g.Vertices[run.NewVertexBase + (uint)sv].position : float3.zero;
+                    float3 p = sv >= 0 ? (float3)g.Vertices[run.NewVertexBase + (uint)sv].position : float3.zero;
                     pts.Add(new double2(math.dot(p, axisU), math.dot(p, axisV)));
                 }
                 bool simple = loop.Count >= 3 && IsSimplePolygon(pts, eps);
@@ -478,17 +477,14 @@ namespace Zantetsu.MeshCut.Verification
                 int expectedSign = 0;
                 foreach (uint v in new[] { a, b, c })
                 {
-                    RenderVertex rv = g.Vertices[v];
+                    VpRenderVertex rv = g.Vertices[v];
                     if (rv.uv0.x != RenderCutMarker.CapUvX || rv.uv0.y != RenderCutMarker.CapUvY)
                     { if (failures++ < 8) r.Fail(label + ": cap vertex " + v + " does not carry the fixed cap UV marker (" + rv.uv0.x + "," + rv.uv0.y + ")"); }
-                    double dot = math.dot((double3)rv.normal, (double3)n);
+                    double dot = math.dot((double3)(float3)rv.normal, (double3)n);
                     if (Math.Abs(Math.Abs(dot) - 1.0) > tol) { if (failures++ < 8) r.Fail(label + ": cap vertex " + v + " normal is not the unit plane normal (|dot| = " + Num(Math.Abs(dot)) + ")"); }
                     int sign = dot > 0 ? 1 : -1;
                     if (expectedSign == 0) expectedSign = sign;
                     else if (sign != expectedSign && failures++ < 8) r.Fail(label + ": cap triangle mixes normal signs");
-                    double tl = math.length(rv.tangent.xyz);
-                    if (Math.Abs(tl - 1.0) > tol || Math.Abs(math.dot(rv.tangent.xyz, rv.normal)) > 1e-3) { if (failures++ < 8) r.Fail(label + ": cap vertex " + v + " tangent is not a unit vector in the plane"); }
-                    if (rv.tangent.w != 1f && failures++ < 8) r.Fail(label + ": cap vertex " + v + " tangent.w is " + rv.tangent.w + " (the cap frame keeps w = +1; the bitangent follows the normal)");
                     int t = run.NewVertexTopology[v - run.NewVertexBase] - run.TopologyBase;
                     if (t >= 0 && t < nodeSlotVertex.Length)
                     {
@@ -500,7 +496,7 @@ namespace Zantetsu.MeshCut.Verification
                 }
                 // Every cap triangle's orientation in the plane basis (the same float projection the kernel triangulates in,
                 // evaluated in double) must agree with its render normal sign unless the triangle is degenerate: the normal
-                // and tangent frame of a non-degenerate cap triangle follow that triangle's own winding (DESIGN 6.4), on simple
+                // of a non-degenerate cap triangle follows that triangle's own winding (DESIGN 6.4), on simple
                 // and on touching / retraced loops alike. The 3D cross product is not used: for slivers it is float noise.
                 double2 pa = Project(g.Vertices[a].position, axisU, axisV), pb = Project(g.Vertices[b].position, axisU, axisV), pc = Project(g.Vertices[c].position, axisU, axisV);
                 double area2 = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
@@ -559,8 +555,8 @@ namespace Zantetsu.MeshCut.Verification
         static bool OnSeg(double2 s0, double2 s1, double2 p) =>
             p.x >= Math.Min(s0.x, s1.x) && p.x <= Math.Max(s0.x, s1.x) && p.y >= Math.Min(s0.y, s1.y) && p.y <= Math.Max(s0.y, s1.y);
 
-        static bool IsFinite(RenderVertex v) =>
-            math.all(math.isfinite(v.position)) && math.all(math.isfinite(v.normal)) && math.all(math.isfinite(v.uv0)) && math.all(math.isfinite(v.tangent));
+        static bool IsFinite(VpRenderVertex v) =>
+            math.all(math.isfinite((float3)v.position)) && math.all(math.isfinite((float3)v.normal)) && math.all(math.isfinite((float2)v.uv0));
 
         static string Num(double d) => d.ToString("G6", CultureInfo.InvariantCulture);
     }
