@@ -112,6 +112,79 @@ namespace Zantetsu.Rendering
             out VpStoredGeometryUpload upload)
         {
             upload = null;
+            if (!TryBuild(
+                    storage,
+                    geometry,
+                    indexBase,
+                    true,
+                    out uint[] indices,
+                    out VpIndirectCommand[] commands,
+                    out int[] materials,
+                    out Bounds localBounds,
+                    out int referencedStart,
+                    out int referencedCount))
+            {
+                return false;
+            }
+
+            upload = new VpStoredGeometryUpload(indices, indexBase, commands, materials, localBounds, referencedStart, referencedCount);
+            return true;
+        }
+
+        /// <summary>
+        /// The commands alone, for a caller whose transfer reads the storage where the indices lie instead of taking a
+        /// copy of them: the same commands, source material indices and bounds as <see cref="TryBuildUpload"/>, built
+        /// under the same read lease and refused under the same conditions, but **with no index array made at all**.
+        /// <para>
+        /// The caller is then responsible for getting those indices to the GPU by some other route, at the very
+        /// positions the commands name. <see cref="VpStoredGeometryTransfer"/> is that route: it transfers the storage's
+        /// own memory to the position it already occupies, which is what <paramref name="indexBase"/> has to be for the
+        /// commands to address it.
+        /// </para>
+        /// </summary>
+        public static bool TryBuildCommands(
+            VpCpuGeometryStorage storage,
+            VpStoredGeometry geometry,
+            int indexBase,
+            out VpIndirectCommand[] commands,
+            out int[] materialIndices,
+            out Bounds localBounds)
+        {
+            return TryBuild(
+                storage,
+                geometry,
+                indexBase,
+                false,
+                out _,
+                out commands,
+                out materialIndices,
+                out localBounds,
+                out _,
+                out _);
+        }
+
+        /// <summary>
+        /// The one build both entry points use. Everything is measured from the leased view itself — the lease is what
+        /// protects that read — and an index array is made only for a caller that asked for one.
+        /// </summary>
+        private static bool TryBuild(
+            VpCpuGeometryStorage storage,
+            VpStoredGeometry geometry,
+            int indexBase,
+            bool copyIndices,
+            out uint[] indices,
+            out VpIndirectCommand[] commands,
+            out int[] materialIndices,
+            out Bounds localBounds,
+            out int referencedStart,
+            out int referencedCount)
+        {
+            indices = null;
+            commands = null;
+            materialIndices = null;
+            localBounds = default;
+            referencedStart = 0;
+            referencedCount = 0;
             if (storage == null
                 || indexBase < 0
                 || !storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out _)
@@ -127,55 +200,56 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            uint[] indices;
             try
             {
-                // Checked before the copy, and in 64 bit: the last index of this upload has to stay expressible as an
-                // int position, or a command would come back starting at a negative one and be taken for a good draw.
+                // Checked first, and in 64 bit: the last index of this upload has to stay expressible as an int
+                // position, or a command would come back starting at a negative one and be taken for a good draw.
                 // Every submesh offset is below the view length, so this one bound covers all the commands as well.
                 if (view.Length == 0
                     || (long)indexBase + view.Length > int.MaxValue
-                    || !DoSubmeshesCoverTheView(submeshes, view.Length))
+                    || !DoSubmeshesCoverTheView(submeshes, view.Length)
+                    || !TryMeasure(storage, blocks, view, out localBounds, out referencedStart, out referencedCount))
                 {
                     return false;
                 }
 
-                // The whole point of the lease: the transfer source is read here, once, into memory of our own.
-                indices = new uint[view.Length];
-                for (int i = 0; i < indices.Length; i++)
+                var builtCommands = new VpIndirectCommand[submeshes.Length];
+                var builtMaterials = new int[submeshes.Length];
+                for (int s = 0; s < submeshes.Length; s++)
                 {
-                    indices[i] = view[i];
+                    VpGeometrySubmesh submesh = submeshes[s];
+                    if (!TryMeasureRange(storage, blocks, view, submesh.indexOffset, submesh.indexCount, localBounds, out Bounds submeshBounds))
+                    {
+                        return false;
+                    }
+
+                    // indexOffset is relative to the geometry's own published range; the upload base is the only thing added.
+                    var range = new VpGeometryRange(referencedStart, referencedCount, indexBase + submesh.indexOffset, submesh.indexCount);
+                    builtCommands[s] = new VpIndirectCommand(range, submeshBounds, 1);
+                    builtMaterials[s] = submesh.materialIndex;
                 }
+
+                if (copyIndices)
+                {
+                    // The other use of the lease: the transfer source is read here, once, into memory of our own.
+                    var copied = new uint[view.Length];
+                    for (int i = 0; i < copied.Length; i++)
+                    {
+                        copied[i] = view[i];
+                    }
+
+                    indices = copied;
+                }
+
+                commands = builtCommands;
+                materialIndices = builtMaterials;
+                return true;
             }
             finally
             {
-                // The CPU copy is complete, so the lease has done its work. It never stood for a draw having finished.
+                // The reading is complete, so the lease has done its work. It never stood for a draw having finished.
                 storage.TryReleaseIndexReadLease(lease);
             }
-
-            if (!TryMeasure(storage, blocks, indices, out Bounds localBounds, out int referencedStart, out int referencedCount))
-            {
-                return false;
-            }
-
-            var commands = new VpIndirectCommand[submeshes.Length];
-            var materials = new int[submeshes.Length];
-            for (int s = 0; s < submeshes.Length; s++)
-            {
-                VpGeometrySubmesh submesh = submeshes[s];
-                if (!TryMeasureRange(storage, blocks, indices, submesh.indexOffset, submesh.indexCount, localBounds, out Bounds submeshBounds))
-                {
-                    return false;
-                }
-
-                // indexOffset is relative to the geometry's own published range; the upload base is the only thing added.
-                var range = new VpGeometryRange(referencedStart, referencedCount, indexBase + submesh.indexOffset, submesh.indexCount);
-                commands[s] = new VpIndirectCommand(range, submeshBounds, 1);
-                materials[s] = submesh.materialIndex;
-            }
-
-            upload = new VpStoredGeometryUpload(indices, indexBase, commands, materials, localBounds, referencedStart, referencedCount);
-            return true;
         }
 
         /// <summary>The submeshes must cover the leased view once, in order, with no gap or overlap, in whole triangles.</summary>
@@ -203,7 +277,7 @@ namespace Zantetsu.Rendering
         private static bool TryMeasure(
             VpCpuGeometryStorage storage,
             NativeArray<VpGeometryVertexBlock>.ReadOnly blocks,
-            uint[] indices,
+            NativeArray<uint>.ReadOnly indices,
             out Bounds localBounds,
             out int referencedStart,
             out int referencedCount)
@@ -250,7 +324,7 @@ namespace Zantetsu.Rendering
         private static bool TryMeasureRange(
             VpCpuGeometryStorage storage,
             NativeArray<VpGeometryVertexBlock>.ReadOnly blocks,
-            uint[] indices,
+            NativeArray<uint>.ReadOnly indices,
             int offset,
             int count,
             Bounds fallback,

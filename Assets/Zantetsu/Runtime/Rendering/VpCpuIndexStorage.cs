@@ -132,6 +132,80 @@ namespace Zantetsu.Rendering
             return true;
         }
 
+        /// <summary>
+        /// A window on the indices of a **held lease's** range, for a transfer that reads them where they are instead of
+        /// copying them out, together with where they sit in the index array. The window is answered only for a lease
+        /// this storage still holds, so a caller cannot ask for an arbitrary start and count. The array is **borrowed**:
+        /// it is read, never written, never kept past the call and never disposed, and it may be used only while the
+        /// lease is held. False with a default window for a returned, stale, foreign or default lease.
+        /// </summary>
+        internal bool TryGetLeasedSpan(VpIndexReadLease lease, out NativeArray<uint> span, out int indexStart, out int indexCount)
+        {
+            ThrowIfDisposed();
+            span = default;
+            indexStart = 0;
+            indexCount = 0;
+            if (!_allocator.IsLeaseHeld(lease)
+                || !_allocator.TryGetState(lease.range, out _, out indexStart, out indexCount))
+            {
+                return false;
+            }
+
+            span = _indices.GetSubArray(indexStart, indexCount);
+            return true;
+        }
+
+        /// <summary>
+        /// The same window over **two held leases whose ranges are adjacent**, in order: the second range must begin
+        /// exactly where the first ends, so the window is the one contiguous run they make together and holds nothing
+        /// else — no gap, no unused reservation tail, no unrelated range. An empty range on either side answers the
+        /// other side's window alone, and two empty ranges answer an empty one. False, with a default window, for a
+        /// lease this storage does not hold or for ranges that are not adjacent in that order.
+        /// </summary>
+        internal bool TryGetLeasedSpan(
+            VpIndexReadLease first,
+            VpIndexReadLease second,
+            out NativeArray<uint> span,
+            out int indexStart,
+            out int indexCount)
+        {
+            ThrowIfDisposed();
+            span = default;
+            indexStart = 0;
+            indexCount = 0;
+            if (!_allocator.IsLeaseHeld(first)
+                || !_allocator.IsLeaseHeld(second)
+                || !_allocator.TryGetState(first.range, out _, out int firstStart, out int firstCount)
+                || !_allocator.TryGetState(second.range, out _, out int secondStart, out int secondCount))
+            {
+                return false;
+            }
+
+            if (firstCount > 0 && secondCount > 0)
+            {
+                if (firstStart + firstCount != secondStart)
+                {
+                    return false;
+                }
+
+                indexStart = firstStart;
+                indexCount = firstCount + secondCount;
+            }
+            else if (firstCount > 0)
+            {
+                indexStart = firstStart;
+                indexCount = firstCount;
+            }
+            else
+            {
+                indexStart = secondStart;
+                indexCount = secondCount;
+            }
+
+            span = _indices.GetSubArray(indexStart, indexCount);
+            return true;
+        }
+
         /// <inheritdoc cref="VpIndexRangeAllocator.TryRetire"/>
         public bool TryRetire(VpIndexRangeHandle handle)
         {

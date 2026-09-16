@@ -676,6 +676,32 @@ namespace Zantetsu.Rendering
             _vertices.Dispose();
         }
 
+        /// <inheritdoc cref="VpCpuVertexStorage.TryGetCommittedRange"/>
+        internal bool TryGetCommittedVertexRange(int start, int count, out NativeArray<VpRenderVertex> range)
+        {
+            ThrowIfDisposed();
+            return _vertices.TryGetCommittedRange(start, count, out range);
+        }
+
+        /// <inheritdoc cref="VpCpuIndexStorage.TryGetLeasedSpan(VpIndexReadLease, out NativeArray{uint}, out int, out int)"/>
+        internal bool TryGetLeasedIndexSpan(VpIndexReadLease lease, out NativeArray<uint> span, out int indexStart, out int indexCount)
+        {
+            ThrowIfDisposed();
+            return _indices.TryGetLeasedSpan(lease, out span, out indexStart, out indexCount);
+        }
+
+        /// <inheritdoc cref="VpCpuIndexStorage.TryGetLeasedSpan(VpIndexReadLease, VpIndexReadLease, out NativeArray{uint}, out int, out int)"/>
+        internal bool TryGetLeasedIndexSpan(
+            VpIndexReadLease first,
+            VpIndexReadLease second,
+            out NativeArray<uint> span,
+            out int indexStart,
+            out int indexCount)
+        {
+            ThrowIfDisposed();
+            return _indices.TryGetLeasedSpan(first, second, out span, out indexStart, out indexCount);
+        }
+
         /// <summary>
         /// Claims the storage for its one <see cref="VpGeometryReferenceTable"/> for the rest of the storage's lifetime,
         /// so that a geometry's index range has a single owner that retires it. Returns false when already claimed; the

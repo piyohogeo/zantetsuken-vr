@@ -51,6 +51,25 @@ namespace Zantetsu.Rendering
             return _vertices.GetSubArray(Count, count);
         }
 
+        /// <summary>
+        /// A window on committed vertices [start, start + count), for a transfer that reads them where they are instead
+        /// of copying them out. The array is **borrowed**: the caller reads it, never writes it, never keeps it past the
+        /// call and never disposes it, and it stays valid only while the storage lives. False with a default window when
+        /// the range is negative or reaches past the committed vertices.
+        /// </summary>
+        internal bool TryGetCommittedRange(int start, int count, out NativeArray<VpRenderVertex> range)
+        {
+            ThrowIfDisposed();
+            if (start < 0 || count < 0 || start > Count - count)
+            {
+                range = default;
+                return false;
+            }
+
+            range = _vertices.GetSubArray(start, count);
+            return true;
+        }
+
         /// <summary>Makes the next <paramref name="count"/> written vertices visible. Throws when the count is negative or exceeds the free tail.</summary>
         internal void Commit(int count)
         {
