@@ -13,6 +13,7 @@
         "Unity.Mathematics",
         "Zantetsu.MeshCut",
         "Zantetsu.MeshCut.Verification",
+        "Zantetsu.MeshCut.ReferenceIntake",
         "Zantetsu.Sandbox",
         "Zantetsu.Rendering",
         "Unity.XR.Management",

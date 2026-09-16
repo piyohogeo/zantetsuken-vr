@@ -12,6 +12,8 @@ namespace Zantetsu.MeshCut.ReferenceIntake
         public SyntheticMesh Mesh;
         public int ControlPoints, Polygons, NonTrianglePolygons, RenderVertices;
         public string[] MaterialNames = Array.Empty<string>();
+        /// <summary>Per submesh of <see cref="Mesh"/>: the file's material index it holds (materials without triangles get no submesh).</summary>
+        public int[] SubmeshMaterialIndex = Array.Empty<int>();
         public string NormalMapping, UvMapping, TangentMapping, MaterialMapping;
         public bool HasUv, HasTangent;
         public float3 BoundsMin, BoundsMax;
@@ -215,13 +217,15 @@ namespace Zantetsu.MeshCut.ReferenceIntake
             int materialCount = 0;
             foreach (var t in triangles) materialCount = Math.Max(materialCount, t.material + 1);
             var indices = new List<uint>(3 * triangles.Count);
+            var submeshMaterial = new List<int>();
             for (int m = 0; m < materialCount; m++)
             {
                 int before = indices.Count;
                 foreach (var t in triangles) if (t.material == m) { indices.Add(t.a); indices.Add(t.b); indices.Add(t.c); }
-                if (indices.Count > before) mesh.SubmeshIndexCounts.Add(indices.Count - before);
+                if (indices.Count > before) { mesh.SubmeshIndexCounts.Add(indices.Count - before); submeshMaterial.Add(m); }
             }
             mesh.Indices = indices.ToArray();
+            g.SubmeshMaterialIndex = submeshMaterial.ToArray();
             g.Mesh = mesh;
         }
 
