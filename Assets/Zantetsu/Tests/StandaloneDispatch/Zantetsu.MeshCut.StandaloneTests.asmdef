@@ -5,6 +5,7 @@
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "Zantetsu.MeshCut",
+        "Zantetsu.Core",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics"
