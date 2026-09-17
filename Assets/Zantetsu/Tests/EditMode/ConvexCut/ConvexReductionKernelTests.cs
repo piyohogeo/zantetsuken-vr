@@ -14,6 +14,30 @@ namespace Zantetsu.ConvexCut.Tests
     {
         public const int L = 128;
 
+        [Test]
+        public unsafe void PolygonalFaceGrowth_ReportsOutputCapacity_NotInternalFailure()
+        {
+            var input = ConvexBrepData.FromPoly(CaseGenerator.Prism(64, 1, 1));
+            using (var arena = new SentinelArena(4 << 20))
+            {
+                // Valid input-sized IO: reduction needs MORE faces despite fewer vertices.
+                var io = input.Upload(
+                    arena.Alloc<float3>("v", input.V),
+                    arena.Alloc<int>("fo", input.F + 1),
+                    arena.Alloc<int>("fi", input.I),
+                    arena.Alloc<int>("fe", input.I),
+                    arena.Alloc<BrepEdge>("e", input.E));
+                ReductionScratch.Layout(null, input.V, input.E, input.F, input.I, out int bytes);
+                var scratch = ReductionScratch.Layout(arena.AllocPtr<byte>("scratch", bytes), input.V, input.E, input.F, input.I, out _);
+                var stats = new ReductionStats();
+                int status = ConvexReductionKernel.Reduce(ref io, 126, ref scratch, ref stats);
+                Assert.That(stats.outputV, Is.EqualTo(126), "reduction itself completed");
+                Assert.That(stats.removedR0 + stats.removedR1, Is.EqualTo(2));
+                Assert.That(status, Is.EqualTo((int)ReductionStatus.CapacityOutput));
+                Assert.That(arena.CheckGuards(), Is.Empty);
+            }
+        }
+
         public sealed class ExcessCase { public string id, family; public ConvexPoly input; public override string ToString() => id; }
 
         static List<ExcessCase> s_excess;

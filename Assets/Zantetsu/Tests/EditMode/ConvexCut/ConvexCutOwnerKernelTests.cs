@@ -133,6 +133,43 @@ namespace Zantetsu.ConvexCut.Tests
             TestContext.Out.WriteLine(log.ToString());
         }
 
+        [TestCase(64, 128)]
+        [TestCase(64, 100)]
+        [TestCase(48, 64)]
+        [TestCase(64, 8)]
+        [TestCase(128, 128)]
+        public void PolygonalPrismCorner_ReductionFitsTheQueriedOwnerCapacity(int sides, int limit)
+        {
+            // Obliquely slice the top rim. The large side gains two vertices; removing them
+            // can leave the original polygonal faces alive AND append new patch faces.
+            using (var h = new OwnerCutHarness { vertexLimit = limit })
+            {
+                h.Add(CaseGenerator.Prism(sides, 1, 1)).Plane(new float3(0.2f, 1, 0.3f), -1.05f, 1e-6f);
+                h.Build(); // Exactly QueryCapacity: no caller-provided output slack.
+                ulong inputHash = h.InputHash();
+                var r = h.Execute();
+                string context = "prism " + sides + " L=" + limit;
+                Assert.That(r.status, Is.EqualTo(ConvexCutOwnerStatus.Ok), context + " reduction=" + r.reductionStatus);
+                Assert.That(r.executedManaged, Is.EqualTo(0));
+                Assert.That(r.reducedConvexCount, Is.GreaterThan(0), "must exercise reduction, not just clipping");
+                Assert.That(r.removedVertices, Is.GreaterThan(0));
+                AssertOutputsValid(h, in r, context, limit);
+                AssertMassContract(h, in r, context);
+                Assert.That(h.InputHash(), Is.EqualTo(inputHash));
+                if (sides == 64 && limit == 128)
+                    Assert.That(h.Outcome(0).negative.faceCount, Is.GreaterThan(sides + 3), "must exceed the old clip-only face reservation");
+
+                ulong outputHash = h.OutputHash();
+                h.ScrambleScratch(0xC0FFEE);
+                var job = h.ExecuteViaJob();
+                Assert.That(job.status, Is.EqualTo(ConvexCutOwnerStatus.Ok), context + " Job");
+                Assert.That(job.executedManaged, Is.EqualTo(0));
+                Assert.That(h.OutputHash(), Is.EqualTo(outputHash));
+                Assert.That(h.InputHash(), Is.EqualTo(inputHash));
+                Assert.That(h.CheckGuards(), Is.Empty);
+            }
+        }
+
         [Test]
         public void ZeroSplitCompound_SucceedsWithoutOutput()
         {

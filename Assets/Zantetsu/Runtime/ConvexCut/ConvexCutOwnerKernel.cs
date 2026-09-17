@@ -129,11 +129,13 @@ namespace Zantetsu.ConvexCut
         }
 
         /// <summary>The per-split reservation: the same formula drives the capacity query and the execution plan.</summary>
-        static SplitPlan PlanSplit(in ConvexBrepRange r, int vPos, int vNeg, int vOn)
+        static SplitPlan PlanSplit(in ConvexBrepRange r, int vPos, int vNeg, int vOn, int vertexLimit)
         {
             var p = new SplitPlan();
             p.pos = ClipCapacity.Snapshot(r.vertexCount, r.edgeCount, r.faceCount, r.faceIndexCount, r.maxFaceLoop, vPos, vOn);
             p.neg = ClipCapacity.Snapshot(r.vertexCount, r.edgeCount, r.faceCount, r.faceIndexCount, r.maxFaceLoop, vNeg, vOn);
+            ReserveReductionOutput(ref p.pos, vertexLimit);
+            ReserveReductionOutput(ref p.neg, vertexLimit);
             p.cutCap = math.max(p.pos.cutK, p.neg.cutK);
             p.hashCap = math.max(p.pos.hashCap, p.neg.hashCap);
             p.boundaryCap = math.max(p.pos.vOut, p.neg.vOut);
@@ -141,6 +143,19 @@ namespace Zantetsu.ConvexCut
             int capV = math.max(p.pos.vOut, p.neg.vOut), capE = math.max(p.pos.eOut, p.neg.eOut), capF = math.max(p.pos.fOut, p.neg.fOut), capI = math.max(p.pos.iOut, p.neg.iOut);
             ReductionScratch.Layout(null, capV, capE, capF, capI, out p.reductionBytes);
             return p;
+        }
+
+        static void ReserveReductionOutput(ref ClipCapacity c, int vertexLimit)
+        {
+            if (c.vOut <= vertexLimit) return;
+            // Removing a vertex can retain its polygonal faces and add patch triangles. F+1 is
+            // only a clip bound. Compact writes once, after reduction reaches at most L vertices.
+            // A closed convex B-rep has F <= 2L-4, E <= 3L-6 and I = 2E <= 6L-12.
+            // Keep the larger clip bounds too: the same buffer first holds the unreduced clip.
+            c.fOut = math.max(c.fOut, 2 * vertexLimit - 4);
+            c.eOut = math.max(c.eOut, 3 * vertexLimit - 6);
+            c.iOut = math.max(c.iOut, 6 * vertexLimit - 12);
+            c.hashCap = math.ceilpow2(math.max(16, 2 * c.eOut));
         }
 
         /// <summary>
@@ -155,7 +170,7 @@ namespace Zantetsu.ConvexCut
             {
                 if ((ConvexSide)input.sides[c] != ConvexSide.Split) continue;
                 CountSigns(in input, c, out int vPos, out int vNeg, out int vOn);
-                var p = PlanSplit(in input.convexes[c], vPos, vNeg, vOn);
+                var p = PlanSplit(in input.convexes[c], vPos, vNeg, vOn, input.vertexLimit);
                 cap.vertices += p.pos.vOut + p.neg.vOut;
                 cap.faceOffsets += p.pos.fOut + 1 + p.neg.fOut + 1;
                 cap.faceIndices += p.pos.iOut + p.neg.iOut;
@@ -203,7 +218,7 @@ namespace Zantetsu.ConvexCut
 
                 // ---- Split: plan (same formula as QueryCapacity), reserve inside the arena, clip, reduce, integrate ----
                 CountSigns(in input, c, out int vPos, out int vNeg, out int vOn);
-                var plan = PlanSplit(in r, vPos, vNeg, vOn);
+                var plan = PlanSplit(in r, vPos, vNeg, vOn, input.vertexLimit);
                 int needV = plan.pos.vOut + plan.neg.vOut, needF = plan.pos.fOut + 1 + plan.neg.fOut + 1, needI = plan.pos.iOut + plan.neg.iOut, needE = plan.pos.eOut + plan.neg.eOut;
                 if (vCur + needV > output.vertexCapacity || fCur + needF > output.faceOffsetCapacity || iCur + needI > output.faceIndexCapacity || eCur + needE > output.edgeCapacity)
                 { result.status = ConvexCutOwnerStatus.CapacityOutput; result.failedConvex = c; output.outcomes[c] = outcome; return; }

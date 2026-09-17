@@ -3,7 +3,7 @@ using Unity.Mathematics;
 
 namespace Zantetsu.ConvexCut
 {
-    public enum ReductionStatus : int { Ok = 0, NotNeeded = 1, ReductionFailed = 2, CapacityScratch = 3, InternalFailure = 4 }
+    public enum ReductionStatus : int { Ok = 0, NotNeeded = 1, ReductionFailed = 2, CapacityScratch = 3, InternalFailure = 4, CapacityOutput = 5 }
 
     public struct ReductionStats
     {
@@ -622,14 +622,15 @@ namespace Zantetsu.ConvexCut
             // remap vertices (reuse nextOf as remap)
             int nv = 0;
             for (int i = 0; i < s.V; i++) s.nextOf[i] = s.alive[i] != 0 ? nv++ : -1;
-            if (nv != alive || nv > io.vCap) return (int)ReductionStatus.InternalFailure;
+            if (nv != alive) return (int)ReductionStatus.InternalFailure;
+            if (nv > io.vCap) return (int)ReductionStatus.CapacityOutput;
             for (int i = 0; i < s.V; i++) if (s.alive[i] != 0) io.v[s.nextOf[i]] = (float3)s.pos[i];
             int nf = 0, ni = 0;
             for (int f = 0; f < s.faceTotal; f++)
             {
                 if (s.faceAlive[f] == 0) continue;
                 int cnt = s.faceCount[f];
-                if (nf + 1 > io.fCap || ni + cnt > io.iCap) return (int)ReductionStatus.InternalFailure;
+                if (nf + 1 > io.fCap || ni + cnt > io.iCap) return (int)ReductionStatus.CapacityOutput;
                 io.faceOff[nf] = ni;
                 for (int k = 0; k < cnt; k++) io.faceIdx[ni + k] = s.nextOf[s.loop[s.faceStart[f] + k]];
                 ni += cnt; nf++;
@@ -639,6 +640,8 @@ namespace Zantetsu.ConvexCut
             for (int i = 0; i < s.V; i++) s.nextOf[i] = -1;
             int probes = 0;
             int r = ConvexClipKernel.BuildEdgeTable(ref io, s.ekeys, s.evals, s.ecap, ref probes);
+            if (r == (int)CutStatus.CapacityEdge) return (int)ReductionStatus.CapacityOutput;
+            if (r == (int)CutStatus.CapacityHash) return (int)ReductionStatus.CapacityScratch;
             return r == 0 ? (int)ReductionStatus.Ok : (int)ReductionStatus.InternalFailure;
         }
     }
