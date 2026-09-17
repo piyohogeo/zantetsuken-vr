@@ -12,13 +12,15 @@ using Object = UnityEngine.Object;
 namespace Zantetsu.Rendering.Tests
 {
     /// <summary>
-    /// The provisional split display of DESIGN 5.1: the same parent geometry drawn twice, each instance keeping one
-    /// half of a world cut plane and moved apart by a world offset. What is checked is the image — nothing here trusts
-    /// that a draw call was issued.
+    /// The provisional split display of DESIGN 5.1 and 5.2: the same parent geometry drawn per side, each instance
+    /// keeping the intersection of up to eight world cut planes and moved apart by one world offset. What is checked
+    /// is the image — nothing here trusts that a draw call was issued.
     /// <para>
-    /// The fixture is one quad in a pool, drawn by the Stage 3 indexed indirect batch. The plane is world x = 0, so the
-    /// positive side keeps the right half of the screen and the negative side the left. Geometry is never duplicated or
-    /// re-meshed for a side: both instances address the same range of the same buffers.
+    /// The fixture is one quad in a pool, drawn by the Stage 3 indexed indirect batch. The single plane is world
+    /// x = 0, so the positive side keeps the right half of the screen and the negative side the left; the eight-plane
+    /// tests use <see cref="Octagon"/>, whose every plane cuts a real piece, so that a plane which did not take
+    /// effect shows up as coverage that did not change. Geometry is never duplicated or re-meshed for a side or for a
+    /// plane count: every instance addresses the same range of the same buffers.
     /// </para>
     /// </summary>
     public class VpIndexedIndirectClipTests
@@ -295,6 +297,100 @@ namespace Zantetsu.Rendering.Tests
         private static readonly Matrix4x4[] OnePlace = { Matrix4x4.identity };
         private static readonly Matrix4x4[] TwoPlaces = { Matrix4x4.identity, Matrix4x4.identity };
 
+        // ----- eight planes at once ------------------------------------------------------------------------------
+
+        /// <summary>The quad scaled up to nearly fill the front view, so eight planes each have room to cut a piece.</summary>
+        private static readonly Matrix4x4[] Scaled = { Matrix4x4.Scale(new Vector3(1.8f, 1.8f, 1f)) };
+
+        /// <summary>The axis-aligned bound of <see cref="Octagon"/>: it keeps |x - cx| and |y - cy| below this.</summary>
+        private const float OctagonAxis = 0.65f;
+
+        /// <summary>The diagonal bound of <see cref="Octagon"/>: it keeps |x - cx| + |y - cy| below this.</summary>
+        private const float OctagonDiagonal = 0.92f;
+
+        /// <summary>
+        /// Eight half-spaces, each keeping the inside: the regular octagon around <paramref name="centre"/> with the
+        /// given axis-aligned bound and diagonal bound. Every one of the eight binds — the four axis planes cut the
+        /// sides, the four diagonal ones cut the corners — which is what makes it possible to see whether a
+        /// particular plane took effect: removing any single one of them enlarges the surviving region.
+        /// </summary>
+        private static VpClipHalfSpace[] Octagon(Vector2 centre, float axis, float diagonal)
+        {
+            var halfSpaces = new VpClipHalfSpace[VpInstanceClip.PlaneCapacity];
+            for (int i = 0; i < halfSpaces.Length; i++)
+            {
+                float angle = i * Mathf.PI / 4f;
+                var normal = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+
+                // An axis plane bounds one coordinate; a diagonal one bounds |dx| + |dy|, which along its own normal
+                // is that bound over root two. The side is negative because each keeps the inside.
+                float distance = i % 2 == 0 ? axis : diagonal / Mathf.Sqrt(2f);
+                float alongNormal = distance + Vector2.Dot(normal, centre);
+                halfSpaces[i] = new VpClipHalfSpace(new Vector4(normal.x, normal.y, 0f, -alongNormal), -1f);
+            }
+
+            return halfSpaces;
+        }
+
+        /// <summary>Whether a world point is inside the octagon <see cref="Octagon"/> describes, within a margin.</summary>
+        private static bool InsideOctagon(Vector2 point, Vector2 centre, float axis, float diagonal, float margin)
+        {
+            float dx = Mathf.Abs(point.x - centre.x);
+            float dy = Mathf.Abs(point.y - centre.y);
+            return dx <= axis + margin && dy <= axis + margin && dx + dy <= diagonal + 2f * margin;
+        }
+
+        /// <summary>The world position of the centre of pixel <paramref name="index"/> of a <see cref="FrontView"/> image.</summary>
+        private static Vector2 WorldAt(int index)
+        {
+            float x = ((index % Size) + 0.5f) / Size * 2f - 1f;
+            float y = ((index / Size) + 0.5f) / Size * 2f - 1f;
+            return new Vector2(x, y);
+        }
+
+        /// <summary>Counts pixels satisfying <paramref name="test"/> whose world position satisfies <paramref name="where"/>.</summary>
+        private static int CountWhere(Color32[] pixels, Func<Vector2, bool> where, Func<Color32, bool> test)
+        {
+            int count = 0;
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (where(WorldAt(i)) && test(pixels[i]))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>The record for a whole set of half-spaces; a set the record refuses fails the test outright.</summary>
+        private static VpInstanceClip KeepSet(IReadOnlyList<VpClipHalfSpace> halfSpaces, Vector3 offset)
+        {
+            Assert.That(VpInstanceClip.TryKeep(halfSpaces, offset, out VpInstanceClip clip), Is.True, "the plane set is accepted");
+            return clip;
+        }
+
+        /// <summary>The same set of half-spaces without the one at <paramref name="index"/>.</summary>
+        private static VpClipHalfSpace[] Without(VpClipHalfSpace[] halfSpaces, int index)
+        {
+            var remaining = new List<VpClipHalfSpace>(halfSpaces);
+            remaining.RemoveAt(index);
+            return remaining.ToArray();
+        }
+
+        /// <summary>
+        /// One upload and one forward render through an **existing** batch, so that successive records overwrite each
+        /// other in the one buffer the draw reads — which is what a stale constraint would show up in.
+        /// </summary>
+        private Color32[] RenderOnce(
+            VpIndexedIndirectDrawBatch batch, VpIndirectCommand[] commands, Matrix4x4[] transforms, VpInstanceClip[] clips,
+            Material material, MaterialPropertyBlock properties, VpGpuIndexedGeometryBuffers buffers, Camera camera, RenderTexture target)
+        {
+            Assert.That(batch.TryUpload(commands, transforms, clips, false), Is.True, "batch upload");
+            batch.RenderForward(material, properties, buffers, 0, 0, batch.CommandCount, camera);
+            return RenderAndRead(camera, target);
+        }
+
         [Test]
         public void WithoutAClip_TheDisplayIsWhatItWasBefore()
         {
@@ -482,7 +578,8 @@ namespace Zantetsu.Rendering.Tests
 
                 var readback = new VpInstanceClip[1];
                 batch.InstanceClipBuffer.GetData(readback, 0, 0, 1);
-                Assert.That(readback[0].Side, Is.EqualTo(1f), "the earlier clip record still stands");
+                Assert.That(readback[0].PlaneCount, Is.EqualTo(1), "the earlier clip record still stands");
+                Assert.That(readback[0].SignedPlane(0), Is.EqualTo(PlaneX0), "with the plane and the side it had");
             }
         }
 
@@ -532,6 +629,243 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(moved.size.x, Is.GreaterThan(unmoved.size.x + 3f), "the bounds grew to hold both offsets");
                 Assert.That(moved.Contains(new Vector3(2f, 0f, 0f)), Is.True, "and hold where the positive side is drawn");
                 Assert.That(moved.Contains(new Vector3(-2f, 0f, 0f)), Is.True, "and where the negative side is drawn");
+            }
+        }
+
+        /// <summary>
+        /// The forms that existed before the capacity grew convert into the eight-plane record without changing what
+        /// they mean: no planes, one plane with either side, and a side of zero which is no clipping but still moves.
+        /// </summary>
+        [Test]
+        public void TheOldSinglePlaneForms_ConvertIntoTheRecordUnchanged()
+        {
+            Assert.That(VpInstanceClip.None.PlaneCount, Is.Zero, "no clip carries no plane");
+            Assert.That(VpInstanceClip.None.IsClipped, Is.False);
+            Assert.That(VpInstanceClip.None.Offset, Is.EqualTo(Vector3.zero));
+            Assert.Throws<ArgumentOutOfRangeException>(() => VpInstanceClip.None.SignedPlane(0), "and no plane to read");
+
+            VpInstanceClip positive = VpInstanceClip.Keep(PlaneX0, 1f, new Vector3(0.25f, 0f, 0f));
+            Assert.That(positive.PlaneCount, Is.EqualTo(1), "one plane, whatever the capacity is");
+            Assert.That(positive.IsClipped, Is.True);
+            Assert.That(positive.SignedPlane(0), Is.EqualTo(PlaneX0));
+            Assert.That(positive.Offset, Is.EqualTo(new Vector3(0.25f, 0f, 0f)));
+
+            VpInstanceClip negative = VpInstanceClip.Keep(PlaneX0, -1f, Vector3.zero);
+            Assert.That(negative.PlaneCount, Is.EqualTo(1));
+            Assert.That(negative.SignedPlane(0), Is.EqualTo(-PlaneX0), "the side kept is folded into the plane");
+
+            // a side of zero was never clipping, and still moved the instance
+            VpInstanceClip lifted = VpInstanceClip.Keep(PlaneX0, 0f, new Vector3(0f, 0.5f, 0f));
+            Assert.That(lifted.IsClipped, Is.False, "a side of zero is still no clipping");
+            Assert.That(lifted.Offset, Is.EqualTo(new Vector3(0f, 0.5f, 0f)), "and the offset still applies");
+
+            // an empty set is the same thing, said the other way
+            Assert.That(VpInstanceClip.TryKeep(new VpClipHalfSpace[0], Vector3.zero, out VpInstanceClip empty), Is.True);
+            Assert.That(empty.PlaneCount, Is.Zero);
+        }
+
+        /// <summary>
+        /// A set larger than the capacity is refused whole, before anything is built from it, and never quietly
+        /// reduced to the first eight — a truncated intersection would keep more than the caller asked for.
+        /// </summary>
+        [Test]
+        public void APlaneSetBeyondTheCapacity_IsRefusedWholeAndNotTruncated()
+        {
+            var nine = new VpClipHalfSpace[VpInstanceClip.PlaneCapacity + 1];
+            for (int i = 0; i < nine.Length; i++)
+            {
+                nine[i] = new VpClipHalfSpace(new Vector4(1f, 0f, 0f, -0.1f * i), 1f);
+            }
+
+            Assert.That(VpInstanceClip.TryKeep(nine, new Vector3(0.5f, 0f, 0f), out VpInstanceClip refused), Is.False, "nine planes are refused");
+            Assert.That(refused.PlaneCount, Is.Zero, "and not truncated to the capacity");
+            Assert.That(refused.IsClipped, Is.False);
+
+            Assert.That(VpInstanceClip.TryKeep(null, Vector3.zero, out _), Is.False, "so is no set at all");
+
+            var withoutASide = new[] { new VpClipHalfSpace(PlaneX0, 1f), new VpClipHalfSpace(PlaneY0, 0f) };
+            Assert.That(
+                VpInstanceClip.TryKeep(withoutASide, Vector3.zero, out _), Is.False,
+                "and so is a half-space with no side, which would quietly drop a constraint");
+
+            VpClipHalfSpace[] eight = Octagon(Vector2.zero, OctagonAxis, OctagonDiagonal);
+            Assert.That(VpInstanceClip.TryKeep(eight, Vector3.zero, out VpInstanceClip full), Is.True, "the capacity itself is accepted");
+            Assert.That(full.PlaneCount, Is.EqualTo(VpInstanceClip.PlaneCapacity));
+            Assert.Throws<ArgumentOutOfRangeException>(() => full.SignedPlane(VpInstanceClip.PlaneCapacity));
+        }
+
+        /// <summary>Eight planes leave the intersection of their half-spaces, and nothing outside it.</summary>
+        [Test]
+        public void EightPlanes_DrawOnlyTheirIntersection()
+        {
+            VpClipHalfSpace[] octagon = Octagon(Vector2.zero, OctagonAxis, OctagonDiagonal);
+            Color32[] clipped = RenderClipped(Quad, Scaled, new[] { KeepSet(octagon, Vector3.zero) });
+            Color32[] whole = RenderClipped(Quad, Scaled, new[] { VpInstanceClip.None });
+
+            Assert.That(Count(clipped, IsGreenish), Is.GreaterThan(CoveredPixels * 4), "the middle of the quad survives");
+            Assert.That(Count(whole, IsGreenish), Is.GreaterThan(Count(clipped, IsGreenish)), "and the planes removed the rest");
+
+            // one pixel of the front view is 2 / Size wide in world units
+            float margin = 2f / Size;
+            Assert.That(
+                CountWhere(clipped, p => !InsideOctagon(p, Vector2.zero, OctagonAxis, OctagonDiagonal, margin), IsGreenish),
+                Is.Zero,
+                "nothing survives outside the intersection of the eight half-spaces");
+        }
+
+        /// <summary>
+        /// Every one of the eight planes takes effect, the four in the second clip distance register included:
+        /// dropping any single plane from the set enlarges what survives. A set whose back half never reached the
+        /// hardware would show no change for those four.
+        /// </summary>
+        [Test]
+        public void RemovingAnyOneOfTheEightPlanes_ChangesWhatSurvives()
+        {
+            VpClipHalfSpace[] octagon = Octagon(Vector2.zero, OctagonAxis, OctagonDiagonal);
+            int all = Count(RenderClipped(Quad, Scaled, new[] { KeepSet(octagon, Vector3.zero) }), IsGreenish);
+            Assert.That(all, Is.GreaterThan(CoveredPixels * 4), "the eight planes leave a region to compare against");
+
+            for (int i = 0; i < octagon.Length; i++)
+            {
+                int without = Count(RenderClipped(Quad, Scaled, new[] { KeepSet(Without(octagon, i), Vector3.zero) }), IsGreenish);
+                Assert.That(
+                    without, Is.GreaterThan(all + 30),
+                    "plane " + i + " of eight has to bind: without it " + without + " px survive, with it " + all);
+            }
+        }
+
+        /// <summary>
+        /// Several instances in one draw each take their own plane set, their own sides and their own offset: one
+        /// kept to an octagon about its own middle and lifted, one kept to half of a plane through its own middle and
+        /// moved the other way. The gap between the two regions stays empty, so neither took the other's planes.
+        /// </summary>
+        [Test]
+        public void SeveralInstances_AreEachClippedByTheirOwnPlaneSetAndOffset()
+        {
+            var places = new[]
+            {
+                Matrix4x4.Translate(new Vector3(-0.5f, 0f, 0f)),
+                Matrix4x4.Translate(new Vector3(0.5f, 0f, 0f)),
+            };
+
+            var leftCentre = new Vector2(-0.5f, 0f);
+            var leftLift = new Vector3(0f, 0.2f, 0f);
+            const float leftAxis = 0.35f;
+            const float leftDiagonal = 0.5f;
+            var clips = new[]
+            {
+                KeepSet(Octagon(leftCentre, leftAxis, leftDiagonal), leftLift),
+                VpInstanceClip.Keep(new Vector4(1f, 0f, 0f, -0.5f), 1f, new Vector3(-0.1f, 0f, 0f)),
+            };
+
+            Color32[] pixels = RenderClipped(Quad, places, clips);
+            float margin = 2f / Size;
+
+            Assert.That(CountWhere(pixels, p => p.x < 0f, IsGreenish), Is.GreaterThan(CoveredPixels * 2), "the first instance kept its octagon");
+            Assert.That(
+                CountWhere(
+                    pixels,
+                    p => p.x < 0f && !InsideOctagon(p - (Vector2)leftLift, leftCentre, leftAxis, leftDiagonal, margin),
+                    IsGreenish),
+                Is.Zero,
+                "and nothing of it outside that set, lifted by its own offset");
+
+            Assert.That(CountWhere(pixels, p => p.x > 0f, IsGreenish), Is.GreaterThan(CoveredPixels * 2), "the second instance kept its own half");
+            Assert.That(
+                CountWhere(
+                    pixels,
+                    p => p.x > 0f && (p.x < 0.4f - margin || p.x > 0.9f + margin || Mathf.Abs(p.y) > 0.5f + margin),
+                    IsGreenish),
+                Is.Zero,
+                "and nothing of it outside that half, moved by its own offset");
+
+            Assert.That(
+                CountWhere(pixels, p => p.x > -0.1f && p.x < 0.35f, IsGreenish), Is.Zero,
+                "and the gap between the two regions is empty: neither instance took the other's planes");
+        }
+
+        /// <summary>
+        /// Eight planes, then one, then none, through the one buffer the draw reads: each record replaces the last
+        /// whole, so no plane of an earlier upload is left in force. What the batch shows after the earlier uploads
+        /// is compared pixel for pixel with the same display built from nothing.
+        /// </summary>
+        [Test]
+        public void EightPlanesThenOneThenNone_LeaveNoStaleConstraint()
+        {
+            Material material = ForwardMaterial(Color.green, Color.white);
+            var octagon = new[] { KeepSet(Octagon(Vector2.zero, OctagonAxis, OctagonDiagonal), Vector3.zero) };
+            var onePlane = new[] { VpInstanceClip.Keep(PlaneX0, 1f, Vector3.zero) };
+            var noPlane = new[] { VpInstanceClip.None };
+
+            (Camera camera, RenderTexture target) = FrontView();
+            Color32[] eight;
+            Color32[] one;
+            Color32[] none;
+            using (var pool = new VpCpuGeometryPool(8, 12, Allocator.Persistent))
+            using (var buffers = new VpGpuIndexedGeometryBuffers(8, 12))
+            using (var batch = new VpIndexedIndirectDrawBatch(2, 4))
+            {
+                Assert.That(pool.TryAppend(QuadMesh(Quad), out VpGeometryRange range), Is.True, "append the quad");
+                Assert.That(buffers.TryUpload(pool), Is.True, "geometry upload");
+                var commands = new[] { new VpIndirectCommand(range, QuadBounds, 1) };
+                var properties = new MaterialPropertyBlock();
+
+                eight = RenderOnce(batch, commands, Scaled, octagon, material, properties, buffers, camera, target);
+                one = RenderOnce(batch, commands, Scaled, onePlane, material, properties, buffers, camera, target);
+                none = RenderOnce(batch, commands, Scaled, noPlane, material, properties, buffers, camera, target);
+            }
+
+            Color32[] freshOne = RenderClipped(Quad, Scaled, onePlane, material);
+            Color32[] freshNone = RenderClipped(Quad, Scaled, noPlane, material);
+
+            Assert.That(Count(eight, IsGreenish), Is.LessThan(Count(one, IsGreenish)), "eight planes keep less than one does");
+            Assert.That(CountDiffering(one, freshOne), Is.Zero, "after eight planes, one plane shows exactly one plane's worth");
+            Assert.That(CountDiffering(none, freshNone), Is.Zero, "and then no plane shows the whole quad, with nothing left in force");
+        }
+
+        /// <summary>
+        /// A plane set out of range is refused when the record is built, which is before any draw data is touched:
+        /// the record the draw reads is still the earlier one, and the display it produced is unchanged.
+        /// </summary>
+        [Test]
+        public void ARejectedPlaneSet_KeepsTheDisplayItHad()
+        {
+            Material material = ForwardMaterial(Color.green, Color.white);
+            var three = new[]
+            {
+                new VpClipHalfSpace(PlaneX0, 1f),                          // keep x >= 0
+                new VpClipHalfSpace(PlaneY0, 1f),                          // keep y >= 0
+                new VpClipHalfSpace(new Vector4(1f, 1f, 0f, -1f), -1f),    // keep x + y <= 1
+            };
+            var nine = new VpClipHalfSpace[VpInstanceClip.PlaneCapacity + 1];
+            for (int i = 0; i < nine.Length; i++)
+            {
+                nine[i] = new VpClipHalfSpace(new Vector4(0f, 1f, 0f, -0.1f * i), 1f);
+            }
+
+            (Camera camera, RenderTexture target) = FrontView();
+            using (var pool = new VpCpuGeometryPool(8, 12, Allocator.Persistent))
+            using (var buffers = new VpGpuIndexedGeometryBuffers(8, 12))
+            using (var batch = new VpIndexedIndirectDrawBatch(2, 4))
+            {
+                Assert.That(pool.TryAppend(QuadMesh(Quad), out VpGeometryRange range), Is.True, "append the quad");
+                Assert.That(buffers.TryUpload(pool), Is.True, "geometry upload");
+                var commands = new[] { new VpIndirectCommand(range, QuadBounds, 1) };
+                var properties = new MaterialPropertyBlock();
+                var kept = new[] { KeepSet(three, Vector3.zero) };
+
+                Color32[] before = RenderOnce(batch, commands, Scaled, kept, material, properties, buffers, camera, target);
+                Assert.That(Count(before, IsGreenish), Is.GreaterThan(CoveredPixels * 2), "the three planes leave a corner of the quad");
+
+                Assert.That(VpInstanceClip.TryKeep(nine, Vector3.zero, out VpInstanceClip refused), Is.False, "the larger set is refused");
+                Assert.That(refused.PlaneCount, Is.Zero, "and nothing was built from it");
+
+                var readback = new VpInstanceClip[1];
+                batch.InstanceClipBuffer.GetData(readback, 0, 0, 1);
+                Assert.That(readback[0].PlaneCount, Is.EqualTo(3), "the record the draw reads is still the earlier one");
+
+                Color32[] after = RenderOnce(batch, commands, Scaled, kept, material, properties, buffers, camera, target);
+                Assert.That(CountDiffering(before, after), Is.Zero, "and the display it produced is unchanged");
             }
         }
 
@@ -675,6 +1009,143 @@ namespace Zantetsu.Rendering.Tests
 
                     Assert.That(darkenedRight, Is.GreaterThan(100), "the kept, moved half casts a shadow on the right — " + what);
                     Assert.That(darkenedLeft, Is.LessThan(darkenedRight / 4), "and the clipped-away half casts almost none on the left — " + what);
+                }
+            });
+        }
+
+        /// <summary>
+        /// What several planes remove writes no depth either: a red Unity quad behind the VP geometry shows through
+        /// in all three quarters two planes took away, rather than being hidden by an invisible surface.
+        /// </summary>
+        [Test]
+        public void TheRegionSeveralPlanesRemove_WritesNoDepthEither()
+        {
+            InEmptyScene(() =>
+            {
+                GameObject wall = Track(GameObject.CreatePrimitive(PrimitiveType.Quad));
+                Object.DestroyImmediate(wall.GetComponent<Collider>());
+                wall.transform.position = new Vector3(0f, 0f, 1f);
+                wall.transform.localScale = new Vector3(4f, 4f, 1f);
+                Material red = Track(new Material(Shader.Find("Universal Render Pipeline/Unlit")));
+                red.SetColor("_BaseColor", Color.red);
+                wall.GetComponent<MeshRenderer>().sharedMaterial = red;
+
+                // keep x >= 0 and y >= 0: one quarter of the quad
+                var quarter = new[] { new VpClipHalfSpace(PlaneX0, 1f), new VpClipHalfSpace(PlaneY0, 1f) };
+                Color32[] pixels = RenderClipped(Quad, OnePlace, new[] { KeepSet(quarter, Vector3.zero) });
+
+                Assert.That(
+                    CountWhere(pixels, p => p.x > 0f && p.y > 0f, IsGreenish), Is.GreaterThan(CoveredPixels),
+                    "the quarter both planes keep is in front of the wall");
+                Assert.That(
+                    CountWhere(pixels, p => p.x < 0f || p.y < 0f, IsGreenish), Is.Zero,
+                    "the three quarters they removed draw no colour");
+                Assert.That(
+                    CountWhere(pixels, p => p.x < 0f || p.y < 0f, IsRedish), Is.GreaterThan(CoveredPixels),
+                    "and the wall behind them is visible there");
+            });
+        }
+
+        /// <summary>
+        /// The shadow caster reads the whole record, not just its first plane: the same set and the same offset. The
+        /// ground is checked to be visible and lit first, and the two-plane shadow is compared with the shadow of the
+        /// same set minus its second plane — a caster that ignored that plane would cast the larger, farther shadow.
+        /// </summary>
+        [Test]
+        public void TheShadowFollowsEveryPlaneOfTheSet()
+        {
+            InEmptyScene(() =>
+            {
+                Light light = Track(new GameObject("VP Clip Test Sun")).AddComponent<Light>();
+                light.type = LightType.Directional;
+                light.intensity = 1f;
+                light.shadows = LightShadows.Hard;
+                light.transform.rotation = Quaternion.Euler(50f, 0f, 0f);
+
+                GameObject ground = Track(GameObject.CreatePrimitive(PrimitiveType.Plane));
+                Object.DestroyImmediate(ground.GetComponent<Collider>());
+                ground.transform.position = new Vector3(0f, -1f, 0f);
+                ground.transform.localScale = new Vector3(2f, 1f, 2f);
+                MeshRenderer groundRenderer = ground.GetComponent<MeshRenderer>();
+                Material lit = Track(new Material(Shader.Find("Universal Render Pipeline/Lit")));
+                lit.SetColor("_BaseColor", Color.white);
+                groundRenderer.sharedMaterial = lit;
+                groundRenderer.receiveShadows = true;
+                groundRenderer.shadowCastingMode = ShadowCastingMode.Off;
+
+                RenderTexture target = Track(new RenderTexture(ShadowSize, ShadowSize, 24, RenderTextureFormat.ARGB32));
+                Camera camera = TestCamera("VP Clip Shadow Camera", target);
+                camera.transform.position = new Vector3(0f, 4f, 0f);
+                camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+                camera.orthographicSize = 1.5f;
+                camera.nearClipPlane = 0.1f;
+                camera.farClipPlane = 20f;
+
+                Color32[] bare = RenderAndRead(camera, target);
+                Assert.That(
+                    Count(bare, p => p.r > 60 && p.g > 60 && p.b > 60), Is.GreaterThan(ShadowSize * ShadowSize / 4),
+                    "the ground is visible and exposed");
+
+                // A quad lying above the ground, so its world x and z are the screen's two axes, and the light is
+                // slanted towards +z: what the shadow of the far half would cover is nearer the top of the image.
+                Material material = ForwardMaterial(Color.green, Color.white);
+                Matrix4x4 lying = Matrix4x4.TRS(new Vector3(0f, 0.5f, 0f), Quaternion.Euler(90f, 0f, 0f), Vector3.one);
+                var moved = new Vector3(0.5f, 0f, 0f);
+                var alongX = new[] { new VpClipHalfSpace(PlaneX0, 1f) };
+                var alongXAndZ = new[]
+                {
+                    new VpClipHalfSpace(PlaneX0, 1f),                          // keep x >= 0
+                    new VpClipHalfSpace(new Vector4(0f, 0f, 1f, 0f), -1f),     // and keep z <= 0
+                };
+
+                using (var pool = new VpCpuGeometryPool(8, 12, Allocator.Persistent))
+                using (var buffers = new VpGpuIndexedGeometryBuffers(8, 12))
+                using (var batch = new VpIndexedIndirectDrawBatch(2, 4))
+                {
+                    Assert.That(pool.TryAppend(QuadMesh(Quad), out VpGeometryRange range), Is.True, "append the quad");
+                    Assert.That(buffers.TryUpload(pool), Is.True, "geometry upload");
+                    var commands = new[] { new VpIndirectCommand(range, QuadBounds, 1) };
+                    var properties = new MaterialPropertyBlock();
+
+                    int Darkened(VpClipHalfSpace[] set, out int onTheLeft, out int meanRow)
+                    {
+                        Assert.That(
+                            batch.TryUpload(commands, new[] { lying }, new[] { KeepSet(set, moved) }, false), Is.True, "batch upload");
+                        batch.Render(material, ShadowMaterial(), properties, buffers, 0, camera);
+                        Color32[] shadowed = RenderAndRead(camera, target);
+
+                        int darkened = 0;
+                        long rowSum = 0;
+                        onTheLeft = 0;
+                        for (int i = 0; i < shadowed.Length; i++)
+                        {
+                            if (shadowed[i].g + 20 >= bare[i].g)
+                            {
+                                continue;
+                            }
+
+                            darkened++;
+                            rowSum += i / ShadowSize;
+                            if (i % ShadowSize < ShadowSize / 2)
+                            {
+                                onTheLeft++;
+                            }
+                        }
+
+                        meanRow = darkened == 0 ? 0 : (int)(rowSum / darkened);
+                        return darkened;
+                    }
+
+                    int one = Darkened(alongX, out int oneLeft, out int oneRow);
+                    int both = Darkened(alongXAndZ, out int bothLeft, out int bothRow);
+                    string what =
+                        "one plane: " + one + " px, mean row " + oneRow + " (" + oneLeft + " left); two planes: " +
+                        both + " px, mean row " + bothRow + " (" + bothLeft + " left); of " + ShadowSize;
+
+                    Assert.That(both, Is.GreaterThan(120), "what the set keeps still casts a shadow — " + what);
+                    Assert.That(bothLeft, Is.LessThan(both / 4), "on the side the first plane keeps, where the offset moved it — " + what);
+                    Assert.That(both, Is.LessThan(one * 0.85f), "the second plane cut the shadow down as well — " + what);
+                    Assert.That(bothRow, Is.LessThan(oneRow), "and it is the far part of the shadow that went — " + what);
                 }
             });
         }

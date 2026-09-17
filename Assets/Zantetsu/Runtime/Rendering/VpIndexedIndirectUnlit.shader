@@ -63,16 +63,42 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
 
-            // Which half of one cut plane each logical instance keeps, and how far it is moved apart (DESIGN 5.1).
-            // Matches Zantetsu.Rendering.VpInstanceClip: 32 bytes. The shadow caster reads the same record, so a
-            // fragment is clipped and offset identically in every pass of the draw.
+            // Which parts of up to eight cut planes each logical instance keeps, and how far it is moved apart
+            // (DESIGN 5.1, 5.2). Matches Zantetsu.Rendering.VpInstanceClip: 144 bytes, the eight signed planes and
+            // then the offset with the count of valid ones. The shadow caster reads the same record, so a fragment
+            // is clipped and offset identically in every pass of the draw.
             struct VpInstanceClip
             {
-                float4 plane;          // (n.xyz, d) in world space, dot(n, x) + d = 0
-                float4 offsetAndSide;  // xyz: world offset added after the transform; w: +1, -1, or 0 for no clipping
+                float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
+                float4 offsetAndCount; // xyz: world offset added after the transform; w: how many planes are valid
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+
+            // One clip distance per plane, so the region kept is the intersection of the valid half-spaces: the
+            // hardware drops a fragment wherever any component is negative. Past the valid count the component is a
+            // positive constant, which is what DESIGN 5.2 asks of the unused components at every vertex, so a record
+            // of count zero clips nothing at all. The same eight components serve every count: there is no
+            // pixel-shader clip() path and no SV_CullDistance.
+            float VpHalfSpace(float4 signedPlane, float3 positionWS, uint index, uint count)
+            {
+                return index < count ? dot(signedPlane.xyz, positionWS) + signedPlane.w : 1.0;
+            }
+
+            void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
+            {
+                uint count = (uint)clipState.offsetAndCount.w;
+                first = float4(
+                    VpHalfSpace(clipState.planes[0], positionWS, 0, count),
+                    VpHalfSpace(clipState.planes[1], positionWS, 1, count),
+                    VpHalfSpace(clipState.planes[2], positionWS, 2, count),
+                    VpHalfSpace(clipState.planes[3], positionWS, 3, count));
+                second = float4(
+                    VpHalfSpace(clipState.planes[4], positionWS, 4, count),
+                    VpHalfSpace(clipState.planes[5], positionWS, 5, count),
+                    VpHalfSpace(clipState.planes[6], positionWS, 6, count),
+                    VpHalfSpace(clipState.planes[7], positionWS, 7, count));
+            }
 
             // Physical instances per logical instance in the forward arguments, set by the batch: 2 for Single Pass
             // Instanced stereo, otherwise 1.
@@ -114,9 +140,10 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 float4 positionCS : SV_POSITION;
 
                 // DESIGN 5.2 evaluates the selected cut planes with SV_ClipDistance and has no pixel-shader clip()
-                // path. One plane is used here, in x; the unused components are a positive finite value at every
-                // vertex, as that section requires. Eight planes would fill these four and SV_ClipDistance1's.
-                float4 clipDistance : SV_ClipDistance0;
+                // path. All eight components are used, four here and four in SV_ClipDistance1, one per plane of the
+                // record; the components past its count are a positive finite value at every vertex.
+                float4 clipDistance0 : SV_ClipDistance0;
+                float4 clipDistance1 : SV_ClipDistance1;
 
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
@@ -156,7 +183,11 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 if (IsVpSecondCopyInSingleView(input))
                 {
+                    // The position alone rejects this copy; the clip distances stay positive so that every vertex
+                    // this shader emits carries the positive finite unused components DESIGN 5.2 asks for.
                     output.positionCS = VP_REJECTED_POSITION_CS;
+                    output.clipDistance0 = 1.0;
+                    output.clipDistance1 = 1.0;
                     return output;
                 }
 
@@ -166,15 +197,16 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 
-                // DESIGN 5.1: the side is decided on the world position before the separation is added, so moving a
-                // fragment apart never changes which half of it survives; the offset is then added after the
-                // object-to-world transform, never before it.
+                // DESIGN 5.1: every plane is tested on the world position before the separation is added, so moving
+                // a fragment apart never changes which part of it survives; the one offset the record carries is
+                // then added after the object-to-world transform, never before it, and only once.
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
-                float signedDistance = dot(clipState.plane.xyz, positionWS) + clipState.plane.w;
-                output.clipDistance = float4(
-                    clipState.offsetAndSide.w == 0.0 ? 1.0 : clipState.offsetAndSide.w * signedDistance,
-                    1.0, 1.0, 1.0);
-                positionWS += clipState.offsetAndSide.xyz;
+                float4 clipDistance0;
+                float4 clipDistance1;
+                VpClipDistances(clipState, positionWS, clipDistance0, clipDistance1);
+                output.clipDistance0 = clipDistance0;
+                output.clipDistance1 = clipDistance1;
+                positionWS += clipState.offsetAndCount.xyz;
 
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, vertex.normal);

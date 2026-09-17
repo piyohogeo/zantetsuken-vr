@@ -32,8 +32,11 @@ namespace Zantetsu.Rendering
         /// <summary>One instance record: a float4x4 object-to-world matrix.</summary>
         public const int InstanceStride = 64;
 
-        /// <summary>One clip record: <see cref="VpInstanceClip"/>, two float4s.</summary>
-        public const int InstanceClipStride = 32;
+        /// <summary>
+        /// One clip record: <see cref="VpInstanceClip"/>, its eight planes and then the offset with the valid
+        /// count, nine float4s. Fixed whatever the count is: no instance takes a smaller or a larger record.
+        /// </summary>
+        public const int InstanceClipStride = 144;
 
         private static readonly int VerticesId = Shader.PropertyToID("_VpVertices");
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");
@@ -166,19 +169,26 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
-        /// The same upload, with one <see cref="VpInstanceClip"/> per instance: which half of a cut plane that
-        /// instance keeps and how far it is drawn apart, for the provisional display of DESIGN 5.1. **Null** is how
-        /// the clips are omitted, and gives the ordinary display; an array must hold exactly one record per
-        /// instance, so an empty array is accepted only when there are no instances. Any other count is rejected,
-        /// changing nothing, as are the conditions of the other overload.
+        /// The same upload, with one <see cref="VpInstanceClip"/> per instance: which parts of up to
+        /// <see cref="VpInstanceClip.PlaneCapacity"/> cut planes that instance keeps and how far it is drawn apart,
+        /// for the provisional display of DESIGN 5.1. **Null** is how the clips are omitted, and gives the ordinary
+        /// display; an array must hold exactly one record per instance, so an empty array is accepted only when
+        /// there are no instances. Any other count is rejected, changing nothing, as are the conditions of the other
+        /// overload.
+        /// <para>
+        /// Each record is one fixed-size entry whatever its plane count, so nothing here varies with it: no second
+        /// path, keyword or draw, and every instance is uploaded the same way. A count out of range cannot arrive
+        /// this far — <see cref="VpInstanceClip.TryKeep"/> refuses more than the capacity when the record is built,
+        /// before any update — so what the buffer holds always carries between zero and the capacity planes.
+        /// </para>
         /// <para>
         /// The clips go into the fixed-capacity buffer this batch owns, and the culling bounds of the draw are the
         /// instance bounds **moved by the offset**, so a separated fragment is not culled away from where it is
-        /// drawn.
+        /// drawn. The bounds stay the parent's, conservatively: what the planes remove is not subtracted from them.
         /// </para>
         /// <para>
         /// The forward and the shadow call bind that one buffer, so within a registration neither can read a
-        /// different plane, side or offset from the other. That is all the binding does: it is **not** a guard
+        /// different plane set, count or offset from the other. That is all the binding does: it is **not** a guard
         /// against uploading again between registrations. Finishing every update before the frame is registered
         /// stays the callers responsibility.
         /// </para>
@@ -283,7 +293,8 @@ namespace Zantetsu.Rendering
                 _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
 
                 // No clips given is the ordinary display: every instance takes a record that clips nothing and
-                // moves nothing, so the buffer never keeps a stale plane from an earlier upload.
+                // moves nothing. Each record is written whole, count and all eight planes together, so a record
+                // that now carries fewer planes — or none — leaves no plane of an earlier upload in force.
                 for (int i = 0; i < instanceTotal; i++)
                 {
                     _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
