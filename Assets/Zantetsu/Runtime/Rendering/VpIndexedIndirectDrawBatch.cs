@@ -32,8 +32,12 @@ namespace Zantetsu.Rendering
         /// <summary>One instance record: a float4x4 object-to-world matrix.</summary>
         public const int InstanceStride = 64;
 
+        /// <summary>One clip record: <see cref="VpInstanceClip"/>, two float4s.</summary>
+        public const int InstanceClipStride = 32;
+
         private static readonly int VerticesId = Shader.PropertyToID("_VpVertices");
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");
+        private static readonly int InstanceClipId = Shader.PropertyToID("_VpInstanceClip");
         private static readonly int InstanceMultiplierId = Shader.PropertyToID("_VpInstanceMultiplier");
 
         private readonly GraphicsBuffer.IndirectDrawIndexedArgs[] _forwardArguments;
@@ -41,6 +45,8 @@ namespace Zantetsu.Rendering
         private readonly GraphicsBuffer _forwardArgumentBuffer;
         private readonly GraphicsBuffer _shadowArgumentBuffer;
         private readonly GraphicsBuffer _instanceBuffer;
+        private readonly GraphicsBuffer _instanceClipBuffer;
+        private readonly VpInstanceClip[] _instanceClips;
         private bool _disposed;
 
         public VpIndexedIndirectDrawBatch(int commandCapacity, int instanceCapacity)
@@ -57,33 +63,38 @@ namespace Zantetsu.Rendering
 
             _forwardArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
             _shadowArguments = new GraphicsBuffer.IndirectDrawIndexedArgs[commandCapacity];
+            _instanceClips = new VpInstanceClip[instanceCapacity];
 
+            // Each buffer is held in a local the moment it exists and named afterwards, so a failure anywhere in
+            // here can release every buffer that was already made. The fields are set only once all four stand.
             GraphicsBuffer forwardArgumentBuffer = null;
             GraphicsBuffer shadowArgumentBuffer = null;
+            GraphicsBuffer instanceBuffer = null;
+            GraphicsBuffer instanceClipBuffer = null;
             try
             {
-                forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size)
-                {
-                    name = "VP Indexed Indirect Forward Arguments",
-                };
-                shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size)
-                {
-                    name = "VP Indexed Indirect Shadow Arguments",
-                };
-                _instanceBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceStride)
-                {
-                    name = "VP Indexed Instance Transforms",
-                };
+                forwardArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                forwardArgumentBuffer.name = "VP Indexed Indirect Forward Arguments";
+                shadowArgumentBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, commandCapacity, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                shadowArgumentBuffer.name = "VP Indexed Indirect Shadow Arguments";
+                instanceBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceStride);
+                instanceBuffer.name = "VP Indexed Instance Transforms";
+                instanceClipBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, instanceCapacity, InstanceClipStride);
+                instanceClipBuffer.name = "VP Indexed Instance Clips";
             }
             catch
             {
                 forwardArgumentBuffer?.Dispose();
                 shadowArgumentBuffer?.Dispose();
+                instanceBuffer?.Dispose();
+                instanceClipBuffer?.Dispose();
                 throw;
             }
 
             _forwardArgumentBuffer = forwardArgumentBuffer;
             _shadowArgumentBuffer = shadowArgumentBuffer;
+            _instanceBuffer = instanceBuffer;
+            _instanceClipBuffer = instanceClipBuffer;
             CommandCapacity = commandCapacity;
             InstanceCapacity = instanceCapacity;
         }
@@ -133,6 +144,16 @@ namespace Zantetsu.Rendering
             }
         }
 
+        /// <summary>The instance clip buffer, for reading back inside this assembly. Not to be written.</summary>
+        internal GraphicsBuffer InstanceClipBuffer
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _instanceClipBuffer;
+            }
+        }
+
         /// <summary>
         /// Replaces the commands and instance transforms as <see cref="VpIndirectDrawBatch.TryUpload(VpIndirectCommand[], Matrix4x4[], bool)"/>
         /// does, writing indexed arguments. Returns false, changing no count, bounds, buffer or Single Pass Instanced mode,
@@ -140,6 +161,29 @@ namespace Zantetsu.Rendering
         /// instances exceed the instance capacity, or the transform count is not the sum of the instance counts.
         /// </summary>
         public bool TryUpload(VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, bool singlePassInstanced)
+        {
+            return TryUpload(commands, objectToWorlds, null, singlePassInstanced);
+        }
+
+        /// <summary>
+        /// The same upload, with one <see cref="VpInstanceClip"/> per instance: which half of a cut plane that
+        /// instance keeps and how far it is drawn apart, for the provisional display of DESIGN 5.1. **Null** is how
+        /// the clips are omitted, and gives the ordinary display; an array must hold exactly one record per
+        /// instance, so an empty array is accepted only when there are no instances. Any other count is rejected,
+        /// changing nothing, as are the conditions of the other overload.
+        /// <para>
+        /// The clips go into the fixed-capacity buffer this batch owns, and the culling bounds of the draw are the
+        /// instance bounds **moved by the offset**, so a separated fragment is not culled away from where it is
+        /// drawn.
+        /// </para>
+        /// <para>
+        /// The forward and the shadow call bind that one buffer, so within a registration neither can read a
+        /// different plane, side or offset from the other. That is all the binding does: it is **not** a guard
+        /// against uploading again between registrations. Finishing every update before the frame is registered
+        /// stays the callers responsibility.
+        /// </para>
+        /// </summary>
+        public bool TryUpload(VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips, bool singlePassInstanced)
         {
             ThrowIfDisposed();
             if (commands == null)
@@ -173,6 +217,11 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
+            if (clips != null && clips.Length != instanceTotal)
+            {
+                return false;
+            }
+
             uint multiplier = singlePassInstanced ? 2u : 1u;
             int startInstance = 0;
             bool anyInstance = false;
@@ -200,6 +249,15 @@ namespace Zantetsu.Rendering
                 for (int i = startInstance; i < startInstance + command.instanceCount; i++)
                 {
                     Bounds instanceBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorlds[i]);
+
+                    // The shader adds the separation offset after the transform, so the culling bounds must move
+                    // with it or a separated fragment can be culled away from where it is actually drawn. The
+                    // moved parent bounds are conservative on purpose: what the clip removes is not subtracted.
+                    if (clips != null)
+                    {
+                        instanceBounds.center += clips[i].Offset;
+                    }
+
                     if (anyInstance)
                     {
                         worldBounds.Encapsulate(instanceBounds);
@@ -223,6 +281,15 @@ namespace Zantetsu.Rendering
             if (instanceTotal > 0)
             {
                 _instanceBuffer.SetData(objectToWorlds, 0, 0, (int)instanceTotal);
+
+                // No clips given is the ordinary display: every instance takes a record that clips nothing and
+                // moves nothing, so the buffer never keeps a stale plane from an earlier upload.
+                for (int i = 0; i < instanceTotal; i++)
+                {
+                    _instanceClips[i] = clips == null ? VpInstanceClip.None : clips[i];
+                }
+
+                _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
             }
 
             CommandCount = commands.Length;
@@ -339,6 +406,7 @@ namespace Zantetsu.Rendering
             _forwardArgumentBuffer.Dispose();
             _shadowArgumentBuffer.Dispose();
             _instanceBuffer.Dispose();
+            _instanceClipBuffer.Dispose();
         }
 
         /// <summary>
@@ -360,6 +428,11 @@ namespace Zantetsu.Rendering
 
             properties.SetBuffer(VerticesId, buffers.VertexBuffer);
             properties.SetBuffer(InstanceObjectToWorldId, _instanceBuffer);
+
+            // Bound here, where the forward call and the shadow call both pass, so within one registration neither
+            // can read a different plane, side or offset from the other. It binds the buffer; it does not stop a
+            // caller uploading again between registrations, which is the callers own business to get right.
+            properties.SetBuffer(InstanceClipId, _instanceClipBuffer);
             return true;
         }
 

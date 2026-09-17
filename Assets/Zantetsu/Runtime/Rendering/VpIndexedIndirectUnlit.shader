@@ -5,6 +5,10 @@
 // the global vertex number and addresses _VpVertices directly (checked by the EditMode tests with a range whose index and
 // vertex starts differ). The colour matches "Zantetsu/VP Indirect Unlit". There is no ShadowCaster pass; the batch's
 // shadow call casts shadows with "Zantetsu/VP Indexed Indirect Shadow Caster".
+// A logical instance may also keep one half of a cut plane and be drawn moved apart (DESIGN 5.1): the side is tested
+// on the world position before the offset, the offset is added after the object-to-world transform, and the plane is
+// evaluated with SV_ClipDistance as DESIGN 5.2 requires. An instance whose record has side 0 is drawn exactly as
+// before.
 // An opaque base texture is sampled with the vertex uv0 and multiplied into the colour. It is the one texture this
 // pass has: no normal map, no transparency, no alpha clipping, and no attempt to stand in for an arbitrary URP
 // material. Leaving _BaseMap unset gives Unity's default white texture, so a caller that sets only a colour sees
@@ -59,6 +63,17 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             StructuredBuffer<VpRenderVertex> _VpVertices;
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
 
+            // Which half of one cut plane each logical instance keeps, and how far it is moved apart (DESIGN 5.1).
+            // Matches Zantetsu.Rendering.VpInstanceClip: 32 bytes. The shadow caster reads the same record, so a
+            // fragment is clipped and offset identically in every pass of the draw.
+            struct VpInstanceClip
+            {
+                float4 plane;          // (n.xyz, d) in world space, dot(n, x) + d = 0
+                float4 offsetAndSide;  // xyz: world offset added after the transform; w: +1, -1, or 0 for no clipping
+            };
+
+            StructuredBuffer<VpInstanceClip> _VpInstanceClip;
+
             // Physical instances per logical instance in the forward arguments, set by the batch: 2 for Single Pass
             // Instanced stereo, otherwise 1.
             uint _VpInstanceMultiplier;
@@ -97,6 +112,12 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+
+                // DESIGN 5.2 evaluates the selected cut planes with SV_ClipDistance and has no pixel-shader clip()
+                // path. One plane is used here, in x; the unused components are a positive finite value at every
+                // vertex, as that section requires. Eight planes would fill these four and SV_ClipDistance1's.
+                float4 clipDistance : SV_ClipDistance0;
+
                 float3 normalWS : TEXCOORD0;
                 float3 positionWS : TEXCOORD1;
                 float2 uv : TEXCOORD2;
@@ -144,6 +165,17 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
+
+                // DESIGN 5.1: the side is decided on the world position before the separation is added, so moving a
+                // fragment apart never changes which half of it survives; the offset is then added after the
+                // object-to-world transform, never before it.
+                VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
+                float signedDistance = dot(clipState.plane.xyz, positionWS) + clipState.plane.w;
+                output.clipDistance = float4(
+                    clipState.offsetAndSide.w == 0.0 ? 1.0 : clipState.offsetAndSide.w * signedDistance,
+                    1.0, 1.0, 1.0);
+                positionWS += clipState.offsetAndSide.xyz;
+
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, vertex.normal);
                 output.positionWS = positionWS;
