@@ -62,6 +62,25 @@ namespace Zantetsu.Sandbox
             public double SpanClosedAt;
             public Vector3 FrozenGuideOrigin;
             public Vector3 FrozenGuideDirection;
+
+            // What the last candidate evaluation of this wave saw, so that a
+            // development readout or a capture can report it. 19.1.12 asks for
+            // the live and frozen guide, r, q and the signed denominator with
+            // its near-parallel judgement to be observable; only the frozen
+            // ones could be read before, because the live terms were computed
+            // inside the update and discarded. Nothing here decides anything:
+            // the span still comes from the running maximum below.
+            public double LastCandidateAt;
+            public bool LastCandidateEvaluated;
+            public bool LastCandidateFromFrozenGuide;
+            public Vector3 LastGuideOrigin;
+            public Vector3 LastGuideDirection;
+            public float LastRawSpan;
+            public float LastQ;
+            public float LastDenominator;
+            public bool LastTermsFinite;
+            public bool LastCandidateUsable;
+            public bool LastCandidateWidenedSpan;
         }
 
         private readonly Wave[] waves = new Wave[Capacity];
@@ -184,13 +203,25 @@ namespace Zantetsu.Sandbox
                 // the candidate evaluated once.
                 bool hasCandidate = false;
                 float rawSpan = 0f;
+                float candidateQ = 0f;
+                float candidateDenominator = 0f;
+                bool candidateTermsFinite = false;
+                bool candidateEvaluated = false;
+                bool candidateFromFrozenGuide = false;
+                Vector3 candidateGuideOrigin = default;
+                Vector3 candidateGuideDirection = default;
                 if (double.IsNaN(waves[i].SpanClosedAt))
                 {
                     if (hasGuide
                         && TryProjectGuide(waves[i], guideEmitter, guideBladeAxis,
                             out Vector3 liveOrigin, out Vector3 liveDirection))
                     {
-                        hasCandidate = TryEvaluateRawSpanCandidate(waves[i], a, liveOrigin, liveDirection, out rawSpan);
+                        hasCandidate = TryEvaluateRawSpanCandidate(
+                            waves[i], a, liveOrigin, liveDirection,
+                            out rawSpan, out candidateQ, out candidateDenominator, out candidateTermsFinite);
+                        candidateEvaluated = true;
+                        candidateGuideOrigin = liveOrigin;
+                        candidateGuideDirection = liveDirection;
 
                         // Closing keeps this update's live candidate; it just
                         // stops later updates from taking a new guide.
@@ -205,14 +236,33 @@ namespace Zantetsu.Sandbox
                 else
                 {
                     hasCandidate = TryEvaluateRawSpanCandidate(
-                        waves[i], a, waves[i].FrozenGuideOrigin, waves[i].FrozenGuideDirection, out rawSpan);
+                        waves[i], a, waves[i].FrozenGuideOrigin, waves[i].FrozenGuideDirection,
+                        out rawSpan, out candidateQ, out candidateDenominator, out candidateTermsFinite);
+                    candidateEvaluated = true;
+                    candidateFromFrozenGuide = true;
+                    candidateGuideOrigin = waves[i].FrozenGuideOrigin;
+                    candidateGuideDirection = waves[i].FrozenGuideDirection;
                 }
 
                 float acceptedSpan = waves[i].AcceptedSpan;
-                if (hasCandidate && rawSpan > acceptedSpan && CanCarrySpan(waves[i], a, rawSpan))
+                bool widened = hasCandidate && rawSpan > acceptedSpan && CanCarrySpan(waves[i], a, rawSpan);
+                if (widened)
                 {
                     acceptedSpan = rawSpan;
                 }
+
+                // Written after the decision and read by nothing that decides.
+                waves[i].LastCandidateAt = nowSeconds;
+                waves[i].LastCandidateEvaluated = candidateEvaluated;
+                waves[i].LastCandidateFromFrozenGuide = candidateFromFrozenGuide;
+                waves[i].LastGuideOrigin = candidateGuideOrigin;
+                waves[i].LastGuideDirection = candidateGuideDirection;
+                waves[i].LastRawSpan = rawSpan;
+                waves[i].LastQ = candidateQ;
+                waves[i].LastDenominator = candidateDenominator;
+                waves[i].LastTermsFinite = candidateTermsFinite;
+                waves[i].LastCandidateUsable = hasCandidate;
+                waves[i].LastCandidateWidenedSpan = widened;
 
                 Vector3 b = a + waves[i].SpanAxis * acceptedSpan;
                 if (!IsFinite(b))
@@ -269,9 +319,15 @@ namespace Zantetsu.Sandbox
             Vector3 a,
             Vector3 guideOrigin,
             Vector3 guideDirection,
-            out float rawSpan)
+            out float rawSpan,
+            out float q,
+            out float denominator,
+            out bool termsFinite)
         {
             rawSpan = 0f;
+            q = 0f;
+            denominator = 0f;
+            termsFinite = false;
 
             if (!IsFinite(a) || !IsFinite(guideOrigin) || !IsFinite(guideDirection))
             {
@@ -284,14 +340,16 @@ namespace Zantetsu.Sandbox
                 return false;
             }
 
-            if (!TryEvaluateRawSpanTerms(normal, a, wave.SpanAxis, guideOrigin, guideDirection,
-                    out float r, out float q, out float denominator)
-                || !IsUsableRawSpan(r, q, denominator))
+            termsFinite = TryEvaluateRawSpanTerms(
+                normal, a, wave.SpanAxis, guideOrigin, guideDirection, out float r, out q, out denominator);
+            // Preserve the raw term even when the candidate is refused.
+            // Admission still depends on termsFinite and IsUsableRawSpan.
+            rawSpan = r;
+            if (!termsFinite || !IsUsableRawSpan(r, q, denominator))
             {
                 return false;
             }
 
-            rawSpan = r;
             return true;
         }
 
@@ -473,6 +531,7 @@ namespace Zantetsu.Sandbox
                 SpanClosedAt = double.NaN,
                 FrozenGuideOrigin = default,
                 FrozenGuideDirection = default,
+                LastCandidateAt = double.NaN,
             };
             count++;
             return true;
@@ -551,6 +610,63 @@ namespace Zantetsu.Sandbox
             frozenGuideDirection = waves[index].FrozenGuideDirection;
             return true;
         }
+
+        /// <summary>
+        /// Reads back what this wave's last candidate evaluation saw: which
+        /// guide it used, the terms of the intersection, whether they were
+        /// usable and whether they widened the span. Observation only -- the
+        /// numbers are the ones the update already used, recorded after it had
+        /// decided. False when the index is outside the live waves or the wave
+        /// has not been through an update since it latched (a wave latched in
+        /// this update has not).
+        /// </summary>
+        internal bool TryGetWaveCandidate(
+            int index,
+            out double candidateAt,
+            out bool evaluated,
+            out bool fromFrozenGuide,
+            out Vector3 guideOrigin,
+            out Vector3 guideDirection,
+            out float rawSpan,
+            out float q,
+            out float denominator,
+            out bool termsFinite,
+            out bool usable,
+            out bool widenedSpan)
+        {
+            candidateAt = 0.0;
+            evaluated = false;
+            fromFrozenGuide = false;
+            guideOrigin = default;
+            guideDirection = default;
+            rawSpan = 0f;
+            q = 0f;
+            denominator = 0f;
+            termsFinite = false;
+            usable = false;
+            widenedSpan = false;
+
+            if (index < 0 || index >= count || double.IsNaN(waves[index].LastCandidateAt))
+            {
+                return false;
+            }
+
+            candidateAt = waves[index].LastCandidateAt;
+            evaluated = waves[index].LastCandidateEvaluated;
+            fromFrozenGuide = waves[index].LastCandidateFromFrozenGuide;
+            guideOrigin = waves[index].LastGuideOrigin;
+            guideDirection = waves[index].LastGuideDirection;
+            rawSpan = waves[index].LastRawSpan;
+            q = waves[index].LastQ;
+            denominator = waves[index].LastDenominator;
+            termsFinite = waves[index].LastTermsFinite;
+            usable = waves[index].LastCandidateUsable;
+            widenedSpan = waves[index].LastCandidateWidenedSpan;
+            return true;
+        }
+
+        /// <summary>The near-parallel threshold the candidate judgement uses, for readouts.</summary>
+        internal static float NearParallelDenominatorThreshold => NearParallelDenominator;
 
         /// <summary>Ends every wave at once, without freeing the storage.</summary>
         internal void Clear()

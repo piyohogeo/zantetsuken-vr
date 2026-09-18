@@ -1681,12 +1681,15 @@ cross2_N(x, y) = dot(N, cross(x, y))
 
 第一候補の固定軸は次である。
 
+2026-09-18の人間による採用判断で、SpanAxisをEmitter chord方向からTravelAxisとの150°固定へ変更する。初期Span長はchord長を維持する。Guide、Close後の成長、候補の採否規則は変更しない。実機記録45 Latchの比較では急増が減ったが、Close後の成長は残り、暴走解消や体感改善の保証とはしない。
+
 ```text
 TravelAxis T = D_B
-SpanAxis   S = normalize(E_L - E_B)
+side = sign(cross2_N(T, E_L - E_B))
+SpanAxis   S = normalize(cos(150°) * T + side * sin(150°) * cross(N, T))
 ```
 
-`S`と`T`の直交は要求しない。`E_L - E_B`が正規化不能、`D_B`が平面へ射影不能等ではFrameを無効とする。
+`S`と`T`は平面内で150°をなし、chordの示す進行側を選ぶ。`E_L - E_B`が正規化不能、`D_B`が平面へ射影不能、sideを判別できない等ではFrameを無効とし、別軸へのfallbackは追加しない。
 
 Wave速度を正の有限定数`c`とし、Latch後のA点を次で定める。
 
@@ -1694,7 +1697,7 @@ Wave速度を正の有限定数`c`とし、Latch後のA点を次で定める。
 A(t) = E_B + c * (t - t_L) * T     for t >= t_L
 ```
 
-Latch時は`A(t_L) = E_B`、初期`AcceptedSpan = length(E_L - E_B)`、`B(t_L) = E_L`とする。Latch時の初期SegmentはStroke BeginからLatchまでに実際に通過したEmitter chordであり、最終Spanは確定しない。初期値を交点式へ依存させない。
+Latch時は`A(t_L) = E_B`、初期`AcceptedSpan = length(E_L - E_B)`、`B(t_L) = E_B + S * AcceptedSpan`とする。初期Segmentの長さはEmitter chord長だが、方向を変えたため終端は一般に`E_L`と一致しない。最終Spanは確定せず、初期値を交点式へ依存させない。
 
 ###### Span Open／Span ClosedのGuide Ray
 

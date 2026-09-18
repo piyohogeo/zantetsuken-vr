@@ -5,6 +5,11 @@ using Zantetsu.Core.Input;
 
 [assembly: InternalsVisibleTo("Zantetsu.Core.EditModeTests")]
 
+// The development save-path check. It has to exercise the real capture root,
+// which the tests deliberately avoid, so it lives in an Editor assembly of its
+// own rather than in the test one.
+[assembly: InternalsVisibleTo("Zantetsu.Sandbox.Editor")]
+
 namespace Zantetsu.Sandbox
 {
     /// <summary>
@@ -219,10 +224,7 @@ namespace Zantetsu.Sandbox
                 }
 
                 liveInputEnabled = value;
-                Hide();
-                ResetStroke();
-                waveStore.Clear();
-                HideAllWaveVisuals();
+                ResetToKnownState();
             }
         }
 
@@ -554,9 +556,9 @@ namespace Zantetsu.Sandbox
         /// The stroke's first-candidate slash frame, per 19.1.5.1: the source
         /// slash plane, the begin and newest emitter points projected onto it,
         /// the travel axis (the begin sample's blade tip direction projected
-        /// onto the plane), the span axis along the emitter chord, and that
-        /// chord's length as the initial span. The two axes are reported as
-        /// they come out; they are not orthogonalised.
+        /// onto the plane), a span axis at 150 degrees to travel on the side
+        /// indicated by the emitter chord, and the chord's length as the
+        /// initial span. The initial endpoint is no longer the latest emitter.
         ///
         /// False when there are fewer than two accepted samples, when no plane
         /// can be derived, or when any projection or normalisation degenerates.
@@ -620,7 +622,17 @@ namespace Zantetsu.Sandbox
             }
 
             Vector3 chordDirection = new Vector3(chord.x / chordLength, chord.y / chordLength, chord.z / chordLength);
-            if (!IsFinite(chordDirection))
+            float side = Vector3.Dot(candidate.normal, Vector3.Cross(travel, chordDirection));
+            if (!IsFinite(chordDirection) || !float.IsFinite(side) || side == 0f)
+            {
+                return false;
+            }
+
+            // Adopted fixed-angle frame: cos(150) T + sign(side) sin(150) (N x T).
+            // Only the axis changes; chord length, guide and Close rules do not.
+            Vector3 fixedSpan = -0.8660254037844386f * travel
+                + (side > 0f ? 0.5f : -0.5f) * Vector3.Cross(candidate.normal, travel);
+            if (!TryProjectOntoPlane(fixedSpan, candidate.normal, out fixedSpan))
             {
                 return false;
             }
@@ -629,7 +641,7 @@ namespace Zantetsu.Sandbox
             beginEmitter = projectedBegin;
             latestEmitter = projectedLatest;
             travelAxis = travel;
-            spanAxis = chordDirection;
+            spanAxis = fixedSpan;
             span = chordLength;
             return true;
         }
@@ -697,10 +709,31 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>
-        /// When one live wave's span closed and the guide it froze then, or
-        /// false while it is still open. The store itself never leaves this
-        /// component.
+        /// What one wave's last candidate evaluation saw: which guide, the
+        /// intersection terms, and whether they were usable or widened the
+        /// span. Observation only, as 19.1.12 asks for; the update had already
+        /// decided before these were written.
         /// </summary>
+        internal bool TryGetWaveCandidate(
+            int index,
+            out double candidateAt,
+            out bool evaluated,
+            out bool fromFrozenGuide,
+            out Vector3 guideOrigin,
+            out Vector3 guideDirection,
+            out float rawSpan,
+            out float q,
+            out float denominator,
+            out bool termsFinite,
+            out bool usable,
+            out bool widenedSpan)
+        {
+            return waveStore.TryGetWaveCandidate(
+                index, out candidateAt, out evaluated, out fromFrozenGuide, out guideOrigin, out guideDirection,
+                out rawSpan, out q, out denominator, out termsFinite, out usable, out widenedSpan);
+        }
+
+        /// <summary>When a wave closed and the guide it froze; false while open.</summary>
         internal bool TryGetWaveSpanClose(
             int index,
             out double spanClosedAt,
@@ -746,10 +779,145 @@ namespace Zantetsu.Sandbox
         }
 
         /// <summary>
-        /// The same, with the view forward for the begin check handed in
-        /// instead of read from the reference: a replay hands in the one
-        /// recorded with the sample. Zero means no begin view check.
+        /// A development capture of the input, or null. Set by the recorder, it
+        /// sees every update through <see cref="TryRecordSample"/> -- live and
+        /// replayed alike, since that is the only path that appends -- and
+        /// a reset ends the capture before the calculation loses its history.
         /// </summary>
+        internal SandboxSlashCapture Capture { get; set; }
+
+        /// <summary>
+        /// Puts the calculation back to a known initial state: no pose history,
+        /// no stroke in progress, no live wave and nothing shown. This is what
+        /// the enable and disable boundaries already do, offered to the
+        /// development capture so that a capture started midway does not begin
+        /// from a state built by input it never saved.
+        /// <para>
+        /// Waves on screen disappear, because they are the state being
+        /// discarded.
+        /// </para>
+        /// </summary>
+        internal void ResetToKnownState()
+        {
+            Capture?.Stop("the calculation was reset; capturing ended before the reset");
+            Capture = null;
+            Hide();
+            ResetStroke();
+            waveStore.Clear();
+            HideAllWaveVisuals();
+        }
+
+        /// <summary>
+        /// Applies a saved run's tunable values, and reports anything that is
+        /// not tunable and does not already match. A recomputation that quietly
+        /// used its own blade length or wave speed would not be recomputing
+        /// that run, so the mismatch is named rather than tolerated.
+        /// </summary>
+        internal bool TryApplyCaptureConditions(in SandboxSlashCapture.Conditions saved, out string mismatch)
+        {
+            mismatch = string.Empty;
+            var refused = new System.Collections.Generic.List<string>();
+            if (!TrySetMinimumSpeed(saved.MinimumSpeed))
+            {
+                refused.Add("minimum speed");
+            }
+
+            if (!TrySetMinimumDisplacement(saved.MinimumDisplacement))
+            {
+                refused.Add("minimum displacement");
+            }
+
+            if (!TrySetMinimumEdgeLeadScore(saved.MinimumEdgeLeadScore))
+            {
+                refused.Add("minimum edge lead score");
+            }
+
+            if (!TrySetReturnStrokeEdgeLeadScore(saved.ReturnStrokeEdgeLeadScore))
+            {
+                refused.Add("return stroke edge lead score");
+            }
+
+            if (!TrySetLatchChordMetres(saved.LatchChordMetres))
+            {
+                refused.Add("latch chord metres");
+            }
+
+            if (!TrySetSpanCaptureTimeoutSeconds(saved.SpanCaptureTimeoutSeconds))
+            {
+                refused.Add("span capture timeout seconds");
+            }
+
+            if (!TrySetBeginBladeAxisViewDotMinimum(saved.BeginBladeAxisViewDotMinimum))
+            {
+                refused.Add("begin blade axis view dot minimum");
+            }
+
+            // Not tunable at run time: they have to match already.
+            SandboxSlashCapture.Conditions mine = CaptureConditions;
+            AddIfDifferent(refused, "blade length", saved.BladeLength, mine.BladeLength);
+            AddIfDifferent(refused, "grip offset position x", saved.GripOffsetPosition.x, mine.GripOffsetPosition.x);
+            AddIfDifferent(refused, "grip offset position y", saved.GripOffsetPosition.y, mine.GripOffsetPosition.y);
+            AddIfDifferent(refused, "grip offset position z", saved.GripOffsetPosition.z, mine.GripOffsetPosition.z);
+            AddIfDifferent(refused, "grip offset rotation x", saved.GripOffsetRotation.x, mine.GripOffsetRotation.x);
+            AddIfDifferent(refused, "grip offset rotation y", saved.GripOffsetRotation.y, mine.GripOffsetRotation.y);
+            AddIfDifferent(refused, "grip offset rotation z", saved.GripOffsetRotation.z, mine.GripOffsetRotation.z);
+            AddIfDifferent(refused, "grip offset rotation w", saved.GripOffsetRotation.w, mine.GripOffsetRotation.w);
+            AddIfDifferent(
+                refused, "emission control point ratio", saved.EmissionControlPointRatio,
+                mine.EmissionControlPointRatio);
+            AddIfDifferent(refused, "cut sample ratio", saved.CutSampleRatio, mine.CutSampleRatio);
+            AddIfDifferent(refused, "wave speed", saved.WaveSpeed, mine.WaveSpeed);
+            AddIfDifferent(refused, "wave lifetime seconds", saved.WaveLifetimeSeconds, mine.WaveLifetimeSeconds);
+            AddIfDifferent(
+                refused, "near parallel denominator", saved.NearParallelDenominator, mine.NearParallelDenominator);
+            if (saved.WaveCapacity != mine.WaveCapacity)
+            {
+                refused.Add("live wave capacity");
+            }
+
+            if (refused.Count == 0)
+            {
+                return true;
+            }
+
+            mismatch = string.Join(", ", refused);
+            return false;
+        }
+
+        private static void AddIfDifferent(
+            System.Collections.Generic.ICollection<string> refused, string name, float saved, float mine)
+        {
+            // A saved value is written so it round trips, so anything other
+            // than equality here is a real difference.
+            if (!saved.Equals(mine))
+            {
+                refused.Add(name + " (saved " + saved.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + ", this katana " + mine.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")");
+            }
+        }
+
+        /// <summary>The values a capture has to save to be recomputable.</summary>
+        internal SandboxSlashCapture.Conditions CaptureConditions => new SandboxSlashCapture.Conditions
+        {
+            MinimumSpeed = minimumSpeed,
+            MinimumDisplacement = minimumDisplacement,
+            MinimumEdgeLeadScore = minimumEdgeLeadScore,
+            ReturnStrokeEdgeLeadScore = returnStrokeEdgeLeadScore,
+            LatchChordMetres = latchChordMetres,
+            SpanCaptureTimeoutSeconds = spanCaptureTimeoutSeconds,
+            BeginBladeAxisViewDotMinimum = beginBladeAxisViewDotMinimum,
+            BladeLength = bladeLength,
+            GripOffsetPosition = offsetPosition,
+            GripOffsetRotation = Quaternion.Euler(offsetEulerAngles),
+            EmissionControlPointRatio = EmissionControlPointRatio,
+            CutSampleRatio = CutSampleRatio,
+            WaveSpeed = SandboxSlashWaveStore.WaveSpeed,
+            WaveLifetimeSeconds = SandboxSlashWaveStore.WaveLifetimeSeconds,
+            NearParallelDenominator = SandboxSlashWaveStore.NearParallelDenominatorThreshold,
+            WaveCapacity = SandboxSlashWaveStore.Capacity,
+        };
+
+        /// <summary>Explicit view forward for live/replayed input; zero skips the begin view check.</summary>
         internal bool TryRecordSample(in BladePoseSample sample, Vector3 viewForward)
         {
             // Waves that have reached their expiry go first, so a latch later
@@ -779,6 +947,11 @@ namespace Zantetsu.Sandbox
             // there is no second bookkeeping to fall out of step after the
             // store compacts.
             SyncWaveVisuals();
+
+            // After the update, so what the capture holds beside the input is
+            // what this update produced from it. Rejected input is captured
+            // too: it still steered the guide, or reset the stroke.
+            Capture?.Append(sample, viewForward, recorded, acceptedSampleCount, this);
 
             return recorded;
         }
@@ -936,7 +1109,7 @@ namespace Zantetsu.Sandbox
             if (!TryGetSlashFrameCandidate(
                     out Plane plane,
                     out Vector3 beginEmitter,
-                    out Vector3 latestEmitter,
+                    out _,
                     out Vector3 travelAxis,
                     out Vector3 spanAxis,
                     out float acceptedSpan))
@@ -948,7 +1121,8 @@ namespace Zantetsu.Sandbox
 
             strokeLatchSpent = true;
             waveStore.TryLatch(
-                nowSeconds, plane, beginEmitter, latestEmitter, travelAxis, spanAxis, acceptedSpan, spanCaptureTimeoutSeconds);
+                nowSeconds, plane, beginEmitter, beginEmitter + spanAxis * acceptedSpan,
+                travelAxis, spanAxis, acceptedSpan, spanCaptureTimeoutSeconds);
         }
 
         // Update boundary only. Before Render never reaches here.
@@ -1132,20 +1306,14 @@ namespace Zantetsu.Sandbox
         // the waves this component owns.
         private void OnEnable()
         {
-            Hide();
-            ResetStroke();
-            waveStore.Clear();
-            HideAllWaveVisuals();
+            ResetToKnownState();
             Application.onBeforeRender += ApplyGripPoseForRender;
         }
 
         private void OnDisable()
         {
             Application.onBeforeRender -= ApplyGripPoseForRender;
-            Hide();
-            ResetStroke();
-            waveStore.Clear();
-            HideAllWaveVisuals();
+            ResetToKnownState();
         }
 
         private void Hide()

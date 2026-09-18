@@ -10,8 +10,8 @@ namespace Zantetsu.Sandbox
     /// samples the sandbox katana sees and feeds the same sequence back into
     /// it, so a swing can be run through the current slash pipeline again.
     ///
-    /// Everything lives in one fixed array in memory: nothing is saved, traced
-    /// or turned into a preset, and a recording that fills the array simply
+    /// The short pose replay lives in a fixed array in memory; it is not a
+    /// saved preset, and a recording that fills the array simply
     /// stops. Tracking-loss samples are kept like any other, because a replay
     /// has to break the stroke where the recording did; only a sample whose
     /// time does not move forward is left out, so recorded times are always
@@ -58,6 +58,12 @@ namespace Zantetsu.Sandbox
     /// Each recorded sample keeps the view forward it was taken with, and a
     /// replay hands that back with the sample, so the katana's begin view
     /// check sees the recorded head rather than wherever the head is now.
+    ///
+    /// Separately, Capture records full input updates and wave observations
+    /// in bounded growing lists. Save writes them under
+    /// C:\log\zantetsuken-vr\SlashSpan. End is not Save: save before leaving
+    /// Play Mode or editing scripts, since a domain reload loses unsaved rows.
+    /// Auto capture restarts only when no unsaved rows remain.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class SandboxSlashPoseRecorder : MonoBehaviour
@@ -125,6 +131,26 @@ namespace Zantetsu.Sandbox
 
         [Tooltip("Log a slash dump once for each newly latched wave. Development output only.")]
         [SerializeField] private bool autoDumpOnLatch;
+
+        // The capture of what the slash path was given. Held in memory while
+        // capturing and written only when saved, so no update pays for a disk
+        // write. It outlives a start/stop pair so a capture can be saved after
+        // it has been ended.
+        private readonly SandboxSlashCapture capture = new SandboxSlashCapture();
+
+        [Tooltip("Names the capture's directory, after the date and time. Development only.")]
+        [SerializeField] private string captureRunId = string.Empty;
+
+        [Tooltip("Saved with the capture, for the observation the swing was recorded for.")]
+        [SerializeField] private string captureNote = string.Empty;
+
+        [Tooltip("Start a capture by itself whenever one can be started: at play start, and again after each "
+            + "successful save. Development only.")]
+        [SerializeField] private bool autoCaptureWhenIdle = true;
+
+        // What the last save did, kept on screen: a failure that only reached
+        // the console would look exactly like a success from the headset.
+        private string lastSaveMessage = string.Empty;
 
         // The newest wave's latch time as last seen, NaN with no wave. A new
         // latch is the newest wave changing; an expiry leaves it alone.
@@ -531,6 +557,8 @@ namespace Zantetsu.Sandbox
 
         private void Update()
         {
+            TryAutoBeginCapture();
+
             if (recording)
             {
                 TryAppendRecordedSample(
@@ -571,6 +599,7 @@ namespace Zantetsu.Sandbox
 
         private void OnDisable()
         {
+            EndCapture();
             // Never leave the katana deaf to the controller.
             Stop();
         }
@@ -879,6 +908,203 @@ namespace Zantetsu.Sandbox
             return Mathf.Round(value * 1000f) / 1000f;
         }
 
+        /// <summary>
+        /// The capture's own controls and, just as importantly, its result. A
+        /// save that failed has to be visible here: the console scrolls away,
+        /// and on this machine <c>Editor.log</c> is overwritten on the next
+        /// launch, which is how earlier device dumps were lost.
+        /// </summary>
+        private void DrawCaptureControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Capture", GUILayout.Width(60f));
+            bool canStart = !capture.IsCapturing && !capture.HasUnsavedRows;
+            bool wasEnabled = GUI.enabled;
+            GUI.enabled = wasEnabled && canStart;
+            if (GUILayout.Button(capture.IsCapturing ? "Capturing..." : "Start (resets state)"))
+            {
+                BeginCapture();
+            }
+
+            GUI.enabled = wasEnabled;
+            if (GUILayout.Button("End"))
+            {
+                EndCapture();
+            }
+
+            if (GUILayout.Button("Save"))
+            {
+                SaveCapture();
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("run id", GUILayout.Width(60f));
+            captureRunId = GUILayout.TextField(captureRunId ?? string.Empty, 40, GUILayout.Width(150f));
+            GUILayout.Label("note", GUILayout.Width(40f));
+            captureNote = GUILayout.TextField(captureNote ?? string.Empty, 200);
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label(
+                "  " + capture.EndedBy + "  " + capture.UpdateCount + " updates (at most "
+                + capture.MaximumUpdates + ")" + (capture.HasUnsavedRows ? "  (not saved)" : string.Empty));
+            if (capture.EndingDetail.Length > 0)
+            {
+                GUILayout.Label("  ended: " + capture.EndingDetail);
+            }
+
+            GUILayout.Label("  to " + SandboxSlashCapture.RootDirectory);
+            GUILayout.Label("  the run id and note are read when you press Save, not at Start");
+            if (autoCaptureWhenIdle)
+            {
+                GUILayout.Label("  auto capture is on: End and Save are the only presses needed");
+            }
+            if (lastSaveMessage.Length > 0)
+            {
+                GUILayout.Label(lastSaveMessage);
+            }
+        }
+
+        /// <summary>
+        /// Starts a capture, with the katana's current tuning and geometry as
+        /// the run's conditions.
+        /// </summary>
+        internal bool BeginCapture()
+        {
+            if (katana == null)
+            {
+                lastSaveMessage = "  CAPTURE NOT STARTED: no katana assigned";
+                return false;
+            }
+
+            if (recording || replaying || !katana.LiveInputEnabled)
+            {
+                lastSaveMessage = "  CAPTURE NOT STARTED: stop the pose recording or replay first";
+                return false;
+            }
+
+            // Starting again would discard rows nobody has written down. A
+            // capture is only replaced once it has been saved.
+            if (capture.IsCapturing)
+            {
+                lastSaveMessage = "  CAPTURE NOT STARTED: already capturing -- End it first";
+                return false;
+            }
+
+            if (capture.HasUnsavedRows)
+            {
+                lastSaveMessage = "  CAPTURE NOT STARTED: " + capture.UpdateCount
+                    + " captured updates are not saved yet -- Save them first";
+                return false;
+            }
+
+            // The calculation goes back to a known initial state first. A
+            // capture started midway would otherwise record input whose result
+            // depends on a history and on waves that were never saved, and a
+            // replay of the file could not reproduce it. Waves on screen
+            // disappear, because they are part of that discarded state.
+            katana.ResetToKnownState();
+
+            capture.Begin(captureRunId, katana.CaptureConditions);
+            capture.Note = captureNote;
+            katana.Capture = capture;
+            lastSaveMessage = "  capturing from a reset state; any wave on screen was cleared."
+                + " Nothing is written until Save";
+            return true;
+        }
+
+        /// <summary>Ends a capture without saving it. The rows stay until the next start.</summary>
+        internal void EndCapture()
+        {
+            capture.Stop();
+            if (katana != null)
+            {
+                katana.Capture = null;
+            }
+        }
+
+        /// <summary>
+        /// Writes the capture and reports where, or why not. The result is left
+        /// on screen either way.
+        /// </summary>
+        internal bool SaveCapture()
+        {
+            EndCapture();
+
+            // Read here, not at the start: the operator takes the headset off
+            // before saving, and that is the first moment they can name the run
+            // and write down what they saw.
+            capture.RunId = captureRunId;
+            capture.Note = captureNote;
+            if (capture.TrySave(out string directory, out string failure))
+            {
+                lastSaveMessage = "  SAVED " + capture.UpdateCount + " updates to " + directory;
+                Debug.Log("SandboxSlashCapture: saved " + capture.UpdateCount + " updates to " + directory);
+                return true;
+            }
+
+            lastSaveMessage = "  SAVE FAILED: " + failure;
+            Debug.LogError("SandboxSlashCapture: save failed: " + failure);
+            return false;
+        }
+
+        /// <summary>
+        /// Starts a capture by itself when one can be started. Pressing Start
+        /// is awkward with a headset in hand, so the capture arms itself: at
+        /// play start, and again after each successful save.
+        /// <para>
+        /// It never starts while a capture is running or while rows are waiting
+        /// to be saved, so it cannot discard anything -- and because a start
+        /// resets the calculation, that is also what keeps the reset away from
+        /// a session whose rows are not yet on disk.
+        /// </para>
+        /// </summary>
+        internal bool TryAutoBeginCapture()
+        {
+            if (!autoCaptureWhenIdle || katana == null || !katana.isActiveAndEnabled
+                || !katana.LiveInputEnabled || recording || replaying
+                || capture.IsCapturing || capture.HasUnsavedRows)
+            {
+                return false;
+            }
+
+            string previousMessage = lastSaveMessage;
+            bool started = BeginCapture();
+            // The new run's state is already shown separately. Keep the last
+            // save outcome visible long enough for the operator to read it.
+            if (started && previousMessage.Length > 0)
+                lastSaveMessage = previousMessage;
+            return started;
+        }
+
+        /// <summary>Whether a capture arms itself when idle.</summary>
+        internal bool AutoCaptureWhenIdle
+        {
+            get => autoCaptureWhenIdle;
+            set => autoCaptureWhenIdle = value;
+        }
+
+        /// <summary>The capture this recorder owns, for tests.</summary>
+        internal SandboxSlashCapture CaptureForTests => capture;
+
+        /// <summary>The last save's outcome as the operator sees it, for tests.</summary>
+        internal string LastSaveMessage => lastSaveMessage;
+
+        /// <summary>The run identifier the next capture is named with.</summary>
+        internal string CaptureRunId
+        {
+            get => captureRunId;
+            set => captureRunId = value ?? string.Empty;
+        }
+
+        /// <summary>The operator's comment saved with the capture.</summary>
+        internal string CaptureNote
+        {
+            get => captureNote;
+            set => captureNote = value ?? string.Empty;
+        }
+
         private void OnGUI()
         {
             const float Width = 560f;
@@ -929,6 +1155,12 @@ namespace Zantetsu.Sandbox
             autoDumpOnLatch = GUILayout.Toggle(autoDumpOnLatch, "Auto dump on latch");
 
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            autoCaptureWhenIdle = GUILayout.Toggle(
+                autoCaptureWhenIdle, "Auto capture (starts itself at play start and after each save)");
+            GUILayout.EndHorizontal();
+
+            DrawCaptureControls();
 
             if (katana != null)
             {

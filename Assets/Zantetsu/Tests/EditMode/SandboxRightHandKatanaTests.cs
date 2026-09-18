@@ -205,6 +205,10 @@ namespace Zantetsu.Core.Tests
 
             Assert.That(span, Is.EqualTo(Vector3.Distance(beginEmitter, latestEmitter)).Within(PositionTolerance));
             Assert.That(span, Is.GreaterThan(0f));
+            Assert.That(Vector3.Angle(travelAxis, spanAxis), Is.EqualTo(150f).Within(0.001f));
+            Assert.That(Vector3.Dot(plane.normal, Vector3.Cross(travelAxis, spanAxis))
+                * Vector3.Dot(plane.normal, Vector3.Cross(travelAxis, latestEmitter - beginEmitter)),
+                Is.GreaterThan(0f), "the fixed axis follows the chord's side of travel");
         }
 
         private static void AssertFiniteVector(Vector3 v, string what)
@@ -1338,17 +1342,19 @@ namespace Zantetsu.Core.Tests
             AssertValidSlashFrame(plane, beginEmitter, latestEmitter, travelAxis, spanAxis, span);
         }
 
-        [Test]
-        public void SpanAxisPointsFromTheBeginEmitterToTheLatest()
+        [TestCase(0f)]
+        [TestCase(0.03f)]
+        [TestCase(-0.03f)]
+        public void SpanAxisIs150DegreesFromTravel_OnTheChordSide_WithChordLengthUnchanged(float alongBlade)
         {
-            Sweep(UprightGrip(follower), EdgeStep, 7);
+            Sweep(UprightGrip(follower), EdgeStep + Vector3.forward * alongBlade, 7);
 
             Assert.That(follower.TryGetSlashFrameCandidate(
-                out _, out Vector3 beginEmitter, out Vector3 latestEmitter,
-                out _, out Vector3 spanAxis, out float span), Is.True);
+                out Plane plane, out Vector3 beginEmitter, out Vector3 latestEmitter,
+                out Vector3 travel, out Vector3 spanAxis, out float span), Is.True);
 
-            AssertVector(beginEmitter + spanAxis * span, latestEmitter);
-            Assert.That(Vector3.Dot(spanAxis, latestEmitter - beginEmitter), Is.GreaterThan(0f));
+            AssertValidSlashFrame(plane, beginEmitter, latestEmitter, travel, spanAxis, span);
+            Assert.That(Vector3.Distance(beginEmitter + spanAxis * span, latestEmitter), Is.GreaterThan(0.01f));
         }
 
         [Test]
@@ -1571,7 +1577,7 @@ namespace Zantetsu.Core.Tests
 
             // At latch both segments are the same degenerate sweep from A to B.
             AssertVector(previousStart, beginEmitter);
-            AssertVector(previousEnd, latestEmitter);
+            AssertVector(previousEnd, beginEmitter + spanAxis * span);
             AssertVector(currentStart, previousStart);
             AssertVector(currentEnd, previousEnd);
             Assert.That(waveSpan, Is.EqualTo(Vector3.Distance(previousStart, previousEnd)).Within(PositionTolerance));
@@ -1807,7 +1813,10 @@ namespace Zantetsu.Core.Tests
                 out Vector3 travelAxis, out Vector3 spanAxis, out float span,
                 out _, out _, out Vector3 initialStart, out Vector3 initialEnd), Is.True);
 
-            SkipTime(0.1);
+            // No guide this update: isolate translation from span growth.
+            strokeTime += 0.1;
+            follower.TryRecordSample(new BladePoseSample(++strokeFrameId, strokeTime, strokePosition,
+                UprightGrip(follower), BladeTrackingState.None));
 
             Assert.That(follower.TryGetWave(0, out double stillLatchedAt, out Plane movedPlane, out Vector3 movedOrigin,
                 out Vector3 movedTravel, out Vector3 movedSpanAxis, out float movedSpan,
@@ -2065,7 +2074,9 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(0, out _, out Plane plane, out Vector3 origin, out Vector3 travelAxis,
                 out Vector3 spanAxis, out float initialSpan, out _, out _, out _, out _), Is.True);
 
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+            // Let A advance far enough that the backward-leaning span meets
+            // the forward guide at q >= 0, still before Close.
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.1), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out Plane planeAfter, out Vector3 originAfter,
                 out Vector3 travelAfter, out Vector3 spanAxisAfter, out float span,
@@ -2081,9 +2092,8 @@ namespace Zantetsu.Core.Tests
             float expectedR = Vector3.Dot(plane.normal, Vector3.Cross(guideOrigin - currentStart, guideDirection)) / denominator;
             Assert.That(span, Is.EqualTo(expectedR).Within(1e-3f));
 
-            // And independently: for this sweep the span line is world -Y, so
-            // the intersection is just how far the emitter is below A.
-            Assert.That(span, Is.EqualTo(currentStart.y - guideOrigin.y).Within(1e-3f));
+            // Independently, the guide has no Y component: solve B.y = E.y.
+            Assert.That(span, Is.EqualTo((guideOrigin.y - currentStart.y) / spanAxis.y).Within(1e-3f));
 
             AssertVector(currentEnd, currentStart + spanAxis * span);
 
@@ -2100,7 +2110,7 @@ namespace Zantetsu.Core.Tests
         {
             Quaternion upright = UprightGrip(follower);
             SweepUntilLatch();
-            Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+            Assert.That(RecordPose(upright, EdgeStep, 0.1), Is.True);
             Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float widest,
@@ -2127,12 +2137,13 @@ namespace Zantetsu.Core.Tests
             Quaternion upright = UprightGrip(follower);
             SweepUntilLatch();
             Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
-            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
+            Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 capturedSpanAxis, out float span,
                 out _, out _, out Vector3 startBefore, out _), Is.True);
 
             // Point the blade along the span axis: the guide ray and the span
             // line are parallel, so there is no usable intersection.
-            Quaternion alongSpan = Quaternion.Euler(90f, 0f, 0f) * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
+            Quaternion alongSpan = Quaternion.LookRotation(capturedSpanAxis, Vector3.up)
+                * Quaternion.Inverse(follower.GripToKatanaOffset.rotation);
             Assert.That(RecordPose(alongSpan, EdgeStep, SampleInterval), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
@@ -2173,6 +2184,10 @@ namespace Zantetsu.Core.Tests
             Quaternion flipped = FlippedGrip(follower);
             Assert.That(RecordPose(flipped, EdgeStep, SampleInterval), Is.True);
             Assert.That(RecordPose(flipped, EdgeStep, SampleInterval), Is.True);
+            Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0));
+            // Keep that rejected pose as the guide while A advances enough
+            // to meet its forward ray with the 150-degree span axis.
+            Assert.That(RecordPose(flipped, Vector3.zero, 0.1), Is.True);
 
             Assert.That(follower.AcceptedSampleCount, Is.EqualTo(0), "the gate accepted none of them");
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float spanAfter,
@@ -2239,9 +2254,30 @@ namespace Zantetsu.Core.Tests
             SweepUntilLatch();
             Assert.That(follower.WaveCount, Is.EqualTo(2));
 
+            var expected = new float[2];
+            for (int w = 0; w < 2; w++)
+                follower.TryGetWave(w, out _, out _, out _, out _, out _, out expected[w], out _, out _, out _, out _);
+
             for (int i = 0; i < 3; i++)
             {
                 Assert.That(RecordPose(upright, EdgeStep, SampleInterval), Is.True);
+                for (int w = 0; w < 2; w++)
+                {
+                    follower.TryGetWave(w, out _, out Plane p, out _, out _, out Vector3 s,
+                        out float actual, out _, out _, out Vector3 a, out _);
+                    bool closed = follower.TryGetWaveSpanClose(w, out _, out Vector3 e, out Vector3 d);
+                    if (!closed)
+                    {
+                        e = CurrentGuideOrigin(p);
+                        d = Vector3.ProjectOnPlane(katanaObject.transform.forward, p.normal).normalized;
+                    }
+                    float denominator = InPlaneCross(p.normal, s, d);
+                    float r = InPlaneCross(p.normal, e - a, d) / denominator;
+                    float q = InPlaneCross(p.normal, e - a, s) / denominator;
+                    if (Mathf.Abs(denominator) > 0.001f && r >= 0f && q >= 0f)
+                        expected[w] = Mathf.Max(expected[w], r);
+                    Assert.That(actual, Is.EqualTo(expected[w]).Within(1e-3f));
+                }
             }
 
             Assert.That(follower.TryGetWave(0, out _, out Plane firstPlane, out _, out _, out Vector3 firstSpanAxis,
@@ -2249,18 +2285,8 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(1, out _, out Plane secondPlane, out _, out _, out Vector3 secondSpanAxis,
                 out float secondSpan, out _, out _, out Vector3 secondStart, out Vector3 secondEnd), Is.True);
 
-            // One pose, but each wave measures from its own A along its own
-            // span axis -- and against the guide that wave is actually using,
-            // which for one past its capture window is the frozen one.
-            Vector3 firstGuide = follower.TryGetWaveSpanClose(0, out _, out Vector3 firstFrozen, out _)
-                ? firstFrozen
-                : CurrentGuideOrigin(firstPlane);
-            Vector3 secondGuide = follower.TryGetWaveSpanClose(1, out _, out Vector3 secondFrozen, out _)
-                ? secondFrozen
-                : CurrentGuideOrigin(secondPlane);
-
-            Assert.That(firstSpan, Is.EqualTo(firstStart.y - firstGuide.y).Within(1e-3f));
-            Assert.That(secondSpan, Is.EqualTo(secondStart.y - secondGuide.y).Within(1e-3f));
+            Assert.That(firstSpan, Is.EqualTo(expected[0]).Within(1e-3f));
+            Assert.That(secondSpan, Is.EqualTo(expected[1]).Within(1e-3f));
             AssertVector(firstEnd, firstStart + firstSpanAxis * firstSpan);
             AssertVector(secondEnd, secondStart + secondSpanAxis * secondSpan);
         }
@@ -2308,7 +2334,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float initialSpan,
                 out _, out _, out _, out _), Is.True);
 
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, SampleInterval), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep, 0.1), Is.True);
 
             Assert.That(follower.TryGetWaveSpanClose(0, out _, out _, out _), Is.False, "the span is still open");
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
@@ -2332,7 +2358,7 @@ namespace Zantetsu.Core.Tests
 
             Vector3 expectedOrigin = CurrentGuideOrigin(plane);
             Vector3 expectedDirection = Vector3.ProjectOnPlane(katanaObject.transform.forward, plane.normal).normalized;
-            Assert.That(span, Is.EqualTo(currentStart.y - expectedOrigin.y).Within(1e-3f));
+            Assert.That(span, Is.EqualTo((expectedOrigin.y - currentStart.y) / spanAxis.y).Within(1e-3f));
             AssertVector(currentEnd, currentStart + spanAxis * span);
 
             Assert.That(follower.TryGetWaveSpanClose(0, out double closedAt, out Vector3 frozenOrigin,
@@ -2590,7 +2616,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out Vector3 spanAxis, out float spanBefore,
                 out _, out _, out Vector3 startBefore, out Vector3 endBefore), Is.True);
 
-            Assert.That(RecordPose(upright, EdgeStep * 3f, SampleInterval), Is.True);
+            Assert.That(RecordPose(upright, EdgeStep * 3f, 0.18), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out Plane plane, out _, out _, out _, out float spanAfter,
                 out Vector3 previousA, out Vector3 previousB,
@@ -2853,7 +2879,7 @@ namespace Zantetsu.Core.Tests
             Assert.That(waveVisuals[0].position, Is.Not.EqualTo(positionAtLatch), "the visual travelled");
             Assert.That(waveVisuals[0].localScale.x, Is.EqualTo(widthAtLatch).Within(PositionTolerance));
 
-            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 3f, SampleInterval), Is.True);
+            Assert.That(RecordPose(UprightGrip(follower), EdgeStep * 3f, 0.13), Is.True);
 
             Assert.That(follower.TryGetWave(0, out _, out _, out _, out _, out _, out float span,
                 out _, out _, out Vector3 segmentStart, out Vector3 segmentEnd), Is.True);
