@@ -46,6 +46,15 @@ namespace Zantetsu.Rendering
 
         public readonly int blockCount;
 
+        /// <summary>
+        /// Whether this geometry was accepted as a cut input: appended through
+        /// <see cref="VpCpuGeometryStorage.TryAppendCuttable"/> after passing <see cref="VpCutInputGate"/>, or produced
+        /// by a cut of a geometry that was. Having a topology mapping is not enough — an ordinary prepared append keeps
+        /// its mapping and stays displayable, but is not cuttable. Only the storage sets this, and it compares it
+        /// against its own record of the append, so a copy with the flag changed is not one of its geometries.
+        /// </summary>
+        public readonly bool cutInputAccepted;
+
         internal VpStoredGeometry(
             int vertexStart,
             int vertexCount,
@@ -56,7 +65,23 @@ namespace Zantetsu.Rendering
             int submeshCount,
             int blockStart,
             int blockCount)
+            : this(vertexStart, vertexCount, indexRange, hasTopology, topologyVertexCount, submeshStart, submeshCount, blockStart, blockCount, false)
         {
+        }
+
+        internal VpStoredGeometry(
+            int vertexStart,
+            int vertexCount,
+            VpIndexRangeHandle indexRange,
+            bool hasTopology,
+            int topologyVertexCount,
+            int submeshStart,
+            int submeshCount,
+            int blockStart,
+            int blockCount,
+            bool cutInputAccepted)
+        {
+            this.cutInputAccepted = cutInputAccepted;
             this.vertexStart = vertexStart;
             this.vertexCount = vertexCount;
             this.indexRange = indexRange;

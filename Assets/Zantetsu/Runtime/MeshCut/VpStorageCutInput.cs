@@ -87,13 +87,17 @@ namespace Zantetsu.MeshCut
         /// Takes the geometry's index read lease and prepares its kernel ranges, one per submesh in submesh order, and
         /// its topology ranges, one per vertex block. Returns false with a null adapter, holding no lease and having
         /// allocated nothing, when the storage is null, the geometry is not one the storage owns (default, foreign,
-        /// stale, or a description that does not match its own append), it has no topology mapping, it has no submesh
-        /// or no index, or its index range is not Published — which covers a range that is Retiring or Free.
+        /// stale, or a description that does not match its own append), it has no topology mapping, it was not accepted
+        /// as a cut input (<see cref="VpStoredGeometry.cutInputAccepted"/>: appended through the input gate, or cut from
+        /// a geometry that was), it has no submesh or no index, or its index range is not Published — which covers a
+        /// range that is Retiring or Free. A topology mapping alone does not make a geometry cuttable: an ordinary
+        /// prepared append is refused here, before any lease.
         /// </summary>
         public static bool TryAcquire(VpCpuGeometryStorage storage, VpStoredGeometry geometry, out VpStorageCutInput input)
         {
             input = null;
             if (storage == null
+                || !geometry.cutInputAccepted
                 || !storage.TryGetVertexBlocks(geometry, out NativeArray<VpGeometryVertexBlock>.ReadOnly blocks, out int topologyVertexCount)
                 || !storage.TryGetSubmeshes(geometry, out NativeArray<VpGeometrySubmesh>.ReadOnly submeshes)
                 || !storage.TryGetIndexState(geometry.indexRange, out _, out _, out int publishedIndexCount))

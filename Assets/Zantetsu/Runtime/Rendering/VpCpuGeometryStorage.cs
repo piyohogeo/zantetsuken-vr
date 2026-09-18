@@ -51,6 +51,7 @@ namespace Zantetsu.Rendering
             public int submeshCount;
             public int blockStart;
             public int blockCount;
+            public bool cutInputAccepted;
         }
 
         private readonly VpCpuVertexStorage _vertices;
@@ -250,8 +251,12 @@ namespace Zantetsu.Rendering
         /// negative, a topology id is outside [0, topologyVertexCount), an index is not below the vertex count or its
         /// global number would exceed uint.MaxValue, a submesh index count or material index is negative, the submeshes
         /// do not cover every index once in order, a capacity is too small, or no index range or descriptor can be
-        /// reserved. Conditions the input gate already decided — manifoldness, winding, finiteness — are not checked
-        /// again here.
+        /// reserved. Manifoldness, winding and finiteness are not checked here.
+        /// </para>
+        /// <para>
+        /// This is the ordinary append: the geometry keeps its topology mapping and can be displayed, but it is not a
+        /// cut input — <see cref="VpStoredGeometry.cutInputAccepted"/> stays false, whatever its topology. An open mesh
+        /// may be appended and shown this way. A geometry that is to be cut goes through <see cref="TryAppendCuttable"/>.
         /// </para>
         /// </summary>
         public bool TryAppendPrepared(
@@ -260,6 +265,51 @@ namespace Zantetsu.Rendering
             int[] topologyOfVertex,
             int topologyVertexCount,
             VpGeometrySubmesh[] submeshes,
+            out VpStoredGeometry geometry)
+        {
+            return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, false, out geometry);
+        }
+
+        /// <summary>
+        /// Appends a prepared geometry as a cut input: the arrays are first put through <see cref="VpCutInputGate"/>,
+        /// DESIGN 6.2's input contract, and only a geometry that passes is appended, exactly as
+        /// <see cref="TryAppendPrepared"/> would append it, and recorded as <see cref="VpStoredGeometry.cutInputAccepted"/>.
+        /// This is the one place a geometry is judged: nothing re-checks it per frame or per draw, and what a cut of it
+        /// produces inherits the acceptance through <see cref="TryCommitCutOutput"/> without being judged again.
+        /// <para>
+        /// Returns false with a default geometry when the gate refuses — <paramref name="verdict"/> says why — or when
+        /// the append itself fails for any reason <see cref="TryAppendPrepared"/> gives. The gate runs before anything
+        /// is reserved, so a refusal takes no vertex, index, submesh or block capacity and changes no geometry already
+        /// stored.
+        /// </para>
+        /// </summary>
+        public bool TryAppendCuttable(
+            VpRenderVertex[] vertices,
+            uint[] localIndices,
+            int[] topologyOfVertex,
+            int topologyVertexCount,
+            VpGeometrySubmesh[] submeshes,
+            out VpStoredGeometry geometry,
+            out VpCutInputVerdict verdict)
+        {
+            ThrowIfDisposed();
+            geometry = default;
+            verdict = VpCutInputGate.Check(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes);
+            if (!verdict.Accepted)
+            {
+                return false;
+            }
+
+            return AppendPrepared(vertices, localIndices, topologyOfVertex, topologyVertexCount, submeshes, true, out geometry);
+        }
+
+        private bool AppendPrepared(
+            VpRenderVertex[] vertices,
+            uint[] localIndices,
+            int[] topologyOfVertex,
+            int topologyVertexCount,
+            VpGeometrySubmesh[] submeshes,
+            bool cutInputAccepted,
             out VpStoredGeometry geometry)
         {
             ThrowIfDisposed();
@@ -339,7 +389,8 @@ namespace Zantetsu.Rendering
             _vertices.Commit(vertexCount);
             _submeshCount += submeshCount;
             _vertexBlockCount = blockStart + 1;
-            geometry = new VpStoredGeometry(vertexStart, vertexCount, indexRange, true, topologyVertexCount, submeshStart, submeshCount, blockStart, 1);
+            geometry = new VpStoredGeometry(
+                vertexStart, vertexCount, indexRange, true, topologyVertexCount, submeshStart, submeshCount, blockStart, 1, cutInputAccepted);
             RecordAppend(indexRange, geometry);
             return true;
         }
@@ -536,11 +587,17 @@ namespace Zantetsu.Rendering
             _vertices.Commit(newVertexCount);
             _submeshCount = submeshStart + submeshCount;
             _vertexBlockCount = blockStart + blockCount;
+
+            // What the cut produces inherits the parent's acceptance as a cut input, without being judged again
+            // (DESIGN 6.2: the cut side inherits the invariants of an accepted input). The parent is the one the
+            // reservation was taken for, checked against this storage's own record when it was taken; the flag cannot
+            // be chosen here or by any ordinary append.
+            bool inheritedAcceptance = parent.cutInputAccepted;
             if (positiveIndexCount > 0)
             {
                 positive = new VpStoredGeometry(
                     reservation.vertexStart, newVertexCount, positiveRange, true, topologyVertexCount,
-                    submeshStart, positiveSubmeshCount, blockStart, blockCount);
+                    submeshStart, positiveSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(positiveRange, positive);
             }
 
@@ -548,7 +605,7 @@ namespace Zantetsu.Rendering
             {
                 negative = new VpStoredGeometry(
                     reservation.vertexStart, newVertexCount, negativeRange, true, topologyVertexCount,
-                    submeshStart + positiveSubmeshCount, negativeSubmeshCount, blockStart, blockCount);
+                    submeshStart + positiveSubmeshCount, negativeSubmeshCount, blockStart, blockCount, inheritedAcceptance);
                 RecordAppend(negativeRange, negative);
             }
 
@@ -743,7 +800,8 @@ namespace Zantetsu.Rendering
                 && append.submeshStart == geometry.submeshStart
                 && append.submeshCount == geometry.submeshCount
                 && append.blockStart == geometry.blockStart
-                && append.blockCount == geometry.blockCount;
+                && append.blockCount == geometry.blockCount
+                && append.cutInputAccepted == geometry.cutInputAccepted;
         }
 
         /// <summary>Records what a published descriptor registration was published with. Writes into the array taken at construction.</summary>
@@ -760,6 +818,7 @@ namespace Zantetsu.Rendering
                 submeshCount = geometry.submeshCount,
                 blockStart = geometry.blockStart,
                 blockCount = geometry.blockCount,
+                cutInputAccepted = geometry.cutInputAccepted,
             };
         }
 
@@ -805,7 +864,7 @@ namespace Zantetsu.Rendering
             return true;
         }
 
-        private static bool AreTopologyIdsInRange(int[] topologyOfVertex, int topologyVertexCount)
+        internal static bool AreTopologyIdsInRange(int[] topologyOfVertex, int topologyVertexCount)
         {
             for (int v = 0; v < topologyOfVertex.Length; v++)
             {
@@ -818,7 +877,7 @@ namespace Zantetsu.Rendering
             return true;
         }
 
-        private static bool AreIndicesInRange(uint[] localIndices, int vertexStart, int vertexCount)
+        internal static bool AreIndicesInRange(uint[] localIndices, int vertexStart, int vertexCount)
         {
             for (int i = 0; i < localIndices.Length; i++)
             {
@@ -837,7 +896,7 @@ namespace Zantetsu.Rendering
         /// and each must hold whole triangles: a boundary inside a triangle would hand the display side a submesh it
         /// cannot draw. An empty submesh is still allowed, 0 being a multiple of 3.
         /// </summary>
-        private static bool DoSubmeshesCover(VpGeometrySubmesh[] submeshes, int start, int count, int indexCount)
+        internal static bool DoSubmeshesCover(VpGeometrySubmesh[] submeshes, int start, int count, int indexCount)
         {
             long covered = 0;
             for (int s = 0; s < count; s++)

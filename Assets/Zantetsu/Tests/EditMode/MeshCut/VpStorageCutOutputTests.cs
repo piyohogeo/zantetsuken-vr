@@ -136,6 +136,16 @@ namespace Zantetsu.MeshCut.Tests
         private static VpStoredGeometry Append(VpCpuGeometryStorage storage, Prepared prepared)
         {
             Assert.That(
+                storage.TryAppendCuttable(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, prepared.TopologyVertexCount, prepared.Submeshes, out VpStoredGeometry geometry, out _),
+                Is.True,
+                "append as a cut input");
+            return geometry;
+        }
+
+        /// <summary>An ordinary append, for the open quads that are only other geometry in the storage and are never cut.</summary>
+        private static VpStoredGeometry AppendOpen(VpCpuGeometryStorage storage, Prepared prepared)
+        {
+            Assert.That(
                 storage.TryAppendPrepared(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, prepared.TopologyVertexCount, prepared.Submeshes, out VpStoredGeometry geometry),
                 Is.True,
                 "append prepared");
@@ -407,7 +417,7 @@ namespace Zantetsu.MeshCut.Tests
             Prepared prepared = BuildPrepared();
             using (VpCpuGeometryStorage storage = NewStorage())
             {
-                Append(storage, BuildQuad(new float3(5, 5, 5)));
+                AppendOpen(storage, BuildQuad(new float3(5, 5, 5)));
                 VpStoredGeometry subject = Append(storage, prepared);
                 Assert.That(subject.vertexStart, Is.Not.Zero, "the vertices do not start at 0");
                 Assert.That(PhysicalStart(storage, subject.indexRange), Is.Not.Zero, "the indices do not start at 0");
@@ -496,7 +506,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(negativeStart, Is.EqualTo(positiveStart + n0), "negative follows positive with no gap");
 
                 // the unused tail of the reservation came back: the next append starts right after the negative side
-                VpStoredGeometry next = Append(storage, BuildQuad(new float3(9, 9, 9)));
+                VpStoredGeometry next = AppendOpen(storage, BuildQuad(new float3(9, 9, 9)));
                 Assert.That(PhysicalStart(storage, next.indexRange), Is.EqualTo(negativeStart + n1), "the tail is reusable");
             }
         }
@@ -584,7 +594,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(positiveState, Is.EqualTo(VpIndexRangeState.Free));
 
                 // its space comes back and is handed out again, before the negative side's own range
-                VpStoredGeometry reuser = Append(storage, BuildQuad(new float3(3, 3, 3)));
+                VpStoredGeometry reuser = AppendOpen(storage, BuildQuad(new float3(3, 3, 3)));
                 Assert.That(PhysicalStart(storage, reuser.indexRange), Is.EqualTo(positiveStart), "the freed space is reused");
 
                 Assert.That(storage.TryGetIndexState(negative.indexRange, out VpIndexRangeState negativeState, out int startAfter, out int countAfter), Is.True);
@@ -664,7 +674,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.VertexBlockCount, Is.EqualTo(blockCount), "no block was committed");
 
                 // nothing was reserved either: the next append takes the space right after the input
-                VpStoredGeometry next = Append(storage, BuildQuad(new float3(1, 1, 1)));
+                VpStoredGeometry next = AppendOpen(storage, BuildQuad(new float3(1, 1, 1)));
                 Assert.That(PhysicalStart(storage, next.indexRange), Is.EqualTo(indexStart + IndexCount), "no reservation was left behind");
             }
         }
@@ -832,7 +842,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.TryCancelCutOutput(null), Is.False, "a null reservation is refused");
 
                 // the cancelled index space is free again
-                VpStoredGeometry next = Append(storage, BuildQuad(float3.zero));
+                VpStoredGeometry next = AppendOpen(storage, BuildQuad(float3.zero));
                 Assert.That(PhysicalStart(storage, next.indexRange), Is.EqualTo(IndexCount), "the cancelled space is reused");
             }
         }
@@ -883,7 +893,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.TryCancelCutOutput(reservation), Is.True, "cancel");
 
                 // appending resumes on exactly the tail the reservation had been holding
-                VpStoredGeometry resumed = Append(storage, other);
+                VpStoredGeometry resumed = AppendOpen(storage, other);
                 Assert.That(resumed.vertexStart, Is.EqualTo(vertexCount), "the vertex tail was never taken");
                 Assert.That(resumed.blockStart, Is.EqualTo(blockCount), "nor the block tail");
                 Assert.That(resumed.submeshStart, Is.EqualTo(submeshCount), "nor the submesh tail");
@@ -902,7 +912,7 @@ namespace Zantetsu.MeshCut.Tests
                 int vertexCount = storage.VertexCount;
                 int submeshCount = storage.SubmeshCount;
                 int blockCount = storage.VertexBlockCount;
-                VpStoredGeometry appended = Append(storage, BuildQuad(new float3(7, 7, 7)));
+                VpStoredGeometry appended = AppendOpen(storage, BuildQuad(new float3(7, 7, 7)));
                 Assert.That(appended.vertexStart, Is.EqualTo(vertexCount), "the commit released the vertex tail");
                 Assert.That(appended.submeshStart, Is.EqualTo(submeshCount), "and the submesh tail");
                 Assert.That(appended.blockStart, Is.EqualTo(blockCount), "and the block tail");

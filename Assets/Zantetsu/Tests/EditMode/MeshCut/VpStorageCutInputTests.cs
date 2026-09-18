@@ -136,9 +136,9 @@ namespace Zantetsu.MeshCut.Tests
         private static VpStoredGeometry Append(VpCpuGeometryStorage storage, Prepared prepared)
         {
             Assert.That(
-                storage.TryAppendPrepared(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, ControlPoints, prepared.Submeshes, out VpStoredGeometry geometry),
+                storage.TryAppendCuttable(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, ControlPoints, prepared.Submeshes, out VpStoredGeometry geometry, out _),
                 Is.True,
-                "append prepared");
+                "append as a cut input");
             return geometry;
         }
 
@@ -687,9 +687,10 @@ namespace Zantetsu.MeshCut.Tests
             using (VpCpuGeometryStorage storage = NewStorage())
             {
                 Assert.That(
-                    storage.TryAppendPrepared(Array.Empty<VpRenderVertex>(), Array.Empty<uint>(), Array.Empty<int>(), 0, Array.Empty<VpGeometrySubmesh>(), out VpStoredGeometry empty),
+                    storage.TryAppendCuttable(Array.Empty<VpRenderVertex>(), Array.Empty<uint>(), Array.Empty<int>(), 0, Array.Empty<VpGeometrySubmesh>(), out VpStoredGeometry empty, out VpCutInputVerdict verdict),
                     Is.True,
-                    "the storage still stores an empty geometry");
+                    "the storage still stores an empty geometry, and the gate has no emptiness rule");
+                Assert.That(verdict.Accepted, Is.True, verdict.ToString());
 
                 Assert.That(VpStorageCutInput.TryAcquire(storage, empty, out VpStorageCutInput adapter), Is.False, "the adapter refuses it");
                 Assert.That(adapter, Is.Null);

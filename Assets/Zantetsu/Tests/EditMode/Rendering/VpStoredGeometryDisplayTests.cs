@@ -132,6 +132,16 @@ namespace Zantetsu.Rendering.Tests
             return geometry;
         }
 
+        /// <summary>For the one subject these display tests cut: appended as a cut input, through the gate.</summary>
+        private static VpStoredGeometry AppendCuttable(VpCpuGeometryStorage storage, Prepared prepared)
+        {
+            Assert.That(
+                storage.TryAppendCuttable(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, prepared.TopologyVertexCount, prepared.Submeshes, out VpStoredGeometry geometry, out _),
+                Is.True,
+                "append as a cut input");
+            return geometry;
+        }
+
         private static float4 TiltedPlane()
         {
             float3 centre = float3.zero;
@@ -234,7 +244,7 @@ namespace Zantetsu.Rendering.Tests
             Material end = NewMaterial("end");
             using (VpCpuGeometryStorage storage = NewStorage())
             {
-                VpStoredGeometry uncut = Append(storage, prepared);
+                VpStoredGeometry uncut = AppendCuttable(storage, prepared);
 
                 // the cut is finished before anything is drawn: that is the whole shape of this display
                 VpStorageCutResult cut = Cut(storage, uncut, TiltedPlane());

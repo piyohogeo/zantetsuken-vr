@@ -18,32 +18,38 @@ namespace Zantetsu.MeshCut.Tests
     {
         private const int TopologyVertices = 4;
 
-        /// <summary>A quad in Unity's basis: four control points, six render vertices with two attribute seams, two submeshes.</summary>
+        /// <summary>
+        /// A closed tetrahedron in Unity's basis: four control points, six render vertices with two attribute seams
+        /// (control points 1 and 3 each carry a second render vertex with another uv), two submeshes. Closed and
+        /// consistently wound on the control points, since the adapter now appends through the cut input gate; the
+        /// seams are told apart by the control point each render vertex names, never by position.
+        /// </summary>
         private static PreparedCommonGeometry Prepared(CommonGeometryBasis basis = CommonGeometryBasis.Unity)
         {
             return new PreparedCommonGeometry
             {
-                Name = "quad",
+                Name = "tetrahedron",
                 Basis = basis,
                 Vertices = new[]
                 {
-                    Vertex(0f, 0f, 0f, 0f), Vertex(1f, 0f, 1f, 0f), Vertex(1f, 1f, 1f, 1f),
-                    Vertex(0f, 1f, 0f, 1f), Vertex(1f, 0f, 0.25f, 0.5f), Vertex(0f, 1f, 0.75f, 0.5f),
+                    Vertex(0f, 0f, 0f, 0f, 0f), Vertex(1f, 0f, 0f, 1f, 0f), Vertex(0f, 1f, 0f, 1f, 1f),
+                    Vertex(0f, 0f, 1f, 0f, 1f), Vertex(1f, 0f, 0f, 0.25f, 0.5f), Vertex(0f, 0f, 1f, 0.75f, 0.5f),
                 },
-                Indices = new uint[] { 0, 1, 2, 0, 2, 3, 4, 5, 0 },
+                // faces on the control points: (0,2,1) | (0,1,3), (0,3,2), (1,2,3) -- every edge shared once each way
+                Indices = new uint[] { 0, 2, 1, 0, 4, 5, 0, 3, 2, 4, 2, 3 },
                 TopologyOfVertex = new[] { 0, 1, 2, 3, 1, 3 },
                 TopologyVertexCount = TopologyVertices,
                 Submeshes = new[]
                 {
                     new CommonGeometrySubmesh { IndexStart = 0, IndexCount = 3, MaterialIndex = 7, MaterialName = "Side" },
-                    new CommonGeometrySubmesh { IndexStart = 3, IndexCount = 6, MaterialIndex = 2, MaterialName = "EndCap" },
+                    new CommonGeometrySubmesh { IndexStart = 3, IndexCount = 9, MaterialIndex = 2, MaterialName = "EndCap" },
                 },
             };
         }
 
-        private static VpRenderVertex Vertex(float x, float y, float u, float v)
+        private static VpRenderVertex Vertex(float x, float y, float z, float u, float v)
         {
-            return new VpRenderVertex { position = new Vector3(x, y, 0f), normal = Vector3.back, uv0 = new Vector2(u, v) };
+            return new VpRenderVertex { position = new Vector3(x, y, z), normal = Vector3.back, uv0 = new Vector2(u, v) };
         }
 
         private static VpCpuGeometryStorage NewStorage()
@@ -76,7 +82,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(storage.TryGetSubmeshes(stored, out NativeArray<VpGeometrySubmesh>.ReadOnly submeshes), Is.True);
                 Assert.That(
                     submeshes.ToArray(),
-                    Is.EqualTo(new[] { new VpGeometrySubmesh(0, 3, 7), new VpGeometrySubmesh(3, 6, 2) }),
+                    Is.EqualTo(new[] { new VpGeometrySubmesh(0, 3, 7), new VpGeometrySubmesh(3, 9, 2) }),
                     "index ranges and source material indices");
             }
         }
@@ -142,6 +148,35 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
+        public void AnOpenSurface_IsRefusedByTheInputGate_AndTheStorageStaysUnchanged()
+        {
+            PreparedCommonGeometry open = Prepared();
+            // drop the last face: three of the control-point edges now have a single face
+            System.Array.Resize(ref open.Indices, open.Indices.Length - 3);
+            open.Submeshes[1] = new CommonGeometrySubmesh { IndexStart = 3, IndexCount = 6, MaterialIndex = 2, MaterialName = "EndCap" };
+            Assert.That(open.Validate(), Is.Empty, "structurally still a valid prepared geometry");
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                Assert.That(CommonGeometryStorage.TryAppend(storage, open, out VpStoredGeometry stored, out VpCutInputVerdict verdict), Is.False);
+                Assert.That(verdict.rejection, Is.EqualTo(VpCutInputRejection.EdgeFaceCount), verdict.ToString());
+                Assert.That(stored, Is.EqualTo(default(VpStoredGeometry)));
+                Assert.That(storage.VertexCount, Is.Zero, "nothing committed");
+                Assert.That(storage.SubmeshCount, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void AnAcceptedGeometry_IsRecordedAsACutInput()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                Assert.That(CommonGeometryStorage.TryAppend(storage, Prepared(), out VpStoredGeometry stored, out VpCutInputVerdict verdict), Is.True);
+                Assert.That(verdict.Accepted, Is.True, verdict.ToString());
+                Assert.That(stored.cutInputAccepted, Is.True);
+            }
+        }
+
+        [Test]
         public void ANullStorage_IsRefused()
         {
             Assert.That(CommonGeometryStorage.TryAppend(null, Prepared(), out VpStoredGeometry stored), Is.False);
@@ -159,7 +194,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(table.TryRegisterGeometry(stored, out VpGeometryReference reference), Is.True, "register");
                 Assert.That(table.TryAddDisplayInstance(reference, out VpDisplayInstanceReference instance), Is.True, "instance");
                 Assert.That(table.TryRetireGeometry(reference), Is.False, "an instance still references it");
-                Assert.That(Storage(storage, stored), Is.EqualTo(new[] { new VpGeometrySubmesh(0, 3, 7), new VpGeometrySubmesh(3, 6, 2) }), "submeshes while live");
+                Assert.That(Storage(storage, stored), Is.EqualTo(new[] { new VpGeometrySubmesh(0, 3, 7), new VpGeometrySubmesh(3, 9, 2) }), "submeshes while live");
 
                 Assert.That(table.TryRetireDisplayInstance(instance), Is.True, "retire the instance");
                 Assert.That(table.TryRetireGeometry(reference), Is.True, "retire the geometry");

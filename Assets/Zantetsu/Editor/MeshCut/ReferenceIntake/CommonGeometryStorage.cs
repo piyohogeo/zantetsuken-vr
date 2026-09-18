@@ -14,13 +14,25 @@ namespace Zantetsu.MeshCut.ReferenceIntake
     public static class CommonGeometryStorage
     {
         /// <summary>
-        /// Appends the prepared geometry to the storage. Returns false with a default result, leaving the storage
-        /// unchanged, when the geometry is null, is not in <see cref="CommonGeometryBasis.Unity"/>, has any structural
-        /// problem of its own (<see cref="PreparedCommonGeometry.Validate"/>), or the storage refuses it.
+        /// Appends the prepared geometry to the storage as a cut input, through the storage's input gate
+        /// (<see cref="VpCpuGeometryStorage.TryAppendCuttable"/>, DESIGN 6.2). Returns false with a default result,
+        /// leaving the storage unchanged, when the geometry is null, is not in <see cref="CommonGeometryBasis.Unity"/>,
+        /// has any structural problem of its own (<see cref="PreparedCommonGeometry.Validate"/>), fails the gate — an
+        /// open or non-manifold surface, a local winding inconsistency, a vertex shared by several fans, a control point
+        /// with two positions, or a non-finite value — or the storage refuses it otherwise.
         /// </summary>
         public static bool TryAppend(VpCpuGeometryStorage storage, PreparedCommonGeometry geometry, out VpStoredGeometry stored)
         {
+            return TryAppend(storage, geometry, out stored, out _);
+        }
+
+        /// <summary>As <see cref="TryAppend(VpCpuGeometryStorage, PreparedCommonGeometry, out VpStoredGeometry)"/>, also
+        /// saying why the gate refused (<see cref="VpCutInputRejection.None"/> when it did not run or accepted).</summary>
+        public static bool TryAppend(
+            VpCpuGeometryStorage storage, PreparedCommonGeometry geometry, out VpStoredGeometry stored, out VpCutInputVerdict verdict)
+        {
             stored = default;
+            verdict = default;
             if (storage == null
                 || geometry == null
                 || geometry.Basis != CommonGeometryBasis.Unity
@@ -36,13 +48,14 @@ namespace Zantetsu.MeshCut.ReferenceIntake
                 submeshes[s] = new VpGeometrySubmesh(submesh.IndexStart, submesh.IndexCount, submesh.MaterialIndex);
             }
 
-            return storage.TryAppendPrepared(
+            return storage.TryAppendCuttable(
                 geometry.Vertices,
                 geometry.Indices,
                 geometry.TopologyOfVertex,
                 geometry.TopologyVertexCount,
                 submeshes,
-                out stored);
+                out stored,
+                out verdict);
         }
     }
 }

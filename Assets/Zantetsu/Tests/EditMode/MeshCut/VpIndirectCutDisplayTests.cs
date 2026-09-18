@@ -136,9 +136,9 @@ namespace Zantetsu.MeshCut.Tests
         private static VpStoredGeometry Append(VpCpuGeometryStorage storage, Prepared prepared)
         {
             Assert.That(
-                storage.TryAppendPrepared(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, ControlPoints, prepared.Submeshes, out VpStoredGeometry geometry),
+                storage.TryAppendCuttable(prepared.Vertices, prepared.Indices, prepared.TopologyOfVertex, ControlPoints, prepared.Submeshes, out VpStoredGeometry geometry, out _),
                 Is.True,
-                "append prepared");
+                "append as a cut input");
             return geometry;
         }
 
