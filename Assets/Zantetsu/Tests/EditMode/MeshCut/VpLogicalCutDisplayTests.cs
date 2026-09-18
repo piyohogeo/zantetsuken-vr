@@ -144,7 +144,7 @@ namespace Zantetsu.MeshCut.Tests
             int instanceCapacity = 16)
         {
             return VpLogicalCutDisplay.TryCreate(
-                storage, table, ledger, Materials(), null, commandCapacity, instanceCapacity, () => _frame, out display);
+                storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity, () => _frame, out display);
         }
 
         private void NextFrame()

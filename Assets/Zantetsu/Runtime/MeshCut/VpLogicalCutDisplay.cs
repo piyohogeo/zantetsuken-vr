@@ -246,6 +246,16 @@ namespace Zantetsu.MeshCut
     /// this contract, and this class does not detect it.
     /// </para>
     /// <para>
+    /// **Two casters, and who owns them.** A body drawn as a provisional split is cast two-sided and every other body
+    /// one-sided, which is DESIGN 5.4's division: no cap is drawn into the shadow map, so what occludes behind the
+    /// opening is the back of the shell, and only a two-sided caster puts it there. Both materials are the caller's,
+    /// made and destroyed by the caller; this class creates neither and disposes neither, and it refuses to be made
+    /// with one of them alone, whichever one that is -- either both casters or no shadows at all. Which commands fall on which side is decided where the candidate is built, from the
+    /// plan that says the body is split -- not by reading back what the clip records hold, which is an input to the
+    /// drawing rather than a statement about the logical state. Every caster reads this frame's adopted snapshot: the
+    /// same geometry, transform, clip record and offset as the surfaces, never a second look at the ledger.
+    /// </para>
+    /// <para>
     /// **One stereo condition for the whole arrangement.** <see cref="SinglePassInstanced"/> is the only way to say
     /// that the draws are stereo, and it is read in one place — where the arrangement uploads — and given to both
     /// batches together, so the body, the initialisation, the volumes and the caps cannot end up on different eye
@@ -333,6 +343,7 @@ namespace Zantetsu.MeshCut
         private readonly LogicalCutLedger _ledger;
         private readonly IReadOnlyDictionary<int, Material> _materials;
         private readonly Material _shadowMaterial;
+        private readonly Material _provisionalShadowMaterial;
         private readonly VpGpuIndexedGeometryBuffers _buffers;
         private readonly VpIndexedIndirectDrawBatch _batch;
         private readonly VpStencilCapBatch _stencil;
@@ -350,6 +361,11 @@ namespace Zantetsu.MeshCut
         private List<LogicalCutDisplaySide> _sides = new List<LogicalCutDisplaySide>(4);
         private VpIndirectCommand[] _commands = Array.Empty<VpIndirectCommand>();
         private Material[] _commandMaterials = Array.Empty<Material>();
+
+        // Which of the adopted commands are a body drawn as a provisional split. It is written where the candidate is
+        // built, from the plan, and adopted with everything else -- never worked out afterwards by looking at what the
+        // clip records happen to hold.
+        private bool[] _commandProvisional = Array.Empty<bool>();
         private int _commandCount;
 
         // The caps of the adopted snapshot, in the same fate as everything else here: prepared with the candidate and
@@ -362,6 +378,7 @@ namespace Zantetsu.MeshCut
         private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
         private VpIndirectCommand[] _candidateCommands = Array.Empty<VpIndirectCommand>();
         private Material[] _candidateCommandMaterials = Array.Empty<Material>();
+        private bool[] _candidateCommandProvisional = Array.Empty<bool>();
         private Matrix4x4[] _candidateTransforms = Array.Empty<Matrix4x4>();
         private VpInstanceClip[] _candidateClips = Array.Empty<VpInstanceClip>();
         private LogicalCutCapRecord[] _candidateCapRecords = Array.Empty<LogicalCutCapRecord>();
@@ -400,6 +417,7 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             IReadOnlyDictionary<int, Material> materials,
             Material shadowMaterial,
+            Material provisionalShadowMaterial,
             VpGpuIndexedGeometryBuffers buffers,
             VpIndexedIndirectDrawBatch batch,
             VpStencilCapBatch stencil,
@@ -413,6 +431,7 @@ namespace Zantetsu.MeshCut
             _ledger = ledger;
             _materials = materials;
             _shadowMaterial = shadowMaterial;
+            _provisionalShadowMaterial = provisionalShadowMaterial;
             _buffers = buffers;
             _batch = batch;
             _stencil = stencil;
@@ -464,6 +483,32 @@ namespace Zantetsu.MeshCut
 
         /// <summary>How many command and instance uploads this display has issued, its first upload included.</summary>
         public int CommandUploads { get; private set; }
+
+        /// <summary>
+        /// Shadow calls issued with the one-sided caster: the ordinary bodies, the ones with no provisional split.
+        /// One per run of such commands per draw.
+        /// </summary>
+        public int OneSidedShadowIssues { get; private set; }
+
+        /// <summary>
+        /// Shadow calls issued with the two-sided caster: the bodies drawn as a provisional split. One per run of such
+        /// commands per draw, and none at all while nothing is split.
+        /// </summary>
+        public int TwoSidedShadowIssues { get; private set; }
+
+        /// <summary>Whether command <paramref name="index"/> of the adopted snapshot is cast two-sided.</summary>
+        public bool CommandCastsTwoSided(int index)
+        {
+            if (index < 0 || index >= _commandCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            return _commandProvisional[index];
+        }
+
+        /// <summary>How many commands the adopted snapshot holds.</summary>
+        public int CommandCount => _commandCount;
 
         /// <summary>Vertex transfers this display has issued. One per body shown, and never one for a split.</summary>
         public int VertexTransfers { get; private set; }
@@ -524,12 +569,13 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             IReadOnlyDictionary<int, Material> materialsBySourceIndex,
             Material shadowMaterial,
+            Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
             out VpLogicalCutDisplay display)
         {
             return TryCreate(
-                storage, table, ledger, materialsBySourceIndex, shadowMaterial,
+                storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
                 commandCapacity, instanceCapacity, null, out display);
         }
 
@@ -544,6 +590,7 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             IReadOnlyDictionary<int, Material> materialsBySourceIndex,
             Material shadowMaterial,
+            Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
             Func<int> frameSource,
@@ -552,6 +599,16 @@ namespace Zantetsu.MeshCut
             display = null;
             if (storage == null || table == null || ledger == null || materialsBySourceIndex == null
                 || commandCapacity <= 0 || instanceCapacity <= 0)
+            {
+                return false;
+            }
+
+            // Casting shadows at all means casting both kinds, so the two casters are given together or not at all.
+            // One of them alone is refused, in either direction and for the same reason: with only the one-sided
+            // caster a provisional split would cast a one-sided shadow, which looks like an ordinary shadow while
+            // being the wrong one; with only the two-sided caster nothing would cast at all, because a display with
+            // no one-sided caster issues no shadow call. Both silent, both wrong, both refused here.
+            if ((shadowMaterial == null) != (provisionalShadowMaterial == null))
             {
                 return false;
             }
@@ -581,8 +638,8 @@ namespace Zantetsu.MeshCut
                 }
 
                 display = new VpLogicalCutDisplay(
-                    storage, table, ledger, materialsBySourceIndex, shadowMaterial, buffers, batch, stencil,
-                    stencilMaterials, commandCapacity, instanceCapacity, frameSource);
+                    storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
+                    batch, stencil, stencilMaterials, commandCapacity, instanceCapacity, frameSource);
                 taken = true;
                 return true;
             }
@@ -751,6 +808,8 @@ namespace Zantetsu.MeshCut
             }
 
             _drawRegisteredThisFrame = true;
+
+            // The surfaces, grouped by material exactly as before: one forward call per run of commands sharing one.
             int start = 0;
             while (start < _commandCount)
             {
@@ -760,16 +819,40 @@ namespace Zantetsu.MeshCut
                     end++;
                 }
 
-                if (_shadowMaterial != null)
-                {
-                    _batch.Render(_commandMaterials[start], _shadowMaterial, _properties, _buffers, layer, start, end - start, camera);
-                }
-                else
-                {
-                    _batch.RenderForward(_commandMaterials[start], _properties, _buffers, layer, start, end - start, camera);
-                }
-
+                _batch.RenderForward(_commandMaterials[start], _properties, _buffers, layer, start, end - start, camera);
                 start = end;
+            }
+
+            // The casters, grouped by something else: which side of DESIGN 5.4's division a command falls on. Cull is
+            // a drawing state of the material, so a run cast one-sided and a run cast two-sided are separate draws,
+            // over the same commands, the same transforms, the same clip records and the same offsets as the surfaces
+            // above -- this frame's adopted snapshot, never a second reading of the ledger.
+            if (_shadowMaterial != null)
+            {
+                start = 0;
+                while (start < _commandCount)
+                {
+                    bool provisional = _commandProvisional[start];
+                    int end = start + 1;
+                    while (end < _commandCount && _commandProvisional[end] == provisional)
+                    {
+                        end++;
+                    }
+
+                    _batch.RenderShadows(
+                        provisional ? _provisionalShadowMaterial : _shadowMaterial, _properties, _buffers, layer,
+                        start, end - start, camera);
+                    if (provisional)
+                    {
+                        TwoSidedShadowIssues++;
+                    }
+                    else
+                    {
+                        OneSidedShadowIssues++;
+                    }
+
+                    start = end;
+                }
             }
 
             // The counting and the caps, after the surfaces: their queues put them after the opaque bodies, so each
@@ -1007,6 +1090,7 @@ namespace Zantetsu.MeshCut
                     _candidateCommands[command] = new VpIndirectCommand(
                         source.range, source.localBounds, plan.split ? 2 : 1);
                     _candidateCommandMaterials[command] = entry.commandMaterials[c];
+                    _candidateCommandProvisional[command] = plan.split;
                     command++;
 
                     if (!plan.split)
@@ -1409,10 +1493,13 @@ namespace Zantetsu.MeshCut
         {
             VpIndirectCommand[] commands = _commands;
             Material[] materials = _commandMaterials;
+            bool[] provisional = _commandProvisional;
             _commands = _candidateCommands;
             _commandMaterials = _candidateCommandMaterials;
+            _commandProvisional = _candidateCommandProvisional;
             _candidateCommands = commands;
             _candidateCommandMaterials = materials;
+            _candidateCommandProvisional = provisional;
 
             List<LogicalCutDisplaySide> sides = _sides;
             _sides = _candidateSides;
@@ -1582,6 +1669,7 @@ namespace Zantetsu.MeshCut
             {
                 _candidateCommands = new VpIndirectCommand[commandCount];
                 _candidateCommandMaterials = new Material[commandCount];
+                _candidateCommandProvisional = new bool[commandCount];
             }
 
             if (_candidateTransforms.Length < instanceCount)

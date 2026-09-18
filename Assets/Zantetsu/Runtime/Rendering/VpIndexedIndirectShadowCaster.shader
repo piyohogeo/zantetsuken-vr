@@ -4,8 +4,19 @@
 // shadow arguments always hold logical instances. The normal bias and light directions match
 // "Zantetsu/VP Indirect Shadow Caster". It reads the same per-instance clip record as the forward shader, so a
 // provisionally clipped and separated fragment casts the shadow of what is actually drawn (DESIGN 5.1).
+//
+// _Cull is what DESIGN 5.4 calls a drawing state rather than a per-instance attribute. A material of this shader is
+// either the one-sided caster of ordinary bodies -- Cull Back, the default, and what every existing caller keeps -- or
+// the two-sided caster of a provisionally clipped body, Cull Off, where the back of the shell behind the opening is
+// what occludes, because no cap is drawn into the shadow map. One shader, two materials, two draws: NOT one draw with
+// every caster turned two-sided, which DESIGN 5.4 refuses without measuring the back-face raster it would add.
 Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 {
+    Properties
+    {
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
+    }
+
     SubShader
     {
         Tags
@@ -20,7 +31,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             Name "ShadowCaster"
             Tags { "LightMode" = "ShadowCaster" }
 
-            Cull Back
+            Cull [_Cull]
             ZWrite On
             ZTest LEqual
             ColorMask 0

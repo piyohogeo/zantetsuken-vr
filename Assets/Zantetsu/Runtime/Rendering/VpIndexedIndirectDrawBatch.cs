@@ -403,8 +403,18 @@ namespace Zantetsu.Rendering
             Graphics.RenderPrimitivesIndexedIndirect(renderParams, MeshTopology.Triangles, buffers.IndexBuffer, _forwardArgumentBuffer, commandCount, startCommand);
         }
 
-        /// <summary>The shadow call of <see cref="Render(Material, Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera)"/> alone.</summary>
-        internal void RenderShadows(
+        /// <summary>
+        /// The shadow call of <see cref="Render(Material, Material, MaterialPropertyBlock, VpGpuIndexedGeometryBuffers, int, int, int, Camera)"/>
+        /// alone, over its own range of commands. A caller that must cast one run of commands one-sided and another
+        /// two-sided issues the two ranges itself with the material each needs: <c>Cull</c> is a drawing state of the
+        /// material, not something an instance carries (DESIGN 5.4).
+        /// <para>
+        /// The shadow arguments hold the logical instance count whatever the forward ones hold, so a batch uploaded for
+        /// Single Pass Instanced casts exactly the instances it would have cast otherwise. The doubling is the forward
+        /// call's alone and nothing here multiplies anything.
+        /// </para>
+        /// </summary>
+        public void RenderShadows(
             Material shadowMaterial,
             MaterialPropertyBlock properties,
             VpGpuIndexedGeometryBuffers buffers,
