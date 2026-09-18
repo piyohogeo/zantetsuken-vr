@@ -87,6 +87,91 @@ namespace Zantetsu.MeshCut
     }
 
     /// <summary>
+    /// One provisional cap this display has prepared: the <c>TemporaryRenderCapRecord</c> of DESIGN 5.2, being one
+    /// side of one adopted cut plane together with the finite Cap Bounds Polygon that side would be masked inside.
+    /// <para>
+    /// **It is an input to a drawing that has not been made.** Nothing here is drawn yet, and this polygon must never
+    /// be drawn opaquely on its own: it is the cross-section of the body's bounds box, not the cut's real outline, and
+    /// DESIGN 5.2 shows it only through the stencil that restricts it to the body. The cut still looks open.
+    /// </para>
+    /// <para>
+    /// **One record per side that has area**, not one per submesh: a body drawn as several commands because it has
+    /// several materials is one body with one cross-section, and the same board is not prepared again for each of
+    /// them. A plane that misses the body's box, or touches it in a point or along an edge, gives no record at all on
+    /// either side rather than an empty board.
+    /// </para>
+    /// <para>
+    /// **The vertices are in world space**, the placement snapshot applied and then this side's separation added, and
+    /// they are wound so that <c>Cross(p1 - p0, p2 - p0)</c> points along <see cref="outwardNormal"/> — which is the
+    /// outward direction for the side that is kept: against the plane's normal on the positive side, along it on the
+    /// negative one. The two sides of one cut are the same polygon in opposite directions.
+    /// </para>
+    /// </summary>
+    public readonly struct LogicalCutCapRecord
+    {
+        internal LogicalCutCapRecord(
+            LogicalFragmentId source,
+            CutOperationId operation,
+            float side,
+            bool published,
+            LogicalFragmentId fragment,
+            bool fixedByAnchors,
+            Vector3 offset,
+            Vector4 worldPlane,
+            Vector3 outwardNormal,
+            int vertexStart,
+            int vertexCount)
+        {
+            this.source = source;
+            this.operation = operation;
+            this.side = side;
+            this.published = published;
+            this.fragment = fragment;
+            this.fixedByAnchors = fixedByAnchors;
+            this.offset = offset;
+            this.worldPlane = worldPlane;
+            this.outwardNormal = outwardNormal;
+            this.vertexStart = vertexStart;
+            this.vertexCount = vertexCount;
+        }
+
+        /// <summary>The fragment this display entry was given, which is the body the cross-section was taken of.</summary>
+        public readonly LogicalFragmentId source;
+
+        /// <summary>The admitted cut whose adopted face this cap lies in.</summary>
+        public readonly CutOperationId operation;
+
+        /// <summary>+1 or -1: which side of that face this cap belongs to.</summary>
+        public readonly float side;
+
+        /// <summary>
+        /// Whether this side is a **published** child. Before publication a cap belongs to the source and the
+        /// operation and to no child, exactly as the drawn sides do: no child id is invented early.
+        /// </summary>
+        public readonly bool published;
+
+        /// <summary>The published child this cap belongs to, or an unset id before publication.</summary>
+        public readonly LogicalFragmentId fragment;
+
+        /// <summary>Whether the anchors make this side fixed. A fixed side has a cap like any other.</summary>
+        public readonly bool fixedByAnchors;
+
+        /// <summary>The separation already added to every vertex of this cap. Zero for a fixed side.</summary>
+        public readonly Vector3 offset;
+
+        /// <summary>The adopted face in world space, before the separation, as <c>(n.xyz, d)</c> with n normalized.</summary>
+        public readonly Vector4 worldPlane;
+
+        /// <summary>The outward normal of the side this cap closes, in world space, which the winding agrees with.</summary>
+        public readonly Vector3 outwardNormal;
+
+        /// <summary>How many vertices this cap's polygon has: three to six, never fewer.</summary>
+        public readonly int vertexCount;
+
+        internal readonly int vertexStart;
+    }
+
+    /// <summary>
     /// Shows one logical cut's provisional split from the ledger's own state (DESIGN 5.1, 7.1): the parent geometry,
     /// and once a cut is admitted and its inputs are ready, that **same** geometry drawn once per side, each clipped
     /// to its own half and the free side moved a little apart.
@@ -126,6 +211,14 @@ namespace Zantetsu.MeshCut
     /// free side was moved. A fixed side takes no separation at all, and two fixed sides are still both clipped.
     /// </para>
     /// <para>
+    /// **The provisional caps are prepared, not drawn.** Each split that has an area also prepares the two
+    /// <see cref="LogicalCutCapRecord"/>s of DESIGN 5.2 — one per side, one per body and never one per submesh — with
+    /// the finite Cap Bounds Polygon each would be masked inside. They are prepared with the candidate and adopted
+    /// with it, so what is on screen and what would be masked can never disagree, and a refused collection keeps the
+    /// caps it had along with the sides it had. Nothing is drawn from them yet: no buffer, no upload and no draw is
+    /// added here, the cut faces stay open, and the polygon must not be drawn opaquely in place of the stencil.
+    /// </para>
+    /// <para>
     /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the buffers for
     /// that frame; <see cref="Render"/> then registers the draws, and every camera and the shadow pass of one frame
     /// read the same settled data. A frame is identified by the engine's frame counter, so collecting again inside
@@ -154,6 +247,29 @@ namespace Zantetsu.MeshCut
             public VpIndirectCommand[] commands;
             public Material[] commandMaterials;
 
+            /// <summary>
+            /// The bounds of the vertices this geometry's indices reach, in the geometry's own frame, measured once
+            /// when the body was taken in. The cap's cross-section is taken of this box, and it is the whole body's —
+            /// not one submesh's — which is what keeps several materials from becoming several caps.
+            /// </summary>
+            public Bounds localBounds;
+
+            /// <summary>
+            /// The cap polygon prepared for this body: the cross-section itself, in world space and **before any
+            /// separation**, together with the three things it was made of. While those are unchanged the intersection,
+            /// the placing and the ordering are not done again (DESIGN 5.7); a body drawn further apart is placed
+            /// again, not intersected again. A count of zero is a prepared answer too - a plane that misses this box is
+            /// not asked about twice.
+            /// </summary>
+            public readonly Vector3[] capPolygon = new Vector3[VpCapBoundsPolygon.MaxVertices];
+
+            public bool capPrepared;
+            public int capVertexCount;
+            public float4 capWorldPlane;
+            public float4 capLocalPlane;
+            public Matrix4x4 capPlacement;
+            public Bounds capBounds;
+
             /// <summary>The cut this entry is showing, remembered from when it was admitted.</summary>
             public CutOperationId operation;
 
@@ -173,6 +289,9 @@ namespace Zantetsu.MeshCut
             public bool positiveFixed;
             public bool negativeFixed;
             public float4 worldPlane;
+
+            /// <summary>The same adopted face in the geometry's own frame, which is where the box's edges are.</summary>
+            public float4 localPlane;
         }
 
         private readonly VpCpuGeometryStorage _storage;
@@ -197,12 +316,23 @@ namespace Zantetsu.MeshCut
         private Material[] _commandMaterials = Array.Empty<Material>();
         private int _commandCount;
 
+        // The caps of the adopted snapshot, in the same fate as everything else here: prepared with the candidate and
+        // adopted with it, so what is drawn and what would be masked never disagree.
+        private LogicalCutCapRecord[] _capRecords = Array.Empty<LogicalCutCapRecord>();
+        private Vector3[] _capVertices = Array.Empty<Vector3>();
+        private int _capRecordCount;
+
         // The candidate being built. It becomes the adopted snapshot only when the upload succeeds.
         private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
         private VpIndirectCommand[] _candidateCommands = Array.Empty<VpIndirectCommand>();
         private Material[] _candidateCommandMaterials = Array.Empty<Material>();
         private Matrix4x4[] _candidateTransforms = Array.Empty<Matrix4x4>();
         private VpInstanceClip[] _candidateClips = Array.Empty<VpInstanceClip>();
+        private LogicalCutCapRecord[] _candidateCapRecords = Array.Empty<LogicalCutCapRecord>();
+        private Vector3[] _candidateCapVertices = Array.Empty<Vector3>();
+        private int _candidateCapRecordCount;
+
+        private readonly VpCapBoundsPolygon _capPolygon = new VpCapBoundsPolygon();
 
         // The frame whose collection succeeded, and the frame that may draw. They are not the same: a frame whose
         // collection was refused may still draw the snapshot adopted earlier.
@@ -271,6 +401,12 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Index transfers this display has issued. One per body shown, and never one for a split.</summary>
         public int IndexTransfers { get; private set; }
+
+        /// <summary>
+        /// How many times a cap polygon was actually taken of a box and a plane. It stays where it is while the box,
+        /// the face and the placement are the same, publication included: only a changed input makes another one.
+        /// </summary>
+        public int CapPolygonBuilds { get; private set; }
 
         private int CurrentFrame => _frameSource != null ? _frameSource() : Time.frameCount;
 
@@ -371,7 +507,8 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            if (!TryPrepare(geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials))
+            if (!TryPrepare(
+                    geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials, out Bounds localBounds))
             {
                 return false;
             }
@@ -420,6 +557,7 @@ namespace Zantetsu.MeshCut
                 objectToWorld = objectToWorld,
                 commands = commands,
                 commandMaterials = commandMaterials,
+                localBounds = localBounds,
             });
 
             return true;
@@ -562,6 +700,47 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>
+        /// How many provisional caps the settled collection prepared: two per split that has an area, none otherwise.
+        /// Nothing is drawn from them yet.
+        /// </summary>
+        public int CapRecordCount => _capRecordCount;
+
+        /// <summary>One prepared cap of the settled collection. The polygon itself is read with <see cref="TryGetCapVertex"/>.</summary>
+        public bool TryGetCapRecord(int index, out LogicalCutCapRecord record)
+        {
+            if (index < 0 || index >= _capRecordCount)
+            {
+                record = default;
+                return false;
+            }
+
+            record = _capRecords[index];
+            return true;
+        }
+
+        /// <summary>
+        /// One world-space vertex of one prepared cap's polygon, in the order it is wound. The display's own buffer is
+        /// never handed out, so nothing outside can reorder or resize what a settled collection holds.
+        /// </summary>
+        public bool TryGetCapVertex(int recordIndex, int vertexIndex, out Vector3 world)
+        {
+            world = default;
+            if (recordIndex < 0 || recordIndex >= _capRecordCount)
+            {
+                return false;
+            }
+
+            LogicalCutCapRecord record = _capRecords[recordIndex];
+            if (vertexIndex < 0 || vertexIndex >= record.vertexCount)
+            {
+                return false;
+            }
+
+            world = _capVertices[record.vertexStart + vertexIndex];
+            return true;
+        }
+
         /// <summary>One instance of the settled collection, in the order it is drawn.</summary>
         public bool TryGetSide(int index, out LogicalCutDisplaySide side)
         {
@@ -597,6 +776,8 @@ namespace Zantetsu.MeshCut
             _sides.Clear();
             _candidateSides.Clear();
             _commandCount = 0;
+            _capRecordCount = 0;
+            _candidateCapRecordCount = 0;
             _hasSnapshot = false;
             _batch.Dispose();
             _buffers.Dispose();
@@ -611,6 +792,7 @@ namespace Zantetsu.MeshCut
             int commandCount = 0;
             int instanceCount = 0;
             int secondInstancesNeeded = 0;
+            int capRecordsNeeded = 0;
             for (int i = 0; i < _shown.Count; i++)
             {
                 if (!TryPlan(_shown[i], out Plan plan))
@@ -630,6 +812,12 @@ namespace Zantetsu.MeshCut
                 {
                     secondInstancesNeeded++;
                 }
+
+                if (plan.split)
+                {
+                    // Room for both sides of this body's one cross-section, however many commands it draws as.
+                    capRecordsNeeded += 2;
+                }
             }
 
             // 2. The fixed capacity is decided here, before anything is taken or uploaded.
@@ -645,10 +833,12 @@ namespace Zantetsu.MeshCut
             }
 
             // 4. Build the candidate. Nothing of the adopted snapshot is touched while this is being made.
-            EnsureCandidateRoom(commandCount, instanceCount);
+            EnsureCandidateRoom(commandCount, instanceCount, capRecordsNeeded);
             _candidateSides.Clear();
+            _candidateCapRecordCount = 0;
             int command = 0;
             int instance = 0;
+            int capVertex = 0;
             for (int i = 0; i < _plans.Count; i++)
             {
                 Plan plan = _plans[i];
@@ -670,6 +860,16 @@ namespace Zantetsu.MeshCut
                     negativeOffset = plan.negativeFixed ? Vector3.zero : -normal * Separation;
                     positiveClip = VpInstanceClip.Keep(ToVector4(plan.worldPlane), 1f, positiveOffset);
                     negativeClip = VpInstanceClip.Keep(ToVector4(plan.worldPlane), -1f, negativeOffset);
+
+                    // The caps of this body, once for the body and not once per command. A malformed placement or
+                    // bounds is an ordinary refusal here, decided before anything is uploaded.
+                    if (!TryAddCaps(plan, positiveOffset, negativeOffset, ref capVertex))
+                    {
+                        GiveBackSecondInstancesTakenThisPass();
+                        _candidateSides.Clear();
+                        _candidateCapRecordCount = 0;
+                        return false;
+                    }
                 }
 
                 for (int c = 0; c < entry.commands.Length; c++)
@@ -724,6 +924,7 @@ namespace Zantetsu.MeshCut
             {
                 _broken = true;
                 _candidateSides.Clear();
+                _candidateCapRecordCount = 0;
                 throw;
             }
 
@@ -732,6 +933,7 @@ namespace Zantetsu.MeshCut
                 // Nothing of this collection is adopted, and the instances it took are given straight back.
                 GiveBackSecondInstancesTakenThisPass();
                 _candidateSides.Clear();
+                _candidateCapRecordCount = 0;
                 return false;
             }
 
@@ -799,6 +1001,7 @@ namespace Zantetsu.MeshCut
                     return false;
                 }
 
+                plan.localPlane = operation.plane;
                 plan.split = true;
                 plan.published = false;
                 plan.positiveFixed = FixedSupportAnchors.IsFixed(distribution.positiveCount);
@@ -819,6 +1022,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            plan.localPlane = published.plane;
             plan.operation = replacing;
             plan.split = true;
             plan.published = true;
@@ -826,6 +1030,101 @@ namespace Zantetsu.MeshCut
             plan.negativeChild = published.negative;
             plan.positiveFixed = _ledger.IsFixedOwner(published.positive);
             plan.negativeFixed = _ledger.IsFixedOwner(published.negative);
+            return true;
+        }
+
+        /// <summary>
+        /// The two provisional caps of one split, prepared into the candidate: one cross-section of this body's local
+        /// bounds box, placed in world, and given to each side with that side's own separation and outward direction.
+        /// <para>
+        /// A plane that misses the box, or meets it in a point or along an edge, leaves both sides without a record.
+        /// That is a normal empty result and no board is invented for it. Returns false only for input the polygon
+        /// cannot be taken of at all, which is an ordinary refusal of the whole collection.
+        /// </para>
+        /// </summary>
+        private bool TryAddCaps(Plan plan, Vector3 positiveOffset, Vector3 negativeOffset, ref int capVertex)
+        {
+            Shown entry = plan.entry;
+            if (!TryPrepareCapPolygon(entry, plan.localPlane))
+            {
+                return false;
+            }
+
+            int count = entry.capVertexCount;
+            if (count == 0)
+            {
+                return true;
+            }
+
+            // The same prepared polygon twice: the negative side keeps the order it was built in, and the positive side
+            // reads it backwards, because its outward direction is the opposite one. Each side's separation is added as
+            // it is placed, which is what makes these the caps of the two sides as they are actually drawn apart - and
+            // what lets the separation change without the cross-section being taken again.
+            int positiveStart = capVertex;
+            int negativeStart = capVertex + count;
+            for (int i = 0; i < count; i++)
+            {
+                _candidateCapVertices[positiveStart + i] = entry.capPolygon[count - 1 - i] + positiveOffset;
+                _candidateCapVertices[negativeStart + i] = entry.capPolygon[i] + negativeOffset;
+            }
+
+            Vector4 face = ToVector4(entry.capWorldPlane);
+            var normal = new Vector3(entry.capWorldPlane.x, entry.capWorldPlane.y, entry.capWorldPlane.z);
+            _candidateCapRecords[_candidateCapRecordCount++] = new LogicalCutCapRecord(
+                entry.fragment, plan.operation, 1f, plan.published, plan.positiveChild, plan.positiveFixed,
+                positiveOffset, face, -normal, positiveStart, count);
+            _candidateCapRecords[_candidateCapRecordCount++] = new LogicalCutCapRecord(
+                entry.fragment, plan.operation, -1f, plan.published, plan.negativeChild, plan.negativeFixed,
+                negativeOffset, face, normal, negativeStart, count);
+
+            capVertex = negativeStart + count;
+            return true;
+        }
+
+        /// <summary>
+        /// The cap polygon of one body, prepared once and then kept. The box, the adopted face and the placement are
+        /// everything it is made of, so while those three are the same the intersection, the conversion and the
+        /// ordering are not repeated - not on the next frame, and not when the cut is published, which changes who the
+        /// sides belong to and not where the face is (DESIGN 5.7). The separation is deliberately not part of it.
+        /// <para>
+        /// The placement and the bounds are settled when the body is taken in and are not changed afterwards; they are
+        /// compared here all the same, so that the reuse rests on what the polygon was made of rather than on that
+        /// being remembered. Nothing is kept across bodies and there is no store to keep: this is one prepared answer
+        /// living on the body it belongs to.
+        /// </para>
+        /// </summary>
+        private bool TryPrepareCapPolygon(Shown entry, float4 localPlane)
+        {
+            if (entry.capPrepared
+                && Same(entry.capLocalPlane, localPlane)
+                && Same(entry.capPlacement, entry.objectToWorld)
+                && Same(entry.capBounds, entry.localBounds))
+            {
+                return true;
+            }
+
+            entry.capPrepared = false;
+            entry.capVertexCount = 0;
+            if (!_capPolygon.TryBuild(
+                    entry.localBounds,
+                    localPlane,
+                    entry.objectToWorld,
+                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds),
+                    entry.capPolygon,
+                    0,
+                    out int count,
+                    out float4 worldPlane))
+            {
+                return false;
+            }
+
+            entry.capVertexCount = count;
+            entry.capWorldPlane = worldPlane;
+            entry.capLocalPlane = localPlane;
+            entry.capPlacement = entry.objectToWorld;
+            entry.capBounds = entry.localBounds;
+            entry.capPrepared = true;
+            CapPolygonBuilds++;
             return true;
         }
 
@@ -848,6 +1147,15 @@ namespace Zantetsu.MeshCut
             _sides = _candidateSides;
             _candidateSides = sides;
             _candidateSides.Clear();
+
+            LogicalCutCapRecord[] capRecords = _capRecords;
+            Vector3[] capVertices = _capVertices;
+            _capRecords = _candidateCapRecords;
+            _capVertices = _candidateCapVertices;
+            _candidateCapRecords = capRecords;
+            _candidateCapVertices = capVertices;
+            _capRecordCount = _candidateCapRecordCount;
+            _candidateCapRecordCount = 0;
 
             _commandCount = commandCount;
             _hasSnapshot = true;
@@ -954,15 +1262,26 @@ namespace Zantetsu.MeshCut
             _table.TryRetireGeometry(entry.reference);
         }
 
-        private bool TryPrepare(VpStoredGeometry geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials)
+        /// <summary>
+        /// What this display needs to hold about a body it is taking in: the commands, their materials, and the local
+        /// bounds of the vertices the indices actually reach. The bounds are measured here, once, by the same build
+        /// that makes the commands — not per frame, not per camera and not per submesh — which is what lets the cap's
+        /// cross-section be the body's own and a change of colour or of viewpoint never re-make it.
+        /// </summary>
+        private bool TryPrepare(
+            VpStoredGeometry geometry,
+            out VpIndirectCommand[] commands,
+            out Material[] commandMaterials,
+            out Bounds localBounds)
         {
             commands = null;
             commandMaterials = null;
             if (!_storage.TryGetIndexState(geometry.indexRange, out VpIndexRangeState state, out int indexStart, out _)
                 || state != VpIndexRangeState.Published
                 || !VpStoredGeometryDraw.TryBuildCommands(
-                    _storage, geometry, indexStart, out commands, out int[] materialIndices, out _))
+                    _storage, geometry, indexStart, out commands, out int[] materialIndices, out localBounds))
             {
+                localBounds = default;
                 return false;
             }
 
@@ -982,7 +1301,11 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        private void EnsureCandidateRoom(int commandCount, int instanceCount)
+        /// <summary>
+        /// Room for the candidate, taken before anything is built and well before anything is adopted: the adoption
+        /// itself only trades arrays, so nothing there can grow, allocate or fail.
+        /// </summary>
+        private void EnsureCandidateRoom(int commandCount, int instanceCount, int capRecordCount)
         {
             if (_candidateCommands.Length < commandCount)
             {
@@ -994,6 +1317,12 @@ namespace Zantetsu.MeshCut
             {
                 _candidateTransforms = new Matrix4x4[instanceCount];
                 _candidateClips = new VpInstanceClip[instanceCount];
+            }
+
+            if (_candidateCapRecords.Length < capRecordCount)
+            {
+                _candidateCapRecords = new LogicalCutCapRecord[capRecordCount];
+                _candidateCapVertices = new Vector3[capRecordCount * VpCapBoundsPolygon.MaxVertices];
             }
         }
 
@@ -1031,6 +1360,40 @@ namespace Zantetsu.MeshCut
             var exact = new VpInstanceClip[count];
             Array.Copy(source, exact, count);
             return exact;
+        }
+
+        // What a prepared polygon was made of is compared value by value: Unity's own equality for Vector4, Matrix4x4
+        // and Bounds is approximate, and something merely close to the face the polygon was taken of is a different
+        // face. Nothing here is a tolerance.
+        private static bool Same(float4 a, float4 b)
+        {
+            return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+        }
+
+        private static bool Same(Matrix4x4 a, Matrix4x4 b)
+        {
+            for (int row = 0; row < 4; row++)
+            {
+                for (int column = 0; column < 4; column++)
+                {
+                    if (a[row, column] != b[row, column])
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static bool Same(Bounds a, Bounds b)
+        {
+            Vector3 aMin = a.min;
+            Vector3 bMin = b.min;
+            Vector3 aMax = a.max;
+            Vector3 bMax = b.max;
+            return aMin.x == bMin.x && aMin.y == bMin.y && aMin.z == bMin.z
+                && aMax.x == bMax.x && aMax.y == bMax.y && aMax.z == bMax.z;
         }
 
         private static Vector4 ToVector4(float4 value)

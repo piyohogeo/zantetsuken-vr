@@ -956,5 +956,699 @@ namespace Zantetsu.MeshCut.Tests
                 }
             }
         }
+        // ----- the provisional caps -------------------------------------------------------------------------------
+
+        private static LogicalCutCapRecord CapOf(VpLogicalCutDisplay display, int index)
+        {
+            Assert.That(display.TryGetCapRecord(index, out LogicalCutCapRecord record), Is.True, "cap " + index);
+            return record;
+        }
+
+        /// <summary>
+        /// Every vertex of a prepared cap, read back through the display's own entry point rather than from any list
+        /// of its own.
+        /// </summary>
+        private static Vector3[] CapVertices(VpLogicalCutDisplay display, int index)
+        {
+            LogicalCutCapRecord record = CapOf(display, index);
+            var vertices = new Vector3[record.vertexCount];
+            for (int i = 0; i < record.vertexCount; i++)
+            {
+                Assert.That(display.TryGetCapVertex(index, i, out vertices[i]), Is.True, "cap vertex " + i);
+            }
+
+            Assert.That(
+                display.TryGetCapVertex(index, record.vertexCount, out _), Is.False, "and there are no more of them");
+            return vertices;
+        }
+
+        /// <summary>
+        /// What a prepared cap has to be: at least a triangle, every vertex on its own face once the separation is
+        /// taken off again, no vertex repeated, and the winding agreeing with the outward normal it carries.
+        /// </summary>
+        private static void AssertCap(VpLogicalCutDisplay display, int index, string what)
+        {
+            LogicalCutCapRecord record = CapOf(display, index);
+            Vector3[] vertices = CapVertices(display, index);
+            Assert.That(vertices.Length, Is.InRange(3, 6), what + ": three to six vertices");
+
+            var normal = new float3(record.worldPlane.x, record.worldPlane.y, record.worldPlane.z);
+            Assert.That(math.length(normal), Is.EqualTo(1f).Within(1e-4f), what + ": a normalized face");
+            AssertVector(
+                record.outwardNormal, (Vector3)(record.side > 0f ? -normal : normal),
+                what + ": the outward normal of the side that is kept");
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                // The separation was added after the placement, so it comes off again to test the face itself.
+                float3 onFace = (float3)(vertices[i] - record.offset);
+                Assert.That(
+                    math.abs(math.dot(normal, onFace) + record.worldPlane.w), Is.LessThan(1e-3f),
+                    what + ": vertex " + i + " lies in the adopted face");
+
+                for (int j = i + 1; j < vertices.Length; j++)
+                {
+                    Assert.That(
+                        Vector3.Distance(vertices[i], vertices[j]), Is.GreaterThan(1e-4f),
+                        what + ": vertices " + i + " and " + j + " are not the same point");
+                }
+            }
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                float3 a = vertices[i];
+                float3 b = vertices[(i + 1) % vertices.Length];
+                float3 c = vertices[(i + 2) % vertices.Length];
+                Assert.That(
+                    math.dot(math.cross(b - a, c - a), (float3)record.outwardNormal), Is.GreaterThan(0f),
+                    what + ": the winding agrees with the outward normal at vertex " + ((i + 1) % vertices.Length));
+            }
+        }
+
+        /// <summary>
+        /// The caps appear exactly when the split does and belong to what the split belongs to: nothing before the
+        /// cut is admitted, nothing while its inputs are not prepared, two once the split is shown — the source and
+        /// the operation, and no child — and the same two carried over to the children at publication.
+        /// <para>
+        /// The body has two submeshes, so it is drawn as two commands per side; the caps are still two, because one
+        /// body has one cross-section however many materials it is drawn with.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void TheCaps_AppearWithTheSplit_AndAreCarriedToTheChildren()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor, k_highAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
+                    Assert.That(display.CapRecordCount, Is.Zero, "a whole body has no cut to cap");
+
+                    // Admitted, with nothing prepared: DESIGN 7.1's "not ready" is not "no cap yet decided".
+                    CutOperationId cut = Admit(ledger, source);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.AwaitingInputs));
+                    Assert.That(display.CapRecordCount, Is.Zero, "no cap before the anchors are prepared");
+
+                    // Prepared: the split, and with it the two caps — before publication, and for the whole body.
+                    Prepare(ledger, cut);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.SideCount, Is.EqualTo(4), "two commands drawn twice");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "one cap per side, not one per submesh");
+
+                    LogicalCutCapRecord positive = CapOf(display, 0);
+                    LogicalCutCapRecord negative = CapOf(display, 1);
+                    Assert.That(positive.side, Is.EqualTo(1f));
+                    Assert.That(negative.side, Is.EqualTo(-1f));
+                    Assert.That(positive.source, Is.EqualTo(source), "the body the cross-section was taken of");
+                    Assert.That(positive.operation, Is.EqualTo(cut), "and the cut whose face it lies in");
+                    Assert.That(positive.published, Is.False, "no child before publication");
+                    Assert.That(positive.fragment.IsSet, Is.False, "and no child id issued early");
+                    Assert.That(negative.published, Is.False);
+                    Assert.That(negative.fragment.IsSet, Is.False);
+                    AssertCap(display, 0, "positive before publication");
+                    AssertCap(display, 1, "negative before publication");
+
+                    // The cube is cut across the middle, so both caps are the same 2 x 2 square at y = 1.
+                    Vector3[] before = CapVertices(display, 0);
+                    Assert.That(before.Length, Is.EqualTo(4), "a square cross-section");
+                    foreach (Vector3 vertex in before)
+                    {
+                        Assert.That(
+                            vertex.y - positive.offset.y, Is.EqualTo(1f).Within(1e-4f), "the face is y = 1");
+                        Assert.That(Mathf.Abs(vertex.x), Is.EqualTo(1f).Within(1e-4f), "and it reaches the body's side");
+                        Assert.That(Mathf.Abs(vertex.z), Is.EqualTo(1f).Within(1e-4f));
+                    }
+
+                    // Published: the same two caps, now naming the children. Nothing about the face changed.
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId positiveChild, out LogicalFragmentId negativeChild),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "still two, not two more");
+
+                    LogicalCutCapRecord positiveAfter = CapOf(display, 0);
+                    LogicalCutCapRecord negativeAfter = CapOf(display, 1);
+                    Assert.That(positiveAfter.published, Is.True);
+                    Assert.That(positiveAfter.fragment, Is.EqualTo(positiveChild), "the positive child");
+                    Assert.That(negativeAfter.fragment, Is.EqualTo(negativeChild), "and the negative one");
+                    Assert.That(positiveAfter.operation, Is.EqualTo(cut), "the same adopted face");
+                    Assert.That(positiveAfter.worldPlane, Is.EqualTo(positive.worldPlane));
+                    AssertVector(positiveAfter.outwardNormal, positive.outwardNormal, "the same outward direction");
+
+                    Vector3[] after = CapVertices(display, 0);
+                    Assert.That(after.Length, Is.EqualTo(before.Length), "the same polygon");
+                    for (int i = 0; i < after.Length; i++)
+                    {
+                        AssertVector(after[i], before[i], "vertex " + i + " is where it was");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// A publication with no display update between the admission and it is shown as a publication here too: the
+        /// caps come from the ledger's own state, not from an operation a collection happened to see first.
+        /// </summary>
+        [Test]
+        public void CapsOfAPublicationWithNoUpdateInBetween_NameTheChildren()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
+                    Assert.That(display.CapRecordCount, Is.Zero);
+
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId positiveChild, out LogicalFragmentId negativeChild),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied),
+                        "admitted, prepared and published inside one frame");
+
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "the caps are prepared straight from the ledger");
+                    Assert.That(CapOf(display, 0).published, Is.True);
+                    Assert.That(CapOf(display, 0).fragment, Is.EqualTo(positiveChild));
+                    Assert.That(CapOf(display, 1).fragment, Is.EqualTo(negativeChild));
+                    AssertCap(display, 0, "positive of an unseen publication");
+                    AssertCap(display, 1, "negative of an unseen publication");
+                }
+            }
+        }
+
+        /// <summary>
+        /// An abort takes the caps with the body, and a result reclaimed as stale leaves none: a display that goes
+        /// back to the whole body has nothing left to cap.
+        /// </summary>
+        [Test]
+        public void AnAbortOrAStaleResult_LeavesNoCaps()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    CutOperationId first = Admit(ledger, source);
+                    Prepare(ledger, first);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "the split has its caps");
+
+                    // Reclaimed as stale: the source is live again with no active operation, so the whole body is
+                    // what is drawn and there is no face to cap.
+                    ledger.NoteOwnershipChanged(source);
+                    Assert.That(ledger.Publish(first, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Stale));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.Whole));
+                    Assert.That(display.CapRecordCount, Is.Zero, "a reclaimed result caps nothing");
+
+                    // Admitted and prepared again, then aborted: the source retires and the caps go with it.
+                    CutOperationId second = Admit(ledger, source);
+                    Prepare(ledger, second);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "the second cut has its caps");
+
+                    Assert.That(ledger.Abort(second), Is.EqualTo(LogicalCutResultOutcome.Applied), "the cut aborts");
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.NotShown));
+                    Assert.That(display.CapRecordCount, Is.Zero, "and nothing of it is left to cap");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A fixed side has a cap like any other, and two fixed sides have two: DESIGN 5.1 forbids the anchors from
+        /// being a reason to leave a provisional drawing out. What the anchors do decide is the separation, and each
+        /// cap carries its own side's.
+        /// </summary>
+        [Test]
+        public void CapsSurvive_OnOneFixedSideBothFixedSidesAndNeither()
+        {
+            (float3[] anchors, bool positiveFixed, bool negativeFixed, string what)[] cases =
+            {
+                (new[] { k_lowAnchor }, false, true, "only the negative side fixed"),
+                (new[] { k_highAnchor }, true, false, "only the positive side fixed"),
+                (new[] { k_lowAnchor, k_highAnchor }, true, true, "both sides fixed"),
+            };
+
+            foreach ((float3[] anchors, bool positiveFixed, bool negativeFixed, string what) in cases)
+            {
+                using (VpCpuGeometryStorage storage = NewStorage())
+                {
+                    var table = new VpGeometryReferenceTable(storage, 8, 8);
+                    LogicalCutLedger ledger = NewLedger();
+                    LogicalFragmentId source = ledger.AddFragment(new List<float3>(anchors));
+                    VpStoredGeometry geometry = Append(storage);
+
+                    Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                    using (display)
+                    {
+                        display.Separation = Separation;
+                        Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                        CutOperationId cut = Admit(ledger, source);
+                        Prepare(ledger, cut);
+                        Assert.That(display.TryBeginFrame(), Is.True);
+
+                        Assert.That(display.CapRecordCount, Is.EqualTo(2), what + ": both sides are capped");
+                        LogicalCutCapRecord positive = CapOf(display, 0);
+                        LogicalCutCapRecord negative = CapOf(display, 1);
+                        Assert.That(positive.fixedByAnchors, Is.EqualTo(positiveFixed), what + ": positive");
+                        Assert.That(negative.fixedByAnchors, Is.EqualTo(negativeFixed), what + ": negative");
+                        AssertCap(display, 0, what + ", positive");
+                        AssertCap(display, 1, what + ", negative");
+
+                        // The plane is y = 1, so the free side moves along y and the fixed one does not move at all.
+                        AssertVector(
+                            positive.offset, positiveFixed ? Vector3.zero : new Vector3(0f, Separation, 0f),
+                            what + ": the positive separation");
+                        AssertVector(
+                            negative.offset, negativeFixed ? Vector3.zero : new Vector3(0f, -Separation, 0f),
+                            what + ": the negative separation");
+
+                        foreach (Vector3 vertex in CapVertices(display, 0))
+                        {
+                            Assert.That(
+                                vertex.y, Is.EqualTo(1f + positive.offset.y).Within(1e-4f),
+                                what + ": the positive cap is drawn where its side is");
+                        }
+
+                        foreach (Vector3 vertex in CapVertices(display, 1))
+                        {
+                            Assert.That(
+                                vertex.y, Is.EqualTo(1f + negative.offset.y).Within(1e-4f),
+                                what + ": and the negative cap where its own side is");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// A body moved, turned, scaled unevenly and mirrored: the caps stay on the face, stay inside the body, and
+        /// keep the winding their outward normal asks for. The placement is the snapshot the display was given.
+        /// </summary>
+        [Test]
+        public void CapsOfAMovedTurnedScaledOrMirroredBody_StayOnTheFace()
+        {
+            (Matrix4x4 placement, string what)[] cases =
+            {
+                (Matrix4x4.TRS(new Vector3(4f, -1f, 2f), Quaternion.Euler(20f, -55f, 10f), Vector3.one), "moved and turned"),
+                (Matrix4x4.TRS(new Vector3(-2f, 3f, 1f), Quaternion.Euler(-15f, 40f, 65f), new Vector3(0.5f, 2.5f, 1.5f)), "non-uniform scale"),
+                (Matrix4x4.TRS(new Vector3(1f, 2f, -2f), Quaternion.Euler(0f, 30f, 0f), new Vector3(1f, -2f, 1f)), "mirrored"),
+            };
+
+            foreach ((Matrix4x4 placement, string what) in cases)
+            {
+                using (VpCpuGeometryStorage storage = NewStorage())
+                {
+                    var table = new VpGeometryReferenceTable(storage, 8, 8);
+                    LogicalCutLedger ledger = NewLedger();
+                    LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                    VpStoredGeometry geometry = Append(storage);
+
+                    Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                    using (display)
+                    {
+                        Assert.That(display.TryShow(source, geometry, placement), Is.True);
+                        CutOperationId cut = Admit(ledger, source);
+                        Prepare(ledger, cut);
+                        Assert.That(display.TryBeginFrame(), Is.True);
+                        Assert.That(display.CapRecordCount, Is.EqualTo(2), what);
+
+                        AssertCap(display, 0, what + ", positive");
+                        AssertCap(display, 1, what + ", negative");
+
+                        // The face each cap lies in is the one its side is clipped by.
+                        LogicalCutCapRecord positive = CapOf(display, 0);
+                        LogicalCutDisplaySide positiveSide = SideOf(display, 0);
+                        Assert.That(positiveSide.side, Is.EqualTo(1f), what + ": the first side is the positive one");
+                        AssertVector(positive.offset, positiveSide.offset, what + ": the same separation as the side");
+
+                        // Back in the body's own frame the cap is the square at y = 1, whatever the placement did.
+                        Matrix4x4 toLocal = placement.inverse;
+                        foreach (Vector3 vertex in CapVertices(display, 0))
+                        {
+                            Vector3 local = toLocal.MultiplyPoint3x4(vertex - positive.offset);
+                            Assert.That(local.y, Is.EqualTo(1f).Within(1e-3f), what + ": on the body's own face");
+                            Assert.That(Mathf.Abs(local.x), Is.EqualTo(1f).Within(1e-3f), what + ": and at its side");
+                            Assert.That(Mathf.Abs(local.z), Is.EqualTo(1f).Within(1e-3f));
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// A plane that does not cross the body's box has no cap on either side, and the split is still drawn: the
+        /// empty cross-section is a normal answer, not a refusal and not a board of its own.
+        /// </summary>
+        [Test]
+        public void APlaneClearOfTheBody_IsSplitWithNoCaps()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+
+                    // y = 9 is well clear of a body that reaches y = 2.
+                    Assert.That(
+                        ledger.Admit(source, new float4(0f, 1f, 0f, -9f), true, out CutOperationId cut),
+                        Is.EqualTo(LogicalCutAdmission.Admitted));
+                    Prepare(ledger, cut);
+
+                    Assert.That(display.TryBeginFrame(), Is.True, "the collection is not refused");
+                    Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
+                    Assert.That(display.SideCount, Is.EqualTo(4), "the sides are drawn as usual");
+                    Assert.That(display.CapRecordCount, Is.Zero, "and no cap is invented for a plane that misses");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A collection that cannot be made keeps the caps it had along with the sides it had — they are adopted
+        /// together and never separately — and the same display prepares the new ones once there is room again.
+        /// </summary>
+        [Test]
+        public void ARefusedCollection_KeepsTheCapsItHad_AndTheSameDisplayRecovers()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                // Four display instances: one for each body, one for the first split, and one for a holder outside.
+                var table = new VpGeometryReferenceTable(storage, 8, 4);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId first = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                LogicalFragmentId second = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry firstGeometry = Append(storage);
+                VpStoredGeometry secondGeometry = Append(storage);
+                VpStoredGeometry elsewhere = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(first, firstGeometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryShow(second, secondGeometry, Matrix4x4.identity), Is.True);
+
+                    // The first body splits, so there are caps to keep.
+                    CutOperationId firstCut = Admit(ledger, first);
+                    Prepare(ledger, firstCut);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "the caps of the first split");
+                    Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(3), "one each, and one for the split");
+
+                    LogicalCutCapRecord kept = CapOf(display, 0);
+                    Vector3[] keptVertices = CapVertices(display, 0);
+                    int settled = display.SettledCollections;
+                    Assert.That(kept.published, Is.False, "not published yet");
+
+                    // Something outside takes the table's last display instance.
+                    Assert.That(
+                        table.TryRegisterGeometryWithDisplayInstance(
+                            elsewhere, out VpGeometryReference otherGeometry, out VpDisplayInstanceReference otherInstance),
+                        Is.True,
+                        "the holder takes the last instance");
+                    Assert.That(table.LiveDisplayInstanceCount, Is.EqualTo(4), "the table is full");
+
+                    // Now the ledger moves on twice over: the first cut is published, and the second body's cut is
+                    // ready to split. The split needs an instance there is none of, so the whole collection is refused.
+                    Assert.That(
+                        ledger.Publish(firstCut, out LogicalFragmentId firstPositive, out _),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    CutOperationId secondCut = Admit(ledger, second);
+                    Prepare(ledger, secondCut);
+                    NextFrame();
+
+                    Assert.That(display.TryBeginFrame(), Is.False, "the latest state could not be settled");
+                    Assert.That(display.SettledCollections, Is.EqualTo(settled), "nothing was settled");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "the caps it had are still the caps it has");
+                    Assert.That(CapOf(display, 0).published, Is.False, "and they are the ones from before, unchanged");
+                    Assert.That(CapOf(display, 0).fragment.IsSet, Is.False);
+                    Assert.That(CapOf(display, 0).worldPlane, Is.EqualTo(kept.worldPlane));
+
+                    Vector3[] stillThere = CapVertices(display, 0);
+                    Assert.That(stillThere.Length, Is.EqualTo(keptVertices.Length));
+                    for (int i = 0; i < stillThere.Length; i++)
+                    {
+                        AssertVector(stillThere[i], keptVertices[i], "vertex " + i + " did not move");
+                    }
+
+                    // What it kept is still what it draws.
+                    Assert.That(() => display.Render(0), Throws.Nothing, "the snapshot it kept is drawable");
+                    Assert.That(display.HasDrawnThisFrame, Is.True);
+
+                    // The holder gives the instance back, and the very same display settles what it could not.
+                    Assert.That(table.TryRetireDisplayInstance(otherInstance), Is.True, "the instance comes back");
+                    Assert.That(table.TryRetireGeometry(otherGeometry), Is.True);
+
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "the same display settles it now");
+                    Assert.That(display.SettledCollections, Is.EqualTo(settled + 1));
+                    Assert.That(display.CapRecordCount, Is.EqualTo(4), "both bodies are split and capped now");
+                    Assert.That(CapOf(display, 0).published, Is.True, "the first cut's caps caught up");
+                    Assert.That(CapOf(display, 0).fragment, Is.EqualTo(firstPositive));
+                    Assert.That(CapOf(display, 2).source, Is.EqualTo(second), "and the second body has its own");
+                    Assert.That(CapOf(display, 2).operation, Is.EqualTo(secondCut));
+                    AssertCap(display, 0, "the first body's positive cap");
+                    AssertCap(display, 2, "the second body's positive cap");
+
+                    Vector3[] caughtUp = CapVertices(display, 0);
+                    Assert.That(caughtUp.Length, Is.EqualTo(keptVertices.Length), "the face itself never moved");
+                    for (int i = 0; i < caughtUp.Length; i++)
+                    {
+                        AssertVector(caughtUp[i], keptVertices[i], "vertex " + i);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Preparing caps changes nothing outside this display: not the ledger, not the shared incomplete budget, and
+        /// not the number of times a geometry was transferred. Nothing is drawn from them either.
+        /// </summary>
+        [Test]
+        public void PreparingCaps_ChangesNoLedgerBudgetOrTransfer()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                var budget = new LogicalCutIncompleteBudget(4);
+                var ledger = new LogicalCutLedger(budget);
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+
+                    int vertexTransfers = display.VertexTransfers;
+                    int indexTransfers = display.IndexTransfers;
+
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+                    Assert.That(budget.IncompleteCutOperationCount, Is.EqualTo(1), "the cut holds its place");
+
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2));
+                    Assert.That(
+                        display.VertexTransfers, Is.EqualTo(vertexTransfers),
+                        "a cap is a cross-section of what is already there");
+                    Assert.That(display.IndexTransfers, Is.EqualTo(indexTransfers));
+                    Assert.That(
+                        budget.IncompleteCutOperationCount, Is.EqualTo(1),
+                        "and preparing one advances no cut");
+
+                    Assert.That(
+                        ledger.TryGetOperation(cut, out LogicalCutOperation operation), Is.True, "the cut is unchanged");
+                    Assert.That(operation.state, Is.EqualTo(LogicalCutOperationState.Admitted));
+                    Assert.That(operation.positive.IsSet, Is.False, "no child was published by a display");
+
+                    // Publishing and then ending the display leaves the budget to the ledger, caps or no caps.
+                    Assert.That(ledger.Publish(cut, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2));
+                    Assert.That(budget.IncompleteCutOperationCount, Is.EqualTo(1), "still the ledger's to give back");
+                }
+
+                Assert.That(
+                    budget.IncompleteCutOperationCount, Is.EqualTo(1),
+                    "and ending a display with caps does not return it either");
+            }
+        }
+
+        /// <summary>
+        /// The cross-section is taken once and then kept: a frame in which nothing changed does not take it again, and
+        /// neither does the publication, which changes who the sides belong to and not where the face is. Changing the
+        /// separation places the caps again without intersecting anything again, and a body whose face really does
+        /// change is the one case that prepares a new polygon.
+        /// </summary>
+        [Test]
+        public void ThePolygon_IsTakenOnceAndKept_UntilAnInputChanges()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    display.Separation = Separation;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
+                    Assert.That(display.CapPolygonBuilds, Is.Zero, "a whole body has no face to take one of");
+
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2));
+                    Assert.That(display.CapPolygonBuilds, Is.EqualTo(1), "one cross-section for the one body");
+
+                    Vector3[] first = CapVertices(display, 0);
+
+                    // A frame in which nothing changed: settled again, and nothing taken again.
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.SettledCollections, Is.EqualTo(3), "the frame did settle");
+                    Assert.That(display.CapPolygonBuilds, Is.EqualTo(1), "and the polygon was reused");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2));
+
+                    Vector3[] again = CapVertices(display, 0);
+                    for (int i = 0; i < again.Length; i++)
+                    {
+                        AssertVector(again[i], first[i], "vertex " + i + " is the one prepared before");
+                    }
+
+                    // Publication: the children are named, the face is not taken again.
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId positiveChild, out _),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(CapOf(display, 0).published, Is.True, "the caps caught up with the publication");
+                    Assert.That(CapOf(display, 0).fragment, Is.EqualTo(positiveChild));
+                    Assert.That(
+                        display.CapPolygonBuilds, Is.EqualTo(1),
+                        "which is a change of who, not of where: no new cross-section");
+
+                    Vector3[] published = CapVertices(display, 0);
+                    for (int i = 0; i < published.Length; i++)
+                    {
+                        AssertVector(published[i], first[i], "vertex " + i + " did not move at publication");
+                    }
+
+                    // A different separation places the caps again, and intersects nothing again.
+                    display.Separation = Separation * 3f;
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(
+                        display.CapPolygonBuilds, Is.EqualTo(1),
+                        "the separation moves a cap, it does not re-cut the box");
+
+                    LogicalCutCapRecord moved = CapOf(display, 0);
+                    AssertVector(
+                        moved.offset, new Vector3(0f, Separation * 3f, 0f), "the cap took the new separation");
+                    Vector3[] placed = CapVertices(display, 0);
+                    for (int i = 0; i < placed.Length; i++)
+                    {
+                        AssertVector(
+                            placed[i], first[i] + new Vector3(0f, Separation * 2f, 0f),
+                            "vertex " + i + " is the same face, placed further apart");
+                    }
+
+                    AssertCap(display, 0, "after the separation changed");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A second body, with its own face, prepares its own cross-section: the keeping is per body and one body's
+        /// prepared polygon is never another's.
+        /// </summary>
+        [Test]
+        public void EachBody_PreparesItsOwnPolygon()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId first = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                LogicalFragmentId second = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry firstGeometry = Append(storage);
+                VpStoredGeometry secondGeometry = Append(storage);
+
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
+                using (display)
+                {
+                    Assert.That(display.TryShow(first, firstGeometry, Matrix4x4.identity), Is.True);
+                    CutOperationId firstCut = Admit(ledger, first);
+                    Prepare(ledger, firstCut);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapPolygonBuilds, Is.EqualTo(1), "the first body's cross-section");
+
+                    // The second body is placed differently, so its face in world is a different one.
+                    NextFrame();
+                    Matrix4x4 placement = Matrix4x4.TRS(
+                        new Vector3(5f, 0f, 0f), Quaternion.Euler(0f, 0f, 90f), Vector3.one);
+                    Assert.That(display.TryShow(second, secondGeometry, placement), Is.True);
+                    CutOperationId secondCut = Admit(ledger, second);
+                    Prepare(ledger, secondCut);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapRecordCount, Is.EqualTo(4), "both bodies are capped");
+                    Assert.That(
+                        display.CapPolygonBuilds, Is.EqualTo(2),
+                        "one cross-section each, and the first was not taken again");
+
+                    AssertCap(display, 0, "the first body");
+                    AssertCap(display, 2, "the second body");
+                    Assert.That(CapOf(display, 2).source, Is.EqualTo(second));
+
+                    // And a further quiet frame takes neither again.
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.CapPolygonBuilds, Is.EqualTo(2), "nothing changed, nothing was taken again");
+                }
+            }
+        }
     }
 }
