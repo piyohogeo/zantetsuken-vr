@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace Zantetsu.MeshCut.Tests
 {
@@ -865,6 +866,80 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(ledger.Publish(cut, out LogicalFragmentId positive, out LogicalFragmentId negative), Is.EqualTo(LogicalCutResultOutcome.Applied));
             Assert.That(AnchorsOf(ledger, positive), Is.EqualTo(new List<float3> { k_high }));
             Assert.That(AnchorsOf(ledger, negative), Is.EqualTo(new List<float3> { k_low }));
+        }
+
+        /// <summary>
+        /// The same publication for a body that is not sitting at the origin: a placement with rotation and
+        /// translation, with the anchors and the adopted plane brought into the coordinates the ledger works in
+        /// through the conversion the product uses. The ledger itself has no notion of a frame and gains none here;
+        /// what is checked is that a real placement, converted the ordinary way, still distributes and publishes the
+        /// arrangement that was laid out.
+        /// <para>
+        /// The arrangement is authored in the body's OWN coordinates, where it is known by construction: one anchor a
+        /// clear distance above the cut face, one a clear distance below it, and one exactly on it. The plane is then
+        /// expressed in world from that same placement and handed back through
+        /// <see cref="VpCutPlane.TryWorldToGeometryLocal"/>, which is the path under test. The expected sides and sets
+        /// are the authored ones -- nothing here recomputes an expectation by running the conversion.
+        /// </para>
+        /// </summary>
+        [Test]
+        public void ANonIdentityPlacement_DistributesAndPublishesTheArrangementItWasGiven()
+        {
+            // The placement: a rotation about all three axes and a translation well away from the origin. No scale,
+            // because a physics frame is rigid and the anchors are points in it.
+            var placement = Matrix4x4.TRS(
+                new Vector3(12f, -3.5f, 7.25f), Quaternion.Euler(24f, -63f, 41f), Vector3.one);
+
+            // The arrangement, authored in the body's own coordinates. The cut face is y = 0.25 there, so:
+            var above = new float3(0.6f, 4f, -0.2f);      // 3.75 above the face
+            var onFace = new float3(1f, 0.25f, 1f);       // exactly on it
+            var below = new float3(-0.3f, -4f, 0.4f);     // 4.25 below it
+
+            // The same face expressed in world, from the placement itself: a point on the face and the face's normal,
+            // carried by Unity's own transform of a point and of a direction. That is the opposite direction to the
+            // conversion under test, and it is what gives this test a world plane to hand back.
+            Vector3 faceNormalInWorld = placement.MultiplyVector(new Vector3(0f, 1f, 0f)).normalized;
+            Vector3 faceOriginInWorld = placement.MultiplyPoint3x4(new Vector3(0f, 0.25f, 0f));
+            var worldPlane = new float4(
+                faceNormalInWorld.x, faceNormalInWorld.y, faceNormalInWorld.z,
+                -Vector3.Dot(faceNormalInWorld, faceOriginInWorld));
+
+            Assert.That(
+                VpCutPlane.TryWorldToGeometryLocal(worldPlane, placement, out float4 localPlane), Is.True,
+                "the world plane converts into the body's own coordinates");
+
+            LogicalCutLedger ledger = NewLedger(2);
+            LogicalFragmentId source = ledger.AddFragment(new List<float3> { above, onFace, below });
+            Assert.That(ledger.IsFixedOwner(source), Is.True, "the source is fixed: it has anchors");
+
+            CutOperationId cut = AdmitOrFail(ledger, source, localPlane);
+            Assert.That(
+                ledger.PrepareAnchorDistribution(cut, k_epsilon, out AnchorDistributionResult prepared),
+                Is.EqualTo(AnchorPreparationOutcome.Prepared));
+
+            // The counts the authored arrangement calls for: the one above and the one on the face go positive, the
+            // one below and the one on the face go negative.
+            Assert.That(prepared.status, Is.EqualTo(AnchorDistributionStatus.Ok));
+            Assert.That(prepared.positiveCount, Is.EqualTo(2), "the anchor above the face, and the one on it");
+            Assert.That(prepared.negativeCount, Is.EqualTo(2), "the anchor below the face, and the one on it");
+            Assert.That(prepared.IsPositiveFixed, Is.True, "so the positive side is fixed");
+            Assert.That(prepared.IsNegativeFixed, Is.True, "and so is the negative side");
+
+            Assert.That(
+                ledger.Publish(cut, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                Is.EqualTo(LogicalCutResultOutcome.Applied));
+
+            // And the sets themselves, as authored: the points are handed on unchanged, in the same coordinates they
+            // were given in, with the one on the face inherited by both sides.
+            Assert.That(
+                AnchorsOf(ledger, positive), Is.EquivalentTo(new[] { above, onFace }),
+                "the positive child holds the anchor above the face and the one on it");
+            Assert.That(
+                AnchorsOf(ledger, negative), Is.EquivalentTo(new[] { onFace, below }),
+                "the negative child holds the one on the face and the anchor below it");
+            Assert.That(ledger.IsFixedOwner(positive), Is.True, "both children are fixed");
+            Assert.That(ledger.IsFixedOwner(negative), Is.True);
+            Assert.That(AnchorsOf(ledger, source), Is.Empty, "and the replaced source let go of the set it handed on");
         }
     }
 }
