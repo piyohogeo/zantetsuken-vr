@@ -916,6 +916,9 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public int CapRecordCount => _capRecordCount;
 
+        /// <summary>The ledger this display reads, which is the scope its cap records' operation ids were issued in.</summary>
+        internal LogicalCutLedger Ledger => _ledger;
+
         /// <summary>One prepared cap of the settled collection. The polygon itself is read with <see cref="TryGetCapVertex"/>.</summary>
         public bool TryGetCapRecord(int index, out LogicalCutCapRecord record)
         {
