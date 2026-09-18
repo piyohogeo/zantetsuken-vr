@@ -546,6 +546,161 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// The stereo condition given to this display reaches the body's surfaces and the stencil work as one: both
+        /// report the condition of the upload that wrote them, never one of them alone. And it is read where the
+        /// arrangement uploads, so an adopted snapshot keeps the condition it was written with until the next
+        /// collection settles -- setting the property invalidates nothing by itself.
+        /// </summary>
+        [Test]
+        public void TheStereoCondition_ReachesTheBodyAndTheStencilWork_FromTheOneUpload()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
+                using (display)
+                {
+                    // Monoscopic is what a display is made as, and what every existing caller keeps.
+                    Assert.That(display.SinglePassInstanced, Is.False, "made monoscopic");
+                    display.Separation = WideSeparation;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.DrawsSinglePassInstanced, Is.False, "the body was written monoscopic");
+                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False, "and so was the stencil work");
+
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+
+                    // Asked for between two collections: the snapshot on the GPU is not touched by the asking.
+                    display.SinglePassInstanced = true;
+                    Assert.That(display.DrawsSinglePassInstanced, Is.False, "the adopted body is still as written");
+                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False, "and so are its caps");
+
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.StencilGroupCount, Is.EqualTo(2), "the split is shown");
+                    Assert.That(display.DrawsSinglePassInstanced, Is.True, "the body took the condition");
+                    Assert.That(
+                        display.StencilDrawsSinglePassInstanced, Is.True,
+                        "and the initialisation, the volumes and the caps took the same one");
+
+                    // And back: nothing latches, and the two still move together.
+                    display.SinglePassInstanced = false;
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.DrawsSinglePassInstanced, Is.False);
+                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False);
+                }
+            }
+        }
+
+        /// <summary>
+        /// An arrangement uploaded for Single Pass Instanced draws the same image to a monoscopic camera, pixel for
+        /// pixel -- body, initialisation, volumes and caps together -- because each shader's single-view variant
+        /// rejects the second eye's copy. What this establishes is that the non-XR path is unchanged by asking for
+        /// stereo; that both eyes are actually drawn is not decided by a monoscopic camera and is not claimed here.
+        /// </summary>
+        [Test]
+        public void AnArrangementUploadedForSinglePassInstanced_DrawsTheSameToAMonoscopicCamera()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
+                using (display)
+                {
+                    display.Separation = WideSeparation;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Color32[] monoscopic = Draw(display, LookingDownFromBetween());
+                    Assert.That(IsRed(At(monoscopic, World(0f, 0f))), Is.True, "the opening is capped");
+                    int polygons = display.CapPolygonBuilds;
+
+                    // The very same logical state, collected again with nothing else changed.
+                    display.SinglePassInstanced = true;
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.DrawsSinglePassInstanced, Is.True);
+                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.True);
+                    Assert.That(
+                        display.CapPolygonBuilds, Is.EqualTo(polygons),
+                        "the same box, face and placement: no polygon was taken again");
+
+                    Color32[] stereo = Draw(display, LookingDownFromBetween());
+                    AssertSamePixels(monoscopic, stereo, "the same arrangement uploaded for stereo");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drawing writes nothing. A frame's draws leave the command uploads, the vertex and index transfers and the
+        /// stencil batch's buffer writes exactly where they were, and each stencil step is issued once per group per
+        /// draw -- not once per body, and not once more for a second camera's worth of work within the frame.
+        /// </summary>
+        [Test]
+        public void Drawing_AddsNoTransferAndNoPerColourUpload()
+        {
+            using (VpCpuGeometryStorage storage = NewStorage())
+            {
+                var table = new VpGeometryReferenceTable(storage, 8, 8);
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
+                VpStoredGeometry geometry = Append(storage);
+                Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
+                using (display)
+                {
+                    display.SinglePassInstanced = true;
+                    display.Separation = WideSeparation;
+                    Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    CutOperationId cut = Admit(ledger, source);
+                    Prepare(ledger, cut);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True);
+                    Assert.That(display.StencilGroupCount, Is.EqualTo(2));
+
+                    int uploads = display.CommandUploads;
+                    int stencilUploads = display.StencilUploads;
+                    int writes = display.StencilBufferWrites;
+                    int vertices = display.VertexTransfers;
+                    int indices = display.IndexTransfers;
+                    int init = display.StencilInitIssues;
+                    int volumes = display.StencilVolumeIssues;
+                    int caps = display.StencilCapIssues;
+
+                    Draw(display, LookingDownFromBetween());
+                    Assert.That(display.CommandUploads, Is.EqualTo(uploads), "drawing uploaded no commands");
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads), "nor any arrangement");
+                    Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "and wrote no buffer");
+                    Assert.That(display.VertexTransfers, Is.EqualTo(vertices), "no vertices went again");
+                    Assert.That(display.IndexTransfers, Is.EqualTo(indices), "no indices went again");
+                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + 2), "one initialisation per group");
+                    Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes + 2), "one volume call per group");
+                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + 2), "one cap call per group");
+
+                    // A second camera of the same frame: the same settled data, the same issue counts, no writes.
+                    Draw(display, LookingDown(2.5f, 3f, 2.5f));
+                    Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "a second camera wrote nothing");
+                    Assert.That(display.CommandUploads, Is.EqualTo(uploads));
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads));
+                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + 4), "two groups again, not four");
+                    Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes + 4));
+                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + 4));
+                }
+            }
+        }
+
         // ---------------------------------------------------------------------------------------------------------
 
         private static VpCpuGeometryStorage NewStorage()

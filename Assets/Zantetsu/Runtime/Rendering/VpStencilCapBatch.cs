@@ -218,7 +218,10 @@ namespace Zantetsu.Rendering
         /// <summary>
         /// The same, saying whether the draws are for Single Pass Instanced stereo. This is the only place the flag
         /// enters: the volume batch doubles its instance arguments on it, and <see cref="Render"/> reads it back for
-        /// the initialisation and the caps. No product caller passes true; the XR capability check does.
+        /// the initialisation and the caps. Only the volume batch's forward arguments are doubled — its shadow
+        /// arguments keep the logical count, and this path issues no shadow draw anyway. The display path passes what
+        /// its own caller asked for, so that the body's surfaces and this batch's work share one condition; the plain
+        /// overload above keeps monoscopic callers as they were.
         /// </summary>
         public bool TryUpload(
             VpIndirectCommand[] commands,

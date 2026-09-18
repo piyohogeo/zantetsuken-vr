@@ -246,6 +246,13 @@ namespace Zantetsu.MeshCut
     /// this contract, and this class does not detect it.
     /// </para>
     /// <para>
+    /// **One stereo condition for the whole arrangement.** <see cref="SinglePassInstanced"/> is the only way to say
+    /// that the draws are stereo, and it is read in one place — where the arrangement uploads — and given to both
+    /// batches together, so the body, the initialisation, the volumes and the caps cannot end up on different eye
+    /// counts. Finding out whether XR is up, and which mode it settled on, is the caller's; this class asks the engine
+    /// nothing and waits for nothing.
+    /// </para>
+    /// <para>
     /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the buffers for
     /// that frame; <see cref="Render"/> then registers the draws, and every camera and the shadow pass of one frame
     /// read the same settled data. A frame is identified by the engine's frame counter, so collecting again inside
@@ -421,6 +428,20 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public float Separation { get; set; } = 0.05f;
 
+        /// <summary>
+        /// Whether the draws this display registers are for Single Pass Instanced stereo: one issue carrying two
+        /// instances, one per eye. It is read where a collection uploads, and both batches are told the same thing in
+        /// that one place, so the body's surfaces, the stencil initialisation, the volumes and the caps are never
+        /// drawn on different conditions. Default false, which is what every existing caller keeps.
+        /// <para>
+        /// Whether XR is up, and which stereo mode it settled on, is the caller's to find out: nothing here asks the
+        /// engine, waits for frames or changes this on its own. Setting it invalidates no adopted snapshot — what the
+        /// GPU holds keeps the condition of the upload that wrote it, which <see cref="DrawsSinglePassInstanced"/> and
+        /// <see cref="StencilDrawsSinglePassInstanced"/> report — and takes effect from the next settled collection.
+        /// </para>
+        /// </summary>
+        public bool SinglePassInstanced { get; set; }
+
         /// <summary>How many bodies this display holds.</summary>
         public int ShownCount => _shown.Count;
 
@@ -468,8 +489,28 @@ namespace Zantetsu.MeshCut
         /// <summary>Cap issues of the stencil batch: one per group per draw.</summary>
         public int StencilCapIssues => _stencil.CapIssues;
 
+        /// <summary>
+        /// Buffer writes the stencil batch has made. Drawing makes none: it is upload time that writes, so this
+        /// standing still across a frame's draws is what says no transfer was added per camera or per colour.
+        /// </summary>
+        public int StencilBufferWrites => _stencil.BufferWrites;
+
         /// <summary>The stencil groups the adopted snapshot holds: 0 with no split shown, otherwise 2.</summary>
         public int StencilGroupCount => _stencil.ColorCount;
+
+        /// <summary>
+        /// The stereo condition the adopted body surfaces are drawn with, as the upload that wrote them settled it.
+        /// Only the forward arguments carry the doubling; the shadow arguments hold the logical instance count, as the
+        /// shadow pass is not stereo.
+        /// </summary>
+        public bool DrawsSinglePassInstanced => _batch.SinglePassInstanced;
+
+        /// <summary>
+        /// The same for the stencil initialisation, the volumes and the caps. It is written from the same
+        /// <see cref="SinglePassInstanced"/> in the same place as the body's, so the two agreeing is what a caller
+        /// checks rather than something it has to arrange.
+        /// </summary>
+        public bool StencilDrawsSinglePassInstanced => _stencil.SinglePassInstanced;
 
         private int CurrentFrame => _frameSource != null ? _frameSource() : Time.frameCount;
 
@@ -1023,13 +1064,17 @@ namespace Zantetsu.MeshCut
             //    nothing written; a refusal from the stencil batch after the display batch has been written would
             //    contradict step 6 and cannot be undone, so it stops the display like a GPU failure. A GPU call that
             //    throws is different, as elsewhere: what reached it cannot be established.
+            //    The stereo condition is read once, here, and given to both: the body's surfaces and the stencil work
+            //    of one arrangement are never written for different eye counts, whatever the property does later.
+            bool singlePassInstanced = SinglePassInstanced;
             bool uploaded;
             try
             {
-                uploaded = _batch.TryUpload(commands, transforms, clips, false);
+                uploaded = _batch.TryUpload(commands, transforms, clips, singlePassInstanced);
                 if (uploaded && !_stencil.TryUpload(
                         stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
-                        _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups))
+                        _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups,
+                        singlePassInstanced))
                 {
                     _broken = true;
                     throw new InvalidOperationException(
