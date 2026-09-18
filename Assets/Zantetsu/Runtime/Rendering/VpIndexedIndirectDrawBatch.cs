@@ -169,6 +169,45 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
+        /// Whether <see cref="TryUpload(VpIndirectCommand[], Matrix4x4[], VpInstanceClip[], bool)"/> would accept
+        /// this input, decided without writing anything. It is the very judgement the upload makes — both call
+        /// <c>Accepts</c> — so a caller that has to settle two batches before writing either can ask first and know
+        /// the answer will not change. Null arrays are refused here rather than thrown, because asking is not
+        /// uploading.
+        /// </summary>
+        public bool CanUpload(VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips)
+        {
+            ThrowIfDisposed();
+            return commands != null && objectToWorlds != null && Accepts(commands, objectToWorlds, clips, out _);
+        }
+
+        // Every ordinary condition of an upload, in one place: the command count, each command's own numbers, the
+        // instance total against the capacity, and one transform -- and one clip record, when clips are given -- per
+        // instance. Nothing here writes or reserves anything.
+        private bool Accepts(
+            VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips, out long instanceTotal)
+        {
+            instanceTotal = 0;
+            if (commands.Length > CommandCapacity)
+            {
+                return false;
+            }
+
+            foreach (VpIndirectCommand command in commands)
+            {
+                if (command.instanceCount < 0 || command.range.indexStart < 0 || command.range.indexCount < 0)
+                {
+                    return false;
+                }
+
+                instanceTotal += command.instanceCount;
+            }
+
+            return instanceTotal <= InstanceCapacity && objectToWorlds.Length == instanceTotal
+                && (clips == null || clips.Length == instanceTotal);
+        }
+
+        /// <summary>
         /// The same upload, with one <see cref="VpInstanceClip"/> per instance: which parts of up to
         /// <see cref="VpInstanceClip.PlaneCapacity"/> cut planes that instance keeps and how far it is drawn apart,
         /// for the provisional display of DESIGN 5.1. **Null** is how the clips are omitted, and gives the ordinary
@@ -211,26 +250,11 @@ namespace Zantetsu.Rendering
                 return false;
             }
 
-            long instanceTotal = 0;
-            foreach (VpIndirectCommand command in commands)
-            {
-                if (command.instanceCount < 0 || command.range.indexStart < 0 || command.range.indexCount < 0)
-                {
-                    return false;
-                }
-
-                instanceTotal += command.instanceCount;
-            }
-
-            if (instanceTotal > InstanceCapacity || objectToWorlds.Length != instanceTotal)
+            if (!Accepts(commands, objectToWorlds, clips, out long instanceTotal))
             {
                 return false;
             }
 
-            if (clips != null && clips.Length != instanceTotal)
-            {
-                return false;
-            }
 
             uint multiplier = singlePassInstanced ? 2u : 1u;
             int startInstance = 0;

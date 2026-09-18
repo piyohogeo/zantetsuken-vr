@@ -211,12 +211,39 @@ namespace Zantetsu.MeshCut
     /// free side was moved. A fixed side takes no separation at all, and two fixed sides are still both clipped.
     /// </para>
     /// <para>
-    /// **The provisional caps are prepared, not drawn.** Each split that has an area also prepares the two
-    /// <see cref="LogicalCutCapRecord"/>s of DESIGN 5.2 — one per side, one per body and never one per submesh — with
-    /// the finite Cap Bounds Polygon each would be masked inside. They are prepared with the candidate and adopted
-    /// with it, so what is on screen and what would be masked can never disagree, and a refused collection keeps the
-    /// caps it had along with the sides it had. Nothing is drawn from them yet: no buffer, no upload and no draw is
-    /// added here, the cut faces stay open, and the polygon must not be drawn opaquely in place of the stencil.
+    /// **The provisional caps are prepared and drawn through the stencil.** Each split that has an area prepares the
+    /// two <see cref="LogicalCutCapRecord"/>s of DESIGN 5.2 — one per side, one per body and never one per submesh —
+    /// with the finite Cap Bounds Polygon each is masked inside. They are prepared with the candidate and adopted with
+    /// it, so what is on screen and what is masked can never disagree, and a refused collection keeps the caps it had
+    /// along with the sides it had. The drawing is DESIGN 5.6's, through a <see cref="VpStencilCapBatch"/> this
+    /// display owns: two fixed stencil groups, one for every positive side and one for every negative side, each
+    /// counting its own side's volumes — the same stored geometry, the same buffers and range, with the side's own
+    /// clip record — and then drawing that side's polygon only where the count says the opening is. The polygon is
+    /// never drawn as an opaque plate; the stencil restricts it to the real cross-section. Both groups are uploaded
+    /// together, once, before any draw is registered, and each is one volume issue and one cap issue per frame.
+    /// </para>
+    /// <para>
+    /// **Two batches, one arrangement.** The body's surfaces go to the display batch and the counting and the caps to
+    /// the stencil batch, from one candidate. Neither is written until both have said they will accept the whole of
+    /// it — the stencil batch is asked with its own non-writing judgement first — so an ordinary refusal leaves the
+    /// body and its caps on screen together as they were, never the body new and its caps old. The provisional cap
+    /// colour is the red of DESIGN 5.3.
+    /// </para>
+    /// <para>
+    /// **What the two fixed groups do and do not cover.** The scope this is established for is ONE body with ONE
+    /// cut. The groups are two because a side is what a cap belongs to, not because gathering sides is known to be
+    /// safe: DESIGN 5.6's counting is per stencil group, so two bodies whose volumes overlap **on screen** in the
+    /// same group count into one another and the caps that follow are not to be trusted. Several bodies may be shown
+    /// here, and each contributes its own commands to the group of its side, but only an arrangement whose volumes do
+    /// not overlap in the view is covered by what has been checked. Nothing here classifies, separates or arbitrates
+    /// between bodies, and nothing in the ledger limits what may be admitted; deciding a colour per overlapping body
+    /// is later work.
+    /// </para>
+    /// <para>
+    /// **One stencil batch per camera.** DESIGN 5.6 gives one camera one aggregate batch, and the stencil byte is
+    /// shared: a second display drawing its own stencil work into the same camera would initialise and count over
+    /// this one's. So registering two independent displays — or any other stencil batch — for one camera is outside
+    /// this contract, and this class does not detect it.
     /// </para>
     /// <para>
     /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the buffers for
@@ -301,6 +328,8 @@ namespace Zantetsu.MeshCut
         private readonly Material _shadowMaterial;
         private readonly VpGpuIndexedGeometryBuffers _buffers;
         private readonly VpIndexedIndirectDrawBatch _batch;
+        private readonly VpStencilCapBatch _stencil;
+        private readonly VpStencilCapMaterials _stencilMaterials;
         private readonly MaterialPropertyBlock _properties = new MaterialPropertyBlock();
         private readonly Func<int> _frameSource;
         private readonly int _commandCapacity;
@@ -334,6 +363,21 @@ namespace Zantetsu.MeshCut
 
         private readonly VpCapBoundsPolygon _capPolygon = new VpCapBoundsPolygon();
 
+        // The stencil arrangement of the candidate: one command per side per body command, the positive sides first
+        // and the negative sides after, so that each stencil group is one contiguous command range; the cap indices
+        // fan each side's polygon; the two groups name their ranges. Built with the candidate, sized once.
+        private VpIndirectCommand[] _candidateStencilCommands = Array.Empty<VpIndirectCommand>();
+        private Matrix4x4[] _candidateStencilTransforms = Array.Empty<Matrix4x4>();
+        private VpInstanceClip[] _candidateStencilClips = Array.Empty<VpInstanceClip>();
+        private int[] _candidateCapIndices = Array.Empty<int>();
+        private readonly VpStencilCapColor[] _candidateStencilColors = new VpStencilCapColor[StencilGroups];
+
+        /// <summary>The two fixed stencil groups: every positive side, then every negative side.</summary>
+        private const int StencilGroups = 2;
+
+        /// <summary>The provisional cap colour of DESIGN 5.3: red until the geometry is committed.</summary>
+        private static readonly Color ProvisionalCapColour = Color.red;
+
         // The frame whose collection succeeded, and the frame that may draw. They are not the same: a frame whose
         // collection was refused may still draw the snapshot adopted earlier.
         private int _settledFrame = int.MinValue;
@@ -351,6 +395,8 @@ namespace Zantetsu.MeshCut
             Material shadowMaterial,
             VpGpuIndexedGeometryBuffers buffers,
             VpIndexedIndirectDrawBatch batch,
+            VpStencilCapBatch stencil,
+            VpStencilCapMaterials stencilMaterials,
             int commandCapacity,
             int instanceCapacity,
             Func<int> frameSource)
@@ -362,6 +408,8 @@ namespace Zantetsu.MeshCut
             _shadowMaterial = shadowMaterial;
             _buffers = buffers;
             _batch = batch;
+            _stencil = stencil;
+            _stencilMaterials = stencilMaterials;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
             _frameSource = frameSource;
@@ -407,6 +455,21 @@ namespace Zantetsu.MeshCut
         /// the face and the placement are the same, publication included: only a changed input makes another one.
         /// </summary>
         public int CapPolygonBuilds { get; private set; }
+
+        /// <summary>How many arrangements the stencil batch has taken; one per settled collection.</summary>
+        public int StencilUploads => _stencil.Uploads;
+
+        /// <summary>Initialisation issues of the stencil batch: one per group per draw.</summary>
+        public int StencilInitIssues => _stencil.StencilInitIssues;
+
+        /// <summary>Volume issues of the stencil batch: one per group per draw, whatever the group's command count.</summary>
+        public int StencilVolumeIssues => _stencil.VolumeIssues;
+
+        /// <summary>Cap issues of the stencil batch: one per group per draw.</summary>
+        public int StencilCapIssues => _stencil.CapIssues;
+
+        /// <summary>The stencil groups the adopted snapshot holds: 0 with no split shown, otherwise 2.</summary>
+        public int StencilGroupCount => _stencil.ColorCount;
 
         private int CurrentFrame => _frameSource != null ? _frameSource() : Time.frameCount;
 
@@ -454,14 +517,31 @@ namespace Zantetsu.MeshCut
 
             VpGpuIndexedGeometryBuffers buffers = null;
             VpIndexedIndirectDrawBatch batch = null;
+            VpStencilCapBatch stencil = null;
+            VpStencilCapMaterials stencilMaterials = null;
             bool taken = false;
             try
             {
                 buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
+
+                // The stencil side is sized from the same capacity: every body command may be drawn as two sides, so
+                // twice the commands and one instance each; every split body has two caps of at most the polygon's
+                // vertex count, fanned. The capacity is fixed with the rest and checked before every upload.
+                stencil = new VpStencilCapBatch(
+                    StencilGroups,
+                    commandCapacity * 2,
+                    commandCapacity * 2,
+                    commandCapacity * 2 * VpCapBoundsPolygon.MaxVertices,
+                    commandCapacity * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3);
+                if (!VpStencilCapMaterials.TryCreate(StencilGroups, out stencilMaterials))
+                {
+                    return false;
+                }
+
                 display = new VpLogicalCutDisplay(
-                    storage, table, ledger, materialsBySourceIndex, shadowMaterial, buffers, batch,
-                    commandCapacity, instanceCapacity, frameSource);
+                    storage, table, ledger, materialsBySourceIndex, shadowMaterial, buffers, batch, stencil,
+                    stencilMaterials, commandCapacity, instanceCapacity, frameSource);
                 taken = true;
                 return true;
             }
@@ -469,6 +549,8 @@ namespace Zantetsu.MeshCut
             {
                 if (!taken)
                 {
+                    stencilMaterials?.Dispose();
+                    stencil?.Dispose();
                     batch?.Dispose();
                     buffers?.Dispose();
                 }
@@ -648,6 +730,10 @@ namespace Zantetsu.MeshCut
 
                 start = end;
             }
+
+            // The counting and the caps, after the surfaces: their queues put them after the opaque bodies, so each
+            // cap is depth-tested against the surfaces of this frame and drawn only inside its side's opening.
+            _stencil.Render(_stencilMaterials, _buffers, layer, camera);
         }
 
         /// <summary>How this display is showing that fragment, whether as a body of its own or as a published child.</summary>
@@ -779,6 +865,8 @@ namespace Zantetsu.MeshCut
             _capRecordCount = 0;
             _candidateCapRecordCount = 0;
             _hasSnapshot = false;
+            _stencilMaterials.Dispose();
+            _stencil.Dispose();
             _batch.Dispose();
             _buffers.Dispose();
         }
@@ -908,17 +996,46 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // 5. One upload of the whole arrangement. An ordinary refusal leaves the batch and the adopted snapshot
-            //    exactly as they were; a GPU call that throws is different, because what reached it cannot be
-            //    established.
+            // 5. The stencil arrangement of the same candidate: each split body's commands once per side, the positive
+            //    sides first, and each side's polygon fanned into the cap index range of its group.
+            BuildStencilArrangement(command, out int stencilCommands, out int capIndexCount, out int stencilGroups);
+
+            // 6. Both batches are asked before either is written. The display batch's conditions are the capacity
+            //    settled in step 2 and the shapes built here; the stencil batch says for itself, without writing. So
+            //    an ordinary refusal from either leaves the body and its caps on screen together as they were.
+            VpIndirectCommand[] commands = Slice(_candidateCommands, command);
+            Matrix4x4[] transforms = Slice(_candidateTransforms, instance);
+            VpInstanceClip[] clips = Slice(_candidateClips, instance);
+            VpIndirectCommand[] stencilCommandsSlice = Slice(_candidateStencilCommands, stencilCommands);
+            Matrix4x4[] stencilTransforms = Slice(_candidateStencilTransforms, stencilCommands);
+            VpInstanceClip[] stencilClips = Slice(_candidateStencilClips, stencilCommands);
+            if (!_stencil.CanUpload(
+                    stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
+                    _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups))
+            {
+                GiveBackSecondInstancesTakenThisPass();
+                _candidateSides.Clear();
+                _candidateCapRecordCount = 0;
+                return false;
+            }
+
+            // 7. The uploads. An ordinary refusal from the display batch here would contradict step 2 and leaves
+            //    nothing written; a refusal from the stencil batch after the display batch has been written would
+            //    contradict step 6 and cannot be undone, so it stops the display like a GPU failure. A GPU call that
+            //    throws is different, as elsewhere: what reached it cannot be established.
             bool uploaded;
             try
             {
-                uploaded = _batch.TryUpload(
-                    Slice(_candidateCommands, command),
-                    Slice(_candidateTransforms, instance),
-                    Slice(_candidateClips, instance),
-                    false);
+                uploaded = _batch.TryUpload(commands, transforms, clips, false);
+                if (uploaded && !_stencil.TryUpload(
+                        stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
+                        _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups))
+                {
+                    _broken = true;
+                    throw new InvalidOperationException(
+                        "the stencil batch refused an arrangement it had said it would accept, after the display batch "
+                        + "was written; the body and its caps could no longer be kept together, so this display stops");
+                }
             }
             catch
             {
@@ -1042,6 +1159,115 @@ namespace Zantetsu.MeshCut
         /// cannot be taken of at all, which is an ordinary refusal of the whole collection.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// The stencil batch's view of the candidate. The display batch draws each body's command with two instances,
+        /// one per side; a stencil group has to count one side alone, so here every split body's command becomes two
+        /// commands of one instance — the positive one in the first group's range, the negative one in the second's —
+        /// with the same index range, transform and clip record as the display instance it stands for. Nothing is cut
+        /// or copied. Each side's polygon is then fanned into its group's index range, and with no split shown there
+        /// are no groups at all.
+        /// </summary>
+        private void BuildStencilArrangement(
+            int commandCount, out int stencilCommands, out int capIndexCount, out int groups)
+        {
+            EnsureStencilRoom(commandCount);
+            int positive = 0;
+            int negative = 0;
+            int splitCommands = 0;
+            for (int c = 0; c < commandCount; c++)
+            {
+                if (_candidateCommands[c].instanceCount == 2)
+                {
+                    splitCommands++;
+                }
+            }
+
+            // Positive sides occupy [0, splitCommands), negative sides [splitCommands, 2 * splitCommands). The
+            // candidate's instances run command by command, the positive instance before the negative one.
+            int instance = 0;
+            for (int c = 0; c < commandCount; c++)
+            {
+                VpIndirectCommand source = _candidateCommands[c];
+                if (source.instanceCount != 2)
+                {
+                    instance += source.instanceCount;
+                    continue;
+                }
+
+                var one = new VpIndirectCommand(source.range, source.localBounds, 1);
+                _candidateStencilCommands[positive] = one;
+                _candidateStencilTransforms[positive] = _candidateTransforms[instance];
+                _candidateStencilClips[positive] = _candidateClips[instance];
+                positive++;
+                instance++;
+
+                int at = splitCommands + negative;
+                _candidateStencilCommands[at] = one;
+                _candidateStencilTransforms[at] = _candidateTransforms[instance];
+                _candidateStencilClips[at] = _candidateClips[instance];
+                negative++;
+                instance++;
+            }
+
+            stencilCommands = positive + negative;
+
+            // The caps: the positive records' polygons fanned first, then the negative ones, so that each group's cap
+            // index range is contiguous. A record's vertices are already in the candidate's cap vertex array.
+            int index = 0;
+            int positiveIndexStart = 0;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                float side = pass == 0 ? 1f : -1f;
+                if (pass == 1)
+                {
+                    positiveIndexStart = index;
+                }
+
+                for (int r = 0; r < _candidateCapRecordCount; r++)
+                {
+                    LogicalCutCapRecord record = _candidateCapRecords[r];
+                    if (record.side != side)
+                    {
+                        continue;
+                    }
+
+                    for (int v = 1; v + 1 < record.vertexCount; v++)
+                    {
+                        _candidateCapIndices[index++] = record.vertexStart;
+                        _candidateCapIndices[index++] = record.vertexStart + v;
+                        _candidateCapIndices[index++] = record.vertexStart + v + 1;
+                    }
+                }
+            }
+
+            capIndexCount = index;
+            groups = splitCommands > 0 ? StencilGroups : 0;
+            if (groups > 0)
+            {
+                _candidateStencilColors[0] = new VpStencilCapColor(
+                    0, splitCommands, 0, positiveIndexStart, ProvisionalCapColour);
+                _candidateStencilColors[1] = new VpStencilCapColor(
+                    splitCommands, splitCommands, positiveIndexStart, index - positiveIndexStart, ProvisionalCapColour);
+            }
+        }
+
+        private void EnsureStencilRoom(int commandCount)
+        {
+            int commands = commandCount * 2;
+            if (_candidateStencilCommands.Length < commands)
+            {
+                _candidateStencilCommands = new VpIndirectCommand[commands];
+                _candidateStencilTransforms = new Matrix4x4[commands];
+                _candidateStencilClips = new VpInstanceClip[commands];
+            }
+
+            int indices = commandCount * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
+            if (_candidateCapIndices.Length < indices)
+            {
+                _candidateCapIndices = new int[indices];
+            }
+        }
+
         private bool TryAddCaps(Plan plan, Vector3 positiveOffset, Vector3 negativeOffset, ref int capVertex)
         {
             Shown entry = plan.entry;

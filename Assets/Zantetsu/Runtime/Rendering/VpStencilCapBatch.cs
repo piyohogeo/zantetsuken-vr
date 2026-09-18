@@ -292,6 +292,42 @@ namespace Zantetsu.Rendering
         }
 
         /// <summary>
+        /// Whether <see cref="TryUpload(VpIndirectCommand[], Matrix4x4[], VpInstanceClip[], Vector3[], int, int[], int, VpStencilCapColor[], int, bool)"/>
+        /// would accept this input, decided without writing anything. It is the same judgement the upload makes
+        /// before its first write, offered on its own so that a caller feeding two batches from one arrangement --
+        /// the display path's forward batch and this one -- can settle both refusals before either is written, and
+        /// never leave the body new and its caps old. The volume side's own capacity is part of the judgement.
+        /// <para>
+        /// The input arrays here are the ones that would be uploaded; <paramref name="objectToWorlds"/> and
+        /// <paramref name="clips"/> are checked for the lengths the volume batch requires.
+        /// </para>
+        /// </summary>
+        public bool CanUpload(
+            VpIndirectCommand[] commands,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (!IsWellFormed(commands, capVertices, capVertexCount, capIndices, capIndexCount, colors, colorCount, out _))
+            {
+                return false;
+            }
+
+            // The volume half is the draw batch's own judgement, asked of it rather than repeated here, so the two
+            // cannot drift apart: a negative index range, a count over the capacity or a transform or clip count
+            // that does not match the instances is refused by the same code that would refuse the upload.
+            return _volumes.CanUpload(
+                commands ?? Array.Empty<VpIndirectCommand>(), objectToWorlds, clips);
+        }
+
+        /// <summary>
         /// Whether the input can be uploaded at all, and how many writes the volume side of it will make. Decided
         /// before anything is written, and with no addition that could carry past what an int holds: a start is
         /// compared against what is left rather than added to a count.
