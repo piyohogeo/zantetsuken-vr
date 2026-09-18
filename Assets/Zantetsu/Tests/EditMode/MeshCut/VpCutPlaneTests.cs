@@ -206,5 +206,115 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(math.distance(local.xyz, world.xyz), Is.LessThan(1e-6f), "the same normal");
             Assert.That(math.abs(local.w - world.w), Is.LessThan(1e-6f), "and the same d");
         }
+
+        // ----- the other direction: a plane given in the geometry's frame, as a plane in world -------------------
+
+        /// <summary>
+        /// A point's side of the plane is what has to survive the conversion. This asks it directly: a point taken in
+        /// the geometry's own frame, and the same point placed in world, must fall on the same side of the two planes.
+        /// </summary>
+        private static void AssertSidesSurvive(Matrix4x4 placement, float4 localPlane, float3 localPoint, string what)
+        {
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(localPlane, placement, out float4 worldPlane), Is.True,
+                what + ": the plane converts");
+
+            float localSide = math.dot(localPlane.xyz, localPoint) + localPlane.w;
+            float3 worldPoint = (float3)placement.MultiplyPoint3x4((Vector3)localPoint);
+            float worldSide = math.dot(worldPlane.xyz, worldPoint) + worldPlane.w;
+
+            Assert.That(math.abs(localSide), Is.GreaterThan(1e-4f), what + ": the point is not on the plane");
+            Assert.That(
+                math.sign(worldSide), Is.EqualTo(math.sign(localSide)),
+                what + ": the point stays on the side it was on (local " + localSide + ", world " + worldSide + ")");
+            Assert.That(math.length(worldPlane.xyz), Is.EqualTo(1f).Within(1e-5f), what + ": the normal is normalized");
+        }
+
+        /// <summary>
+        /// The sign is never flipped, whatever the placement does to lengths or to handedness: a non-uniform scale and
+        /// a mirroring one both keep each point on the side it was on.
+        /// </summary>
+        [Test]
+        public void TheOtherDirection_KeepsBothSides_UnderNonUniformScaleAndMirroring()
+        {
+            var plane = new float4(0f, 1f, 0f, -1f);
+            var above = new float3(0.3f, 1.7f, -0.2f);
+            var below = new float3(-0.4f, 0.25f, 0.6f);
+
+            Matrix4x4 nonUniform = Matrix4x4.TRS(
+                new Vector3(2f, -3f, 0.5f), Quaternion.Euler(15f, -40f, 75f), new Vector3(0.25f, 3.5f, 1.75f));
+            AssertSidesSurvive(nonUniform, plane, above, "non-uniform scale, above");
+            AssertSidesSurvive(nonUniform, plane, below, "non-uniform scale, below");
+
+            // A mirroring placement: its determinant is negative, and the sides still do not change hands.
+            Matrix4x4 mirrored = Matrix4x4.TRS(
+                new Vector3(-1f, 2f, 3f), Quaternion.Euler(0f, 30f, 0f), new Vector3(1f, -2f, 1f));
+            Assert.That(mirrored.determinant, Is.LessThan(0f), "the placement really does mirror");
+            AssertSidesSurvive(mirrored, plane, above, "mirrored, above");
+            AssertSidesSurvive(mirrored, plane, below, "mirrored, below");
+
+            // A plane whose normal is not an axis, through a placement that scales that direction unevenly.
+            var slanted = new float4(math.normalize(new float3(0.4f, -0.7f, 0.59f)), 0.23f);
+            AssertSidesSurvive(nonUniform, slanted, above, "slanted plane, above");
+            AssertSidesSurvive(nonUniform, slanted, below, "slanted plane, below");
+        }
+
+        /// <summary>
+        /// A placement that cannot be inverted has no world plane to give back, and neither has a projective one or a
+        /// plane with no normal. Nothing is invented for any of them.
+        /// </summary>
+        [Test]
+        public void TheOtherDirection_RefusesASingularOrProjectivePlacement()
+        {
+            var plane = new float4(0f, 1f, 0f, -1f);
+
+            // Flattened onto a plane: the placement is singular, and there is no way back from it.
+            Matrix4x4 singular = Matrix4x4.Scale(new Vector3(1f, 0f, 1f));
+            Assert.That(singular.determinant, Is.EqualTo(0f), "the placement is singular");
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(plane, singular, out float4 fromSingular), Is.False,
+                "a singular placement is refused");
+            Assert.That(fromSingular, Is.EqualTo(default(float4)), "and nothing is handed back");
+
+            // Wholly degenerate, for the same reason.
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(plane, Matrix4x4.zero, out float4 fromZero), Is.False,
+                "a zero placement is refused");
+            Assert.That(fromZero, Is.EqualTo(default(float4)));
+
+            // Projective placements are not what this API is for, in either direction.
+            var projective = Matrix4x4.identity;
+            projective.m30 = 0.5f;
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(plane, projective, out float4 fromProjective), Is.False,
+                "a projective placement is refused");
+            Assert.That(fromProjective, Is.EqualTo(default(float4)));
+
+            // And a plane with no normal is no plane.
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(new float4(0f, 0f, 0f, 1f), Matrix4x4.identity, out float4 fromNoNormal),
+                Is.False,
+                "a plane with no normal is refused");
+            Assert.That(fromNoNormal, Is.EqualTo(default(float4)));
+
+            Assert.That(
+                VpCutPlane.TryGeometryLocalToWorld(new float4(0f, float.NaN, 0f, 1f), Matrix4x4.identity, out _), Is.False,
+                "and so is one that is not finite");
+        }
+
+        /// <summary>The two directions are each other's inverse: a plane converted and converted back is the same one.</summary>
+        [Test]
+        public void TheTwoDirections_AreEachOthersInverse()
+        {
+            var local = new float4(math.normalize(new float3(0.2f, 0.9f, -0.35f)), -0.75f);
+            Matrix4x4 placement = Matrix4x4.TRS(
+                new Vector3(1.5f, 0.25f, -2f), Quaternion.Euler(-20f, 65f, 10f), new Vector3(2f, 0.5f, 1.25f));
+
+            Assert.That(VpCutPlane.TryGeometryLocalToWorld(local, placement, out float4 world), Is.True, "out to world");
+            Assert.That(VpCutPlane.TryWorldToGeometryLocal(world, placement, out float4 back), Is.True, "and back again");
+
+            Assert.That(math.distance(back.xyz, local.xyz), Is.LessThan(1e-5f), "the same normal");
+            Assert.That(math.abs(back.w - local.w), Is.LessThan(1e-5f), "and the same d");
+        }
     }
 }

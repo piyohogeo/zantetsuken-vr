@@ -73,6 +73,11 @@ namespace Zantetsu.MeshCut
             public LogicalFragmentState state;
             public CutOperationId activeOperation;
 
+            // The operation that replaced this fragment by publishing its two children. Set once, at publication,
+            // and kept: a reader that finds a fragment Replaced needs it to reach the children, and an id is never
+            // reused, so it always names the operation that actually replaced it.
+            public CutOperationId replacedBy;
+
             // The source's ownership authority as a counter: bumped by NoteOwnershipChanged, snapshotted at admission,
             // and compared when the result arrives. Local to this fragment on purpose.
             public int authority;
@@ -169,6 +174,23 @@ namespace Zantetsu.MeshCut
             }
 
             operation = _fragments[index].activeOperation;
+            return true;
+        }
+
+        /// <summary>
+        /// The operation that replaced this fragment, for a reader that finds it <see cref="LogicalFragmentState.Replaced"/>
+        /// and has to reach the two children from there. False for a fragment that is live or retired, and for one
+        /// this ledger does not hold. Reading it changes nothing.
+        /// </summary>
+        public bool TryGetReplacingOperation(LogicalFragmentId fragment, out CutOperationId operation)
+        {
+            if (!TryIndex(fragment, out int index) || !_fragments[index].replacedBy.IsSet)
+            {
+                operation = default;
+                return false;
+            }
+
+            operation = _fragments[index].replacedBy;
             return true;
         }
 
@@ -423,6 +445,7 @@ namespace Zantetsu.MeshCut
             Fragment source = _fragments[sourceIndex];
             source.state = LogicalFragmentState.Replaced;
             source.activeOperation = default;
+            source.replacedBy = id;
 
             // The children hold what they inherited, so the replaced source lets its own set go rather than keeping it
             // for the lifetime of the ledger. The list itself is not cleared — the children's sets are separate lists.

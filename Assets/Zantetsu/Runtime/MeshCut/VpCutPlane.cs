@@ -89,6 +89,44 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>
+        /// The other direction: the plane <paramref name="localPlane"/>, given in the coordinates of a geometry placed
+        /// by <paramref name="geometryLocalToWorld"/>, as a plane in world space. This is what a display needs when the
+        /// plane it was handed lives in the geometry's own frame and the clipping happens in world space.
+        /// <para>
+        /// A plane goes the opposite way to a point, so where a point uses the transform this uses the transpose of its
+        /// inverse: the same rule as <see cref="TryWorldToGeometryLocal"/>, read the other way round. The normal and d
+        /// are again divided by the same positive length, so the plane keeps its position and both of its sides, and
+        /// the sign is never flipped — what was positive in the geometry's frame is positive in world.
+        /// </para>
+        /// <para>
+        /// Refused, with a default plane and nothing changed, in the same cases as the other direction, and also when
+        /// the placement cannot be inverted at all. The transform is the caller's snapshot here too: this reads no
+        /// display, no later pose and nothing else.
+        /// </para>
+        /// </summary>
+        public static bool TryGeometryLocalToWorld(float4 localPlane, Matrix4x4 geometryLocalToWorld, out float4 worldPlane)
+        {
+            worldPlane = default;
+            if (!IsFinite(geometryLocalToWorld))
+            {
+                return false;
+            }
+
+            // Affine placement only, checked here too so that no inverse is taken of something this API does not
+            // accept in the first place.
+            if (geometryLocalToWorld.m30 != 0f
+                || geometryLocalToWorld.m31 != 0f
+                || geometryLocalToWorld.m32 != 0f
+                || geometryLocalToWorld.m33 != 1f)
+            {
+                return false;
+            }
+
+            // A singular placement inverts to all zeros, which the transpose then refuses as a zero normal.
+            return TryWorldToGeometryLocal(localPlane, geometryLocalToWorld.inverse, out worldPlane);
+        }
+
         private static bool IsFinite(float4 value)
         {
             return math.all(math.isfinite(value));
