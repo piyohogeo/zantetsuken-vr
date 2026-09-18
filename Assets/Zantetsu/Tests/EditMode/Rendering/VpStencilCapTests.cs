@@ -558,6 +558,70 @@ namespace Zantetsu.Rendering.Tests
         }
 
         /// <summary>
+        /// Uploaded for Single Pass Instanced but drawn by a monoscopic camera, the batch has to give the same image
+        /// as the plain upload: the initialisation, the volumes and the caps are each issued as two instances, and
+        /// the shaders' non-stereo variants reject the second one, so nothing is initialised, counted or capped
+        /// twice. This is the non-XR half of the both-eyes change; what the stereo variants do is only seen in XR.
+        /// </summary>
+        [Test]
+        public void TheCap_UploadedForSinglePassInstanced_DrawsTheSameToAMonoscopicCamera()
+        {
+            RenderTexture target = StencilTarget();
+            Camera camera = TestCamera(target);
+
+            Color32[] plain;
+            Color32[] instanced;
+            using (Fixture fixture = NewFixture())
+            {
+                VpGeometryRange box = AppendBox(fixture.pool, Vector3.zero, 1f);
+                Assert.That(fixture.buffers.TryUpload(fixture.pool), Is.True, "geometry to the GPU");
+
+                var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
+                var transforms = new[] { Matrix4x4.identity };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                Vector3[] capVertices = CapPolygon();
+                int[] capIndices = FanIndices(0, capVertices.Length);
+                var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
+
+                Assert.That(
+                    fixture.batch.TryUpload(
+                        commands, transforms, clips, capVertices, capVertices.Length, capIndices, capIndices.Length,
+                        colors, 1),
+                    Is.True);
+                Assert.That(fixture.batch.SinglePassInstanced, Is.False, "the plain overload asks for no doubling");
+                fixture.batch.Render(fixture.materials, fixture.buffers, 0, camera);
+                plain = RenderAndRead(camera, target);
+
+                Assert.That(
+                    fixture.batch.TryUpload(
+                        commands, transforms, clips, capVertices, capVertices.Length, capIndices, capIndices.Length,
+                        colors, 1, true),
+                    Is.True);
+                Assert.That(fixture.batch.SinglePassInstanced, Is.True, "the upload settles the flag");
+                int initsBefore = fixture.batch.StencilInitIssues;
+                int volumesBefore = fixture.batch.VolumeIssues;
+                int capsBefore = fixture.batch.CapIssues;
+                fixture.batch.Render(fixture.materials, fixture.buffers, 0, camera);
+                instanced = RenderAndRead(camera, target);
+
+                Assert.That(fixture.batch.StencilInitIssues - initsBefore, Is.EqualTo(1), "still one init issue");
+                Assert.That(fixture.batch.VolumeIssues - volumesBefore, Is.EqualTo(1), "still one volume issue");
+                Assert.That(fixture.batch.CapIssues - capsBefore, Is.EqualTo(1), "still one cap issue");
+            }
+
+            int plainCapped = Count(plain, IsRedish);
+            Assert.That(plainCapped, Is.GreaterThan(400), "the plain upload caps the opening");
+            Assert.That(Count(instanced, IsRedish), Is.EqualTo(plainCapped), "so does the instanced one, no more and no less");
+            for (int i = 0; i < plain.Length; i++)
+            {
+                if (plain[i].r != instanced[i].r || plain[i].g != instanced[i].g || plain[i].b != instanced[i].b)
+                {
+                    Assert.Fail("pixel " + i + " differs between the plain and the instanced upload");
+                }
+            }
+        }
+
+        /// <summary>
         /// The polygon is the cross-section of the body's bounds box and is larger than the body, so what keeps it
         /// inside the body is the stencil and nothing else. A cap polygon twice the width of the box is given, and only
         /// the box's own opening comes out filled.

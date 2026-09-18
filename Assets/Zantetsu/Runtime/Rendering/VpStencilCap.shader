@@ -14,6 +14,11 @@
 //
 // The vertices arrive already in world space, with the side's separation applied, so this transforms and does nothing
 // else to them.
+//
+// **Both eyes.** The vertices do not depend on the instance, so under Single Pass Instanced the batch issues the caps
+// as two instances, one per eye, and the stereo output is initialised from the instance id as the colour pass does;
+// each instance is then transformed by its own eye's matrix into its own slice. Outside stereo instancing the second
+// instance is rejected so a monoscopic camera draws each cap once.
 Shader "Zantetsu/VP Stencil Cap"
 {
     Properties
@@ -49,26 +54,59 @@ Shader "Zantetsu/VP Stencil Cap"
             #pragma target 4.5
             #pragma vertex Vertex
             #pragma fragment Fragment
+            #pragma multi_compile_instancing
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             StructuredBuffer<float4> _VpCapVertices;
 
+            // 2 when the batch was uploaded for Single Pass Instanced, otherwise 1.
+            uint _VpInstanceMultiplier;
+
+            #define VP_REJECTED_POSITION_CS float4(2.0, 2.0, 2.0, 1.0)
+
             CBUFFER_START(UnityPerMaterial)
             half4 _BaseColor;
             CBUFFER_END
 
+            struct Attributes
+            {
+                uint vertexID : SV_VertexID;
+            #if UNITY_ANY_INSTANCING_ENABLED
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            #else
+                uint instanceID : SV_InstanceID;
+            #endif
+            };
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_OUTPUT_STEREO
             };
+
+            bool IsVpSecondCopyInSingleView(Attributes input)
+            {
+            #if defined(UNITY_STEREO_INSTANCING_ENABLED)
+                return false;
+            #else
+                return _VpInstanceMultiplier == 2u && (input.instanceID & 1u) != 0u;
+            #endif
+            }
 
             // The index buffer carries global vertex numbers, as it does for the indexed indirect draws, so the vertex
             // id indexes the shared cap vertex buffer directly.
-            Varyings Vertex(uint vertexID : SV_VertexID)
+            Varyings Vertex(Attributes input)
             {
-                Varyings output;
-                float3 positionWS = _VpCapVertices[vertexID].xyz;
+                Varyings output = (Varyings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                if (IsVpSecondCopyInSingleView(input))
+                {
+                    output.positionCS = VP_REJECTED_POSITION_CS;
+                    return output;
+                }
+
+                float3 positionWS = _VpCapVertices[input.vertexID].xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
                 return output;
             }

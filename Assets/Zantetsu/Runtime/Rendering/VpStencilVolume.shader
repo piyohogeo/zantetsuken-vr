@@ -17,6 +17,11 @@
 // not written, so the scene's own colour and depth are untouched by counting. Which face is front is the rasterizer's
 // ordinary judgement, the same one the colour pass uses: a mirroring transform flips it and nothing here corrects for
 // that, as DESIGN 5.6 requires (向きをPositiveへ直す補正や二重補正を行わない).
+//
+// **Both eyes.** The stereo output is initialised from the instance id exactly as the colour pass does, so under
+// Single Pass Instanced each instance counts into the slice of the eye it stands for, and the logical instance -- the
+// transform and the clip record -- is the physical one halved. Outside stereo instancing the second copy is rejected
+// so a monoscopic camera counts each volume once.
 Shader "Zantetsu/VP Stencil Volume"
 {
     SubShader
@@ -113,7 +118,19 @@ Shader "Zantetsu/VP Stencil Volume"
                 float4 positionCS : SV_POSITION;
                 float4 clipDistance0 : SV_ClipDistance0;
                 float4 clipDistance1 : SV_ClipDistance1;
+                UNITY_VERTEX_OUTPUT_STEREO
             };
+
+            #define VP_REJECTED_POSITION_CS float4(2.0, 2.0, 2.0, 1.0)
+
+            bool IsVpSecondCopyInSingleView(Attributes input)
+            {
+            #if defined(UNITY_STEREO_INSTANCING_ENABLED)
+                return false;
+            #else
+                return _VpInstanceMultiplier == 2u && (GetIndirectInstanceID_Base(input.instanceID) & 1u) != 0u;
+            #endif
+            }
 
             void InitializeVpIndirectDraw(Attributes input)
             {
@@ -129,6 +146,16 @@ Shader "Zantetsu/VP Stencil Volume"
                 InitializeVpIndirectDraw(input);
 
                 Varyings output = (Varyings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                if (IsVpSecondCopyInSingleView(input))
+                {
+                    output.positionCS = VP_REJECTED_POSITION_CS;
+                    output.clipDistance0 = 1.0;
+                    output.clipDistance1 = 1.0;
+                    return output;
+                }
+
                 VpRenderVertex vertex = _VpVertices[input.vertexID];
                 uint physicalInstance = GetIndirectInstanceID_Base(input.instanceID);
                 uint logicalInstance = _VpInstanceMultiplier == 2u ? physicalInstance >> 1 : physicalInstance;

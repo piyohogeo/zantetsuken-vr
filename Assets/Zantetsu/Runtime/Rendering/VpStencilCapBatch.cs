@@ -54,12 +54,14 @@ namespace Zantetsu.Rendering
 
         private static readonly int CapVerticesId = Shader.PropertyToID("_VpCapVertices");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+        private static readonly int InstanceMultiplierId = Shader.PropertyToID("_VpInstanceMultiplier");
 
         private readonly VpIndexedIndirectDrawBatch _volumes;
         private readonly GraphicsBuffer _capVertexBuffer;
         private readonly GraphicsBuffer _capIndexBuffer;
         private readonly MaterialPropertyBlock _volumeProperties = new MaterialPropertyBlock();
         private readonly MaterialPropertyBlock _capProperties = new MaterialPropertyBlock();
+        private readonly MaterialPropertyBlock _initProperties = new MaterialPropertyBlock();
         private readonly VpStencilCapColor[] _colors;
         private readonly Vector4[] _capVertices;
         private readonly uint[] _capIndices;
@@ -162,6 +164,14 @@ namespace Zantetsu.Rendering
         /// </summary>
         public int VolumeGpuDraws { get; private set; }
 
+        /// <summary>
+        /// Whether the last upload was for Single Pass Instanced stereo. Then every draw this batch issues stands for
+        /// both eyes: the volumes' arguments carry twice the logical instances, and the initialisation and the caps
+        /// are issued as two instances, one per eye, with the shaders taking the eye from the instance id. The value
+        /// is fixed by the upload, as it is for the display path, and read by <see cref="Render"/>.
+        /// </summary>
+        public bool SinglePassInstanced { get; private set; }
+
         /// <summary>Whether a GPU call threw, after which this batch neither uploads nor draws again.</summary>
         public bool IsBroken => _broken;
 
@@ -200,6 +210,28 @@ namespace Zantetsu.Rendering
             VpStencilCapColor[] colors,
             int colorCount)
         {
+            return TryUpload(
+                commands, objectToWorlds, clips, capVertices, capVertexCount, capIndices, capIndexCount, colors,
+                colorCount, false);
+        }
+
+        /// <summary>
+        /// The same, saying whether the draws are for Single Pass Instanced stereo. This is the only place the flag
+        /// enters: the volume batch doubles its instance arguments on it, and <see cref="Render"/> reads it back for
+        /// the initialisation and the caps. No product caller passes true; the XR capability check does.
+        /// </summary>
+        public bool TryUpload(
+            VpIndirectCommand[] commands,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool singlePassInstanced)
+        {
             ThrowIfDisposed();
             ThrowIfBroken();
 
@@ -213,7 +245,8 @@ namespace Zantetsu.Rendering
             // Every check is behind us; from here the buffers are written.
             try
             {
-                if (!_volumes.TryUpload(commands ?? Array.Empty<VpIndirectCommand>(), objectToWorlds, clips, false))
+                if (!_volumes.TryUpload(
+                        commands ?? Array.Empty<VpIndirectCommand>(), objectToWorlds, clips, singlePassInstanced))
                 {
                     return false;
                 }
@@ -253,6 +286,7 @@ namespace Zantetsu.Rendering
 
             Array.Copy(colors, _colors, colorCount);
             _colorCount = colorCount;
+            SinglePassInstanced = singlePassInstanced;
             Uploads++;
             return true;
         }
@@ -358,6 +392,13 @@ namespace Zantetsu.Rendering
                     nameof(materials), "the material set has fewer colours than the upload settled");
             }
 
+            // Under Single Pass Instanced each issue carries two instances, one per eye; the shaders take the eye
+            // from the instance id, and a monoscopic camera's variant rejects the second one. This is still one CPU
+            // issue per colour per step.
+            int eyeInstances = SinglePassInstanced ? 2 : 1;
+            _initProperties.SetInteger(InstanceMultiplierId, eyeInstances);
+            _capProperties.SetInteger(InstanceMultiplierId, eyeInstances);
+
             try
             {
                 for (int c = 0; c < _colorCount; c++)
@@ -369,11 +410,12 @@ namespace Zantetsu.Rendering
                     {
                         camera = camera,
                         layer = layer,
+                        matProps = _initProperties,
                         worldBounds = Everywhere,
                         shadowCastingMode = ShadowCastingMode.Off,
                         receiveShadows = false,
                     };
-                    Graphics.RenderPrimitives(initParams, MeshTopology.Triangles, 3);
+                    Graphics.RenderPrimitives(initParams, MeshTopology.Triangles, 3, eyeInstances);
                     StencilInitIssues++;
 
                     // 2. Every volume of this colour, in one call over this colour's command range.
@@ -403,7 +445,7 @@ namespace Zantetsu.Rendering
                         };
                         Graphics.RenderPrimitivesIndexed(
                             capParams, MeshTopology.Triangles, _capIndexBuffer, color.capIndexCount,
-                            color.capIndexStart);
+                            color.capIndexStart, eyeInstances);
                         CapIssues++;
                     }
                 }
