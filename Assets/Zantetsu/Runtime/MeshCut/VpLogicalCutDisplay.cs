@@ -919,6 +919,35 @@ namespace Zantetsu.MeshCut
         /// <summary>The ledger this display reads, which is the scope its cap records' operation ids were issued in.</summary>
         internal LogicalCutLedger Ledger => _ledger;
 
+        /// <summary>
+        /// The body box and the placement one prepared cap's polygon was made from: the box in the geometry's own frame,
+        /// and the object-to-world transform, without the separation. Read-only; false when there is no such cap or its
+        /// body is no longer held.
+        /// </summary>
+        internal bool TryGetCapBody(int capIndex, out Bounds localBounds, out Matrix4x4 objectToWorld)
+        {
+            localBounds = default;
+            objectToWorld = default;
+            if (capIndex < 0 || capIndex >= _capRecordCount)
+            {
+                return false;
+            }
+
+            LogicalFragmentId source = _capRecords[capIndex].source;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                Shown entry = _shown[i];
+                if (entry.fragment == source && entry.capPrepared)
+                {
+                    localBounds = entry.capBounds;
+                    objectToWorld = entry.capPlacement;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>One prepared cap of the settled collection. The polygon itself is read with <see cref="TryGetCapVertex"/>.</summary>
         public bool TryGetCapRecord(int index, out LogicalCutCapRecord record)
         {
