@@ -208,6 +208,55 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// The operation admitted at <paramref name="position"/> (from 0) in the order this ledger holds its operations,
+        /// which is the order they were admitted in: operations are only ever appended, never removed or reordered.
+        /// This reads that held order; it is not a statement about what an id's number means. False past the end.
+        /// Reading it changes nothing.
+        /// </summary>
+        public bool TryGetOperationAtAdmission(int position, out LogicalCutOperation operation)
+        {
+            if (position < 0 || position >= _operations.Count)
+            {
+                operation = default;
+                return false;
+            }
+
+            Operation record = _operations[position];
+            operation = new LogicalCutOperation(
+                new CutOperationId(position + 1), record.source, record.plane, record.state, record.positive, record.negative);
+            return true;
+        }
+
+        /// <summary>
+        /// The published operation that made <paramref name="fragment"/>, and which of its two sides the fragment is:
+        /// +1 for the positive child, -1 for the negative. False for a fragment no cut made -- one added directly -- and
+        /// for one this ledger does not hold. Found by reading the operations' own records; nothing is stored for it,
+        /// and reading it changes nothing.
+        /// </summary>
+        public bool TryGetOrigin(LogicalFragmentId fragment, out CutOperationId operation, out float side)
+        {
+            operation = default;
+            side = 0f;
+            if (!TryIndex(fragment, out _))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _operations.Count; i++)
+            {
+                Operation record = _operations[i];
+                if (record.positive == fragment || record.negative == fragment)
+                {
+                    operation = new CutOperationId(i + 1);
+                    side = record.positive == fragment ? 1f : -1f;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Fills <paramref name="into"/> with a **copy** of the fragment's anchor set, clearing it first, and returns
         /// false for an id this ledger never issued. The ledger's own list is never handed out, so what a caller does
         /// with the copy cannot change the registered set.
