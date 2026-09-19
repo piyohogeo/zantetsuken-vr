@@ -497,13 +497,32 @@ StencilはParityの`Invert`や飽和演算ではなく、共通入力Gateに合�
   - 初期断面の投影入力：Groupの初期断面、Offset、各眼の投影結果とその確定可否。
   - RenderFragmentを表す既存のTargetと`capsComplete`の意味は上書きしない。新経路では、旧RenderFragment方式の`capsComplete`は使わない。
 
-- 製品へ接続する前に、次を確認する（D-183）。
-  - 凹形状、穴、複数の島を持つGeometry。
-  - Facing epsilon帯、および左右眼で可視性が異なる場合。
-  - 初期断面は重なるが、描画用Capは離れる場合。
-  - 厳密に一致するVolumeの共有と、微小に異なる場合の非共有。
-  - Color上限の超過（カメラ準備の拒否）、4x MSAA、複数カメラ。
-  - 6章のGateに合格する実アセットの人形を使った、人間向けの画像一覧。
+- 製品へ接続する前に、次を確認する（D-183）。括弧内は2026-09-20時点の既存証拠との対応で、記載のない範囲は未照合とする。
+  - 凹形状、穴、複数の島を持つGeometry。（非XRの自動比較：K1星形の柱、K2輪、K3三つの島。非XRの陰影付き画像一覧の人間確認。XR Simulator（固定姿勢、Single Pass Instanced、4x）：K1・K2で両眼とも製品とCap別参照の画像が一致。K3のXRと、K1～K3のQuest Linkでの確認は行っていない）
+  - Facing epsilon帯、および左右眼で可視性が異なる場合。（CPU試験：片眼だけ可視のCapとepsilon帯内のCapを残す。表示・画像での確認は未照合）
+  - 初期断面は重なるが、描画用Capは離れる場合。（CPU試験、表示試験、非XRの自動比較：X5）
+  - 厳密に一致するVolumeの共有と、微小に異なる場合の非共有。（CPU試験：同一Volumeは1 Group、100万分の1の差は別Group。表示試験：公開とOffset変更を通じて1回だけ発行。非XRの自動比較：X6）
+  - Color上限の超過（カメラ準備の拒否）、4x MSAA、複数カメラ。（上限超過：CPU試験・表示試験の拒否と次の準備、非XRでT3-v1を試験上限4で拒否、XR Simulator状態12の成功→拒否→回復。4x：XR Simulatorと、Quest LinkのL1・T3で撮影した描画自身のColor／Depth-Stencilが4 sample。複数カメラ：表示試験だけで、画像では未照合）
+  - 6章のGateに合格する実アセットの人形を使った、人間向けの画像一覧。（非XRの陰影付き画像一覧のK4：静的な1姿勢・2視点で、見える問題の指摘なし。XR Simulatorの固定姿勢でも製品とCap別参照の画像が一致。当該アセットの6章Gate合格は非XRとXR Simulatorの記録で確認済み。独立した幾何期待値はなく、Gate合格も画像の一致も描画の幾何的な正しさの証明ではない）
+
+- 実装状況（2026-09-20追記。D-181・D-183の当時の本文と成立範囲は変更しない）。
+  - 実装済み：
+    - D-181の複数切断Snapshot（f528426）、既存分類器による分類（a90cd90）、全登録の一経路表示（5581624）。
+    - D-183のCPU処理：Cap仕事、厳密一致のStencil Volume Group、初期断面の投影によるColor判定（6c27b54）。
+    - 製品のカメラ準備・upload・描画への接続（dce1487）。Volumeは自身の面・Sideだけでclipし、描画するCapには他のSelected面で切り詰めたPolygonを使い、描画用に生成・保持した断面を再利用する。Color上限内に割り当てられなければカメラ準備を拒否し、次の準備試行で再び準備できる。
+    - 共用Scene Volume ProfileのBloom無効化（36377368）。人間がBloomを必要としないと判断し、無効化した。限定した対照比較でpost-processingの関与は確認したが、Bloom単独の因果は切り分けていない。
+  - 確認済み（成立範囲付き。記録はPhase2CapJobDisplayの要約を参照）：
+    - EditMode：全EditMode 3140/3140は固定容量修正の前の結果である。修正後は関連試験198/198だけを実行し、全EditModeは再実行していない。
+    - 非XR（単眼、MSAAなし）の自動比較：14視点で、製品とCap別参照のColor・最終Depthが一致した。製品経路のDepthは非XRの最終値で確認したものであり、以前のハーネスで取得した段階別のDepthは別の証拠として、製品経路の段階別確認には流用しない。独立した幾何期待値に対して、Edge帯の外で欠落・余分はない。本体Depthの3画素（T3-v2で1、K1-v1で2）は原因が未確定である。
+    - 非XRの人間確認：陰影付き画像一覧17組（K4を含む）の全102項目で、問題なしが選ばれた。
+    - XR Simulator（固定姿勢、Single Pass Instanced、4x、Bloom無効）：状態01～10の16組のA/B比較で、製品とCap別参照の両眼画像が一致した（K1・K2・K4を含む）。状態11で全Capが不可視であることを確認し、状態12（Color上限の成功→拒否→回復）は別の実行で確認した。描画時のColor／Depth-Stencil Attachmentの名前・形式・sample数を、撮影したフレームと対応付けて取得した。
+    - XR Simulatorの保存画像の人間確認：左右眼別の216項目で、問題なしが選ばれた。回答者と回答時刻は空欄である。固定姿勢の画像の確認であり、HMDでの立体視の確認ではない。
+    - Quest Link（本人1名、座位でほぼ静止）：L1（A公開・B保留）で、単色・陰影とも異常の報告はない。赤い面どうしの境界はこの配置では判定不能だった。
+    - Quest LinkのL1 B公開前後：公開は1回で結果はApplied。公開を反映した最初の採用Snapshotで準備が成功した。描画範囲・配置・clip・Offset・Capの幾何は一致し、断面の再生成とGeometry再転送はない。公開後の見え方に異常の指摘はない。切り替えの瞬間に一時的な異常がなかったかは、本人の回答「みてたとおもいます」に基づくため未確定である。
+    - Quest LinkのT3：同じ破片に隣接する3枚の断面を同時に見て、面の向きと互いの境界を見分けられ、異常の報告はない。1つの静的な姿勢に限る。
+  - 未確認：XRでのDepthの直接取得、Player、性能（CPU／GPU時間、製品相当の負荷での評価。固定ケースの発行数と成功／拒否の件数は記録済み）、Quest Linkでの他の姿勢・移動中とL1・T3以外の形状、XR SimulatorでのK3と固定姿勢以外、Cap仕事方式での複数カメラの画像、表示・画像でのFacing epsilon帯、8bitの排他利用と一般構成への保証（確認した構成のAttachmentの特定とは別。Phase 1.52の記録は変更しない）。K4には独立した幾何期待値がない。確認に使った赤い陰影は検証用であり、5.3の共通トゥーンによる通常表示の完成ではない。
+  - 未解決：O-034（製品の`MaxStencilColors`など。試験値8は製品値ではない）、O-049（上限超過時の通常表示。拒否と回復の確認はその解決ではない）、実Geometry Commitとの接続（Phase 3）などの後続統合。
+  - 以上はCap仕事方式の接続単位の区切りであり、Phase 2全体、T-066・T-067・T-089の完了を意味しない。未確認事項の扱いはD-184に従う。
 
 - Camera内部／Near Plane近傍の表示は5.2の品質例外とD-131に従う。Stable Geometry置換後はTemporary Stencil由来の部分Capを残さない。
 
@@ -1170,9 +1189,10 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-178 | VP描画StageのStage 3維持 | 4.5.5のStage 3（Indexed Indirect＋属性Pulling）を現在の採用経路とし、Phase 1の表示・Clip・Stencil／Cap・Shadowをこの経路のまま維持する | 人間承認済み、2026-09-18。Stage 3のStage 2に対する性能優位は未比較・未確認であり、それを採用の妨げとしない。追加のStage 2／3比較を採用条件にせず、Stage 2の実装・試験も削除しない。Phase 0.94のStage 2採用と比較結果は過去の記録として変更しない。採用MSAA構成は本決定に含まず未決定のまま残す |
 | D-179 | 採用MSAA構成 | 採用URP Asset（現在の品質レベルPCが参照するPC_RPAsset）のMSAAを4xとし、PC品質レベルのantiAliasingを同じ4に揃える | TL判断、2026-09-19。本人の実機比較を根拠とする。見やすさへの本人の回答と、設定採用の技術判断は区別する。根拠は、XR SimulatorでのMSAA無効と4xの比較（4xで描画時のColor／Depth-Stencilがともに4 sample、基本表示・Clip・Cap／Depth・2 Color・正負とOffset・Shadowが両構成で成立し、両者の差は物体の輪郭に限られた）と、Quest Linkでの本人の目視比較（どちらがMSAAかを伝えずに4xを見やすいと回答）である。性能は測定しておらず、90fps等の達成やすべての場面での画質を保証しない。Playerビルドでは確認していない。Mobile品質レベルのURP Assetは変更していない。D-178時点で未決定とした採用MSAA構成は本決定で定める。資料はMSAA比較資料（MsaaDecision/20260919-device-comparison ほか） |
 | D-180 | Ignored Cap板を残す制約の撤回 | 5.2の`IgnoredTemporaryClipBoundarySet`に属する境界から描画用Cap板を生成しない。D-127の備考にある「残存Cap板の最後の統合Colorでの表示・Depth品質例外」は当時の判断として記録に残し、本決定以降はIgnored Cap板を残す前提を置かない | 人間判断、2026-09-19。Ignored境界の即時断面は背景Geometry Commitまたは選択への編入まで表示されない。論理状態、Anchor、背景処理は変更しない |
-| D-181 | 複数切断の即時表示の具体化 | D-180を具体化し、5.1／5.2／5.6に次を定める。Ignored境界では表示を分岐させず、同じ表示登録内で最初のIgnored境界より手前の形状を一つのRenderFragmentとして一度だけ描く。描画用clip・分離Offset・Stencil Volume・Cap板は選択済み境界だけから描画更新境界ごとに構築し、個別除去・compactionは行わない。候補・Side・選択状態は論理枝ごとに保持する。仮分離Offsetは確定済みAnchor配分による系譜加算とし、Ignored境界は加えない。採用面のframe写像は呼出側が明示し、その適用範囲を登録した根からの系譜に限る。Snapshot構築・描画は一経路とし、同じ系譜の重複登録を拒否する | TL判断、2026-09-19。Cap Record・候補の保持容量は呼出側の明示容量とし、製品値は定めない。Phase 2およびT-089の完了を意味しない。実装と確認は未実施 |
+| D-181 | 複数切断の即時表示の具体化 | D-180を具体化し、5.1／5.2／5.6に次を定める。Ignored境界では表示を分岐させず、同じ表示登録内で最初のIgnored境界より手前の形状を一つのRenderFragmentとして一度だけ描く。描画用clip・分離Offset・Stencil Volume・Cap板は選択済み境界だけから描画更新境界ごとに構築し、個別除去・compactionは行わない。候補・Side・選択状態は論理枝ごとに保持する。仮分離Offsetは確定済みAnchor配分による系譜加算とし、Ignored境界は加えない。採用面のframe写像は呼出側が明示し、その適用範囲を登録した根からの系譜に限る。Snapshot構築・描画は一経路とし、同じ系譜の重複登録を拒否する | TL判断、2026-09-19。Cap Record・候補の保持容量は呼出側の明示容量とし、製品値は定めない。Phase 2およびT-089の完了を意味しない。実装と確認は未実施（2026-09-19時点の記述）。2026-09-20追記：実装済み（f528426、a90cd90、5581624）。現在の状況は5.6の「実装状況」を参照する。Phase 2およびT-089の完了は引き続き意味しない |
 | D-182 | 複数切断Stencilの可視Cap欠落：人間の指摘と確認 | Quest Linkの実機確認（2026-09-19、A公開・B保留の2段切断）で、見た人が「上側の２回切れた直方体が断面ではなくて直方体の内面に赤い面ができてます」と報告し、確認を中断した。非XRの固定視点13組（単一切断、直交・斜交2面、3面、平行2面、9段目Ignored、Color設計2配置）で、現行方式（全Selected面でclipしたVolume）とCap別方式（自身の面・Sideだけでclipし、Capごとに初期化）を並べて見た人が確認した。現行方式は、複数Selected面の片を含む11組で「欠けあり」。Cap別方式は13組すべてで欠け・はみ出し・前後関係の異常の報告なし。「余計な内部面」は、赤面に陰影がなく欠けと区別できないため参考とする | 人間の指摘と確認、2026-09-19。異常の報告はQuest Link実機での観察であり、原因の確認とCap別方式の成立は非XRの画像比較による。その成立範囲は単眼・凸形状・MSAAなしに限り、複雑な形状とXRでの成立を意味しない。各回答の時刻は記録されていない |
-| D-183 | Cap仕事単位のStencilへの変更 | D-182を受け、5.2／5.6に次を定める。①処理順は、可視・非空のCap仕事（RenderFragmentとCap境界の組）→同一VolumeのGroup→投影競合によるColor割当て→描画。Volumeは自身の面・Sideだけでclipし、Colorの競合判定には切り詰め前のOBB初期断面を、描画するCapには他のSelected面で切り詰めたPolygonを使う。Color内は初期化→全Volume→全Cap。本体・Depth・Shadowの全Selected面clipは変えない。②Volumeを1回にまとめるのは、同じ登録・同じ境界とSideで、Volumeへ実際に渡すGeometry・配置・平面・Offsetが同一の場合だけ（epsilonで同一視しない）。近いが同一でない仕事は別Groupとし、投影競合でColorの共有を決める。World Plane一致・Offset一致のepsilonは、Stencilの共有にも判定にも使わない。③Color上限内に安全に割り当てられなければ、理由を区別してカメラ準備を拒否する。部分upload・部分描画・以前の準備結果の再使用を行わず、失敗した準備でRenderを許可しない。displayの永続停止とは分け、次の準備試行を認める。同期的な追加描画・自動的な上限拡張は追加しない。④描画用に生成・保持済みの初期断面を、競合判定に読み取り専用で使う（用途の追加。描かれない面の断面生成は引き続き行わない）。カメラ準備で作り直さず、Offsetは仕事ごとに1回だけ適用する。⑤Cap仕事・Volume Group・初期断面の投影入力を別の契約とし、RenderFragmentのTargetと`capsComplete`の意味を上書きしない。初期断面の不正・欠落・非有限を非競合としない | TL判断、2026-09-19。置換範囲：D-079の「`MaxStencilColors`へ収まらない対象は最後のColorへ統合する」と「保守的な可視Cap Bounds」による判定、D-080の互換Groupの定義（全World Cut Plane・Side・Offset・Cap描画状態の一致による同一Colorへの加算）、D-081の互換Group単位のCull（Cap仕事単位へ）、D-082の可視Cap Boundsによる競合領域（初期断面へ）、D-127備考の最後の統合Colorでの表示・Depth品質例外、5.2の品質例外8。D-079のConflict Graphに関する記述、D-080の符号保存と`sum(W_i) > 0`の意味、D-081の両眼Facing条件、D-082の実Stencil非監視は維持する。③は誤った蓄積を混ぜないための暫定の拒否であり、上限超過時の通常表示はO-049に残す。初期断面による分離（C-proposed）の確認は単眼・凸形状の自動比較に限り、描画用Capの非交差だけで共有した場合のはみ出し（X5のC-naive）は自動比較だけの証拠で、人間は確認していない。製品実装・製品接続前の確認（5.6）は未実施 |
+| D-183 | Cap仕事単位のStencilへの変更 | D-182を受け、5.2／5.6に次を定める。①処理順は、可視・非空のCap仕事（RenderFragmentとCap境界の組）→同一VolumeのGroup→投影競合によるColor割当て→描画。Volumeは自身の面・Sideだけでclipし、Colorの競合判定には切り詰め前のOBB初期断面を、描画するCapには他のSelected面で切り詰めたPolygonを使う。Color内は初期化→全Volume→全Cap。本体・Depth・Shadowの全Selected面clipは変えない。②Volumeを1回にまとめるのは、同じ登録・同じ境界とSideで、Volumeへ実際に渡すGeometry・配置・平面・Offsetが同一の場合だけ（epsilonで同一視しない）。近いが同一でない仕事は別Groupとし、投影競合でColorの共有を決める。World Plane一致・Offset一致のepsilonは、Stencilの共有にも判定にも使わない。③Color上限内に安全に割り当てられなければ、理由を区別してカメラ準備を拒否する。部分upload・部分描画・以前の準備結果の再使用を行わず、失敗した準備でRenderを許可しない。displayの永続停止とは分け、次の準備試行を認める。同期的な追加描画・自動的な上限拡張は追加しない。④描画用に生成・保持済みの初期断面を、競合判定に読み取り専用で使う（用途の追加。描かれない面の断面生成は引き続き行わない）。カメラ準備で作り直さず、Offsetは仕事ごとに1回だけ適用する。⑤Cap仕事・Volume Group・初期断面の投影入力を別の契約とし、RenderFragmentのTargetと`capsComplete`の意味を上書きしない。初期断面の不正・欠落・非有限を非競合としない | TL判断、2026-09-19。置換範囲：D-079の「`MaxStencilColors`へ収まらない対象は最後のColorへ統合する」と「保守的な可視Cap Bounds」による判定、D-080の互換Groupの定義（全World Cut Plane・Side・Offset・Cap描画状態の一致による同一Colorへの加算）、D-081の互換Group単位のCull（Cap仕事単位へ）、D-082の可視Cap Boundsによる競合領域（初期断面へ）、D-127備考の最後の統合Colorでの表示・Depth品質例外、5.2の品質例外8。D-079のConflict Graphに関する記述、D-080の符号保存と`sum(W_i) > 0`の意味、D-081の両眼Facing条件、D-082の実Stencil非監視は維持する。③は誤った蓄積を混ぜないための暫定の拒否であり、上限超過時の通常表示はO-049に残す。初期断面による分離（C-proposed）の確認は単眼・凸形状の自動比較に限り、描画用Capの非交差だけで共有した場合のはみ出し（X5のC-naive）は自動比較だけの証拠で、人間は確認していない。製品実装・製品接続前の確認（5.6）は未実施（2026-09-19時点の記述）。2026-09-20追記：CPU処理（6c27b54）と、製品のカメラ準備・upload・描画への接続（dce1487）を実装済み。製品接続前の確認項目と既存証拠の対応、残る未確認・未解決は5.6の「実装状況」を参照する |
+| D-184 | 描画検証の運用とXR確認系列の終了 | 描画の検証は、自動レンダリング、画像比較、必要な場合のDepth取得を中心とする。人間確認は、保存した画像一覧をまとめて確認する方法を基本とする。Cap仕事方式について2026-09-19～20に行った追加のXR確認系列（XR Simulator、Quest Link）はここで終了する。未確認事項を埋めることだけを理由に、実機・SimulatorのXR試験を自動的に追加しない。XR固有の問題で再確認が必要な場合に限り、目的・得られる情報・所要時間を示し、人間の事前了承を得てから行う。未確認事項は未確認として記録に残すが、それだけを理由に後続の実装を待たせ続けない | 人間判断、2026-09-20。製品の両眼描画要件（4章、5章、T-004、T-089など）を削除する決定ではなく、未確認事項を合格に変更する決定でもない。検証形式の扱いは17章に従い、14章の各試験の方法はこの運用の範囲で行う |
 
 ## 13. 未決事項
 
@@ -1214,7 +1234,7 @@ CPU性能の測定では実行先・並列度・Main配置条件を区別し、�
 
 4章の共通Player終了出口を最初に接続する既存Phaseでは、終了APIをfakeに置き換えた短いシナリオで、Worker通知だけではlatchが変わらずMain回収時に確定すること、ログ・終了APIより先に受付・Commitが閉じて終了APIを一度だけ呼ぶこと、後続要求でログ・終了処理を重複実行しないことを確認する。専用Test ID・Phase、実Player終了、全エラー直積・競合網羅・診断保存試験は追加しない。
 
-検証形式・試験手順の扱いは17章に従う。下表は確認する能力を定め、過去のCapture／Trace／Fixture形式や専用試験の維持を要求しない。
+検証形式・試験手順の扱いは17章に従う。描画の検証方法、人間確認の形、XR試験を追加する条件はD-184に従う。下表は確認する能力を定め、過去のCapture／Trace／Fixture形式や専用試験の維持を要求しない。
 
 Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10へ集約し、導入時だけ適用する。下表の既存試験は担当契約の範囲で再利用する。既存Phaseの完了条件へ追加機能を前倒しせず、専用Test IDや大規模性能matrixを追加しない。
 
@@ -1264,7 +1284,7 @@ Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10�
 | T-064 | 全体低重力プレイ | 一般プレイヤーが空中物体を狙いやすく、世界全体の浮遊感とゲームテンポが許容でき、全軌道系で重力が一致する | 0.35G／0.5G／0.7G／1.0Gを同一投擲・切断Scenarioで比較し、滞空時間、斬撃成功率、主観評価、Physics／予測／VFXの軌道差を記録 |
 | T-065 | 即時切断Shadow | Stencil Capなしの両面Shadowが即時状態で許容でき、clip／Offsetがカラー像と一致し、片面／両面群分割が90fps予算を阻害しない | 箱、薄板、凹形、非閉形状を床／壁近傍で切り、単一Directionalの各Cascade、Bias条件について実Capとの差分、漏れ、peter-panning、Shadow Draw、GPU時間を比較 |
 | T-066 | Stencil Color割当て | 通常Colorでは、左右眼いずれかで初期断面の投影が重なる異なるVolume Groupを分離し、実行Color数を`MaxStencilColors`以下に保つ。安全に割り当てられない場合は、理由を区別してカメラ準備を拒否する（D-183）。各Colorで全Volume後に全Capを描く | 左右眼だけで初期断面が重なる配置、OBBは重なるが初期断面は非交差の配置、描画用Capは離れるが初期断面は重なる配置、全重複、非重複、小さいColor上限（準備拒否と次の準備試行）を確認し、CPU分類、Cap仕事・Volume Group・Color数、拒否率、Clear／Volume／Cap GPU時間、Drawを測定する。全Graph／全Edge、特定のColor番号、方式間で同じ彩色結果を要求しない |
-| T-067 | 正符号Stencil／互換Group | 128初期化とWrap加減算から得る`S>128`が範囲内の`W>0`と一致し、共通契約を満たすGeometryを符号保存のまま共有できる。通常Colorでは異なるVolume GroupのResidual Supportの分離条件を守り、同一のVolume入力を持つCap仕事だけがVolumeを共有する（D-183）。描画結果には5.2の明示的品質例外を適用する | Phase 1.52の低レベル確認を再利用し、Phase 2で製品状態・互換Groupとの統合を確認する。正向き箱、凹形、同方向重複と、生のCount `-1／0／+1／+2`が`127／128／129／130`になる小さいFixtureで`Ref 128 / Comp Less`、Read／Write Mask、IncrementWrap／DecrementWrap、Color／Depth writeを確認する。全体反転閉Mesh、正逆重複、別TopologyのCoincident／Nested／Self-intersection、負determinant Transform、World Plane差、左右眼を試し、向き正規化や二重Transform補正がないことを確認する。範囲外Winding、入力Gateの不合格行列、削除済みの符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupをこの描画試験へ追加しない。8bit排他不能構成はゲーム開始を拒否する |
+| T-067 | 正符号Stencil／Stencil Volume Group | 128初期化とWrap加減算から得る`S>128`が範囲内の`W>0`と一致し、共通契約を満たすGeometryを符号保存のまま共有できる。通常Colorでは異なるVolume GroupのResidual Supportの分離条件を守り、同一のVolume入力を持つCap仕事だけがVolumeを共有する（D-183）。描画結果には5.2の明示的品質例外を適用する | Phase 1.52の低レベル確認を再利用し、Phase 2で製品状態・Stencil Volume Group（D-183。旧方式の互換Group〔D-080〕ではない）との統合を確認する。正向き箱、凹形、同方向重複と、生のCount `-1／0／+1／+2`が`127／128／129／130`になる小さいFixtureで`Ref 128 / Comp Less`、Read／Write Mask、IncrementWrap／DecrementWrap、Color／Depth writeを確認する。全体反転閉Mesh、正逆重複、別TopologyのCoincident／Nested／Self-intersection、負determinant Transform、World Plane差、左右眼を試し、向き正規化や二重Transform補正がないことを確認する。範囲外Winding、入力Gateの不合格行列、削除済みの符号証明、向き正規化、Winding上界、Count容量分割、符号別Groupをこの描画試験へ追加しない。8bit排他不能構成はゲーム開始を拒否する |
 | T-068 | 両眼Cap可視性Cull | Facingでは両眼ともepsilonを越えて明確に裏向きのCapだけを除外し、片眼可視・epsilon帯内・正負Capを誤って除外せずStencil仕事を削減する | 左右眼のFacing一致／不一致、epsilon境界の内外、正負Cap、Frustum内外の固定配置でCull判定、Stencil Draw／GPU時間、左右眼画像差を比較する |
 | T-069 | Owner単位Cut/Cook | 7.2の実行分担と一体Commitを確認する | 受付済みPhysicsの新規投入をurgent Unity Jobで実行し、Burst kernelからMeshDataへ出力する。Main ThreadのMesh適用後にmanaged Jobで`Physics.BakeMesh`を行う。同一Meshの同時Bakeがなく、stale非適用、all-or-none Commit、cook不成立時のAbortを少数Fixtureで確認する。cook後の品質差の扱いは7.3に従う |
 | T-072 | 固定物体の即時切断 | cook遅延中も7.1の配分でAnchorを持つ所有者全体が固定され、Anchorなし側だけが仮分離する。固定を理由に仮描画を省略しない | 単一・両側・OnPlane Anchor、同Sideの離れた島、連続切断、先行結果Rejectを少数例で確認する。cook遅延caseでは固定・仮分離と固定側の誤Impulse・変位がないことを確認し、全体固定による浮遊とAnchor喪失後の大型物体の落下・回転を許容する。cook失敗caseではFinalを部分公開せず、7.1に従ってSourceを退役することを確認する |
@@ -1384,6 +1404,8 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も同じPhase 1を指し、既存Phaseは一括改番しない。各0.9xは先行成果を使いつつ独立に完了でき、即切断、実切断、Cap、物理切断、未来予測の完成をGateにしない。Stageは描画方式の段階でありPhase番号とは別である。0.94の実装・比較は必須とし、採用結果に応じてPhase 1へ進む。実行時自動Fallbackを追加しない。
 
 Phase 1.50と1.52は、2026-09-18に既存証拠を各行の条件へ照合して完了とした。Stage 3経路での確認（非XR、XR Simulator、Quest Link）を根拠とし、成立条件はEditor Play Mode／Quest Link／D3D11／Single Pass Instanced／MSAA無効である。これらの確認はいずれもMSAA無効の構成で行ったものであり、その記録は変更しない。採用MSAA構成はその後D-179で4xと定め、Phase 1.51は2026-09-19に既存の固定Clip確認と4xでの確認を合わせて完了とした（Phase 1.51行）。MSAA無効での確認を4xでの確認とは扱わない。1.50・1.52の完了は、Playerビルドでの成立、性能、実Attachmentの特定と8bit排他利用へは広げない。これらは今回の低レベル確認では直接検証しておらず、一般構成への保証は含めないという限定であって、T-067とPhase 2、4章が求める要件を免除するものではない。
+
+Phase 2のうち、Cap仕事方式（D-183）の製品接続の単位は2026-09-20に区切った（5.6の「実装状況」）。Phase 2全体とT-066・T-067・T-089は完了扱いにしない。
 
 0.9／0.92の完了記録にあるPhase 0.2入力は当時の実施証跡であり、新規利用や今後の再実行に同じ入力を要求する規範ではない。旧入力の移行だけで完了済みPhaseの測定・承認を再実施しない。
 
@@ -1533,6 +1555,8 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 - 未決事項は結論、根拠、決定日を追記して決定事項へ移す。
 
 - 技術検証は測定環境、再現手順、数値結果、スクリーンショット／Profiler参照を残す。
+
+- 描画の検証とXR試験の追加はD-184に従う。未確認事項は未確認として残し、それを埋めることだけを理由にXR試験を追加しない。
 
 - ロードマップのPhase完了条件を満たす前に次Phaseへ進む場合は、既知の負債として記録する。ただし、15章の独立分岐（0.21未完了中の他Phase進行と2.9／3.9の先行実装・未接続mergeを含む）・任意4.55・条件付き4.71／4.72の省略は未完了負債にせず、任意Phase 5.6／5.7も双方または片方を省略してPhase 6へ進める。任意Phase 7.1の未実装・延期・無効・省略も15章に従い未完了負債にしない。
 
