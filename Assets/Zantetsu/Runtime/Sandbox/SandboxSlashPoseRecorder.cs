@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using UnityEngine;
+using Zantetsu.Core;
 using Zantetsu.Core.Input;
 
 namespace Zantetsu.Sandbox
@@ -48,10 +49,9 @@ namespace Zantetsu.Sandbox
     /// keeps a copy, a pin does not record them, and the buttons only ever go
     /// through the katana's own checked setters.
     ///
-    /// Dump writes the katana's current slash numbers to the Unity console
-    /// once. It is throwaway development output for Phase 0.55 tuning: not a
-    /// trace event, not a saved format, and nothing promises it stays the same
-    /// or can be read back. Whether it stays is decided when tuning is done.
+    /// Dump writes the katana's current slash numbers through DevelopmentLogger
+    /// once. Its text is a tuning readout, not a Trace event or replay input.
+    /// DevelopmentLogger owns persistence; the readout has no stable schema.
     /// With Auto dump on latch ticked, the same readout is logged once for
     /// each newly latched wave, while its stroke and begin are still there.
     ///
@@ -127,7 +127,6 @@ namespace Zantetsu.Sandbox
 
         // Reused across draws: OnGUI runs more than once per frame.
         private readonly StringBuilder comparisonText = new StringBuilder(1024);
-        private readonly StringBuilder dumpText = new StringBuilder(2048);
 
         [Tooltip("Log a slash dump once for each newly latched wave. Development output only.")]
         [SerializeField] private bool autoDumpOnLatch;
@@ -593,7 +592,9 @@ namespace Zantetsu.Sandbox
         {
             if (ObserveNewLatch() && autoDumpOnLatch)
             {
-                LogSlashDump();
+#if DEBUG
+                DevelopmentLogger.Instance.write_log("SandboxSlashPoseRecorder", "slash", BuildSlashReadout());
+#endif
             }
         }
 
@@ -613,7 +614,7 @@ namespace Zantetsu.Sandbox
         /// </summary>
         internal void AppendSlashDump(StringBuilder text)
         {
-            text.Append("Slash dump (development output; not a saved or stable format)\n");
+            text.Append("Slash dump (development readout; no stable schema)\n");
             if (katana == null)
             {
                 text.Append("No katana assigned.\n");
@@ -807,12 +808,12 @@ namespace Zantetsu.Sandbox
             return true;
         }
 
-        /// <summary>Logs <see cref="AppendSlashDump"/> once to the Unity console.</summary>
-        internal void LogSlashDump()
+        /// <summary>Formats the readout; the caller chooses whether to record it.</summary>
+        internal string BuildSlashReadout()
         {
-            dumpText.Clear();
+            var dumpText = new StringBuilder(2048);
             AppendSlashDump(dumpText);
-            Debug.Log(dumpText.ToString());
+            return dumpText.ToString();
         }
 
         // Degrees above the horizontal; zero for a zero vector.
@@ -1040,12 +1041,16 @@ namespace Zantetsu.Sandbox
             if (capture.TrySave(out string directory, out string failure))
             {
                 lastSaveMessage = "  SAVED " + capture.UpdateCount + " updates to " + directory;
-                Debug.Log("SandboxSlashCapture: saved " + capture.UpdateCount + " updates to " + directory);
+#if DEBUG
+                DevelopmentLogger.Instance.write_log("SandboxSlashPoseRecorder", "capture_saved", lastSaveMessage);
+#endif
                 return true;
             }
 
             lastSaveMessage = "  SAVE FAILED: " + failure;
-            Debug.LogError("SandboxSlashCapture: save failed: " + failure);
+#if DEBUG
+            DevelopmentLogger.Instance.write_log("SandboxSlashPoseRecorder", "capture_save_failed", failure);
+#endif
             return false;
         }
 
@@ -1149,7 +1154,9 @@ namespace Zantetsu.Sandbox
 
             if (GUILayout.Button("Dump"))
             {
-                LogSlashDump();
+#if DEBUG
+                DevelopmentLogger.Instance.write_log("SandboxSlashPoseRecorder", "slash", BuildSlashReadout());
+#endif
             }
 
             autoDumpOnLatch = GUILayout.Toggle(autoDumpOnLatch, "Auto dump on latch");

@@ -3893,8 +3893,7 @@ namespace Zantetsu.Core.Tests
             StringAssert.Contains("current A ", dump);
             Assert.That(dump.Split('\n').Length, Is.LessThanOrEqualTo(MaxSlashDumpLines));
 
-            LogAssert.Expect(LogType.Log, new Regex("^Slash dump"));
-            Assert.DoesNotThrow(() => recorder.LogSlashDump());
+            Assert.That(recorder.BuildSlashReadout(), Does.Contain("Slash dump"));
         }
 
         [Test]
@@ -3910,8 +3909,7 @@ namespace Zantetsu.Core.Tests
             Object.DestroyImmediate(recorderObject);
             SandboxSlashPoseRecorder unassigned = CreateRecorder(null);
             StringAssert.Contains("No katana assigned.", SlashDumpText(unassigned));
-            LogAssert.Expect(LogType.Log, new Regex("^Slash dump"));
-            Assert.DoesNotThrow(() => unassigned.LogSlashDump());
+            Assert.That(unassigned.BuildSlashReadout(), Does.Contain("No katana assigned."));
         }
 
         // Sweep, with every sample handed the given view forward.

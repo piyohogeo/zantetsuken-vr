@@ -2244,15 +2244,15 @@ Slashの調整・再評価用入力と開発情報の扱いは19.1.12に従う�
 
 writer_idとtagは利用者が選ぶ文字列で、ロガーは解釈・正規化・ID発行・登録・衝突検査をしない。writer_idの別用途との衝突は後から追加する側が回避する。tagの表記・意味にJSON構造や共有Schemaを要求しない。valueの初期対応は数値・文字列と、それらを列挙するiteratorとする。iteratorは呼出し中に列挙して同じ1 recordのJSON arrayへ格納し、呼出し後までlazyに保持しない。必要なUnity Vector等の型対応は同じロガーへ追加でき、値の表現・型対応の追加に共有Schema・登録・旧形式互換・本書の改訂を要求しない。
 
-有効条件はUnity標準の`DEBUG`だけとし、独自フラグを設けない。未定義時は初期化・記録処理を条件付きコンパイルで外し、通常のC#呼出しは引数評価ごと除去する。残るAPI本体も列挙・シリアライズ・記録せず直ちに戻る。呼出し前の別文による値生成や、API宣言等の最終バイナリからの完全除去は保証しない。
+有効条件はUnity標準の`DEBUG`だけとし、独自フラグを設けない。未定義時は初期化・記録処理を条件付きコンパイルで外す。戻り値を持つAPIはC#のConditional属性を使用できないため、呼出し側の`#if DEBUG`で引数評価ごと除去する。既存呼出しもこの形式とし、エラーハンドリングは追加しない。残るAPI本体は列挙・シリアライズ・記録せず無効を返す。呼出し前の別文による値生成や、API宣言等の最終バイナリからの完全除去は保証しない。
 
-DEBUG有効時は各Play Mode開始／Player起動で、旧Writerをbest effortで閉じ、`C:\log\zantetsuken-vr\logger`以下へ開始タイムスタンプとコミットハッシュを含む名前の新しい`.jsonl`を開く。以前のログを上書きしない。開いた`StreamWriter`を保持して`AutoFlush = true`とし、呼出元threadで値の列挙とJSON生成を同期処理した後、完成recordを共通lock内で1行ずつ追記する。複数threadの行混在を防ぐが、厳密な記録順序は要求しない。初期実装にQueue・専用Workerを設けず、非同期化は必要になってから判断する。
+DEBUG有効時は各Play Mode開始／Player起動で旧sessionの受付を停止し、旧Workerへbest effortの排出・closeを要求する。新sessionの専用Workerが、`C:\log\zantetsuken-vr\logger`以下へ開始タイムスタンプとコミットハッシュを含む名前の新しい`.jsonl`を開く。以前のログを上書きしない。開いた`StreamWriter`をWorkerだけが所有して`AutoFlush = true`とし、呼出元threadで値の列挙とJSON生成を同期処理した後、完成recordを有限Queueへ投入する。Queueの既定容量は65,536件とし、満杯なら空きを待たず`write_log`が満杯エラーを返して新規recordを拒否する。受付成功は永続化成功を意味しない。WorkerがFIFOで1行ずつ追記し、I/O中はproducer共通lockを保持しない。容量は待機record数であり、Workerで処理中の最大1件を含めない。複数threadの行混在を防ぐが、producer間の厳密な記録順序は要求しない。2026-09-20の人間指示により書込みをWorkerへ分離する。
 
 出力はUTF-8（BOMなし）のJSONL、行終端はLFとし、Writerを開いたまま別プロセスが読めるようにする。読者はLF終端の正常なJSON行を使い、末尾の未完了・破損部分や最新recordがまだ読めないことを許容する。外部読者との同期、record書込みの原子性、ファイル全体の一貫したSnapshot、電源断への永続化は保証しない。AI等による直接読取りを用途とし、専用Reader／Viewerは作らない。
 
-Play停止／Player終了の標準通知でWriterをbest effortで閉じる。切替・破棄は書込みと同じlockで行い、Writer不在時は記録を無視して自動再生成しない。終了時の全ログ回収・異常終了時のcloseは保証しない。ロガー自身の初期化・I/O失敗は診断の欠落として扱い、Gameplay・Commit・共通Player終了要求へ波及させない。4章の終了前記録を本ロガーへ置き換えず、そのlock取得・同期保存・close成功を終了API呼出しの前提にしない。再試行・代替Logger・Recovery・新しい共通Player終了条件を要求しない。
+Play停止／Player終了の標準通知で受付を停止し、Workerへ待機recordの排出とWriterのbest effort closeを要求する。Worker終了待ちは有限時間とし、timeout後も旧Workerは旧sessionだけを扱い、新sessionのQueueやWriterへ触れない。Writerの作成・書込み・closeはWorkerだけが行う。session不在・停止中・I/O失敗後は受付不可を返し、自動再生成しない。終了時の全ログ回収・異常終了時のcloseは保証しない。ロガー自身の初期化・I/O失敗は診断の欠落として扱い、Gameplay・Commit・共通Player終了要求へ波及させない。4章の終了前記録を本ロガーへ置き換えず、そのlock取得・同期保存・close成功を終了API呼出しの前提にしない。再試行・代替Logger・Recovery・新しい共通Player終了条件を要求しない。
 
-2026-09-20の人間承認により、DEBUG有効時の同期I/O・lock待ち・allocation・GCによるフレーム停止とタイミング変化、ログ欠落・ファイル増加を許容する。非Development Playerではこの任意診断を取得しない。ローテーション・自動削除・耐障害保存を要求せず、ログの増加と後処理は開発時の運用で扱う。製品性能目標、幾何・物理整合性と既存Profiler・Trace・Captureの契約は維持し、測定構成を14章で区別する。記録を製品状態・Commit・Recovery・Trace完全性の正本にせず、Trace Run・Profile・producer登録・History・seal・終了時保存を利用条件にしない。既存の必須Trace記録をJSONLだけで代替しない。
+2026-09-20の人間承認により、DEBUG有効時の値変換・Queue lock待ち・allocation・GC・有限のWorker終了待ちによるフレーム停止とタイミング変化、ログ欠落・ファイル増加を許容する。非Development Playerではこの任意診断を取得しない。ローテーション・自動削除・耐障害保存を要求せず、ログの増加と後処理は開発時の運用で扱う。製品性能目標、幾何・物理整合性と既存Profiler・Trace・Captureの契約は維持し、測定構成を14章で区別する。記録を製品状態・Commit・Recovery・Trace完全性の正本にせず、Trace Run・Profile・producer登録・History・seal・終了時保存を利用条件にしない。既存の必須Trace記録をJSONLだけで代替しない。
 
 導入は通常の共通コード変更とし、17章の同用途出力の移行・削除を含める。導入時は少数例で値・時刻の桁保持、複数threadの行混在なしと外部読取り、Domain Reload無効を含むPlay再開始・終了、DEBUG未定義時の引数評価・列挙・ファイル生成なしと移行範囲を確認する。既存Phaseを再実行せず、専用Phase・Test ID・Benchmark・Logger台帳・CI検出器を追加しない。Player確認は3.3を共用する。開始・終了callback、ファイル名の細部、コミット情報の取得・Playerへの受渡し、JSONキー・型対応の細部は実装詳細とする。3.3のユーザーパス匿名化と10.8の公開／非公開・利用許可境界を維持し、ローカル保存を公開許可とみなさない。
 
