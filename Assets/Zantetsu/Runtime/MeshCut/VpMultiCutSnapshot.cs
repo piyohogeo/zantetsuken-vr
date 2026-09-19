@@ -607,6 +607,12 @@ namespace Zantetsu.MeshCut
         private readonly Vector3[] _sectionVertices;
         private readonly VpMultiCutRegistration[] _single = new VpMultiCutRegistration[1];
 
+        // Which section each cap was built from: the slot in _sections, so that the section kept for a drawn cap can be
+        // read as it is (InitialSection) without being taken again.
+        private readonly int[] _capSection;
+        private int _registrationCount;
+        private long _buildGeneration;
+
         private int _branchCount;
         private int _candidateCount;
         private int _renderFragmentCount;
@@ -662,6 +668,7 @@ namespace Zantetsu.MeshCut
             _capVertices = new Vector3[(int)capVertices];
             _sections = new Section[capacities.caps];
             _sectionVertices = new Vector3[(int)sectionVertices];
+            _capSection = new int[capacities.caps];
             _chain = new VpClipBoundary[capacities.chainDepth];
             _checkCandidates = new VpClipCandidate[capacities.chainDepth];
             _checkStates = new VpClipSelectionState[capacities.chainDepth];
@@ -703,6 +710,35 @@ namespace Zantetsu.MeshCut
 
             return new VpArrayRange<Vector3>(_capVertices, cap.vertexStart, cap.vertexCount);
         }
+
+        /// <summary>
+        /// A look at the section one cap started from, as this snapshot keeps it: the box-and-plane section of the cap's
+        /// face through its registration's box (at most <see cref="VpCapBoundsPolygon.MaxVertices"/>, six), before the
+        /// other selected half-spaces cut it -- in world space after the placement and **before** the render fragment's
+        /// separation, which a reader adds once. It is the section taken or reused for the cap in the build, not a copy
+        /// and not the build's working room; nothing is taken here. Good only until this snapshot is built again
+        /// (<see cref="BuildGeneration"/>). A section of no vertices is a plane that missed the box.
+        /// </summary>
+        internal VpArrayRange<Vector3> InitialSection(int capIndex)
+        {
+            if (!TryGetCap(capIndex, out VpMultiCutCap cap))
+            {
+                throw new ArgumentOutOfRangeException(nameof(capIndex));
+            }
+
+            int slot = _capSection[capIndex];
+            return new VpArrayRange<Vector3>(
+                _sectionVertices, slot * VpCapBoundsPolygon.MaxVertices, _sections[slot].vertexCount);
+        }
+
+        /// <summary>How many registrations the last successful build was given, in the order given; 0 otherwise.</summary>
+        public int RegistrationCount => IsBuilt ? _registrationCount : 0;
+
+        /// <summary>
+        /// Counts the builds this snapshot was asked for, successful or not. A reader that keeps an index into this
+        /// snapshot, or a look at it, keeps it only while this value is unchanged.
+        /// </summary>
+        internal long BuildGeneration => _buildGeneration;
 
         /// <summary>
         /// A look at one render fragment's conditions in this snapshot's own array, on the same terms as
@@ -873,6 +909,7 @@ namespace Zantetsu.MeshCut
             }
 
             Clear();
+            _buildGeneration++;
             _invalid = VpMultiCutInvalidInput.None;
             SectionBuildCount = 0;
             if (reuseFrom == this || (reuseFrom != null && !reuseFrom.IsBuilt))
@@ -925,6 +962,7 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            _registrationCount = registrations.Count;
             IsBuilt = true;
             return VpMultiCutBuildOutcome.Built;
         }
@@ -1686,7 +1724,7 @@ namespace Zantetsu.MeshCut
             {
                 VpClipBoundary boundary = _candidates[representative.candidateStart + j].boundary;
                 VpMultiCutBuildOutcome sectioned = TryTakeSection(
-                    boundary.face, _localPlanes[j], registration, reuseFrom, out int initial);
+                    boundary.face, _localPlanes[j], registration, reuseFrom, out int initial, out int sectionSlot);
                 if (sectioned != VpMultiCutBuildOutcome.Built)
                 {
                     return sectioned;
@@ -1722,6 +1760,7 @@ namespace Zantetsu.MeshCut
 
                 float4 plane = _worldPlanes[j];
                 var normal = new Vector3(plane.x, plane.y, plane.z);
+                _capSection[_capCount] = sectionSlot;
                 _caps[_capCount++] = new VpMultiCutCap(
                     index, boundary, plane, -boundary.side * normal, _capVertexCount, initial, clipped);
                 _capVertexCount += clipped;
@@ -1744,13 +1783,15 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome TryTakeSection(
             VpCapFace face, float4 localPlane, in VpMultiCutRegistration registration, VpMultiCutSnapshot reuseFrom,
-            out int vertexCount)
+            out int vertexCount, out int sectionSlot)
         {
             vertexCount = 0;
+            sectionSlot = -1;
             const int stride = VpCapBoundsPolygon.MaxVertices;
             int found = FindSection(face, localPlane, registration);
             if (found >= 0)
             {
+                sectionSlot = found;
                 vertexCount = _sections[found].vertexCount;
                 Array.Copy(_sectionVertices, found * stride, _initial, 0, vertexCount);
                 return VpMultiCutBuildOutcome.Built;
@@ -1789,6 +1830,7 @@ namespace Zantetsu.MeshCut
                 vertexCount = vertexCount,
             };
             _sectionCount++;
+            sectionSlot = slot;
             Array.Copy(_sectionVertices, slot * stride, _initial, 0, vertexCount);
             return VpMultiCutBuildOutcome.Built;
         }
