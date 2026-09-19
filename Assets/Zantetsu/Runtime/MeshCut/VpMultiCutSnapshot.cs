@@ -292,6 +292,8 @@ namespace Zantetsu.MeshCut
         private int _conditionCount;
         private int _capCount;
         private int _capVertexCount;
+        private Bounds _localBounds;
+        private Matrix4x4 _geometryLocalToWorld;
 
         /// <summary>
         /// Makes the room. Every derived size -- the cap vertices, the walk -- is worked out in 64-bit arithmetic and
@@ -332,6 +334,41 @@ namespace Zantetsu.MeshCut
         }
 
         public VpMultiCutCapacities Capacities => _capacities;
+
+        /// <summary>The source geometry's box the last successful build was made with, in the geometry's coordinates.</summary>
+        public Bounds LocalBounds => IsBuilt ? _localBounds : default;
+
+        /// <summary>The placement the last successful build was made with: the separation summed here is not in it.</summary>
+        public Matrix4x4 GeometryLocalToWorld => IsBuilt ? _geometryLocalToWorld : default;
+
+        /// <summary>
+        /// A look at one cap's vertices (world space, separation added) in this snapshot's own array: nothing is copied,
+        /// and it is good only until this snapshot is built again. For a caller that finishes with it before then.
+        /// </summary>
+        internal VpArrayRange<Vector3> CapPolygon(int capIndex)
+        {
+            if (!TryGetCap(capIndex, out VpMultiCutCap cap))
+            {
+                throw new ArgumentOutOfRangeException(nameof(capIndex));
+            }
+
+            return new VpArrayRange<Vector3>(_capVertices, cap.vertexStart, cap.vertexCount);
+        }
+
+        /// <summary>
+        /// A look at one render fragment's conditions in this snapshot's own array, on the same terms as
+        /// <see cref="CapPolygon"/>.
+        /// </summary>
+        internal VpArrayRange<VpCapConstraint> Conditions(in VpMultiCutRenderFragment renderFragment)
+        {
+            if (!IsBuilt || renderFragment.conditionStart < 0
+                || renderFragment.conditionStart > _conditionCount - renderFragment.conditionCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(renderFragment));
+            }
+
+            return new VpArrayRange<VpCapConstraint>(_conditions, renderFragment.conditionStart, renderFragment.conditionCount);
+        }
 
         /// <summary>Whether the last build succeeded; nothing is readable otherwise.</summary>
         public bool IsBuilt { get; private set; }
@@ -469,6 +506,8 @@ namespace Zantetsu.MeshCut
                 }
             }
 
+            _localBounds = localBounds;
+            _geometryLocalToWorld = geometryLocalToWorld;
             IsBuilt = true;
             return VpMultiCutBuildOutcome.Built;
         }

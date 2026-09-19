@@ -17,11 +17,11 @@ namespace Zantetsu.MeshCut.Tests
     /// </summary>
     public class VpMultiCutSnapshotTests
     {
-        private const float Separation = 0.25f;
+        internal const float Separation = 0.25f;
         private const float Tolerance = 1e-4f;
 
-        private static readonly Bounds k_box = new Bounds(Vector3.zero, Vector3.one * 2f);
-        private static readonly VpClipBoundary[] k_none = Array.Empty<VpClipBoundary>();
+        internal static readonly Bounds k_box = new Bounds(Vector3.zero, Vector3.one * 2f);
+        internal static readonly VpClipBoundary[] k_none = Array.Empty<VpClipBoundary>();
 
         private readonly List<Object> _objects = new List<Object>();
         private int _frame;
@@ -48,21 +48,21 @@ namespace Zantetsu.MeshCut.Tests
 
         // ----- helpers -------------------------------------------------------------------------------------------------
 
-        private static LogicalCutLedger NewLedger() => new LogicalCutLedger(new LogicalCutIncompleteBudget(64));
+        internal static LogicalCutLedger NewLedger() => new LogicalCutLedger(new LogicalCutIncompleteBudget(64));
 
-        private static VpMultiCutSnapshot NewSnapshot(int branches = 64, int candidates = 1024, int renderFragments = 64, int caps = 512, int chain = 64)
+        internal static VpMultiCutSnapshot NewSnapshot(int branches = 64, int candidates = 1024, int renderFragments = 64, int caps = 512, int chain = 64)
         {
             return new VpMultiCutSnapshot(new VpMultiCutCapacities(branches, candidates, renderFragments, caps, chain));
         }
 
-        private static CutOperationId Admit(LogicalCutLedger ledger, LogicalFragmentId source, float4 plane)
+        internal static CutOperationId Admit(LogicalCutLedger ledger, LogicalFragmentId source, float4 plane)
         {
             Assert.That(ledger.Admit(source, plane, true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
             Assert.That(ledger.PrepareAnchorDistribution(cut, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
             return cut;
         }
 
-        private static (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) Cut(
+        internal static (CutOperationId cut, LogicalFragmentId positive, LogicalFragmentId negative) Cut(
             LogicalCutLedger ledger, LogicalFragmentId source, float4 plane)
         {
             CutOperationId cut = Admit(ledger, source, plane);
@@ -70,7 +70,7 @@ namespace Zantetsu.MeshCut.Tests
             return (cut, positive, negative);
         }
 
-        private static VpMultiCutBuildOutcome Build(
+        internal static VpMultiCutBuildOutcome Build(
             VpMultiCutSnapshot snapshot, LogicalCutLedger ledger, LogicalFragmentId root, IReadOnlyCollection<VpClipBoundary> reflected = null,
             Matrix4x4? placement = null, Matrix4x4? mapping = null, Bounds? box = null)
         {
@@ -80,11 +80,11 @@ namespace Zantetsu.MeshCut.Tests
                 Separation, VpCapBoundsPolygon.EpsilonFor(bounds));
         }
 
-        private static VpClipBoundary B(LogicalCutLedger ledger, CutOperationId cut, float side) => new VpClipBoundary(new VpCapFace(ledger, cut), side);
+        internal static VpClipBoundary B(LogicalCutLedger ledger, CutOperationId cut, float side) => new VpClipBoundary(new VpCapFace(ledger, cut), side);
 
         private static Vector3 N(float4 plane) => new Vector3(plane.x, plane.y, plane.z).normalized;
 
-        private static VpMultiCutRenderFragment RenderFragmentOf(VpMultiCutSnapshot snapshot, LogicalFragmentId fragment, float pendingSide = 0f)
+        internal static VpMultiCutRenderFragment RenderFragmentOf(VpMultiCutSnapshot snapshot, LogicalFragmentId fragment, float pendingSide = 0f)
         {
             for (int b = 0; b < snapshot.BranchCount; b++)
             {
@@ -907,9 +907,9 @@ namespace Zantetsu.MeshCut.Tests
             new[] { 0, 1, 2, 3 }, new[] { 4, 7, 6, 5 },
         };
 
-        private const int SideMaterial = 7;
+        internal const int SideMaterial = 7;
 
-        private static VpStoredGeometry AppendPyramid(VpCpuGeometryStorage storage)
+        internal static VpStoredGeometry AppendPyramid(VpCpuGeometryStorage storage)
         {
             var vertices = new List<VpRenderVertex>();
             var topology = new List<int>();

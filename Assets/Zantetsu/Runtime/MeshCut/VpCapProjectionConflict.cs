@@ -291,8 +291,9 @@ namespace Zantetsu.MeshCut
                 return VpCapProjectionOverlap.MayOverlap;
             }
 
-            Span<Vector2> capA = stackalloc Vector2[VpCapBoundsPolygon.MaxVertices];
-            Span<Vector2> capB = stackalloc Vector2[VpCapBoundsPolygon.MaxVertices];
+            // A cap may be the box-and-plane section cut by other selected half-spaces: up to fourteen vertices.
+            Span<Vector2> capA = stackalloc Vector2[VpCapPolygonClip.MaxVertices];
+            Span<Vector2> capB = stackalloc Vector2[VpCapPolygonClip.MaxVertices];
 
             // Every cap of both is looked at once first, so that one which is not finite is never skipped over because
             // the cap it would have been compared with projects to nothing.
@@ -359,10 +360,13 @@ namespace Zantetsu.MeshCut
             return false;
         }
 
-        /// <summary>A polygon there is something of, and no more of than the projection has room for.</summary>
+        /// <summary>
+        /// A polygon there is something of, and no more of than a clipped cap can have
+        /// (<see cref="VpCapPolygonClip.MaxVertices"/>, fourteen; the unclipped section is at most six).
+        /// </summary>
         private static bool IsWellFormed(VpArrayRange<Vector3> polygon)
         {
-            return !polygon.IsNull && polygon.Count >= 1 && polygon.Count <= VpCapBoundsPolygon.MaxVertices;
+            return !polygon.IsNull && polygon.Count >= 1 && polygon.Count <= VpCapPolygonClip.MaxVertices;
         }
 
         private enum Projection
