@@ -54,9 +54,9 @@ namespace Zantetsu.MeshCut
     /// The both-eye Frustum and Facing test of DESIGN 5.7 / T-068 for one prepared cap of a
     /// <see cref="VpLogicalCutDisplay"/>: whether that cap stays a drawing candidate this frame.
     /// <para>
-    /// **What it reads.** The cap's own record and its Cap Bounds Polygon, as the display prepared them — world-space
-    /// vertices with the placement snapshot and the side's separation already applied, and the outward normal of the
-    /// side the cap closes. No cap is built again here and no other representation of one is made; the transform is
+    /// **What it reads.** The cap's own record and its polygon, as the display prepared them — world-space vertices
+    /// of the box section cut by the render fragment's other selected half-spaces, with the placement snapshot and the
+    /// render fragment's separation already applied, and the outward normal of the side the cap closes. No cap is built again here and no other representation of one is made; the transform is
     /// the one that collection used. Nothing reads a triangle, a topology, the stencil or any occlusion.
     /// </para>
     /// <para>
@@ -109,7 +109,10 @@ namespace Zantetsu.MeshCut
     {
         /// <summary>
         /// Judges the prepared cap <paramref name="capIndex"/> of <paramref name="display"/>'s settled collection for
-        /// the two eyes given. False, with a default verdict, when there is no such cap.
+        /// the two eyes given, reading the record's outward normal and its vertices -- up to
+        /// <see cref="VpCapPolygonClip.MaxVertices"/> -- and asking the same test the display's own preparation asks.
+        /// False, with a default verdict, when there is no such cap or it is empty: an empty cap has nothing to judge,
+        /// is never drawn, and is not an omission.
         /// </summary>
         /// <exception cref="ArgumentNullException"><paramref name="display"/> is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException"><paramref name="facingEpsilon"/> is negative or not finite.</exception>
@@ -131,12 +134,12 @@ namespace Zantetsu.MeshCut
             verdict = default;
             if (!display.TryGetCapRecord(capIndex, out LogicalCutCapRecord record)
                 || record.vertexCount < 1
-                || record.vertexCount > VpCapBoundsPolygon.MaxVertices)
+                || record.vertexCount > VpCapPolygonClip.MaxVertices)
             {
                 return false;
             }
 
-            Span<Vector3> polygon = stackalloc Vector3[VpCapBoundsPolygon.MaxVertices];
+            Span<Vector3> polygon = stackalloc Vector3[VpCapPolygonClip.MaxVertices];
             for (int i = 0; i < record.vertexCount; i++)
             {
                 if (!display.TryGetCapVertex(capIndex, i, out polygon[i]))

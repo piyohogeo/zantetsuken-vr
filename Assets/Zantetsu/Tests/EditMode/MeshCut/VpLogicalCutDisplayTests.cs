@@ -148,7 +148,7 @@ namespace Zantetsu.MeshCut.Tests
         {
             return VpLogicalCutDisplay.TryCreate(
                 storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity,
-                VpStencilTestSettings.Create(), () => _frame, out display);
+                VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(), () => _frame, out display);
         }
 
         /// <summary>
@@ -1365,11 +1365,12 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// A plane that does not cross the body's box has no cap on either side, and the split is still drawn: the
-        /// empty cross-section is a normal answer, not a refusal and not a board of its own.
+        /// A plane that does not cross the body's box leaves each side's cap empty, and the split is still drawn: the
+        /// empty cross-section is a normal answer, not a refusal and not a board of its own. Each side keeps its cap
+        /// record (DESIGN D-181: an empty polygon keeps its record), with no vertex, and no triangle of it is issued.
         /// </summary>
         [Test]
-        public void APlaneClearOfTheBody_IsSplitWithNoCaps()
+        public void APlaneClearOfTheBody_IsSplitWithEmptyCaps()
         {
             using (VpCpuGeometryStorage storage = NewStorage())
             {
@@ -1392,7 +1393,17 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.TryBeginFrame(), Is.True, "the collection is not refused");
                     Assert.That(display.StateOf(source), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
                     Assert.That(display.SideCount, Is.EqualTo(4), "the sides are drawn as usual");
-                    Assert.That(display.CapRecordCount, Is.Zero, "and no cap is invented for a plane that misses");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "one record per side, kept");
+                    for (int i = 0; i < display.CapRecordCount; i++)
+                    {
+                        Assert.That(display.TryGetCapRecord(i, out LogicalCutCapRecord record), Is.True);
+                        Assert.That(record.vertexCount, Is.Zero, "and no vertex is invented for a plane that misses");
+                        Assert.That(display.TryGetCapVertex(i, 0, out _), Is.False);
+                    }
+
+                    RenderFrame(display);
+                    Assert.That(display.TryGetCameraStencil(_camera, out VpStencilPreparation preparation, out _), Is.True);
+                    Assert.That(preparation.capsDrawn, Is.Zero, "no triangle of an empty cap is issued");
                 }
             }
         }

@@ -800,7 +800,7 @@ namespace Zantetsu.MeshCut.Tests
         {
             return VpLogicalCutDisplay.TryCreate(
                 storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity,
-                VpStencilTestSettings.Create(), () => _frame, out display);
+                VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(), () => _frame, out display);
         }
 
         private void NextFrame()

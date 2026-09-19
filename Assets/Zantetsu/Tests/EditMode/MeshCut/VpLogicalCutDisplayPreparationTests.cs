@@ -182,6 +182,75 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// The same measure over a multi-cut snapshot: two bodies, each cut and published, then each published top cut
+        /// again, pending, and the bottoms cut again too -- render fragments under one and under two boundaries, caps
+        /// clipped by another boundary, and two registrations classified together. After warming up, a hundred
+        /// preparations over two views show no GC.Alloc sample on this thread; the recorder is shown one allocation first.
+        /// </summary>
+        [Test]
+        public void AMultiCutPreparation_ShowsNoManagedAllocation()
+        {
+            AssertTheMeasuresSeeAllocation();
+            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), 16, false, 0f, 1.2f))
+            {
+                VpLogicalCutDisplay display = scene.display;
+                LogicalCutLedger ledger = scene.ledger;
+                var tops = new List<LogicalFragmentId>();
+                var bottoms = new List<LogicalFragmentId>();
+                for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+                {
+                    Assert.That(ledger.Publish(operation.id, out LogicalFragmentId top, out LogicalFragmentId bottom), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    tops.Add(top);
+                    bottoms.Add(bottom);
+                }
+
+                foreach (LogicalFragmentId fragment in tops)
+                {
+                    Assert.That(ledger.Admit(fragment, new float4(1f, 0f, 0f, 0f), true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
+                    Assert.That(ledger.PrepareAnchorDistribution(cut, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
+                }
+
+                foreach (LogicalFragmentId fragment in bottoms)
+                {
+                    Assert.That(ledger.Admit(fragment, new float4(0f, 0f, 1f, 0.3f), true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
+                    Assert.That(ledger.PrepareAnchorDistribution(cut, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
+                }
+
+                _frame++;
+                Assert.That(display.TryBeginFrame(), Is.True, "the second cuts settle");
+                Assert.That(display.RenderFragmentCount, Is.EqualTo(8), "the layout: four render fragments per body");
+                Assert.That(display.CapRecordCount, Is.EqualTo(16), "two boundaries each");
+
+                Camera camera = TopDown(0.6f, 3f);
+                Assert.That(display.TryRegisterCamera(camera), Is.True);
+                VpCapEye above = EyeOf(camera);
+                camera.transform.position = new Vector3(-0.5f, 2.5f, 0f);
+                camera.orthographicSize = 0.5f;
+                VpCapEye narrow = EyeOf(camera);
+                var views = new[] { above, narrow };
+                for (int i = 0; i < Warmup; i++)
+                {
+                    foreach (VpCapEye eye in views)
+                    {
+                        Assert.That(display.TryPrepareCamera(camera, eye, eye), Is.True);
+                    }
+                }
+
+                int uploads = display.StencilUploads;
+                Measurement multi = Measure(display, camera, views, false, out bool allPrepared);
+                TestContext.WriteLine("multi-cut, two views: " + multi);
+                Assert.That(allPrepared, Is.True, "every preparation succeeded");
+                Assert.That(display.StencilUploads - uploads, Is.EqualTo(Iterations), "each one uploaded");
+                Assert.That(multi.samples, Is.Zero, "no GC.Alloc sample on this thread");
+                Assert.That(display.HeldPreparationLooks, Is.Zero, "no look is left after a preparation");
+                Assert.That(display.TryPrepareCamera(camera, above, above), Is.True);
+                Assert.That(PreparationOf(display, camera).targets, Is.EqualTo(16), "every cap asked about");
+                AssertTheClassifiersAgree(display, ledger, camera, above, 4, "multi-cut, from above");
+                RenderAndRead(display, camera);
+            }
+        }
+
         // ----- the same result ------------------------------------------------------------------------------------------
 
         /// <summary>
@@ -219,7 +288,7 @@ namespace Zantetsu.MeshCut.Tests
                         Assert.That(display.TryRegisterCamera(camera), Is.True);
                         VpCapEye eye = EyeOf(camera);
                         Assert.That(display.TryPrepareCamera(camera, eye, eye), Is.True);
-                        AssertTheClassifiersAgree(display, camera, eye, limit, "limit " + limit + ", " + what);
+                        AssertTheClassifiersAgree(display, scene.ledger, camera, eye, limit, "limit " + limit + ", " + what);
                     }
 
                     foreach ((Camera camera, _) in views)
@@ -233,44 +302,52 @@ namespace Zantetsu.MeshCut.Tests
         // ----- refusal ------------------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Command capacities whose derived sizes do not fit an int -- twice the commands, the cap vertices (twelve
-        /// times), the cap indices (twenty-four times) -- are refused by TryCreate before any GPU buffer, material or
-        /// scratch is made: nothing is created, no material appears, and it answers at once. The largest capacity whose
-        /// sizes all fit is derived without being made.
+        /// Instance capacities whose derived sizes do not fit an int -- the caps (eight per render fragment, one render
+        /// fragment per instance at most), their vertices (fourteen per cap) and their fanned indices (thirty-six per
+        /// cap) -- and a branch capacity whose walk does not fit, are refused by TryCreate before any GPU buffer,
+        /// material or scratch is made: nothing is created, no material appears, and it answers at once. The largest
+        /// instance capacity whose sizes all fit is derived without being made, and the logical capacities are passed
+        /// through as given.
         /// </summary>
         [Test]
         public void CapacitiesThatDoNotFitAnInt_AreRefusedBeforeAnythingIsMade()
         {
-            int fits = int.MaxValue / 24;
-            Assert.That(VpLogicalCutDisplay.TryDeriveCapacities(fits, out VpLogicalCutDisplay.DerivedCapacities derived), Is.True,
-                "every size of " + fits + " commands fits");
-            Assert.That(derived.stencilCommands, Is.EqualTo(fits * 2));
-            Assert.That(derived.capVertices, Is.EqualTo(fits * 12));
-            Assert.That(derived.capIndices, Is.EqualTo(fits * 24));
-            Assert.That(derived.capRecords, Is.EqualTo(fits * 2));
-            Assert.That(derived.constraints, Is.EqualTo(fits * 2 * VpCapCompatibility.SingleCutConstraints));
-            Assert.That(derived.caps, Is.EqualTo(fits * 2 * VpCapProjectionConflict.SingleCutCaps));
+            int fits = int.MaxValue / 288;
+            Assert.That(
+                VpLogicalCutDisplay.TryDeriveCapacities(1, fits, 7, 11, 5, out VpLogicalCutDisplay.DerivedCapacities derived),
+                Is.True, "every size of " + fits + " instances fits");
+            Assert.That(derived.stencilCommands, Is.EqualTo(fits), "a volume command per instance at most");
+            Assert.That(derived.renderFragments, Is.EqualTo(fits));
+            Assert.That(derived.caps, Is.EqualTo(fits * 8));
+            Assert.That(derived.capVertices, Is.EqualTo(fits * 8 * 14));
+            Assert.That(derived.capIndices, Is.EqualTo(fits * 8 * 36));
+            Assert.That(derived.branches, Is.EqualTo(7), "the logical room is the caller's");
+            Assert.That(derived.candidates, Is.EqualTo(11));
+            Assert.That(derived.chainDepth, Is.EqualTo(5));
 
-            var overflowing = new (int commands, string what)[]
+            var overflowing = new (int instances, int branches, string what)[]
             {
-                (fits + 1, "the cap indices, twenty-four times the commands"),
-                (int.MaxValue / 12 + 1, "the cap vertices, twelve times"),
-                (int.MaxValue / 2 + 1, "the stencil commands and records, twice"),
-                (int.MaxValue, "the largest int"),
+                (fits + 1, 4, "the cap indices, 288 times the instances"),
+                (int.MaxValue / 112 + 1, 4, "the cap vertices, 112 times"),
+                (int.MaxValue / 8 + 1, 4, "the caps, eight times"),
+                (int.MaxValue, 4, "the largest int"),
+                (1, int.MaxValue / 2, "the branch walk, twice the branches"),
+                (0, 4, "no instance"),
+                (1, 0, "no branch"),
             };
 
             Dictionary<int, Material> materials = Materials();
             using (var storage = new VpCpuGeometryStorage(1024, 4096, 16, 64, 64, Allocator.Persistent))
             {
                 var table = new VpGeometryReferenceTable(storage, 4, 4);
-                foreach ((int commands, string what) in overflowing)
+                foreach ((int instances, int branches, string what) in overflowing)
                 {
-                    Assert.That(VpLogicalCutDisplay.TryDeriveCapacities(commands, out _), Is.False, what + ": not derived");
+                    Assert.That(VpLogicalCutDisplay.TryDeriveCapacities(1, instances, branches, 4, 4, out _), Is.False, what + ": not derived");
                     int materialsBefore = Resources.FindObjectsOfTypeAll<Material>().Length;
                     var clock = System.Diagnostics.Stopwatch.StartNew();
                     bool created = VpLogicalCutDisplay.TryCreate(
                         storage, table, new LogicalCutLedger(new LogicalCutIncompleteBudget(2)), materials, null, null,
-                        commands, 1, VpStencilTestSettings.Create(4), Frame, out VpLogicalCutDisplay display);
+                        1, instances, branches, 4, 4, VpStencilTestSettings.Create(4), Frame, out VpLogicalCutDisplay display);
                     clock.Stop();
                     Assert.That(created, Is.False, what + ": refused");
                     Assert.That(display, Is.Null, what);
@@ -565,31 +642,55 @@ namespace Zantetsu.MeshCut.Tests
         // ----- the classifiers asked one by one ----------------------------------------------------------------------
 
         /// <summary>
-        /// Visibility, targets (each with its own copies), groups, the work of each record, colours and the arrangement,
-        /// asked of the public classifiers in turn; the preparation's counts and each uploaded colour range must be
-        /// theirs.
+        /// Visibility per cap, one target per render fragment made from the display's records (each with its own copies),
+        /// groups, what each group keeps, colours and the arrangement, asked of the public classifiers in turn; the
+        /// preparation's counts and each uploaded colour range must be theirs.
         /// </summary>
         private static void AssertTheClassifiersAgree(
-            VpLogicalCutDisplay display, Camera camera, VpCapEye eye, int limit, string what)
+            VpLogicalCutDisplay display, LogicalCutLedger ledger, Camera camera, VpCapEye eye, int limit, string what)
         {
             VpStencilSettings settings = display.StencilSettings;
             int records = display.CapRecordCount;
             var seen = new bool[records];
-            var targets = new VpCapProjectionTarget[records];
-            var conditions = new VpCapCompatibilityTarget[records];
-            for (int r = 0; r < records; r++)
+            for (int c = 0; c < records; c++)
             {
-                Assert.That(VpCapVisibility.TryClassify(display, r, eye, eye, settings.facingEpsilon, out VpCapVisibilityVerdict verdict), Is.True);
-                Assert.That(VpCapProjectionConflict.TryGetSingleCutTarget(display, r, eye, eye, settings.facingEpsilon, out targets[r]), Is.True);
-                seen[r] = verdict.Keep;
-                conditions[r] = targets[r].conditions;
+                Assert.That(display.TryGetCapRecord(c, out LogicalCutCapRecord record), Is.True);
+                if (record.vertexCount == 0)
+                {
+                    continue;
+                }
+
+                Assert.That(VpCapVisibility.TryClassify(display, c, eye, eye, settings.facingEpsilon, out VpCapVisibilityVerdict verdict), Is.True);
+                seen[c] = verdict.Keep;
             }
 
-            var groupOf = new int[records];
-            int groups = records == 0 ? 0 : VpCapCompatibility.Classify(conditions, settings.planeEpsilon, settings.offsetEpsilon, groupOf);
+            var targetOf = new List<int>();
+            var targets = new List<VpCapProjectionTarget>();
+            for (int r = 0; r < display.RenderFragmentCount; r++)
+            {
+                Assert.That(display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                if (rf.conditionCount == 0)
+                {
+                    continue;
+                }
+
+                targetOf.Add(r);
+                targets.Add(VpDisplayRecordTargets.Projection(display, ledger, rf.capStart, eye, eye, settings.facingEpsilon));
+            }
+
+            var conditions = new VpCapCompatibilityTarget[targets.Count];
+            for (int t = 0; t < targets.Count; t++)
+            {
+                conditions[t] = targets[t].conditions;
+            }
+
+            var groupOf = new int[targets.Count];
+            int groups = targets.Count == 0 ? 0 : VpCapCompatibility.Classify(conditions, settings.planeEpsilon, settings.offsetEpsilon, groupOf);
             var groupKept = new bool[groups];
-            var capIssued = new bool[records];
-            VpLogicalCutDisplay.SelectStencilWork(seen, groupOf, groups, groupKept, capIssued);
+            for (int t = 0; t < targets.Count; t++)
+            {
+                groupKept[groupOf[t]] |= targets[t].visibleCaps.Count > 0;
+            }
 
             var keptIndex = new int[groups];
             int kept = 0;
@@ -598,33 +699,33 @@ namespace Zantetsu.MeshCut.Tests
                 keptIndex[g] = groupKept[g] ? kept++ : -1;
             }
 
-            var keptRecords = new List<int>();
-            for (int r = 0; r < records; r++)
+            var keptTargets = new List<int>();
+            for (int t = 0; t < targets.Count; t++)
             {
-                if (keptIndex[groupOf[r]] >= 0)
+                if (keptIndex[groupOf[t]] >= 0)
                 {
-                    keptRecords.Add(r);
+                    keptTargets.Add(t);
                 }
             }
 
-            var keptTargets = new VpCapProjectionTarget[keptRecords.Count];
-            var keptGroupOf = new int[keptRecords.Count];
-            for (int k = 0; k < keptRecords.Count; k++)
+            var keptTargetArray = new VpCapProjectionTarget[keptTargets.Count];
+            var keptGroupOf = new int[keptTargets.Count];
+            for (int k = 0; k < keptTargets.Count; k++)
             {
-                keptTargets[k] = targets[keptRecords[k]];
-                keptGroupOf[k] = keptIndex[groupOf[keptRecords[k]]];
+                keptTargetArray[k] = targets[keptTargets[k]];
+                keptGroupOf[k] = keptIndex[groupOf[keptTargets[k]]];
             }
 
             var colourOf = new int[kept];
             if (kept > 0)
             {
                 VpStencilColors.Assign(
-                    keptTargets, keptGroupOf, kept, eye, eye, settings.ndcMargin, settings.planeEpsilon,
+                    keptTargetArray, keptGroupOf, kept, eye, eye, settings.ndcMargin, settings.planeEpsilon,
                     settings.offsetEpsilon, limit, colourOf);
             }
 
-            // The expected ranges, colour by colour: each kept record's volumes (one per side instance it closes), then
-            // the fan of each seen cap.
+            // The expected ranges, colour by colour: each kept render fragment's volume (one command per command of its
+            // body), then the fan of each of its seen caps.
             var expected = new List<VpStencilCapColor>();
             int volume = 0;
             int index = 0;
@@ -642,7 +743,7 @@ namespace Zantetsu.MeshCut.Tests
                 int volumeStart = volume;
                 int capStart = index;
                 bool any = false;
-                for (int k = 0; k < keptRecords.Count; k++)
+                for (int k = 0; k < keptTargets.Count; k++)
                 {
                     if (colourOf[keptGroupOf[k]] != colour)
                     {
@@ -650,13 +751,20 @@ namespace Zantetsu.MeshCut.Tests
                     }
 
                     any = true;
-                    Assert.That(display.TryGetCapRecord(keptRecords[k], out LogicalCutCapRecord record), Is.True);
-                    volume += SidesClosedBy(display, record);
+                    int r = targetOf[keptTargets[k]];
+                    display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                    volume += SidesOf(display, r);
                     volumeTargets++;
-                    if (capIssued[keptRecords[k]])
+                    for (int c = rf.capStart; c < rf.capStart + rf.capCount; c++)
                     {
+                        if (!seen[c])
+                        {
+                            continue;
+                        }
+
+                        display.TryGetCapRecord(c, out LogicalCutCapRecord record);
                         capsDrawn++;
-                        index += 3 * (record.vertexCount - 2);
+                        index += 3 * Math.Max(0, record.vertexCount - 2);
                     }
                 }
 
@@ -670,7 +778,7 @@ namespace Zantetsu.MeshCut.Tests
             }
 
             VpStencilPreparation preparation = PreparationOf(display, camera);
-            Assert.That(preparation.targets, Is.EqualTo(records), what + ": targets");
+            Assert.That(preparation.targets, Is.EqualTo(records), what + ": caps asked about");
             Assert.That(preparation.groups, Is.EqualTo(groups), what + ": groups");
             Assert.That(preparation.culledGroups, Is.EqualTo(groups - kept), what + ": groups left out");
             Assert.That(preparation.colours, Is.EqualTo(expected.Count), what + ": colours");
@@ -694,13 +802,14 @@ namespace Zantetsu.MeshCut.Tests
                 + inLast + " in the last, " + volumeTargets + " volume targets, " + capsDrawn + " caps");
         }
 
-        private static int SidesClosedBy(VpLogicalCutDisplay display, LogicalCutCapRecord record)
+        /// <summary>How many instances draw render fragment <paramref name="renderFragment"/>: one per command of its body.</summary>
+        private static int SidesOf(VpLogicalCutDisplay display, int renderFragment)
         {
             int n = 0;
             for (int i = 0; i < display.SideCount; i++)
             {
                 Assert.That(display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
-                n += side.source == record.source && side.side == record.side ? 1 : 0;
+                n += side.renderFragment == renderFragment ? 1 : 0;
             }
 
             return n;
@@ -740,7 +849,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
                     scene.storage, table, scene.ledger, Materials(), null, null, commandCapacity, commandCapacity * 2,
-                    settings, Frame, out scene.display),
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, Frame, out scene.display),
                 Is.True,
                 "create the display");
             scene.display.Separation = WideSeparation;

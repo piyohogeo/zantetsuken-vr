@@ -24,19 +24,47 @@ namespace Zantetsu.MeshCut
         AwaitingInputs = 2,
 
         /// <summary>
-        /// The provisional split: the same parent geometry drawn once per side, each clipped to its own half. Before
-        /// publication the sides belong to the operation; after it, to the two published children.
+        /// The provisional split: the same parent geometry drawn once per render fragment, each clipped to its own
+        /// region. A registered fragment is in this state once anything below it is drawn apart; a fragment below a
+        /// registered one is in it while the adopted snapshot draws it or something below it.
         /// </summary>
         ProvisionalSplit = 3,
     }
 
+    /// <summary>Why a <see cref="VpLogicalCutDisplay"/> stopped drawing. Each is its own reason, never merged.</summary>
+    public enum LogicalCutDisplayHaltReason
+    {
+        /// <summary>It has not stopped.</summary>
+        None = 0,
+
+        /// <summary>A snapshot could not be built from the input (<see cref="VpMultiCutBuildOutcome.InvalidInput"/>).</summary>
+        InvalidInput = 1,
+
+        /// <summary>A cut on a drawn lineage has no settled distribution (<see cref="VpMultiCutBuildOutcome.UnsettledDistribution"/>).</summary>
+        UnsettledDistribution = 2,
+
+        /// <summary>
+        /// A retired fragment lies inside what the new snapshot would draw once
+        /// (<see cref="VpMultiCutBuildOutcome.RetiredInsideAggregate"/>): the new snapshot cannot be built.
+        /// </summary>
+        RetiredInsideAggregate = 3,
+
+        /// <summary>
+        /// The new snapshot was refused for want of room, and the snapshot adopted earlier -- the one that would keep
+        /// drawing -- draws a fragment retired since, anywhere, in an aggregate or not: keeping it would show what is no
+        /// longer there, and nothing of the new one is adopted in part to take it away.
+        /// </summary>
+        RetiredWhileShown = 4,
+    }
+
     /// <summary>
-    /// One instance the display drew, and what it is: the whole body, or one side of a provisional split.
+    /// One instance the display drew: one render fragment of one registration, for one of its commands.
     /// </summary>
     public readonly struct LogicalCutDisplaySide
     {
         internal LogicalCutDisplaySide(
             LogicalFragmentId source,
+            int renderFragment,
             CutOperationId operation,
             float side,
             bool published,
@@ -46,6 +74,7 @@ namespace Zantetsu.MeshCut
             VpInstanceClip clip)
         {
             this.source = source;
+            this.renderFragment = renderFragment;
             this.operation = operation;
             this.side = side;
             this.published = published;
@@ -58,10 +87,16 @@ namespace Zantetsu.MeshCut
         /// <summary>The fragment this display entry was given, which is the body the geometry belongs to.</summary>
         public readonly LogicalFragmentId source;
 
-        /// <summary>The admitted cut this side belongs to. Unset for a whole body.</summary>
+        /// <summary>The render fragment of the adopted snapshot this instance draws.</summary>
+        public readonly int renderFragment;
+
+        /// <summary>
+        /// The cut this render fragment is the side of: its own pending cut when it is drawn as one side of it, else the
+        /// cut that made it. Unset for a body drawn as it was registered.
+        /// </summary>
         public readonly CutOperationId operation;
 
-        /// <summary>+1 or -1 for a side of a split; 0 for a whole body.</summary>
+        /// <summary>+1 or -1 for a side of that cut; 0 for a body drawn as it was registered.</summary>
         public readonly float side;
 
         /// <summary>
@@ -74,44 +109,43 @@ namespace Zantetsu.MeshCut
         public readonly LogicalFragmentId fragment;
 
         /// <summary>
-        /// Whether the anchors make this side fixed, which is what decides it is not moved apart. Read from the
-        /// prepared distribution before publication and from the published child afterwards; the display has no
-        /// judgement of its own about anchors.
+        /// Whether the anchors make this side fixed, read from that cut's own settled distribution; the display has no
+        /// judgement of its own about anchors. Whether it is drawn apart is the whole lineage's, in <see cref="offset"/>.
         /// </summary>
         public readonly bool fixedByAnchors;
 
-        /// <summary>The separation this side is drawn at, in world space. Zero for a fixed side and a whole body.</summary>
+        /// <summary>
+        /// The separation this render fragment is drawn at, in world space: every free side on its lineage from the
+        /// registered fragment down, summed. Zero for a body drawn as it was registered.
+        /// </summary>
         public readonly Vector3 offset;
 
-        /// <summary>The clip record this side was drawn with.</summary>
+        /// <summary>The clip record this side was drawn with: its selected boundaries, at most eight.</summary>
         public readonly VpInstanceClip clip;
     }
 
     /// <summary>
-    /// One provisional cap this display has prepared: the <c>TemporaryRenderCapRecord</c> of DESIGN 5.2, being one
-    /// side of one adopted cut plane together with the finite Cap Bounds Polygon that side would be masked inside.
+    /// One drawing cap this display has prepared: the <c>TemporaryRenderCapRecord</c> of DESIGN 5.2, being one render
+    /// fragment and one of its selected boundaries, with the polygon that side would be masked inside.
     /// <para>
-    /// **It is an input to a drawing that has not been made.** Nothing here is drawn yet, and this polygon must never
-    /// be drawn opaquely on its own: it is the cross-section of the body's bounds box, not the cut's real outline, and
-    /// DESIGN 5.2 shows it only through the stencil that restricts it to the body. The cut still looks open.
+    /// **It is an input to the stencil, not a plate.** The polygon is the cross-section of the body's bounds box, cut by
+    /// the render fragment's other selected half-spaces -- not the cut's real outline -- and it is only ever drawn
+    /// through the stencil that restricts it to the body.
     /// </para>
     /// <para>
-    /// **One record per side that has area**, not one per submesh: a body drawn as several commands because it has
-    /// several materials is one body with one cross-section, and the same board is not prepared again for each of
-    /// them. A plane that misses the body's box, or touches it in a point or along an edge, gives no record at all on
-    /// either side rather than an empty board.
+    /// **One record per render fragment and selected boundary**, not one per submesh and never one for an Ignored
+    /// boundary. A polygon cut down to nothing keeps its record with no vertices: a normal empty result, never drawn.
     /// </para>
     /// <para>
-    /// **The vertices are in world space**, the placement snapshot applied and then this side's separation added, and
-    /// they are wound so that <c>Cross(p1 - p0, p2 - p0)</c> points along <see cref="outwardNormal"/> — which is the
-    /// outward direction for the side that is kept: against the plane's normal on the positive side, along it on the
-    /// negative one. The two sides of one cut are the same polygon in opposite directions.
+    /// **The vertices are in world space**, the placement snapshot applied and then the render fragment's separation
+    /// added once, and they are wound so that <c>Cross(p1 - p0, p2 - p0)</c> points along <see cref="outwardNormal"/>.
     /// </para>
     /// </summary>
     public readonly struct LogicalCutCapRecord
     {
         internal LogicalCutCapRecord(
             LogicalFragmentId source,
+            int renderFragment,
             CutOperationId operation,
             float side,
             bool published,
@@ -124,6 +158,7 @@ namespace Zantetsu.MeshCut
             int vertexCount)
         {
             this.source = source;
+            this.renderFragment = renderFragment;
             this.operation = operation;
             this.side = side;
             this.published = published;
@@ -139,6 +174,9 @@ namespace Zantetsu.MeshCut
         /// <summary>The fragment this display entry was given, which is the body the cross-section was taken of.</summary>
         public readonly LogicalFragmentId source;
 
+        /// <summary>The render fragment of the adopted snapshot this cap closes.</summary>
+        public readonly int renderFragment;
+
         /// <summary>The admitted cut whose adopted face this cap lies in.</summary>
         public readonly CutOperationId operation;
 
@@ -146,18 +184,18 @@ namespace Zantetsu.MeshCut
         public readonly float side;
 
         /// <summary>
-        /// Whether this side is a **published** child. Before publication a cap belongs to the source and the
+        /// Whether that side is a **published** child. Before publication a cap belongs to the source and the
         /// operation and to no child, exactly as the drawn sides do: no child id is invented early.
         /// </summary>
         public readonly bool published;
 
-        /// <summary>The published child this cap belongs to, or an unset id before publication.</summary>
+        /// <summary>The published child on this side of that face, or an unset id before publication.</summary>
         public readonly LogicalFragmentId fragment;
 
-        /// <summary>Whether the anchors make this side fixed. A fixed side has a cap like any other.</summary>
+        /// <summary>Whether the anchors make this side of that face fixed. A fixed side has a cap like any other.</summary>
         public readonly bool fixedByAnchors;
 
-        /// <summary>The separation already added to every vertex of this cap. Zero for a fixed side.</summary>
+        /// <summary>The render fragment's separation, already added to every vertex of this cap.</summary>
         public readonly Vector3 offset;
 
         /// <summary>The adopted face in world space, before the separation, as <c>(n.xyz, d)</c> with n normalized.</summary>
@@ -166,16 +204,17 @@ namespace Zantetsu.MeshCut
         /// <summary>The outward normal of the side this cap closes, in world space, which the winding agrees with.</summary>
         public readonly Vector3 outwardNormal;
 
-        /// <summary>How many vertices this cap's polygon has: three to six, never fewer.</summary>
+        /// <summary>How many vertices this cap's polygon has: 0 to 14. Zero is an empty cap, kept and never drawn.</summary>
         public readonly int vertexCount;
 
         internal readonly int vertexStart;
     }
 
     /// <summary>
-    /// Shows one logical cut's provisional split from the ledger's own state (DESIGN 5.1, 7.1): the parent geometry,
-    /// and once a cut is admitted and its inputs are ready, that **same** geometry drawn once per side, each clipped
-    /// to its own half and the free side moved a little apart.
+    /// Shows logical cuts from the ledger's own state (DESIGN 5.1, 5.2, 5.6; D-180, D-181): each registered geometry, and
+    /// once cuts are admitted and their inputs are ready, that **same** geometry drawn once per render fragment of the
+    /// multi-cut snapshot (<see cref="VpMultiCutSnapshot"/>), each clipped to its selected boundaries and moved by its
+    /// lineage's separation. One cut and several go through this one path.
     /// <para>
     /// **The ledger is the state; this only reads it.** Admission, anchor distribution, publication, Abort and Stale
     /// all belong to <see cref="LogicalCutLedger"/>, and nothing here keeps a second copy of them or a publication
@@ -184,114 +223,91 @@ namespace Zantetsu.MeshCut
     /// display therefore never returns a share of the incomplete budget.
     /// </para>
     /// <para>
-    /// **What each logical state looks like.** Before admission, the whole parent. Admitted with the anchor
-    /// distribution prepared, the provisional split; admitted without it, still the whole parent, told apart as
-    /// <see cref="LogicalCutDisplayState.AwaitingInputs"/>. Published, the same split carried over to the two
-    /// children, which is what the sides then name. Aborted, the retired source is dropped and nothing of it is
-    /// drawn. Stale leaves the source live with no active operation, so the display goes back to the whole body —
-    /// the prepared result is not shown as if it had been published.
+    /// **Registrations.** <see cref="TryShow(LogicalFragmentId, VpStoredGeometry, Matrix4x4, Matrix4x4, IReadOnlyCollection{VpClipBoundary})"/>
+    /// takes a live fragment with its geometry, its placement, the mapping from its lineage's frame to the geometry's
+    /// coordinates and the boundaries the geometry already reflects, all stated by the caller. The older
+    /// <see cref="TryShow(LogicalFragmentId, VpStoredGeometry, Matrix4x4)"/> is the same call under its caller contract:
+    /// the whole lineage is in the geometry's own frame (identity) and nothing is reflected. Both share one registry,
+    /// and a fragment that is an ancestor or a descendant of one already registered is refused.
     /// </para>
     /// <para>
-    /// **The split does not wait for publication**, and the slot it draws before publication is not a child: no child
-    /// id is invented early, and the sides say so. After publication each side names the child it became, so the same
-    /// face is never registered twice.
+    /// **What each logical state looks like.** Before admission, the whole body. Admitted with the anchor
+    /// distribution prepared, one render fragment per side; admitted without it, still the whole, told apart as
+    /// <see cref="LogicalCutDisplayState.AwaitingInputs"/>. Published, the same render fragments carried over to the
+    /// children, which the sides then name; further cuts divide them again. Up to eight boundaries are drawn per
+    /// render fragment; past that a lineage is drawn once as the shape before its first Ignored boundary, and an
+    /// Ignored boundary makes no clip, offset, volume or cap. Aborted below a registered fragment, the retired part is
+    /// drawn as nothing; a registered fragment that is itself retired is let go. Stale goes back to what was before.
     /// </para>
     /// <para>
-    /// **One geometry, drawn twice.** Both sides address the same stored geometry, the same vertex and index buffers
-    /// and the same index range. Nothing is cut, duplicated, re-meshed or transferred again for the split: only the
-    /// per-instance clip records and transforms are uploaded. The geometry registration and the display instances are
-    /// held for as long as this display shows them, so a source going Replaced does not retire the geometry a
-    /// provisional display is still reading, and each reference this display took is given back exactly once.
+    /// **One geometry, drawn many times.** Every render fragment addresses the same stored geometry, the same vertex
+    /// and index buffers and the same index range: one command per submesh, whose instance count is the number of
+    /// render fragments. Nothing is cut, duplicated, re-meshed or transferred again. The geometry registration is held
+    /// once, and one display instance reference is held per render fragment (never fewer than one); each reference
+    /// this display took is given back exactly once.
     /// </para>
     /// <para>
-    /// **Spaces.** The plane the ledger holds is in the fragment's physics frame, which for the synthetic input of
-    /// this scope is the geometry's own local space; it is converted to world once per collection with the transform
-    /// snapshot this display was given, which does not follow anything afterwards. The clip is evaluated on the world
-    /// position **before** the separation is added and the separation is added after the object-to-world transform,
-    /// as DESIGN 5.1 requires. The kerf is zero: no plane is moved to open a gap, so a gap appears only because a
-    /// free side was moved. A fixed side takes no separation at all, and two fixed sides are still both clipped.
+    /// **Body, depth, shadow and stencil volume read one record.** Each render fragment's clip record (its selected
+    /// half-spaces, before the separation) and its separation are what the surfaces, the depth, both casters and its
+    /// stencil volume are drawn with. The kerf is zero: no plane is moved to open a gap.
     /// </para>
     /// <para>
-    /// **The provisional caps are prepared and drawn through the stencil.** Each split that has an area prepares the
-    /// two <see cref="LogicalCutCapRecord"/>s of DESIGN 5.2 — one per side, one per body and never one per submesh —
-    /// with the finite Cap Bounds Polygon each is masked inside. They are prepared with the candidate and adopted with
-    /// it, so a refused collection keeps the caps it had along with the sides it had. The polygon is never drawn as an
-    /// opaque plate; the stencil restricts it to the real cross-section. The provisional cap colour is the red of
-    /// DESIGN 5.3.
+    /// **Caps, per camera (DESIGN 5.6).** One cap per render fragment and selected boundary, up to fourteen vertices;
+    /// every camera's arrangement comes from <see cref="VpMultiCutStencilClassification"/> over every registration's
+    /// render fragments together: visibility per cap, compatibility and projection over every render fragment's
+    /// conditions, a group with any cap seen keeping every member's volume (once each, whatever the submesh count --
+    /// one command per submesh), only the caps seen drawn, and the colours within the limit. Within a colour the order
+    /// stays initialisation, every volume, every cap.
     /// </para>
     /// <para>
-    /// **Colours, per camera (DESIGN 5.6).** Which caps are seen, and which bodies may overlap on screen, depend on
-    /// the camera, so the stencil arrangement is made per camera by <see cref="TryPrepareCamera(Camera)"/> from the
-    /// adopted snapshot alone, in DESIGN 5.6's order: each cap's both-eye visibility (<see cref="VpCapVisibility"/>),
-    /// the compatibility groups over every cut condition, seen or not (<see cref="VpCapCompatibility"/>), the groups
-    /// none of whose caps is seen left out altogether — their volumes and their caps, while the body and its shadow
-    /// stay — and the colours within the limit (<see cref="VpStencilColors"/>, with
-    /// <see cref="VpCapProjectionConflict"/> saying who must be kept apart, and caps left out by visibility passed on
-    /// as not complete). A group with a cap still seen keeps the volumes of every target in it. Every colour is uploaded
-    /// together, once per preparation, into that camera's own stencil batch; within a colour the order stays
-    /// initialisation, every volume, every cap. No fixed positive and negative group is used.
+    /// **One stencil batch per registered camera.** A camera is registered with <see cref="TryRegisterCamera"/>, up to
+    /// the fixed <see cref="VpStencilSettings.cameraCapacity"/>, and owns a stencil batch of its own for as long as it is
+    /// registered, so preparing one camera never writes the buffers another camera's registered draws read. Once a
+    /// camera's draws are registered in a frame it is not prepared again and not unregistered in that frame.
     /// </para>
     /// <para>
-    /// **One stencil batch per registered camera.** A camera is registered with
-    /// <see cref="TryRegisterCamera"/>, up to the fixed <see cref="VpStencilSettings.cameraCapacity"/>, and owns a stencil
-    /// batch of its own for as long as it is registered, so preparing one camera never writes the buffers another
-    /// camera's registered draws read. The geometry, its GPU buffers and the display batch are shared; only the
-    /// arrangement and its buffers are per camera. Once a camera's draws are registered in a frame it is not prepared
-    /// again and not unregistered in that frame. Other stencil work drawing into the same camera is still outside this
-    /// contract, and this class does not detect it.
+    /// **Snapshot and adoption.** A collection builds a new snapshot beside the adopted one, over every registration
+    /// together, and adopts it only when all of it was built and it fits: the commands, the instances, the display
+    /// instances it needs, and the largest stencil arrangement it could need against every registered camera's batch.
+    /// A capacity shortfall alone keeps the previous snapshot drawing, whole: nothing of the new one is adopted or
+    /// uploaded -- but only when that snapshot draws no fragment retired since it was adopted; otherwise the display
+    /// stops (<see cref="LogicalCutDisplayHaltReason.RetiredWhileShown"/>). The body's upload is asked, by the counts and
+    /// contents it will send, before anything is written; an upload refused after that is not a shortfall and stops the
+    /// display as broken. A preparation belongs to the frame and the adopted snapshot it was made for.
     /// </para>
     /// <para>
-    /// **Snapshot and preparation.** Adopting a snapshot needs both the display batch and the stencil side to have
-    /// room for it: the largest stencil arrangement the candidate could need is checked against the stencil capacity,
-    /// and against every registered camera's batch, before anything is written, and an ordinary refusal keeps the
-    /// previous snapshot as before. That check is of capacity and form; it does not promise the later upload, and an
-    /// upload refused against it, like a GPU call that throws, stops the display. A preparation belongs to the frame
-    /// and the adopted snapshot it was made for, so a camera prepared before a newer snapshot was adopted, or in an
-    /// earlier frame, draws nothing until it is prepared again — and <see cref="Render"/> refuses it before
-    /// registering anything, the body included.
+    /// **What stops the display.** A snapshot that cannot be built for a reason other than room -- a retired fragment
+    /// inside what would be drawn once (<see cref="VpMultiCutBuildOutcome.RetiredInsideAggregate"/>), input that
+    /// cannot be built from, a distribution that is not settled -- is not a reason to keep drawing the previous one,
+    /// which may show what is no longer there. The display then stops for good: <see cref="IsHalted"/> is true,
+    /// <see cref="HaltReason"/> keeps the first reason, collections and new bodies are refused, and preparing or drawing
+    /// throws. This is decided when a frame is collected, before that frame registers any draw. Nothing is repaired,
+    /// retried or dropped, and nothing is released on the spot: <see cref="Dispose"/> gives everything back under the
+    /// usual frame guard. What decides it is read from the ledger before any room is taken, so a shortage of room is
+    /// never what hides it (see <see cref="VpMultiCutSnapshot"/> for the one exception, an overflow).
     /// </para>
     /// <para>
-    /// **A preparation allocates nothing once the display is made.** Everything a camera's preparation works in — the
-    /// targets, their conditions and caps, the visibility, the groups, what is kept, the colours and the arrangement
-    /// itself — is this display's own scratch, made when the display is made at the sizes its fixed capacity gives
-    /// (every body command drawn as two sides, and two caps per split body), filled to a count each time and never
-    /// grown. A cap is read as a look at the adopted snapshot's own vertices, not copied; those looks last only while
-    /// the preparation runs and are cleared when it ends, so nothing kept by a camera, and nothing kept from one
-    /// adoption to the next, refers to them. The arrangement is uploaded by count, so nothing an earlier, larger
-    /// arrangement left in the scratch is checked, sent or drawn. A preparation runs to its end before another
-    /// starts: a call into this display made while one is running is refused before it changes anything.
+    /// **A preparation allocates nothing once the display is made.** The classification's room, the arrangement and the
+    /// batches are made with the display at the sizes its capacities give, filled to a count each time and never
+    /// grown. A cap is read as a look at the adopted snapshot's own vertices, held only while the preparation runs. A
+    /// preparation runs to its end before another starts: a call into this display made while one is running is
+    /// refused before it changes anything.
     /// </para>
     /// <para>
-    /// **Two casters, and who owns them.** A body drawn as a provisional split is cast two-sided and every other body
-    /// one-sided, which is DESIGN 5.4's division: no cap is drawn into the shadow map, so what occludes behind the
-    /// opening is the back of the shell, and only a two-sided caster puts it there. Both materials are the caller's,
-    /// made and destroyed by the caller; this class creates neither and disposes neither, and it refuses to be made
-    /// with one of them alone, whichever one that is -- either both casters or no shadows at all. Which commands fall on which side is decided where the candidate is built, from the
-    /// plan that says the body is split -- not by reading back what the clip records hold, which is an input to the
-    /// drawing rather than a statement about the logical state. Every caster reads this frame's adopted snapshot: the
-    /// same geometry, transform, clip record and offset as the surfaces, never a second look at the ledger.
+    /// **Two casters, and who owns them.** A body with any render fragment clipped is cast two-sided and every other
+    /// body one-sided, which is DESIGN 5.4's division. Both materials are the caller's; this class creates neither and
+    /// disposes neither, and it refuses to be made with one of them alone.
     /// </para>
     /// <para>
-    /// **One stereo condition for the whole arrangement.** <see cref="SinglePassInstanced"/> is the only way to say
-    /// that the draws are stereo, and it is read in one place — where the arrangement uploads — and given to both
-    /// batches together, so the body, the initialisation, the volumes and the caps cannot end up on different eye
-    /// counts. Finding out whether XR is up, and which mode it settled on, is the caller's; this class asks the engine
-    /// nothing and waits for nothing.
+    /// **One stereo condition for the whole arrangement.** <see cref="SinglePassInstanced"/> is read in one place —
+    /// where a collection uploads — and given to both batches together.
     /// </para>
     /// <para>
     /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the body's buffers
     /// for that frame; <see cref="TryPrepareCamera(Camera)"/> then makes one camera's stencil arrangement from what was
-    /// settled, as often as the view changes before that camera draws, without collecting the ledger or transferring
-    /// geometry again; <see cref="Render"/> registers that camera's draws. A frame is identified by the engine's frame
-    /// counter, so collecting again inside one frame changes nothing and nothing rewrites what a frame has already
-    /// drawn. Capacity is fixed and an ordinary shortage is decided **before** anything is uploaded.
-    /// </para>
-    /// <para>
-    /// **A display failure is never a logical one.** When a collection cannot be made, the previous snapshot stays on
-    /// screen and <see cref="TryBeginFrame"/> returns false: the caller is told that the latest logical state is not
-    /// what is being shown, and nothing rolls back a publication that already happened. A GPU call that throws is
-    /// different, as elsewhere: what reached the GPU cannot be established, so the display stops and only
-    /// <see cref="Dispose"/> is left. Main thread only.
+    /// settled; <see cref="Render"/> registers that camera's draws. A frame is identified by the engine's frame
+    /// counter, so collecting again inside one frame changes nothing. A GPU call that throws stops the display as
+    /// broken: what reached the GPU cannot be established, and only <see cref="Dispose"/> is left. Main thread only.
     /// </para>
     /// </summary>
     public sealed class VpLogicalCutDisplay : IDisposable
@@ -301,58 +317,36 @@ namespace Zantetsu.MeshCut
             public LogicalFragmentId fragment;
             public VpStoredGeometry geometry;
             public VpGeometryReference reference;
-            public VpDisplayInstanceReference positiveInstance;
-            public VpDisplayInstanceReference secondInstance;
-            public bool hasSecondInstance;
+
+            // Every display instance this registration holds, the one taken with the geometry first: one per render
+            // fragment it is drawn as, and never fewer than one.
+            public readonly List<VpDisplayInstanceReference> instances = new List<VpDisplayInstanceReference>(2);
+            public int takenThisPass;
+
             public Matrix4x4 objectToWorld;
+            public Matrix4x4 lineageToGeometryLocal;
+            public VpClipBoundary[] reflected;
             public VpIndirectCommand[] commands;
             public Material[] commandMaterials;
 
             /// <summary>
             /// The bounds of the vertices this geometry's indices reach, in the geometry's own frame, measured once
-            /// when the body was taken in. The cap's cross-section is taken of this box, and it is the whole body's —
-            /// not one submesh's — which is what keeps several materials from becoming several caps.
+            /// when the body was taken in: the whole body's, not one submesh's.
             /// </summary>
             public Bounds localBounds;
 
-            /// <summary>
-            /// The cap polygon prepared for this body: the cross-section itself, in world space and **before any
-            /// separation**, together with the three things it was made of. While those are unchanged the intersection,
-            /// the placing and the ordering are not done again (DESIGN 5.7); a body drawn further apart is placed
-            /// again, not intersected again. A count of zero is a prepared answer too - a plane that misses this box is
-            /// not asked about twice.
-            /// </summary>
-            public readonly Vector3[] capPolygon = new Vector3[VpCapBoundsPolygon.MaxVertices];
-
-            public bool capPrepared;
-            public int capVertexCount;
-            public float4 capWorldPlane;
-            public float4 capLocalPlane;
-            public Matrix4x4 capPlacement;
-            public Bounds capBounds;
-
-            /// <summary>The cut this entry is showing, remembered from when it was admitted.</summary>
-            public CutOperationId operation;
-
+            // What the adopted snapshot shows of it.
             public bool splitShown;
-        }
+            public bool awaitingShown;
+            public int renderFragmentsShown;
 
-        /// <summary>What one entry's collection decided, before anything is changed.</summary>
-        private struct Plan
-        {
-            public Shown entry;
-            public bool drop;
+            // What the collection under way decided, before anything is changed.
+            public bool dropping;
+            public bool awaiting;
             public bool split;
-            public CutOperationId operation;
-            public bool published;
-            public LogicalFragmentId positiveChild;
-            public LogicalFragmentId negativeChild;
-            public bool positiveFixed;
-            public bool negativeFixed;
-            public float4 worldPlane;
-
-            /// <summary>The same adopted face in the geometry's own frame, which is where the box's edges are.</summary>
-            public float4 localPlane;
+            public bool clipped;
+            public int renderFragments;
+            public int firstRenderFragment;
         }
 
         private readonly VpCpuGeometryStorage _storage;
@@ -384,131 +378,57 @@ namespace Zantetsu.MeshCut
         private readonly int _instanceCapacity;
 
         private readonly List<Shown> _shown = new List<Shown>(2);
-        private readonly List<Plan> _plans = new List<Plan>(2);
+        private readonly List<VpMultiCutRegistration> _registrations = new List<VpMultiCutRegistration>(2);
 
-        // The adopted snapshot: what the GPU holds and what is being drawn. Nothing here is touched until an upload
-        // has succeeded, so a refused collection leaves exactly this on screen.
+        // The adopted snapshot and the one a collection builds beside it. They change places on adoption, so the one
+        // just replaced is what the next collection builds in, and sections are reused from the adopted one.
+        private VpMultiCutSnapshot _snapshot;
+        private VpMultiCutSnapshot _building;
+        private readonly VpMultiCutStencilClassification _classification;
+
+        // The adopted draw data: what the GPU holds and what is being drawn. Nothing here is touched until an upload
+        // has succeeded, so a refused collection leaves exactly this on screen. Each has a candidate twin of the same
+        // fixed size; adoption trades them.
         private List<LogicalCutDisplaySide> _sides = new List<LogicalCutDisplaySide>(4);
-        private VpIndirectCommand[] _commands = Array.Empty<VpIndirectCommand>();
-        private Material[] _commandMaterials = Array.Empty<Material>();
-
-        // Which of the adopted commands are a body drawn as a provisional split. It is written where the candidate is
-        // built, from the plan, and adopted with everything else -- never worked out afterwards by looking at what the
-        // clip records happen to hold.
-        private bool[] _commandProvisional = Array.Empty<bool>();
+        private VpIndirectCommand[] _commands;
+        private Material[] _commandMaterials;
+        private bool[] _commandProvisional;
+        private Matrix4x4[] _transforms;
+        private VpInstanceClip[] _clips;
+        private LogicalCutCapRecord[] _capRecords;
+        private int[] _rfCommandStart;
+        private int[] _rfCommandCount;
+        private Matrix4x4[] _rfTransform;
+        private LogicalFragmentId[] _roots = Array.Empty<LogicalFragmentId>();
         private int _commandCount;
-
-        // The caps of the adopted snapshot, in the same fate as everything else here: prepared with the candidate and
-        // adopted with it, so what is drawn and what would be masked never disagree.
-        private LogicalCutCapRecord[] _capRecords = Array.Empty<LogicalCutCapRecord>();
-        private Vector3[] _capVertices = Array.Empty<Vector3>();
         private int _capRecordCount;
-        private int _capVertexCount;
 
-        // Each instance's transform and clip record, adopted with the rest, so that a camera's stencil arrangement is
-        // made from exactly what the body is drawn with.
-        private Matrix4x4[] _transforms = Array.Empty<Matrix4x4>();
-        private VpInstanceClip[] _clips = Array.Empty<VpInstanceClip>();
+        private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
+        private VpIndirectCommand[] _candidateCommands;
+        private Material[] _candidateCommandMaterials;
+        private bool[] _candidateCommandProvisional;
+        private Matrix4x4[] _candidateTransforms;
+        private VpInstanceClip[] _candidateClips;
+        private LogicalCutCapRecord[] _candidateCapRecords;
+        private int[] _candidateRfCommandStart;
+        private int[] _candidateRfCommandCount;
+        private Matrix4x4[] _candidateRfTransform;
+        private LogicalFragmentId[] _candidateRoots = Array.Empty<LogicalFragmentId>();
 
         // Counts adoptions. A camera's preparation names the snapshot it was made for, and a newer one voids it.
         private long _generation;
 
-        // The candidate being built. It becomes the adopted snapshot only when the upload succeeds.
-        private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
-        private VpIndirectCommand[] _candidateCommands = Array.Empty<VpIndirectCommand>();
-        private Material[] _candidateCommandMaterials = Array.Empty<Material>();
-        private bool[] _candidateCommandProvisional = Array.Empty<bool>();
-        private Matrix4x4[] _candidateTransforms = Array.Empty<Matrix4x4>();
-        private VpInstanceClip[] _candidateClips = Array.Empty<VpInstanceClip>();
-        private LogicalCutCapRecord[] _candidateCapRecords = Array.Empty<LogicalCutCapRecord>();
-        private Vector3[] _candidateCapVertices = Array.Empty<Vector3>();
-        private int _candidateCapRecordCount;
-
-        private readonly VpCapBoundsPolygon _capPolygon = new VpCapBoundsPolygon();
-
         // A stencil arrangement being made: for the largest one a candidate could need, checked before adoption, and
-        // for one camera's colours when it is prepared. Scratch only; each upload copies what it takes.
-        // Made once, at the stencil capacity, and never grown: the arrangement is filled to a count and uploaded by it.
+        // for one camera's colours when it is prepared. Made once, at the stencil capacity, and never grown.
         private readonly VpIndirectCommand[] _candidateStencilCommands;
         private readonly Matrix4x4[] _candidateStencilTransforms;
         private readonly VpInstanceClip[] _candidateStencilClips;
         private readonly int[] _candidateCapIndices;
         private readonly VpStencilCapColor[] _candidateStencilColors;
 
-        // One preparation's scratch, one slot per cap record the capacity allows: made once, filled to a count, never
-        // grown, and read no further than that count. The targets hold looks at the adopted cap vertices and at the
-        // two scratch arrays below them; those are cleared when the preparation ends.
         private readonly int _capRecordCapacity;
-        private readonly VpCapProjectionTarget[] _prepTargets;
-        private readonly VpCapCompatibilityTarget[] _prepConditions;
-        private readonly bool[] _prepSeen;
-        private readonly int[] _prepGroupOfRecord;
-        private readonly bool[] _prepGroupSeen;
-        private readonly bool[] _prepCapIssued;
-        private readonly int[] _prepKeptGroup;
-        private readonly int[] _prepKeptRecords;
-        private readonly VpCapProjectionTarget[] _prepKeptTargets;
-        private readonly int[] _prepKeptGroupOf;
-        private readonly int[] _prepColourOfGroup;
-        private readonly VpCapConstraint[] _prepConstraints;
-        private readonly VpArrayRange<Vector3>[] _prepCaps;
-        private readonly CountedList<VpCapCompatibilityTarget> _prepConditionList;
-        private readonly CountedList<VpCapProjectionTarget> _prepKeptTargetList;
-        private readonly CountedList<int> _prepKeptGroupOfList;
-        private int _prepRecordsUsed;
         private int _preparationRecordLimit;
         private bool _preparing;
-
-        /// <summary>
-        /// A read-only look at the first <see cref="Count"/> items of an array this display owns, for the classifiers
-        /// that take lists. Made once with its array; only the count changes, so nothing is allocated when it is handed
-        /// over, and nothing past the count -- an earlier, longer fill -- is ever read through it.
-        /// </summary>
-        private sealed class CountedList<T> : IReadOnlyList<T>
-        {
-            private readonly T[] _items;
-            private int _count;
-
-            public CountedList(T[] items)
-            {
-                _items = items;
-            }
-
-            public int Count => _count;
-
-            public T this[int index]
-            {
-                get
-                {
-                    if ((uint)index >= (uint)_count)
-                    {
-                        throw new ArgumentOutOfRangeException(nameof(index));
-                    }
-
-                    return _items[index];
-                }
-            }
-
-            public void SetCount(int count)
-            {
-                if ((uint)count > (uint)_items.Length)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(count));
-                }
-
-                _count = count;
-            }
-
-            public IEnumerator<T> GetEnumerator()
-            {
-                for (int i = 0; i < _count; i++)
-                {
-                    yield return _items[i];
-                }
-            }
-
-            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-        }
 
         /// <summary>One registered camera's stencil work: its own batch, and what it was last prepared and drawn for.</summary>
         private sealed class CameraStencil
@@ -525,13 +445,17 @@ namespace Zantetsu.MeshCut
         private static readonly Color ProvisionalCapColour = Color.red;
 
         // The frame whose collection succeeded, and the frame that may draw. They are not the same: a frame whose
-        // collection was refused may still draw the snapshot adopted earlier.
+        // collection was refused for room may still draw the snapshot adopted earlier.
         private int _settledFrame = int.MinValue;
         private int _openFrame = int.MinValue;
         private bool _hasSnapshot;
         private bool _drawRegisteredThisFrame;
         private bool _broken;
+        private bool _halted;
+        private LogicalCutDisplayHaltReason _haltReason = LogicalCutDisplayHaltReason.None;
+        private VpMultiCutInvalidInput _haltInvalidInput = VpMultiCutInvalidInput.None;
         private bool _disposed;
+        private float _separation = 0.05f;
 
         private VpLogicalCutDisplay(
             VpCpuGeometryStorage storage,
@@ -547,6 +471,9 @@ namespace Zantetsu.MeshCut
             int commandCapacity,
             int instanceCapacity,
             in DerivedCapacities derived,
+            VpMultiCutSnapshot snapshot,
+            VpMultiCutSnapshot building,
+            VpMultiCutStencilClassification classification,
             Func<int> frameSource)
         {
             _storage = storage;
@@ -559,12 +486,15 @@ namespace Zantetsu.MeshCut
             _batch = batch;
             _stencilMaterials = stencilMaterials;
             _settings = settings;
+            _snapshot = snapshot;
+            _building = building;
+            _classification = classification;
             _cameraStencils = new CameraStencil[settings.cameraCapacity];
             _candidateStencilColors = new VpStencilCapColor[settings.maxStencilColors];
 
-            // Every body command may be drawn as two sides, one instance each, and every split body has two caps of at
-            // most the polygon's vertex count, fanned. Each camera's batch is made to these sizes, derived and checked
-            // before anything was made (DeriveCapacities).
+            // Every render fragment's volume is one stencil command per command of its body, which is at most one per
+            // instance; every cap is fanned. Each camera's batch is made to these sizes, derived and checked before
+            // anything was made (TryDeriveCapacities).
             _stencilCommandCapacity = derived.stencilCommands;
             _stencilCapVertexCapacity = derived.capVertices;
             _stencilCapIndexCapacity = derived.capIndices;
@@ -573,81 +503,97 @@ namespace Zantetsu.MeshCut
             _candidateStencilClips = new VpInstanceClip[_stencilCommandCapacity];
             _candidateCapIndices = new int[_stencilCapIndexCapacity];
 
-            // Two caps per split body, and a body takes at least one command: a collection with more is refused before
-            // it is adopted, so no preparation meets more records than this.
-            _capRecordCapacity = derived.capRecords;
-            int records = _capRecordCapacity;
-            _prepTargets = new VpCapProjectionTarget[records];
-            _prepConditions = new VpCapCompatibilityTarget[records];
-            _prepSeen = new bool[records];
-            _prepGroupOfRecord = new int[records];
-            _prepGroupSeen = new bool[records];
-            _prepCapIssued = new bool[records];
-            _prepKeptGroup = new int[records];
-            _prepKeptRecords = new int[records];
-            _prepKeptTargets = new VpCapProjectionTarget[records];
-            _prepKeptGroupOf = new int[records];
-            _prepColourOfGroup = new int[records];
-            _prepConstraints = new VpCapConstraint[derived.constraints];
-            _prepCaps = new VpArrayRange<Vector3>[derived.caps];
-            _prepConditionList = new CountedList<VpCapCompatibilityTarget>(_prepConditions);
-            _prepKeptTargetList = new CountedList<VpCapProjectionTarget>(_prepKeptTargets);
-            _prepKeptGroupOfList = new CountedList<int>(_prepKeptGroupOf);
-            _preparationRecordLimit = records;
+            _commands = new VpIndirectCommand[commandCapacity];
+            _commandMaterials = new Material[commandCapacity];
+            _commandProvisional = new bool[commandCapacity];
+            _candidateCommands = new VpIndirectCommand[commandCapacity];
+            _candidateCommandMaterials = new Material[commandCapacity];
+            _candidateCommandProvisional = new bool[commandCapacity];
+            _transforms = new Matrix4x4[instanceCapacity];
+            _clips = new VpInstanceClip[instanceCapacity];
+            _candidateTransforms = new Matrix4x4[instanceCapacity];
+            _candidateClips = new VpInstanceClip[instanceCapacity];
+            _rfCommandStart = new int[derived.renderFragments];
+            _rfCommandCount = new int[derived.renderFragments];
+            _rfTransform = new Matrix4x4[derived.renderFragments];
+            _candidateRfCommandStart = new int[derived.renderFragments];
+            _candidateRfCommandCount = new int[derived.renderFragments];
+            _candidateRfTransform = new Matrix4x4[derived.renderFragments];
+            _capRecordCapacity = derived.caps;
+            _capRecords = new LogicalCutCapRecord[derived.caps];
+            _candidateCapRecords = new LogicalCutCapRecord[derived.caps];
+            _preparationRecordLimit = derived.caps;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
             _frameSource = frameSource;
         }
 
-        /// <summary>The sizes a display of one command capacity is made to, every one of them an int.</summary>
+        /// <summary>The sizes a display is made to, every one of them an int.</summary>
         internal readonly struct DerivedCapacities
         {
-            public DerivedCapacities(int stencilCommands, int capVertices, int capIndices, int capRecords, int constraints, int caps)
+            public DerivedCapacities(
+                int stencilCommands, int capVertices, int capIndices, int renderFragments, int caps, int branches,
+                int candidates, int chainDepth)
             {
                 this.stencilCommands = stencilCommands;
                 this.capVertices = capVertices;
                 this.capIndices = capIndices;
-                this.capRecords = capRecords;
-                this.constraints = constraints;
+                this.renderFragments = renderFragments;
                 this.caps = caps;
+                this.branches = branches;
+                this.candidates = candidates;
+                this.chainDepth = chainDepth;
             }
 
             public readonly int stencilCommands;
             public readonly int capVertices;
             public readonly int capIndices;
-            public readonly int capRecords;
-            public readonly int constraints;
+            public readonly int renderFragments;
             public readonly int caps;
+            public readonly int branches;
+            public readonly int candidates;
+            public readonly int chainDepth;
+
+            /// <summary>The snapshot room these sizes stand for.</summary>
+            public VpMultiCutCapacities Snapshot => new VpMultiCutCapacities(branches, candidates, renderFragments, caps, chainDepth);
         }
 
         /// <summary>
-        /// Every size a display of <paramref name="commandCapacity"/> commands is made to -- the stencil commands, cap
-        /// vertices and cap indices of each camera's batch, and the cap records, conditions and cap looks of a
-        /// preparation -- worked out in 64-bit arithmetic. False when any of them is not a positive int, which is a
-        /// capacity that cannot be represented; nothing is decided here beyond that, and no limit of its own is set.
+        /// Every size a display is made to, worked out in 64-bit arithmetic from its explicit capacities: a render
+        /// fragment takes at least one instance, since every body has a command, so there are at most as many render
+        /// fragments -- and stencil volume commands -- as instances; eight caps per render fragment; fourteen vertices
+        /// and twelve fanned triangles per cap. The logical branches, candidates and chain depth are not derived from
+        /// anything: they are the caller's. False when any input is out of range or any size is not an int; nothing
+        /// is decided here beyond that, and no limit of its own is set.
         /// </summary>
-        internal static bool TryDeriveCapacities(int commandCapacity, out DerivedCapacities derived)
+        internal static bool TryDeriveCapacities(
+            int commandCapacity,
+            int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
+            out DerivedCapacities derived)
         {
             derived = default;
-            if (commandCapacity <= 0)
+            if (commandCapacity <= 0 || instanceCapacity <= 0 || branchCapacity <= 0 || candidateCapacity < 0
+                || chainDepth <= 0)
             {
                 return false;
             }
 
-            long stencilCommands = (long)commandCapacity * 2;
-            long capVertices = stencilCommands * VpCapBoundsPolygon.MaxVertices;
-            long capIndices = stencilCommands * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
-            long capRecords = stencilCommands;
-            long constraints = capRecords * VpCapCompatibility.SingleCutConstraints;
-            long caps = capRecords * VpCapProjectionConflict.SingleCutCaps;
-            if (!FitsInt(stencilCommands) || !FitsInt(capVertices) || !FitsInt(capIndices) || !FitsInt(capRecords)
-                || !FitsInt(constraints) || !FitsInt(caps))
+            long renderFragments = instanceCapacity;
+            long caps = renderFragments * VpClipCandidates.Capacity;
+            long capVertices = caps * VpCapPolygonClip.MaxVertices;
+            long capIndices = caps * (VpCapPolygonClip.MaxVertices - 2) * 3;
+            long stack = ((long)branchCapacity * 2) + 2;
+            if (!FitsInt(caps) || !FitsInt(capVertices) || !FitsInt(capIndices) || !FitsInt(stack))
             {
                 return false;
             }
 
             derived = new DerivedCapacities(
-                (int)stencilCommands, (int)capVertices, (int)capIndices, (int)capRecords, (int)constraints, (int)caps);
+                instanceCapacity, (int)capVertices, (int)capIndices, instanceCapacity, (int)caps, branchCapacity,
+                candidateCapacity, chainDepth);
             return true;
         }
 
@@ -657,29 +603,40 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// How far the free side of a split is drawn apart, along the cut plane's own normal. A fixed side is not
-        /// moved whatever this says, and the plane itself is never moved: the kerf stays zero.
+        /// How far a free side is drawn apart, along its cut plane's own normal; the render fragment's separation is
+        /// this, summed down its lineage. A fixed side is not moved whatever this says, and the plane itself is never
+        /// moved: the kerf stays zero.
         /// </summary>
-        public float Separation { get; set; } = 0.05f;
+        /// <exception cref="ArgumentOutOfRangeException">Negative or not finite.</exception>
+        public float Separation
+        {
+            get => _separation;
+            set
+            {
+                if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value), value, "a finite length, not negative");
+                }
+
+                _separation = value;
+            }
+        }
 
         /// <summary>
         /// Whether the draws this display registers are for Single Pass Instanced stereo: one issue carrying two
         /// instances, one per eye. It is read where a collection uploads, and both batches are told the same thing in
-        /// that one place, so the body's surfaces, the stencil initialisation, the volumes and the caps are never
-        /// drawn on different conditions. Default false, which is what every existing caller keeps.
-        /// <para>
-        /// Whether XR is up, and which stereo mode it settled on, is the caller's to find out: nothing here asks the
-        /// engine, waits for frames or changes this on its own. Setting it invalidates no adopted snapshot — what the
-        /// GPU holds keeps the condition of the upload that wrote it, which <see cref="DrawsSinglePassInstanced"/> reports
-        /// and every camera's stencil preparation takes — and takes effect from the next settled collection.
-        /// </para>
+        /// that one place. Default false. Whether XR is up is the caller's to find out; setting it takes effect from the
+        /// next settled collection.
         /// </summary>
         public bool SinglePassInstanced { get; set; }
 
         /// <summary>How many bodies this display holds.</summary>
         public int ShownCount => _shown.Count;
 
-        /// <summary>How many instances the last settled collection draws: one per whole body, two per split.</summary>
+        /// <summary>
+        /// How many instances the last settled collection draws: per body, its command count times its render
+        /// fragments.
+        /// </summary>
         public int SideCount => _sides.Count;
 
         public bool IsDisposed => _disposed;
@@ -690,6 +647,28 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public bool IsBroken => _broken;
 
+        /// <summary>
+        /// Whether this display stopped drawing because a snapshot could not be built for a reason other than room
+        /// (see the class notes). It stays stopped until <see cref="Dispose"/>; nothing recovers it.
+        /// </summary>
+        public bool IsHalted => _halted;
+
+        /// <summary>Why this display stopped: the first reason, kept. <see cref="LogicalCutDisplayHaltReason.None"/> while it has not.</summary>
+        public LogicalCutDisplayHaltReason HaltReason => _haltReason;
+
+        /// <summary>
+        /// When <see cref="HaltReason"/> is <see cref="LogicalCutDisplayHaltReason.InvalidInput"/>, which kind: in
+        /// particular whether the conservative numeric check refused the input or a value really came out not finite.
+        /// <see cref="VpMultiCutInvalidInput.None"/> otherwise.
+        /// </summary>
+        public VpMultiCutInvalidInput HaltInvalidInput => _haltInvalidInput;
+
+        /// <summary>
+        /// Asked just before the body's upload; when it answers true the upload is taken as refused by the batch, and
+        /// when it throws, as a GPU call that threw. For tests only, to reach what no input can; null otherwise.
+        /// </summary>
+        internal Func<bool> RefuseBodyUploadForTest { get; set; }
+
         /// <summary>Whether a draw has already been registered in the frame this display last settled.</summary>
         public bool HasDrawnThisFrame => _drawRegisteredThisFrame;
 
@@ -699,15 +678,12 @@ namespace Zantetsu.MeshCut
         /// <summary>How many command and instance uploads this display has issued, its first upload included.</summary>
         public int CommandUploads { get; private set; }
 
-        /// <summary>
-        /// Shadow calls issued with the one-sided caster: the ordinary bodies, the ones with no provisional split.
-        /// One per run of such commands per draw.
-        /// </summary>
+        /// <summary>Shadow calls issued with the one-sided caster: one per run of such commands per draw.</summary>
         public int OneSidedShadowIssues { get; private set; }
 
         /// <summary>
-        /// Shadow calls issued with the two-sided caster: the bodies drawn as a provisional split. One per run of such
-        /// commands per draw, and none at all while nothing is split.
+        /// Shadow calls issued with the two-sided caster: the bodies with a render fragment clipped. One per run of such
+        /// commands per draw, and none at all while nothing is clipped.
         /// </summary>
         public int TwoSidedShadowIssues { get; private set; }
 
@@ -732,8 +708,9 @@ namespace Zantetsu.MeshCut
         public int IndexTransfers { get; private set; }
 
         /// <summary>
-        /// How many times a cap polygon was actually taken of a box and a plane. It stays where it is while the box,
-        /// the face and the placement are the same, publication included: only a changed input makes another one.
+        /// How many times a cap's box-and-plane section was actually taken, over every collection attempt. It stays
+        /// where it is while the box, the face, the plane and the placement are the same -- publication and a change of
+        /// separation included: only a changed input makes another one.
         /// </summary>
         public int CapPolygonBuilds { get; private set; }
 
@@ -775,18 +752,24 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// The stereo condition the adopted body surfaces are drawn with, as the upload that wrote them settled it.
-        /// Only the forward arguments carry the doubling; the shadow arguments hold the logical instance count, as the
-        /// shadow pass is not stereo.
         /// </summary>
         public bool DrawsSinglePassInstanced => _batch.SinglePassInstanced;
-
 
         private int CurrentFrame => _frameSource != null ? _frameSource() : Time.frameCount;
 
         /// <summary>
         /// Makes a display over one storage and one ledger. The GPU buffers are the storage's own shape, made once and
-        /// kept: no growth, no replacement. Nothing is shown until <see cref="TryShow"/> is called.
+        /// kept: no growth, no replacement. Nothing is shown until <see cref="TryShow(LogicalFragmentId, VpStoredGeometry, Matrix4x4)"/>
+        /// is called.
         /// </summary>
+        /// <param name="commandCapacity">Draw commands: one per submesh of every body drawn.</param>
+        /// <param name="instanceCapacity">
+        /// Draw instances: per body, its commands times its render fragments. Render fragments, stencil volume commands,
+        /// caps (eight per render fragment), cap vertices and cap indices are derived from it.
+        /// </param>
+        /// <param name="branchCapacity">Logical branches over every registration together.</param>
+        /// <param name="candidateCapacity">Clip candidates kept over every branch together; not cut at eight.</param>
+        /// <param name="chainDepth">The longest chain of boundaries one fragment may have.</param>
         public static bool TryCreate(
             VpCpuGeometryStorage storage,
             VpGeometryReferenceTable table,
@@ -796,18 +779,21 @@ namespace Zantetsu.MeshCut
             Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
             VpStencilSettings stencilSettings,
             out VpLogicalCutDisplay display)
         {
             return TryCreate(
                 storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
-                commandCapacity, instanceCapacity, stencilSettings, null, out display);
+                commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth, stencilSettings, null,
+                out display);
         }
 
         /// <summary>
         /// The same, with the frame counter given by the caller instead of taken from the engine. It exists for tests,
-        /// which have no frame loop to advance: <paramref name="frameSource"/> is what both
-        /// <see cref="TryBeginFrame"/> and <see cref="Render"/> ask, so a test decides what one frame means.
+        /// which have no frame loop to advance.
         /// </summary>
         internal static bool TryCreate(
             VpCpuGeometryStorage storage,
@@ -818,20 +804,23 @@ namespace Zantetsu.MeshCut
             Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
+            int branchCapacity,
+            int candidateCapacity,
+            int chainDepth,
             VpStencilSettings stencilSettings,
             Func<int> frameSource,
             out VpLogicalCutDisplay display)
         {
             display = null;
-            if (storage == null || table == null || ledger == null || materialsBySourceIndex == null
-                || commandCapacity <= 0 || instanceCapacity <= 0)
+            if (storage == null || table == null || ledger == null || materialsBySourceIndex == null)
             {
                 return false;
             }
 
-            // Every size derived from the command capacity is worked out wide and must be an int, before any GPU
-            // buffer, material or scratch is made.
-            if (!TryDeriveCapacities(commandCapacity, out DerivedCapacities derived))
+            // Every size is worked out wide and must be an int, before any GPU buffer, material or scratch is made.
+            if (!TryDeriveCapacities(
+                    commandCapacity, instanceCapacity, branchCapacity, candidateCapacity, chainDepth,
+                    out DerivedCapacities derived))
             {
                 return false;
             }
@@ -844,10 +833,6 @@ namespace Zantetsu.MeshCut
             }
 
             // Casting shadows at all means casting both kinds, so the two casters are given together or not at all.
-            // One of them alone is refused, in either direction and for the same reason: with only the one-sided
-            // caster a provisional split would cast a one-sided shadow, which looks like an ordinary shadow while
-            // being the wrong one; with only the two-sided caster nothing would cast at all, because a display with
-            // no one-sided caster issues no shadow call. Both silent, both wrong, both refused here.
             if ((shadowMaterial == null) != (provisionalShadowMaterial == null))
             {
                 return false;
@@ -859,11 +844,15 @@ namespace Zantetsu.MeshCut
             bool taken = false;
             try
             {
+                VpMultiCutCapacities snapshotCapacities = derived.Snapshot;
+                var snapshot = new VpMultiCutSnapshot(snapshotCapacities);
+                var building = new VpMultiCutSnapshot(snapshotCapacities);
+                var classification = new VpMultiCutStencilClassification(snapshotCapacities);
+
                 buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
 
-                // One material set for every camera: the queues order the colours, and each camera's batch carries its
-                // own buffers and properties. The stencil batches themselves come with the cameras.
+                // One material set for every camera; the stencil batches themselves come with the cameras.
                 if (!VpStencilCapMaterials.TryCreate(stencilSettings.maxStencilColors, out stencilMaterials))
                 {
                     return false;
@@ -871,7 +860,8 @@ namespace Zantetsu.MeshCut
 
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
-                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, derived, frameSource);
+                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, derived, snapshot,
+                    building, classification, frameSource);
                 taken = true;
                 return true;
             }
@@ -890,15 +880,15 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// Registers <paramref name="camera"/> for stencil work: a stencil batch of its own is made for it, sized like
-        /// every other camera's. False, making nothing, when the camera is null or already registered, or every slot of
-        /// <see cref="VpStencilSettings.cameraCapacity"/> is taken.
+        /// every other camera's. False, making nothing, when the camera is null or already registered, every slot of
+        /// <see cref="VpStencilSettings.cameraCapacity"/> is taken, or the display has stopped.
         /// </summary>
         public bool TryRegisterCamera(Camera camera)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfPreparing();
-            if (ReferenceEquals(camera, null) || FindCamera(camera) != null)
+            if (_halted || ReferenceEquals(camera, null) || FindCamera(camera) != null)
             {
                 return false;
             }
@@ -968,13 +958,13 @@ namespace Zantetsu.MeshCut
         /// as the camera has not drawn in this frame; nothing about the ledger, the body or the geometry is read again
         /// or transferred.
         /// <para>
-        /// False when the camera is not registered, has already drawn in this frame, a cap could not be read into
-        /// the tests, or the snapshot holds more cap records than a preparation has room for; the camera is then not
-        /// prepared, nothing is uploaded, and <see cref="Render"/> refuses it. An upload refused within the capacity
-        /// checked at adoption, or a GPU call that throws, stops the display.
+        /// False when the camera is not registered, has already drawn in this frame, or the snapshot holds more caps
+        /// than a preparation has room for; the camera is then not prepared, nothing is uploaded, and
+        /// <see cref="Render"/> refuses it. An upload refused within the capacity checked at adoption, or a GPU call
+        /// that throws, stops the display as broken. A display that has stopped throws.
         /// </para>
         /// <para>
-        /// Works in this display's own scratch and allocates nothing (see the class notes). Calling into this display
+        /// Works in this display's own room and allocates nothing (see the class notes). Calling into this display
         /// while a preparation is running -- from inside it -- throws before anything is changed.
         /// </para>
         /// </summary>
@@ -982,6 +972,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfHalted();
             ThrowIfPreparing();
             if (ReferenceEquals(camera, null))
             {
@@ -1013,13 +1004,13 @@ namespace Zantetsu.MeshCut
                 }
 
                 // Uploaded by count: the scratch is the stencil capacity long, and only what this arrangement filled
-                // is checked, sent and drawn.
+                // is checked, sent and drawn. The cap vertices are the adopted snapshot's own.
                 try
                 {
                     if (!slot.batch.TryUpload(
                             _candidateStencilCommands, commands, _candidateStencilTransforms, _candidateStencilClips,
-                            _capVertices, _capVertexCount, _candidateCapIndices, capIndices, _candidateStencilColors,
-                            colours, _batch.SinglePassInstanced))
+                            _snapshot.CapVertexArray, _snapshot.CapVertexCount, _candidateCapIndices, capIndices,
+                            _candidateStencilColors, colours, _batch.SinglePassInstanced))
                     {
                         _broken = true;
                         throw new InvalidOperationException(
@@ -1040,15 +1031,14 @@ namespace Zantetsu.MeshCut
             }
             finally
             {
-                ClearPreparationScratch();
                 _preparing = false;
             }
         }
 
         /// <summary>
-        /// How many cap records one preparation may take, at most the room its scratch was made with. Lowered only by
-        /// tests, to reach the refusal of a snapshot that holds more records than a preparation has room for, which
-        /// the collection's own refusal otherwise keeps from happening.
+        /// How many caps one preparation may take, at most the room it was made with. Lowered only by tests, to reach
+        /// the refusal of a snapshot that holds more caps than a preparation has room for, which the collection's own
+        /// capacity otherwise keeps from happening.
         /// </summary>
         internal int PreparationRecordLimit
         {
@@ -1068,34 +1058,13 @@ namespace Zantetsu.MeshCut
         internal bool IsPreparing => _preparing;
 
         /// <summary>
-        /// How many looks the preparation scratch still holds -- at cap vertices, conditions or caps. Zero whenever no
-        /// preparation is running. For tests.
+        /// How many looks at the adopted snapshot the classification's room still holds. Zero whenever no preparation
+        /// is running. For tests.
         /// </summary>
-        internal int HeldPreparationLooks
-        {
-            get
-            {
-                int held = 0;
-                for (int i = 0; i < _prepTargets.Length; i++)
-                {
-                    held += _prepTargets[i].visibleCaps.IsNull && _prepTargets[i].conditions.constraints.IsNull ? 0 : 1;
-                    held += _prepKeptTargets[i].visibleCaps.IsNull && _prepKeptTargets[i].conditions.constraints.IsNull ? 0 : 1;
-                    held += _prepConditions[i].constraints.IsNull ? 0 : 1;
-                }
+        internal int HeldPreparationLooks => _classification.HeldViews;
 
-                for (int i = 0; i < _prepCaps.Length; i++)
-                {
-                    held += _prepCaps[i].IsNull ? 0 : 1;
-                }
-
-                for (int i = 0; i < _prepConstraints.Length; i++)
-                {
-                    held += _prepConstraints[i].face.scope == null ? 0 : 1;
-                }
-
-                return held;
-            }
-        }
+        /// <summary>The classification the last preparation made, for tests that read it through its results.</summary>
+        internal VpMultiCutStencilClassification Classification => _classification;
 
         /// <summary>One colour range of what <paramref name="camera"/>'s batch holds from its last upload. For tests.</summary>
         internal bool TryGetPreparedColor(Camera camera, int index, out VpStencilCapColor color)
@@ -1108,24 +1077,6 @@ namespace Zantetsu.MeshCut
             }
 
             return slot.batch.TryGetColor(index, out color);
-        }
-
-        /// <summary>
-        /// The looks a preparation took -- at the adopted cap vertices, and at its own conditions and caps -- are let
-        /// go when it ends, so that none of them outlives it or crosses into another adoption.
-        /// </summary>
-        private void ClearPreparationScratch()
-        {
-            int used = _prepRecordsUsed;
-            Array.Clear(_prepTargets, 0, used);
-            Array.Clear(_prepConditions, 0, used);
-            Array.Clear(_prepKeptTargets, 0, used);
-            Array.Clear(_prepConstraints, 0, used * VpCapCompatibility.SingleCutConstraints);
-            Array.Clear(_prepCaps, 0, used * VpCapProjectionConflict.SingleCutCaps);
-            _prepConditionList.SetCount(0);
-            _prepKeptTargetList.SetCount(0);
-            _prepKeptGroupOfList.SetCount(0);
-            _prepRecordsUsed = 0;
         }
 
         /// <summary>What <paramref name="camera"/>'s last preparation made, and what its stencil batch has counted.</summary>
@@ -1185,9 +1136,10 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// DESIGN 5.6's order over the adopted snapshot, for two eyes: visibility, compatibility groups over every cut
-        /// condition, the groups with no cap seen left out, colours within the limit, and the arrangement, colour by
-        /// colour, into the stencil scratch.
+        /// DESIGN 5.6's order over the adopted snapshot, for two eyes, through the one classification of every
+        /// registration's render fragments together; then the arrangement, colour by colour, into the stencil scratch:
+        /// each colour's volumes -- every kept render fragment once, one command per command of its body, with its own
+        /// transform and clip record -- and then its seen caps, fanned.
         /// </summary>
         private bool TryArrange(
             in VpCapEye left, in VpCapEye right, out int commandCount, out int capIndexCount, out int colourCount,
@@ -1197,89 +1149,20 @@ namespace Zantetsu.MeshCut
             capIndexCount = 0;
             colourCount = 0;
             preparation = default;
-            int records = _capRecordCount;
 
-            // Room is decided before anything is read into the scratch, let alone uploaded.
-            if (records > _preparationRecordLimit)
+            // Room is decided before anything is read, let alone uploaded.
+            if (_snapshot.CapCount > _preparationRecordLimit)
             {
                 return false;
             }
 
-            // Every slot up to here may hold a look from this preparation from now on, and is cleared when it ends.
-            _prepRecordsUsed = records;
-            VpCapProjectionTarget[] targets = _prepTargets;
-            VpCapCompatibilityTarget[] conditions = _prepConditions;
-            bool[] seen = _prepSeen;
-            for (int r = 0; r < records; r++)
+            if (!_classification.TryClassify(_snapshot, left, right, _settings))
             {
-                if (!VpCapVisibility.TryClassify(this, r, left, right, _settings.facingEpsilon, out VpCapVisibilityVerdict verdict)
-                    || !VpCapProjectionConflict.TryGetSingleCutTarget(
-                        this, r, left, right, _settings.facingEpsilon,
-                        _prepConstraints, r * VpCapCompatibility.SingleCutConstraints,
-                        _prepCaps, r * VpCapProjectionConflict.SingleCutCaps, out targets[r]))
-                {
-                    return false;
-                }
-
-                seen[r] = verdict.Keep;
-                conditions[r] = targets[r].conditions;
+                return false;
             }
 
-            int[] groupOfRecord = _prepGroupOfRecord;
-            _prepConditionList.SetCount(records);
-            int groups = records == 0
-                ? 0
-                : VpCapCompatibility.Classify(_prepConditionList, _settings.planeEpsilon, _settings.offsetEpsilon, groupOfRecord);
-
-            // A group is drawn when any cap in it is seen; then every target in it keeps its volumes, and only the
-            // caps that were seen are drawn.
-            bool[] groupSeen = _prepGroupSeen;
-            bool[] capIssued = _prepCapIssued;
-            SelectStencilWork(seen, records, groupOfRecord, groups, groupSeen, capIssued);
-
-            int[] keptGroup = _prepKeptGroup;
-            int kept = 0;
-            for (int g = 0; g < groups; g++)
-            {
-                keptGroup[g] = groupSeen[g] ? kept++ : -1;
-            }
-
-            int[] keptRecords = _prepKeptRecords;
-            int keptCount = 0;
-            for (int r = 0; r < records; r++)
-            {
-                if (keptGroup[groupOfRecord[r]] >= 0)
-                {
-                    keptRecords[keptCount++] = r;
-                }
-            }
-
-            VpCapProjectionTarget[] keptTargets = _prepKeptTargets;
-            int[] keptGroupOf = _prepKeptGroupOf;
-            for (int k = 0; k < keptCount; k++)
-            {
-                keptTargets[k] = targets[keptRecords[k]];
-                keptGroupOf[k] = keptGroup[groupOfRecord[keptRecords[k]]];
-            }
-
-            int[] colourOfGroup = _prepColourOfGroup;
+            int renderFragments = _snapshot.RenderFragmentCount;
             int max = _settings.maxStencilColors;
-            if (kept > 0)
-            {
-                _prepKeptTargetList.SetCount(keptCount);
-                _prepKeptGroupOfList.SetCount(keptCount);
-                VpStencilColors.Assign(
-                    _prepKeptTargetList, _prepKeptGroupOfList, kept, left, right, _settings.ndcMargin,
-                    _settings.planeEpsilon, _settings.offsetEpsilon, max, colourOfGroup);
-            }
-
-            // The arrangement, colour by colour in their order: each colour's volumes and then its caps are contiguous.
-            int inLast = 0;
-            for (int g = 0; g < kept; g++)
-            {
-                inLast += colourOfGroup[g] == max - 1 ? 1 : 0;
-            }
-
             int ordinary = 0;
             int volumeTargets = 0;
             int capsDrawn = 0;
@@ -1288,28 +1171,28 @@ namespace Zantetsu.MeshCut
                 int volumeStart = commandCount;
                 int capStart = capIndexCount;
                 bool any = false;
-                for (int k = 0; k < keptCount; k++)
+                for (int r = 0; r < renderFragments; r++)
                 {
-                    if (colourOfGroup[keptGroupOf[k]] != colour)
+                    _classification.TryGetRenderFragment(r, out VpMultiCutStencilRenderFragment result);
+                    if (!result.volumeIssued || result.colour != colour)
                     {
                         continue;
                     }
 
                     any = true;
-                    LogicalCutCapRecord record = _capRecords[keptRecords[k]];
-                    AppendVolumes(record, ref commandCount);
+                    _snapshot.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                    AppendVolume(r, rf.clip, _commands, _rfCommandStart, _rfCommandCount, _rfTransform, ref commandCount);
                     volumeTargets++;
-                    if (!capIssued[keptRecords[k]])
+                    for (int c = 0; c < rf.capCount; c++)
                     {
-                        continue;
-                    }
+                        _classification.TryGetCap(rf.capStart + c, out VpMultiCutStencilCap cap);
+                        if (!cap.issued)
+                        {
+                            continue;
+                        }
 
-                    capsDrawn++;
-                    for (int v = 1; v + 1 < record.vertexCount; v++)
-                    {
-                        _candidateCapIndices[capIndexCount++] = record.vertexStart;
-                        _candidateCapIndices[capIndexCount++] = record.vertexStart + v;
-                        _candidateCapIndices[capIndexCount++] = record.vertexStart + v + 1;
+                        capsDrawn++;
+                        AppendFan(_capRecords[rf.capStart + c], ref capIndexCount);
                     }
                 }
 
@@ -1328,84 +1211,100 @@ namespace Zantetsu.MeshCut
             }
 
             preparation = new VpStencilPreparation(
-                records, groups, groups - kept, colourCount, ordinary, inLast, volumeTargets, capsDrawn);
+                _snapshot.CapCount, _classification.GroupCount, _classification.CulledGroupCount, colourCount, ordinary,
+                _classification.GroupsInLastColour, volumeTargets, capsDrawn);
             return true;
         }
 
         /// <summary>
-        /// Which stencil work each cap record takes: a group is kept when any of its caps is seen, every record of a
-        /// kept group has its volumes issued, and a record's cap is issued only when it was seen itself. A cap that was
-        /// not seen still counted towards its group's compatibility; it is only not drawn.
+        /// One render fragment's volume: every command of its body, once, with one instance, the body's transform and
+        /// this render fragment's clip record -- the same geometry and range the body is drawn with.
         /// </summary>
-        /// <param name="groupKept">Written: per group, whether any of its caps is seen.</param>
-        /// <param name="capIssued">Written: per record, whether its cap is drawn.</param>
-        internal static void SelectStencilWork(
-            bool[] seen, int[] groupOfRecord, int groupCount, bool[] groupKept, bool[] capIssued)
+        private void AppendVolume(
+            int renderFragment,
+            in VpInstanceClip clip,
+            VpIndirectCommand[] commands,
+            int[] commandStart,
+            int[] commandCountOf,
+            Matrix4x4[] transforms,
+            ref int commandCount)
         {
-            SelectStencilWork(seen, seen.Length, groupOfRecord, groupCount, groupKept, capIssued);
-        }
-
-        /// <summary>The same over the first <paramref name="recordCount"/> records only.</summary>
-        internal static void SelectStencilWork(
-            bool[] seen, int recordCount, int[] groupOfRecord, int groupCount, bool[] groupKept, bool[] capIssued)
-        {
-            Array.Clear(groupKept, 0, groupCount);
-            for (int r = 0; r < recordCount; r++)
+            int start = commandStart[renderFragment];
+            int count = commandCountOf[renderFragment];
+            for (int c = 0; c < count; c++)
             {
-                groupKept[groupOfRecord[r]] |= seen[r];
-            }
-
-            for (int r = 0; r < recordCount; r++)
-            {
-                capIssued[r] = seen[r] && groupKept[groupOfRecord[r]];
+                VpIndirectCommand source = commands[start + c];
+                _candidateStencilCommands[commandCount] = new VpIndirectCommand(source.range, source.localBounds, 1);
+                _candidateStencilTransforms[commandCount] = transforms[renderFragment];
+                _candidateStencilClips[commandCount] = clip;
+                commandCount++;
             }
         }
+
+        /// <summary>A cap's polygon as a fan; a cap of fewer than three vertices has no triangle and adds nothing.</summary>
+        private void AppendFan(in LogicalCutCapRecord record, ref int capIndexCount)
+        {
+            for (int v = 1; v + 1 < record.vertexCount; v++)
+            {
+                _candidateCapIndices[capIndexCount++] = record.vertexStart;
+                _candidateCapIndices[capIndexCount++] = record.vertexStart + v;
+                _candidateCapIndices[capIndexCount++] = record.vertexStart + v + 1;
+            }
+        }
+
+        // ----- bodies ----------------------------------------------------------------------------------------------
 
         /// <summary>
-        /// The volumes of the side a cap closes: every adopted command of that body, once, with that side's own
-        /// instance transform and clip record -- the same geometry and range the body is drawn with.
-        /// </summary>
-        private void AppendVolumes(LogicalCutCapRecord record, ref int commandCount)
-        {
-            int instance = 0;
-            for (int c = 0; c < _commandCount; c++)
-            {
-                VpIndirectCommand source = _commands[c];
-                for (int i = 0; i < source.instanceCount; i++, instance++)
-                {
-                    LogicalCutDisplaySide side = _sides[instance];
-                    if (side.source != record.source || side.side != record.side)
-                    {
-                        continue;
-                    }
-
-                    _candidateStencilCommands[commandCount] = new VpIndirectCommand(source.range, source.localBounds, 1);
-                    _candidateStencilTransforms[commandCount] = _transforms[instance];
-                    _candidateStencilClips[commandCount] = _clips[instance];
-                    commandCount++;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Shows <paramref name="geometry"/> as the whole body of the live fragment <paramref name="fragment"/>, at
-        /// the transform snapshot given. The geometry is transferred to the GPU once, here, and the registration and
-        /// one display instance are taken and held until this display lets the body go.
-        /// <para>
-        /// Refused, changing nothing, when the fragment is not live, when it or one of its published children is
-        /// already shown here — the same face is never registered twice — when the geometry cannot be prepared or
-        /// resolved to materials, or when what it needs does not fit the fixed capacity.
-        /// </para>
+        /// Shows <paramref name="geometry"/> as the live fragment <paramref name="fragment"/> under the caller contract of
+        /// this spelling: the whole lineage is in the geometry's own frame (the identity mapping) and the geometry
+        /// reflects no boundary. It is the other <c>TryShow</c> with those two stated, nothing more.
         /// </summary>
         public bool TryShow(LogicalFragmentId fragment, VpStoredGeometry geometry, Matrix4x4 objectToWorld)
+        {
+            return TryShow(fragment, geometry, objectToWorld, Matrix4x4.identity, Array.Empty<VpClipBoundary>());
+        }
+
+        /// <summary>
+        /// Shows <paramref name="geometry"/> as the live fragment <paramref name="fragment"/> and everything its lineage
+        /// becomes, at the placement given. The geometry is transferred to the GPU once, here, and the registration and
+        /// one display instance are taken and held until this display lets the body go.
+        /// <para>
+        /// Refused, changing nothing, when the fragment is not live, when it is already shown here or is an ancestor or a
+        /// descendant of a fragment shown here, when the box, the placement or the mapping is outside the snapshot's
+        /// input contract, when the box, the placement and the vertex epsilon it would be built with fail the snapshot's
+        /// conservative section bounds (<see cref="VpMultiCutInvalidInput.ConservativeSection"/>), when the geometry cannot be prepared or resolved to materials, when what it needs does not
+        /// fit the fixed capacity, or when the display has stopped.
+        /// </para>
+        /// </summary>
+        /// <param name="lineageToGeometryLocal">
+        /// The mapping from the lineage's common logical frame to the geometry's coordinates: rigid. Required.
+        /// </param>
+        /// <param name="reflected">
+        /// The boundaries the geometry already reflects. Required: null is not "none". It is copied here.
+        /// </param>
+        /// <exception cref="ArgumentNullException"><paramref name="reflected"/> is null.</exception>
+        public bool TryShow(
+            LogicalFragmentId fragment,
+            VpStoredGeometry geometry,
+            Matrix4x4 objectToWorld,
+            Matrix4x4 lineageToGeometryLocal,
+            IReadOnlyCollection<VpClipBoundary> reflected)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfPreparing();
+            if (reflected == null)
+            {
+                throw new ArgumentNullException(
+                    nameof(reflected), "what the geometry reflects must be said, even if it is nothing");
+            }
 
-            // A frame this display has already settled, or already drawn, is not changed from here: taking a body
-            // now would transfer and register into the very frame that is done with. The caller offers it again
-            // before the next frame is settled, and nothing of it has happened in the meantime.
+            if (_halted)
+            {
+                return false;
+            }
+
+            // A frame this display has already settled, or already drawn, is not changed from here.
             int frame = CurrentFrame;
             if ((_hasSnapshot && _settledFrame == frame) || (_openFrame == frame && _drawRegisteredThisFrame))
             {
@@ -1415,19 +1314,24 @@ namespace Zantetsu.MeshCut
             if (!fragment.IsSet
                 || !_ledger.TryGetFragmentState(fragment, out LogicalFragmentState state)
                 || state != LogicalFragmentState.Live
-                || IsAlreadyShown(fragment))
+                || IsOnShownLineage(fragment))
             {
                 return false;
             }
 
             if (!TryPrepare(
-                    geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials, out Bounds localBounds))
+                    geometry, out VpIndirectCommand[] commands, out Material[] commandMaterials, out Bounds localBounds)
+                || !VpMultiCutSnapshot.IsWithinInputContract(localBounds, objectToWorld, lineageToGeometryLocal)
+                || !VpMultiCutSnapshot.IsWithinSectionBounds(
+                    localBounds, objectToWorld, VpCapBoundsPolygon.EpsilonFor(localBounds)))
             {
+                // What the registration settles by itself -- its box, its placement and the epsilon it will be built
+                // with -- is refused here, before anything is transferred, registered or taken; the collection asks the
+                // same function again.
                 return false;
             }
 
-            // Room for the body now, and for the second side it may take later: a split must not be the thing that
-            // discovers the capacity is gone.
+            // Room for the body now, and for a second render fragment it may take later.
             if (_commandCount + commands.Length > _commandCapacity
                 || CurrentInstanceCount() + (commands.Length * 2) > _instanceCapacity)
             {
@@ -1461,29 +1365,41 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            _shown.Add(new Shown
+            var reflectedCopy = new VpClipBoundary[reflected.Count];
+            int k = 0;
+            foreach (VpClipBoundary boundary in reflected)
+            {
+                reflectedCopy[k++] = boundary;
+            }
+
+            var entry = new Shown
             {
                 fragment = fragment,
                 geometry = geometry,
                 reference = reference,
-                positiveInstance = instance,
                 objectToWorld = objectToWorld,
+                lineageToGeometryLocal = lineageToGeometryLocal,
+                reflected = reflectedCopy,
                 commands = commands,
                 commandMaterials = commandMaterials,
                 localBounds = localBounds,
-            });
-
+            };
+            entry.instances.Add(instance);
+            _shown.Add(entry);
             return true;
         }
+
+        // ----- frames ----------------------------------------------------------------------------------------------
 
         /// <summary>
         /// Collects the ledger's state and settles this frame's draw data. Calling it again within one frame does
         /// nothing at all and answers true: a frame that has drawn is not rewritten.
         /// <para>
-        /// False means this frame could not be settled from the latest logical state — the capacity is short, a
-        /// reference could not be taken, a plane could not be converted, or the batch refused the upload. The previous
-        /// snapshot stays exactly as it was and keeps drawing, so what is on screen is **not** the latest state, and
-        /// that is what the caller is being told. Nothing about the ledger is changed either way.
+        /// False means this frame could not be settled from the latest logical state. For want of room -- commands,
+        /// instances, display instances, snapshot or stencil room -- or a batch refusing the upload, the previous
+        /// snapshot stays exactly as it was and keeps drawing, and the caller is told it is not the latest. For any other
+        /// reason the snapshot could not be built, the display stops (<see cref="IsHalted"/>) before this frame draws;
+        /// false from then on. Nothing about the ledger is changed either way.
         /// </para>
         /// </summary>
         public bool TryBeginFrame()
@@ -1491,6 +1407,10 @@ namespace Zantetsu.MeshCut
             ThrowIfDisposed();
             ThrowIfBroken();
             ThrowIfPreparing();
+            if (_halted)
+            {
+                return false;
+            }
 
             int frame = CurrentFrame;
             if (_hasSnapshot && _settledFrame == frame)
@@ -1507,9 +1427,8 @@ namespace Zantetsu.MeshCut
 
             if (!TryCollectAndUpload())
             {
-                // The latest logical state could not be settled. What was adopted earlier stays on the GPU and
-                // stays drawable in this frame; the caller is told that it is not the latest.
-                if (_hasSnapshot)
+                // A stop is decided here, before anything of this frame is drawn: the frame is not opened.
+                if (_hasSnapshot && !_halted)
                 {
                     _openFrame = frame;
                     _drawRegisteredThisFrame = false;
@@ -1529,13 +1448,14 @@ namespace Zantetsu.MeshCut
         /// Registers this frame's draws for <paramref name="camera"/>: one forward call per run of commands sharing a
         /// material, each followed by its shadow call when a shadow material was given, and then that camera's own
         /// stencil work as <see cref="TryPrepareCamera(Camera)"/> made it. Drawing writes nothing. The camera must be
-        /// registered and prepared in this frame for the adopted snapshot; otherwise this throws before registering
-        /// anything.
+        /// registered and prepared in this frame for the adopted snapshot, and the display must not have stopped;
+        /// otherwise this throws before registering anything.
         /// </summary>
         public void Render(int layer, Camera camera)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfHalted();
             ThrowIfPreparing();
 
             if (camera == null)
@@ -1567,7 +1487,7 @@ namespace Zantetsu.MeshCut
             _drawRegisteredThisFrame = true;
             cameraStencil.drawnFrame = CurrentFrame;
 
-            // The surfaces, grouped by material exactly as before: one forward call per run of commands sharing one.
+            // The surfaces, grouped by material: one forward call per run of commands sharing one.
             int start = 0;
             while (start < _commandCount)
             {
@@ -1581,10 +1501,8 @@ namespace Zantetsu.MeshCut
                 start = end;
             }
 
-            // The casters, grouped by something else: which side of DESIGN 5.4's division a command falls on. Cull is
-            // a drawing state of the material, so a run cast one-sided and a run cast two-sided are separate draws,
-            // over the same commands, the same transforms, the same clip records and the same offsets as the surfaces
-            // above -- this frame's adopted snapshot, never a second reading of the ledger.
+            // The casters, grouped by which side of DESIGN 5.4's division a command falls on, over the same commands,
+            // transforms, clip records and offsets as the surfaces above.
             if (_shadowMaterial != null)
             {
                 start = 0;
@@ -1613,23 +1531,18 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // The counting and the caps, after the surfaces: their queues put them after the opaque bodies, so each
-            // cap is depth-tested against the surfaces of this frame and drawn only inside its side's opening.
+            // The counting and the caps, after the surfaces: their queues put them after the opaque bodies.
             cameraStencil.batch.Render(_stencilMaterials, _buffers, layer, camera);
         }
 
-        /// <summary>How this display is showing that fragment, whether as a body of its own or as a published child.</summary>
+        // ----- what is shown ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// How this display is showing that fragment: as a registered body, or as a fragment below one that the adopted
+        /// snapshot draws, or below which it draws.
+        /// </summary>
         public LogicalCutDisplayState StateOf(LogicalFragmentId fragment)
         {
-            for (int i = 0; i < _sides.Count; i++)
-            {
-                LogicalCutDisplaySide side = _sides[i];
-                if (side.published && side.fragment == fragment)
-                {
-                    return LogicalCutDisplayState.ProvisionalSplit;
-                }
-            }
-
             for (int i = 0; i < _shown.Count; i++)
             {
                 Shown entry = _shown[i];
@@ -1643,7 +1556,36 @@ namespace Zantetsu.MeshCut
                     return LogicalCutDisplayState.ProvisionalSplit;
                 }
 
-                return entry.operation.IsSet ? LogicalCutDisplayState.AwaitingInputs : LogicalCutDisplayState.Whole;
+                return entry.awaitingShown ? LogicalCutDisplayState.AwaitingInputs : LogicalCutDisplayState.Whole;
+            }
+
+            if (!_hasSnapshot || !fragment.IsSet)
+            {
+                return LogicalCutDisplayState.NotShown;
+            }
+
+            // Below a registered fragment: on the way from an adopted branch up to its registration's root.
+            int steps = _ledger.OperationCount + 1;
+            for (int b = 0; b < _snapshot.BranchCount; b++)
+            {
+                _snapshot.TryGetBranch(b, out VpMultiCutBranch branch);
+                LogicalFragmentId root = _roots[branch.registration];
+                LogicalFragmentId at = branch.fragment;
+                for (int step = 0; step <= steps && at != root; step++)
+                {
+                    if (at == fragment)
+                    {
+                        return LogicalCutDisplayState.ProvisionalSplit;
+                    }
+
+                    if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
+                        || !_ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                    {
+                        break;
+                    }
+
+                    at = cut.source;
+                }
             }
 
             return LogicalCutDisplayState.NotShown;
@@ -1653,8 +1595,8 @@ namespace Zantetsu.MeshCut
         public int DrawCommandCount => _commandCount;
 
         /// <summary>
-        /// One command of the settled collection: its index range is the geometry's own, and its instance count is
-        /// two for a split, which is how both sides come to address the same range.
+        /// One command of the settled collection: its index range is the geometry's own, and its instance count is the
+        /// number of render fragments that body is drawn as, which is how they all come to address the same range.
         /// </summary>
         public bool TryGetDrawCommand(int index, out VpIndirectCommand command)
         {
@@ -1668,43 +1610,8 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        /// <summary>
-        /// How many provisional caps the settled collection prepared: two per split that has an area, none otherwise.
-        /// Nothing is drawn from them yet.
-        /// </summary>
+        /// <summary>How many caps the settled collection prepared: one per render fragment and selected boundary.</summary>
         public int CapRecordCount => _capRecordCount;
-
-        /// <summary>The ledger this display reads, which is the scope its cap records' operation ids were issued in.</summary>
-        internal LogicalCutLedger Ledger => _ledger;
-
-        /// <summary>
-        /// The body box and the placement one prepared cap's polygon was made from: the box in the geometry's own frame,
-        /// and the object-to-world transform, without the separation. Read-only; false when there is no such cap or its
-        /// body is no longer held.
-        /// </summary>
-        internal bool TryGetCapBody(int capIndex, out Bounds localBounds, out Matrix4x4 objectToWorld)
-        {
-            localBounds = default;
-            objectToWorld = default;
-            if (capIndex < 0 || capIndex >= _capRecordCount)
-            {
-                return false;
-            }
-
-            LogicalFragmentId source = _capRecords[capIndex].source;
-            for (int i = 0; i < _shown.Count; i++)
-            {
-                Shown entry = _shown[i];
-                if (entry.fragment == source && entry.capPrepared)
-                {
-                    localBounds = entry.capBounds;
-                    objectToWorld = entry.capPlacement;
-                    return true;
-                }
-            }
-
-            return false;
-        }
 
         /// <summary>One prepared cap of the settled collection. The polygon itself is read with <see cref="TryGetCapVertex"/>.</summary>
         public bool TryGetCapRecord(int index, out LogicalCutCapRecord record)
@@ -1721,7 +1628,7 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// One world-space vertex of one prepared cap's polygon, in the order it is wound. The display's own buffer is
-        /// never handed out, so nothing outside can reorder or resize what a settled collection holds.
+        /// never handed out.
         /// </summary>
         public bool TryGetCapVertex(int recordIndex, int vertexIndex, out Vector3 world)
         {
@@ -1737,25 +1644,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            world = _capVertices[record.vertexStart + vertexIndex];
-            return true;
-        }
-
-        /// <summary>
-        /// One prepared cap's polygon as a look at the adopted snapshot's own vertices, in the order they are wound:
-        /// nothing is copied. It is good only until another snapshot is adopted, which reuses those vertices, and is
-        /// for a preparation to read while it runs; <see cref="TryGetCapVertex"/> is how anything else reads a cap.
-        /// </summary>
-        internal bool TryGetCapPolygon(int capIndex, out VpArrayRange<Vector3> polygon)
-        {
-            if (capIndex < 0 || capIndex >= _capRecordCount)
-            {
-                polygon = default;
-                return false;
-            }
-
-            LogicalCutCapRecord record = _capRecords[capIndex];
-            polygon = new VpArrayRange<Vector3>(_capVertices, record.vertexStart, record.vertexCount);
+            world = _snapshot.CapVertexArray[record.vertexStart + vertexIndex];
             return true;
         }
 
@@ -1772,11 +1661,41 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        // ----- diagnostics: the adopted snapshot, read only ------------------------------------------------------------
+
+        /// <summary>The logical branches of the adopted snapshot, over every registration.</summary>
+        public int BranchCount => _hasSnapshot ? _snapshot.BranchCount : 0;
+
+        /// <summary>One branch of the adopted snapshot: its candidates, how many are selected, and what it is drawn as.</summary>
+        public bool TryGetBranch(int index, out VpMultiCutBranch branch)
+        {
+            branch = default;
+            return _hasSnapshot && _snapshot.TryGetBranch(index, out branch);
+        }
+
+        /// <summary>One candidate of the adopted snapshot and what the selection made of it.</summary>
+        public bool TryGetCandidate(int index, out VpClipCandidate candidate, out VpClipSelectionState state)
+        {
+            candidate = default;
+            state = default;
+            return _hasSnapshot && _snapshot.TryGetCandidate(index, out candidate, out state);
+        }
+
+        /// <summary>The render fragments of the adopted snapshot.</summary>
+        public int RenderFragmentCount => _hasSnapshot ? _snapshot.RenderFragmentCount : 0;
+
+        /// <summary>One render fragment of the adopted snapshot: its root, its clip record, its offset and its caps.</summary>
+        public bool TryGetRenderFragment(int index, out VpMultiCutRenderFragment renderFragment)
+        {
+            renderFragment = default;
+            return _hasSnapshot && _snapshot.TryGetRenderFragment(index, out renderFragment);
+        }
+
         /// <summary>
         /// Gives back everything this display owns: the buffers, the batches, and every geometry registration and
         /// display instance it took, each exactly once. Refused, changing nothing, while any camera has draws
-        /// registered in the current frame; a later frame may dispose. The ledger, the storage and the borrowed materials are left
-        /// alone — in particular no cut is completed, terminated or aborted by a display ending.
+        /// registered in the current frame; a later frame may dispose. A display that has stopped is disposed the same
+        /// way. The ledger, the storage and the borrowed materials are left alone.
         /// </summary>
         public void Dispose()
         {
@@ -1805,11 +1724,11 @@ namespace Zantetsu.MeshCut
             }
 
             _shown.Clear();
+            _registrations.Clear();
             _sides.Clear();
             _candidateSides.Clear();
             _commandCount = 0;
             _capRecordCount = 0;
-            _candidateCapRecordCount = 0;
             _hasSnapshot = false;
             for (int i = 0; i < _cameraStencils.Length; i++)
             {
@@ -1829,153 +1748,107 @@ namespace Zantetsu.MeshCut
 
         private bool TryCollectAndUpload()
         {
-            // 1. Decide everything first, reading the ledger and changing nothing.
-            _plans.Clear();
-            int commandCount = 0;
-            int instanceCount = 0;
-            int secondInstancesNeeded = 0;
-            int capRecordsNeeded = 0;
-            for (int i = 0; i < _shown.Count; i++)
+            // 1. What each registration is now, read from the ledger, changing nothing.
+            _registrations.Clear();
+            for (int g = 0; g < _shown.Count; g++)
             {
-                if (!TryPlan(_shown[i], out Plan plan))
-                {
-                    return false;
-                }
-
-                _plans.Add(plan);
-                if (plan.drop)
-                {
-                    continue;
-                }
-
-                commandCount += plan.entry.commands.Length;
-                instanceCount += plan.entry.commands.Length * (plan.split ? 2 : 1);
-                if (plan.split && !plan.entry.hasSecondInstance)
-                {
-                    secondInstancesNeeded++;
-                }
-
-                if (plan.split)
-                {
-                    // Room for both sides of this body's one cross-section, however many commands it draws as.
-                    capRecordsNeeded += 2;
-                }
+                Shown entry = _shown[g];
+                bool known = _ledger.TryGetFragmentState(entry.fragment, out LogicalFragmentState state);
+                entry.dropping = !known || state == LogicalFragmentState.Retired;
+                entry.awaiting = known && state == LogicalFragmentState.Live
+                    && _ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active)
+                    && !_ledger.TryGetPreparedAnchorDistribution(active, out _);
+                entry.split = false;
+                entry.clipped = false;
+                entry.renderFragments = 0;
+                entry.firstRenderFragment = 0;
+                entry.takenThisPass = 0;
+                _registrations.Add(new VpMultiCutRegistration(
+                    entry.fragment, entry.localBounds, entry.objectToWorld, entry.lineageToGeometryLocal, entry.reflected,
+                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
             }
 
-            // 2. The fixed capacity is decided here, before anything is taken or uploaded. The cap records are bounded
-            //    by the commands already -- two per split body, and a body has a command -- and are checked all the
-            //    same, because a camera's preparation has room for no more than that.
-            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity
-                || capRecordsNeeded > _capRecordCapacity)
+            // 2. One snapshot of every registration together, beside the adopted one. Room short is an ordinary
+            //    refusal; anything else stops the display, decided here before this frame draws.
+            VpMultiCutBuildOutcome outcome = _building.TryBuild(_ledger, _registrations, Separation, _snapshot);
+            CapPolygonBuilds += _building.SectionBuildCount;
+            if (outcome == VpMultiCutBuildOutcome.CapacityExceeded)
             {
+                return RefuseForRoom();
+            }
+
+            if (outcome != VpMultiCutBuildOutcome.Built)
+            {
+                if (!_halted && outcome == VpMultiCutBuildOutcome.InvalidInput)
+                {
+                    _haltInvalidInput = _building.InvalidInputReason;
+                }
+
+                Halt(ReasonOf(outcome));
                 return false;
             }
 
-            // 3. Take the display instances a new split needs. A failure gives back what this pass took.
-            if (secondInstancesNeeded > 0 && !TryTakeSecondInstances())
+            // 3. What each registration is drawn as; the commands and instances that takes.
+            int renderFragments = _building.RenderFragmentCount;
+            for (int r = 0; r < renderFragments; r++)
             {
-                return false;
+                _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                Shown entry = _shown[rf.registration];
+                if (entry.renderFragments == 0)
+                {
+                    entry.firstRenderFragment = r;
+                }
+
+                entry.renderFragments++;
+                entry.clipped |= rf.clip.PlaneCount > 0;
+                entry.split |= rf.root != entry.fragment || rf.rootPendingSide != 0f || rf.aggregated;
             }
 
-            // 4. Build the candidate. Nothing of the adopted snapshot is touched while this is being made.
-            EnsureCandidateRoom(commandCount, instanceCount, capRecordsNeeded);
-            _candidateSides.Clear();
-            _candidateCapRecordCount = 0;
-            int command = 0;
-            int instance = 0;
-            int capVertex = 0;
-            for (int i = 0; i < _plans.Count; i++)
+            long commandCount = 0;
+            long instanceCount = 0;
+            for (int g = 0; g < _shown.Count; g++)
             {
-                Plan plan = _plans[i];
-                if (plan.drop)
+                Shown entry = _shown[g];
+                entry.split |= entry.renderFragments > 1;
+                if (entry.renderFragments > 0)
                 {
-                    continue;
-                }
-
-                Shown entry = plan.entry;
-                Vector3 positiveOffset = Vector3.zero;
-                Vector3 negativeOffset = Vector3.zero;
-                VpInstanceClip positiveClip = VpInstanceClip.None;
-                VpInstanceClip negativeClip = VpInstanceClip.None;
-                if (plan.split)
-                {
-                    // The plane is not moved: the kerf is zero, and a gap is only ever the moved side's doing.
-                    var normal = new Vector3(plan.worldPlane.x, plan.worldPlane.y, plan.worldPlane.z);
-                    positiveOffset = plan.positiveFixed ? Vector3.zero : normal * Separation;
-                    negativeOffset = plan.negativeFixed ? Vector3.zero : -normal * Separation;
-                    positiveClip = VpInstanceClip.Keep(ToVector4(plan.worldPlane), 1f, positiveOffset);
-                    negativeClip = VpInstanceClip.Keep(ToVector4(plan.worldPlane), -1f, negativeOffset);
-
-                    // The caps of this body, once for the body and not once per command. A malformed placement or
-                    // bounds is an ordinary refusal here, decided before anything is uploaded.
-                    if (!TryAddCaps(plan, positiveOffset, negativeOffset, ref capVertex))
-                    {
-                        GiveBackSecondInstancesTakenThisPass();
-                        _candidateSides.Clear();
-                        _candidateCapRecordCount = 0;
-                        return false;
-                    }
-                }
-
-                for (int c = 0; c < entry.commands.Length; c++)
-                {
-                    VpIndirectCommand source = entry.commands[c];
-                    _candidateCommands[command] = new VpIndirectCommand(
-                        source.range, source.localBounds, plan.split ? 2 : 1);
-                    _candidateCommandMaterials[command] = entry.commandMaterials[c];
-                    _candidateCommandProvisional[command] = plan.split;
-                    command++;
-
-                    if (!plan.split)
-                    {
-                        _candidateTransforms[instance] = entry.objectToWorld;
-                        _candidateClips[instance] = VpInstanceClip.None;
-                        instance++;
-                        _candidateSides.Add(new LogicalCutDisplaySide(
-                            entry.fragment, default, 0f, false, default, false, Vector3.zero, VpInstanceClip.None));
-                        continue;
-                    }
-
-                    // Both sides share this geometry, this range and this transform: only the clip record differs,
-                    // and the separation is in that record, applied after the transform.
-                    _candidateTransforms[instance] = entry.objectToWorld;
-                    _candidateClips[instance] = positiveClip;
-                    instance++;
-                    _candidateSides.Add(new LogicalCutDisplaySide(
-                        entry.fragment, plan.operation, 1f, plan.published, plan.positiveChild,
-                        plan.positiveFixed, positiveOffset, positiveClip));
-
-                    _candidateTransforms[instance] = entry.objectToWorld;
-                    _candidateClips[instance] = negativeClip;
-                    instance++;
-                    _candidateSides.Add(new LogicalCutDisplaySide(
-                        entry.fragment, plan.operation, -1f, plan.published, plan.negativeChild,
-                        plan.negativeFixed, negativeOffset, negativeClip));
+                    commandCount += entry.commands.Length;
+                    instanceCount += (long)entry.commands.Length * entry.renderFragments;
                 }
             }
 
-            // 5. The largest stencil arrangement this candidate could need, of every side and every cap in one
-            //    colour: no camera's arrangement of it has more commands, cap vertices or cap indices.
-            BuildLargestStencilArrangement(command, out int stencilCommands, out int capIndexCount, out int stencilColours);
+            // Fixed capacity, decided before anything is taken or uploaded. The stencil side's room follows from these:
+            // no more volume commands than instances, no more caps than the snapshot holds.
+            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity)
+            {
+                return RefuseForRoom();
+            }
 
-            // 6. Both sides are asked before anything is written: the display batch's conditions are the capacity
-            //    settled in step 2 and the shapes built here; the stencil side's are its fixed sizes and every
-            //    registered camera's own non-writing judgement. So an ordinary refusal keeps the previous snapshot.
-            //    This is a judgement of capacity and form, not a promise that each camera's later upload succeeds.
-            VpIndirectCommand[] commands = Slice(_candidateCommands, command);
-            Matrix4x4[] transforms = Slice(_candidateTransforms, instance);
-            VpInstanceClip[] clips = Slice(_candidateClips, instance);
+            // 4. The display instances the new snapshot needs that are not held yet. A failure gives back what this
+            //    pass took, and nothing already held is given back early to make room.
+            if (!TryTakeInstances())
+            {
+                return RefuseForRoom();
+            }
+
+            // 5. The candidate, beside the adopted draw data.
+            BuildCandidate(out int commands, out int instances);
+
+            // 6. The largest stencil arrangement this candidate could need -- every render fragment's volume and every
+            //    cap in one colour -- asked of the fixed sizes and of every registered camera's batch, by count, before
+            //    anything is written. A judgement of capacity and form, not a promise of each later upload.
+            BuildLargestStencilArrangement(out int stencilCommands, out int capIndexCount, out int stencilColours);
+            int capVertices = _building.CapVertexCount;
             bool stencilFits = stencilCommands <= _stencilCommandCapacity
-                && capVertex <= _stencilCapVertexCapacity
+                && capVertices <= _stencilCapVertexCapacity
                 && capIndexCount <= _stencilCapIndexCapacity;
             if (stencilFits)
             {
-                // Asked by count, as each camera's preparation uploads.
                 foreach (CameraStencil slot in _cameraStencils)
                 {
                     if (slot != null && !slot.batch.CanUpload(
                             _candidateStencilCommands, stencilCommands, _candidateStencilTransforms,
-                            _candidateStencilClips, _candidateCapVertices, capVertex, _candidateCapIndices,
+                            _candidateStencilClips, _building.CapVertexArray, capVertices, _candidateCapIndices,
                             capIndexCount, _candidateStencilColors, stencilColours))
                     {
                         stencilFits = false;
@@ -1984,406 +1857,436 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            if (!stencilFits)
+            // The body batch is asked too, by exactly the counts and contents it would be sent, before anything is written.
+            if (stencilFits && !_batch.CanUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips))
             {
-                GiveBackSecondInstancesTakenThisPass();
-                _candidateSides.Clear();
-                _candidateCapRecordCount = 0;
-                return false;
+                stencilFits = false;
             }
 
-            // 7. The body's upload. The stencil arrangement is each camera's, uploaded when that camera is prepared
-            //    from the snapshot adopted here. The stereo condition is read once, here; the cameras' stencil work
-            //    takes the condition this upload settled, so the body and its caps are never on different eye counts.
-            //    A GPU call that throws stops the display: what reached it cannot be established.
+            if (!stencilFits)
+            {
+                GiveBackInstancesTakenThisPass();
+                _candidateSides.Clear();
+                return RefuseForRoom();
+            }
+
+            // 7. The body's upload, by count. The stereo condition is read once, here. It was asked a moment ago with
+            //    these very counts; a refusal now is not a shortfall, and like a GPU call that throws it stops the display
+            //    as broken, since what reached the GPU cannot be established. Whatever references this pass took stay
+            //    with their registrations, and Dispose gives every one back, once.
             bool singlePassInstanced = SinglePassInstanced;
             bool uploaded;
             try
             {
-                uploaded = _batch.TryUpload(commands, transforms, clips, singlePassInstanced);
+                uploaded = RefuseBodyUploadForTest != null && RefuseBodyUploadForTest()
+                    ? false
+                    : _batch.TryUpload(_candidateCommands, commands, _candidateTransforms, _candidateClips, singlePassInstanced);
             }
             catch
             {
                 _broken = true;
                 _candidateSides.Clear();
-                _candidateCapRecordCount = 0;
                 throw;
             }
 
             if (!uploaded)
             {
-                // Nothing of this collection is adopted, and the instances it took are given straight back.
-                GiveBackSecondInstancesTakenThisPass();
+                _broken = true;
                 _candidateSides.Clear();
-                _candidateCapRecordCount = 0;
-                return false;
+                throw new InvalidOperationException(
+                    "the display batch refused an upload it had accepted by the same counts a moment before; this display "
+                    + "stops");
             }
 
-            // The candidate becomes the adopted snapshot, and the arrays change places rather than being copied.
-            AdoptCandidate(command, capVertex);
+            // 8. The candidate becomes the adopted snapshot; the arrays and the snapshots change places.
+            Adopt(commands);
             CommandUploads++;
 
-            // 6. Only now, with the GPU holding this arrangement, is the display's own state changed.
-            for (int i = 0; i < _plans.Count; i++)
+            // 9. Only now is the display's own state changed: the references no longer needed are given back, and a
+            //    registered fragment that is retired is let go.
+            for (int g = _shown.Count - 1; g >= 0; g--)
             {
-                Plan plan = _plans[i];
-                if (plan.drop)
+                Shown entry = _shown[g];
+                entry.takenThisPass = 0;
+                if (entry.dropping)
                 {
-                    ReleaseReferences(plan.entry);
-                    _shown.Remove(plan.entry);
+                    ReleaseReferences(entry);
+                    _shown.RemoveAt(g);
                     continue;
                 }
 
-                plan.entry.operation = plan.operation;
-                plan.entry.splitShown = plan.split;
-                if (!plan.split && plan.entry.hasSecondInstance)
+                entry.splitShown = entry.split;
+                entry.awaitingShown = entry.awaiting && !entry.split;
+                entry.renderFragmentsShown = entry.renderFragments;
+                int required = Math.Max(1, entry.renderFragments);
+                while (entry.instances.Count > required)
                 {
-                    _table.TryRetireDisplayInstance(plan.entry.secondInstance);
-                    plan.entry.secondInstance = default;
-                    plan.entry.hasSecondInstance = false;
+                    int last = entry.instances.Count - 1;
+                    _table.TryRetireDisplayInstance(entry.instances[last]);
+                    entry.instances.RemoveAt(last);
                 }
             }
 
             return true;
         }
 
-        /// <summary>Reads the ledger for one entry and decides what it should look like. Changes nothing.</summary>
-        private bool TryPlan(Shown entry, out Plan plan)
+        /// <summary>
+        /// Takes, for every registration kept, the display instances it lacks: one per render fragment, never fewer than
+        /// one. A registration being let go takes none. On a failure, everything this pass took is given back and
+        /// nothing else is touched.
+        /// </summary>
+        private bool TryTakeInstances()
         {
-            plan = new Plan { entry = entry, operation = entry.operation };
-
-            if (!_ledger.TryGetFragmentState(entry.fragment, out LogicalFragmentState state)
-                || state == LogicalFragmentState.Retired)
+            for (int g = 0; g < _shown.Count; g++)
             {
-                // Aborted, or gone: the display lets the body go and draws nothing of it.
-                plan.drop = true;
-                return true;
-            }
-
-            if (state == LogicalFragmentState.Live)
-            {
-                if (!_ledger.TryGetActiveOperation(entry.fragment, out CutOperationId active))
+                Shown entry = _shown[g];
+                if (entry.dropping)
                 {
-                    // Nothing admitted, or an operation reclaimed as stale: the whole body, and the cut is forgotten.
-                    plan.operation = default;
-                    return true;
+                    continue;
                 }
 
-                plan.operation = active;
-                if (!_ledger.TryGetPreparedAnchorDistribution(active, out AnchorDistributionResult distribution)
-                    || distribution.status != AnchorDistributionStatus.Ok)
+                int required = Math.Max(1, entry.renderFragments);
+                while (entry.instances.Count < required)
                 {
-                    // Admitted, but what the display needs is not prepared. Not the same as "no anchors".
-                    return true;
-                }
+                    if (!_table.TryAddDisplayInstance(entry.reference, out VpDisplayInstanceReference instance))
+                    {
+                        GiveBackInstancesTakenThisPass();
+                        return false;
+                    }
 
-                if (!_ledger.TryGetOperation(active, out LogicalCutOperation operation)
-                    || !TryWorldPlane(entry, operation.plane, out plan.worldPlane))
-                {
-                    return false;
+                    entry.instances.Add(instance);
+                    entry.takenThisPass++;
                 }
-
-                plan.localPlane = operation.plane;
-                plan.split = true;
-                plan.published = false;
-                plan.positiveFixed = FixedSupportAnchors.IsFixed(distribution.positiveCount);
-                plan.negativeFixed = FixedSupportAnchors.IsFixed(distribution.negativeCount);
-                return true;
             }
 
-            // Replaced: the cut was published, and the sides are its children from now on. Which cut that was is
-            // asked of the ledger, not remembered from an earlier collection: a publication must not depend on this
-            // display having been updated in between, and an operation reclaimed as stale must never be mistaken for
-            // the one that really replaced the fragment.
-            if (!_ledger.TryGetReplacingOperation(entry.fragment, out CutOperationId replacing)
-                || !_ledger.TryGetOperation(replacing, out LogicalCutOperation published)
-                || !published.positive.IsSet
-                || !published.negative.IsSet
-                || !TryWorldPlane(entry, published.plane, out plan.worldPlane))
-            {
-                return false;
-            }
-
-            plan.localPlane = published.plane;
-            plan.operation = replacing;
-            plan.split = true;
-            plan.published = true;
-            plan.positiveChild = published.positive;
-            plan.negativeChild = published.negative;
-            plan.positiveFixed = _ledger.IsFixedOwner(published.positive);
-            plan.negativeFixed = _ledger.IsFixedOwner(published.negative);
             return true;
         }
 
-        /// <summary>
-        /// The two provisional caps of one split, prepared into the candidate: one cross-section of this body's local
-        /// bounds box, placed in world, and given to each side with that side's own separation and outward direction.
-        /// <para>
-        /// A plane that misses the box, or meets it in a point or along an edge, leaves both sides without a record.
-        /// That is a normal empty result and no board is invented for it. Returns false only for input the polygon
-        /// cannot be taken of at all, which is an ordinary refusal of the whole collection.
-        /// </para>
-        /// </summary>
-        /// <summary>
-        /// The stencil batch's view of the candidate. The display batch draws each body's command with two instances,
-        /// one per side; a stencil group has to count one side alone, so here every split body's command becomes two
-        /// commands of one instance — the positive one in the first group's range, the negative one in the second's —
-        /// with the same index range, transform and clip record as the display instance it stands for. Nothing is cut
-        /// or copied. Each side's polygon is then fanned into its group's index range, and with no split shown there
-        /// are no groups at all.
-        /// </summary>
-        /// <summary>
-        /// Every split side's commands and every cap's fan, in one colour: the most any camera's arrangement of this
-        /// candidate could hold. It is only asked about, never uploaded.
-        /// </summary>
-        private void BuildLargestStencilArrangement(
-            int commandCount, out int stencilCommands, out int capIndexCount, out int colours)
+        /// <summary>Gives back exactly what this pass took, newest first; what the adopted snapshot holds stays held.</summary>
+        private void GiveBackInstancesTakenThisPass()
         {
-            // The scratch is the stencil capacity long, made with the display: twice the commands this candidate was
-            // allowed, and every cap fanned.
-            stencilCommands = 0;
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                Shown entry = _shown[g];
+                while (entry.takenThisPass > 0)
+                {
+                    int last = entry.instances.Count - 1;
+                    _table.TryRetireDisplayInstance(entry.instances[last]);
+                    entry.instances.RemoveAt(last);
+                    entry.takenThisPass--;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The candidate draw data from the built snapshot: per registration and command, one command whose instances
+        /// are its render fragments in order, each with the body's transform and that render fragment's clip record;
+        /// each render fragment's volume commands; and one cap record per snapshot cap.
+        /// </summary>
+        private void BuildCandidate(out int commandCount, out int instanceCount)
+        {
+            _candidateSides.Clear();
+            int command = 0;
             int instance = 0;
-            for (int c = 0; c < commandCount; c++)
+            for (int g = 0; g < _shown.Count; g++)
             {
-                VpIndirectCommand source = _candidateCommands[c];
-                if (source.instanceCount != 2)
+                Shown entry = _shown[g];
+                if (entry.renderFragments == 0)
                 {
-                    instance += source.instanceCount;
                     continue;
                 }
 
-                var one = new VpIndirectCommand(source.range, source.localBounds, 1);
-                for (int side = 0; side < 2; side++, instance++)
+                int bodyStart = command;
+                for (int c = 0; c < entry.commands.Length; c++)
                 {
-                    _candidateStencilCommands[stencilCommands] = one;
-                    _candidateStencilTransforms[stencilCommands] = _candidateTransforms[instance];
-                    _candidateStencilClips[stencilCommands] = _candidateClips[instance];
-                    stencilCommands++;
+                    VpIndirectCommand source = entry.commands[c];
+                    _candidateCommands[command] = new VpIndirectCommand(source.range, source.localBounds, entry.renderFragments);
+                    _candidateCommandMaterials[command] = entry.commandMaterials[c];
+                    _candidateCommandProvisional[command] = entry.clipped;
+                    command++;
+                    for (int k = 0; k < entry.renderFragments; k++)
+                    {
+                        int r = entry.firstRenderFragment + k;
+                        _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                        _candidateTransforms[instance] = entry.objectToWorld;
+                        _candidateClips[instance] = rf.clip;
+                        _candidateSides.Add(SideOf(entry, r, rf));
+                        instance++;
+                    }
+                }
+
+                for (int k = 0; k < entry.renderFragments; k++)
+                {
+                    int r = entry.firstRenderFragment + k;
+                    _candidateRfCommandStart[r] = bodyStart;
+                    _candidateRfCommandCount[r] = entry.commands.Length;
+                    _candidateRfTransform[r] = entry.objectToWorld;
                 }
             }
 
-            int index = 0;
-            for (int r = 0; r < _candidateCapRecordCount; r++)
+            if (_candidateRoots.Length < _shown.Count)
             {
-                LogicalCutCapRecord record = _candidateCapRecords[r];
-                for (int v = 1; v + 1 < record.vertexCount; v++)
-                {
-                    _candidateCapIndices[index++] = record.vertexStart;
-                    _candidateCapIndices[index++] = record.vertexStart + v;
-                    _candidateCapIndices[index++] = record.vertexStart + v + 1;
-                }
+                _candidateRoots = new LogicalFragmentId[_shown.Count];
             }
 
-            capIndexCount = index;
-            colours = stencilCommands > 0 || index > 0 ? 1 : 0;
+            for (int g = 0; g < _shown.Count; g++)
+            {
+                _candidateRoots[g] = _shown[g].fragment;
+            }
+
+            int caps = _building.CapCount;
+            for (int i = 0; i < caps; i++)
+            {
+                _candidateCapRecords[i] = CapRecordOf(i);
+            }
+
+            commandCount = command;
+            instanceCount = instance;
+        }
+
+        /// <summary>What one render fragment is, as a side: the cut it is a side of, and whether that side is published.</summary>
+        private LogicalCutDisplaySide SideOf(Shown entry, int renderFragment, in VpMultiCutRenderFragment rf)
+        {
+            if (rf.rootPendingSide != 0f && _ledger.TryGetActiveOperation(rf.root, out CutOperationId pending))
+            {
+                return new LogicalCutDisplaySide(
+                    entry.fragment, renderFragment, pending, rf.rootPendingSide, false, default,
+                    FixedOf(pending, rf.rootPendingSide), rf.offset, rf.clip);
+            }
+
+            if (rf.root != entry.fragment && _ledger.TryGetOrigin(rf.root, out CutOperationId origin, out float side))
+            {
+                return new LogicalCutDisplaySide(
+                    entry.fragment, renderFragment, origin, side, true, rf.root, FixedOf(origin, side), rf.offset, rf.clip);
+            }
+
+            return new LogicalCutDisplaySide(
+                entry.fragment, renderFragment, default, 0f, false, default, false, rf.offset, rf.clip);
+        }
+
+        /// <summary>One snapshot cap as a record: its boundary's cut and side, published or not, and its polygon's place.</summary>
+        private LogicalCutCapRecord CapRecordOf(int capIndex)
+        {
+            _building.TryGetCap(capIndex, out VpMultiCutCap cap);
+            _building.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment rf);
+            _building.TryGetBranch(rf.branchStart, out VpMultiCutBranch representative);
+            _building.TryGetCandidate(representative.candidateStart + (capIndex - rf.capStart), out VpClipCandidate candidate, out _);
+
+            CutOperationId operation = cap.boundary.face.operation;
+            float side = cap.boundary.side;
+            bool published = !candidate.pending;
+            LogicalFragmentId child = default;
+            if (published && _ledger.TryGetOperation(operation, out LogicalCutOperation cut))
+            {
+                child = side > 0f ? cut.positive : cut.negative;
+            }
+
+            return new LogicalCutCapRecord(
+                _shown[rf.registration].fragment, cap.renderFragment, operation, side, published, child,
+                FixedOf(operation, side), rf.offset, ToVector4(cap.worldPlane), cap.outwardNormal, cap.vertexStart,
+                cap.vertexCount);
+        }
+
+        private bool FixedOf(CutOperationId operation, float side)
+        {
+            return _ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution)
+                && FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount);
+        }
+
+        /// <summary>
+        /// Every render fragment's volume and every cap's fan, in one colour: the most any camera's arrangement of this
+        /// candidate could hold. It is only asked about, never uploaded. A render fragment under no condition is no
+        /// stencil target and has no volume.
+        /// </summary>
+        private void BuildLargestStencilArrangement(out int stencilCommands, out int capIndexCount, out int colours)
+        {
+            stencilCommands = 0;
+            capIndexCount = 0;
+            int renderFragments = _building.RenderFragmentCount;
+            for (int r = 0; r < renderFragments; r++)
+            {
+                _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                if (rf.conditionCount == 0)
+                {
+                    continue;
+                }
+
+                AppendVolume(
+                    r, rf.clip, _candidateCommands, _candidateRfCommandStart, _candidateRfCommandCount,
+                    _candidateRfTransform, ref stencilCommands);
+            }
+
+            int caps = _building.CapCount;
+            for (int i = 0; i < caps; i++)
+            {
+                AppendFan(_candidateCapRecords[i], ref capIndexCount);
+            }
+
+            colours = stencilCommands > 0 || capIndexCount > 0 ? 1 : 0;
             if (colours > 0)
             {
-                _candidateStencilColors[0] = new VpStencilCapColor(0, stencilCommands, 0, index, ProvisionalCapColour);
+                _candidateStencilColors[0] = new VpStencilCapColor(0, stencilCommands, 0, capIndexCount, ProvisionalCapColour);
             }
-        }
-
-        private bool TryAddCaps(Plan plan, Vector3 positiveOffset, Vector3 negativeOffset, ref int capVertex)
-        {
-            Shown entry = plan.entry;
-            if (!TryPrepareCapPolygon(entry, plan.localPlane))
-            {
-                return false;
-            }
-
-            int count = entry.capVertexCount;
-            if (count == 0)
-            {
-                return true;
-            }
-
-            // The same prepared polygon twice: the negative side keeps the order it was built in, and the positive side
-            // reads it backwards, because its outward direction is the opposite one. Each side's separation is added as
-            // it is placed, which is what makes these the caps of the two sides as they are actually drawn apart - and
-            // what lets the separation change without the cross-section being taken again.
-            int positiveStart = capVertex;
-            int negativeStart = capVertex + count;
-            for (int i = 0; i < count; i++)
-            {
-                _candidateCapVertices[positiveStart + i] = entry.capPolygon[count - 1 - i] + positiveOffset;
-                _candidateCapVertices[negativeStart + i] = entry.capPolygon[i] + negativeOffset;
-            }
-
-            Vector4 face = ToVector4(entry.capWorldPlane);
-            var normal = new Vector3(entry.capWorldPlane.x, entry.capWorldPlane.y, entry.capWorldPlane.z);
-            _candidateCapRecords[_candidateCapRecordCount++] = new LogicalCutCapRecord(
-                entry.fragment, plan.operation, 1f, plan.published, plan.positiveChild, plan.positiveFixed,
-                positiveOffset, face, -normal, positiveStart, count);
-            _candidateCapRecords[_candidateCapRecordCount++] = new LogicalCutCapRecord(
-                entry.fragment, plan.operation, -1f, plan.published, plan.negativeChild, plan.negativeFixed,
-                negativeOffset, face, normal, negativeStart, count);
-
-            capVertex = negativeStart + count;
-            return true;
         }
 
         /// <summary>
-        /// The cap polygon of one body, prepared once and then kept. The box, the adopted face and the placement are
-        /// everything it is made of, so while those three are the same the intersection, the conversion and the
-        /// ordering are not repeated - not on the next frame, and not when the cut is published, which changes who the
-        /// sides belong to and not where the face is (DESIGN 5.7). The separation is deliberately not part of it.
-        /// <para>
-        /// The placement and the bounds are settled when the body is taken in and are not changed afterwards; they are
-        /// compared here all the same, so that the reuse rests on what the polygon was made of rather than on that
-        /// being remembered. Nothing is kept across bodies and there is no store to keep: this is one prepared answer
-        /// living on the body it belongs to.
-        /// </para>
+        /// The candidate becomes what is drawn. Everything trades places -- the snapshots, the arrays and the list of
+        /// sides alike -- so what was adopted a moment ago becomes the room the next candidate is built in. Nothing is
+        /// copied and nothing can grow here.
         /// </summary>
-        private bool TryPrepareCapPolygon(Shown entry, float4 localPlane)
+        private void Adopt(int commandCount)
         {
-            if (entry.capPrepared
-                && Same(entry.capLocalPlane, localPlane)
-                && Same(entry.capPlacement, entry.objectToWorld)
-                && Same(entry.capBounds, entry.localBounds))
-            {
-                return true;
-            }
-
-            entry.capPrepared = false;
-            entry.capVertexCount = 0;
-            if (!_capPolygon.TryBuild(
-                    entry.localBounds,
-                    localPlane,
-                    entry.objectToWorld,
-                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds),
-                    entry.capPolygon,
-                    0,
-                    out int count,
-                    out float4 worldPlane))
-            {
-                return false;
-            }
-
-            entry.capVertexCount = count;
-            entry.capWorldPlane = worldPlane;
-            entry.capLocalPlane = localPlane;
-            entry.capPlacement = entry.objectToWorld;
-            entry.capBounds = entry.localBounds;
-            entry.capPrepared = true;
-            CapPolygonBuilds++;
-            return true;
-        }
-
-        /// <summary>
-        /// The candidate becomes what is drawn. Everything trades places — the arrays and the list of sides alike —
-        /// so the snapshot that was adopted a moment ago becomes the scratch the next candidate is built in.
-        /// Nothing is copied and nothing can grow here, which is what keeps the adopted CPU state and what the GPU
-        /// now holds from ever disagreeing.
-        /// </summary>
-        private void AdoptCandidate(int commandCount, int capVertexCount)
-        {
-            Matrix4x4[] transforms = _transforms;
-            VpInstanceClip[] clips = _clips;
-            _transforms = _candidateTransforms;
-            _clips = _candidateClips;
-            _candidateTransforms = transforms;
-            _candidateClips = clips;
-
-            VpIndirectCommand[] commands = _commands;
-            Material[] materials = _commandMaterials;
-            bool[] provisional = _commandProvisional;
-            _commands = _candidateCommands;
-            _commandMaterials = _candidateCommandMaterials;
-            _commandProvisional = _candidateCommandProvisional;
-            _candidateCommands = commands;
-            _candidateCommandMaterials = materials;
-            _candidateCommandProvisional = provisional;
-
-            List<LogicalCutDisplaySide> sides = _sides;
-            _sides = _candidateSides;
-            _candidateSides = sides;
+            Swap(ref _snapshot, ref _building);
+            Swap(ref _commands, ref _candidateCommands);
+            Swap(ref _commandMaterials, ref _candidateCommandMaterials);
+            Swap(ref _commandProvisional, ref _candidateCommandProvisional);
+            Swap(ref _transforms, ref _candidateTransforms);
+            Swap(ref _clips, ref _candidateClips);
+            Swap(ref _capRecords, ref _candidateCapRecords);
+            Swap(ref _rfCommandStart, ref _candidateRfCommandStart);
+            Swap(ref _rfCommandCount, ref _candidateRfCommandCount);
+            Swap(ref _rfTransform, ref _candidateRfTransform);
+            Swap(ref _roots, ref _candidateRoots);
+            Swap(ref _sides, ref _candidateSides);
             _candidateSides.Clear();
 
-            LogicalCutCapRecord[] capRecords = _capRecords;
-            Vector3[] capVertices = _capVertices;
-            _capRecords = _candidateCapRecords;
-            _capVertices = _candidateCapVertices;
-            _candidateCapRecords = capRecords;
-            _candidateCapVertices = capVertices;
-            _capRecordCount = _candidateCapRecordCount;
-            _candidateCapRecordCount = 0;
-
             _commandCount = commandCount;
-            _capVertexCount = capVertexCount;
+            _capRecordCount = _snapshot.CapCount;
             _hasSnapshot = true;
 
             // Every camera's preparation was for the snapshot just replaced.
             _generation++;
         }
 
-        /// <summary>
-        /// Gives back the display instances this pass took for a split that is not being adopted. An entry that was
-        /// already drawn as a split keeps the instance it has: that one belongs to the adopted snapshot.
-        /// </summary>
-        private void GiveBackSecondInstancesTakenThisPass()
+        private static void Swap<T>(ref T a, ref T b)
         {
-            for (int i = 0; i < _plans.Count; i++)
+            T held = a;
+            a = b;
+            b = held;
+        }
+
+        /// <summary>
+        /// A collection refused for want of room keeps the adopted snapshot drawing, as it was -- unless that snapshot
+        /// draws a fragment retired since it was adopted, in an aggregate or not. Then keeping it would show what is no
+        /// longer there, so the display stops instead; nothing of the new snapshot is adopted in part.
+        /// </summary>
+        private bool RefuseForRoom()
+        {
+            if (_hasSnapshot && AdoptedDrawsARetiredFragment())
             {
-                Plan plan = _plans[i];
-                if (plan.drop || !plan.split || !plan.entry.hasSecondInstance || plan.entry.splitShown)
+                Halt(LogicalCutDisplayHaltReason.RetiredWhileShown);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Whether a fragment the ledger has retired -- the source of an aborted cut, which is the only way one retires --
+        /// is, or lies below, a branch the adopted snapshot draws. A branch is a live fragment when it was adopted, so a
+        /// fragment retired before that is never at or below one: a match is a retirement since.
+        /// </summary>
+        private bool AdoptedDrawsARetiredFragment()
+        {
+            int steps = _ledger.OperationCount + 1;
+            for (int position = 0; _ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+            {
+                if (operation.state != LogicalCutOperationState.Aborted)
                 {
                     continue;
                 }
 
-                _table.TryRetireDisplayInstance(plan.entry.secondInstance);
-                plan.entry.secondInstance = default;
-                plan.entry.hasSecondInstance = false;
-            }
-        }
-
-        private bool TryTakeSecondInstances()
-        {
-            for (int i = 0; i < _plans.Count; i++)
-            {
-                Plan plan = _plans[i];
-                if (plan.drop || !plan.split || plan.entry.hasSecondInstance)
+                LogicalFragmentId at = operation.source;
+                for (int step = 0; step <= steps; step++)
                 {
-                    continue;
-                }
+                    if (IsAdoptedBranch(at))
+                    {
+                        return true;
+                    }
 
-                if (!_table.TryAddDisplayInstance(plan.entry.reference, out VpDisplayInstanceReference second))
-                {
-                    // Give back only what this pass took, and leave everything else as it was.
-                    GiveBackSecondInstancesTakenThisPass();
-                    return false;
-                }
+                    if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
+                        || !_ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                    {
+                        break;
+                    }
 
-                plan.entry.secondInstance = second;
-                plan.entry.hasSecondInstance = true;
+                    at = cut.source;
+                }
             }
 
-            return true;
+            return false;
         }
 
-        private bool TryWorldPlane(Shown entry, float4 physicsFramePlane, out float4 worldPlane)
+        private bool IsAdoptedBranch(LogicalFragmentId fragment)
         {
-            // The ledger's plane is in the fragment's physics frame, which is this geometry's own local space for the
-            // synthetic input of this scope. The transform is the snapshot this display was given.
-            return VpCutPlane.TryGeometryLocalToWorld(physicsFramePlane, entry.objectToWorld, out worldPlane);
-        }
-
-        /// <summary>
-        /// Whether this display already shows that fragment, as a body of its own or as one of the published children
-        /// of a body it holds. The children are asked of the ledger rather than read off the last snapshot, so a
-        /// publication that happened between two collections is seen here just the same.
-        /// </summary>
-        private bool IsAlreadyShown(LogicalFragmentId fragment)
-        {
-            for (int i = 0; i < _shown.Count; i++)
+            for (int b = 0; b < _snapshot.BranchCount; b++)
             {
-                Shown entry = _shown[i];
-                if (entry.fragment == fragment)
+                _snapshot.TryGetBranch(b, out VpMultiCutBranch branch);
+                if (branch.fragment == fragment)
                 {
                     return true;
                 }
+            }
 
-                if (_ledger.TryGetReplacingOperation(entry.fragment, out CutOperationId replacing)
-                    && _ledger.TryGetOperation(replacing, out LogicalCutOperation published)
-                    && (published.positive == fragment || published.negative == fragment))
+            return false;
+        }
+
+        private static LogicalCutDisplayHaltReason ReasonOf(VpMultiCutBuildOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case VpMultiCutBuildOutcome.UnsettledDistribution:
+                    return LogicalCutDisplayHaltReason.UnsettledDistribution;
+                case VpMultiCutBuildOutcome.RetiredInsideAggregate:
+                    return LogicalCutDisplayHaltReason.RetiredInsideAggregate;
+                default:
+                    return LogicalCutDisplayHaltReason.InvalidInput;
+            }
+        }
+
+        private void Halt(LogicalCutDisplayHaltReason reason)
+        {
+            if (_halted)
+            {
+                return;
+            }
+
+            _halted = true;
+            _haltReason = reason;
+        }
+
+        /// <summary>
+        /// Whether that fragment is shown here, or is an ancestor or a descendant of a fragment shown here -- asked of the
+        /// ledger's origins, so a publication that happened between two collections is seen just the same.
+        /// </summary>
+        private bool IsOnShownLineage(LogicalFragmentId fragment)
+        {
+            int steps = _ledger.OperationCount + 1;
+            for (int i = 0; i < _shown.Count; i++)
+            {
+                LogicalFragmentId shown = _shown[i].fragment;
+                if (shown == fragment || IsBelow(fragment, shown, steps) || IsBelow(shown, fragment, steps))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether <paramref name="ancestor"/> is on <paramref name="fragment"/>'s origins, strictly above it.</summary>
+        private bool IsBelow(LogicalFragmentId fragment, LogicalFragmentId ancestor, int steps)
+        {
+            LogicalFragmentId at = fragment;
+            for (int step = 0; step <= steps; step++)
+            {
+                if (!_ledger.TryGetOrigin(at, out CutOperationId origin, out _)
+                    || !_ledger.TryGetOperation(origin, out LogicalCutOperation cut))
+                {
+                    return false;
+                }
+
+                at = cut.source;
+                if (at == ancestor)
                 {
                     return true;
                 }
@@ -2397,7 +2300,7 @@ namespace Zantetsu.MeshCut
             int count = 0;
             for (int i = 0; i < _shown.Count; i++)
             {
-                count += _shown[i].commands.Length * (_shown[i].splitShown ? 2 : 1);
+                count += _shown[i].commands.Length * Math.Max(1, _shown[i].renderFragmentsShown);
             }
 
             return count;
@@ -2405,22 +2308,19 @@ namespace Zantetsu.MeshCut
 
         private void ReleaseReferences(Shown entry)
         {
-            if (entry.hasSecondInstance)
+            for (int i = entry.instances.Count - 1; i >= 0; i--)
             {
-                _table.TryRetireDisplayInstance(entry.secondInstance);
-                entry.secondInstance = default;
-                entry.hasSecondInstance = false;
+                _table.TryRetireDisplayInstance(entry.instances[i]);
             }
 
-            _table.TryRetireDisplayInstance(entry.positiveInstance);
+            entry.instances.Clear();
+            entry.takenThisPass = 0;
             _table.TryRetireGeometry(entry.reference);
         }
 
         /// <summary>
         /// What this display needs to hold about a body it is taking in: the commands, their materials, and the local
-        /// bounds of the vertices the indices actually reach. The bounds are measured here, once, by the same build
-        /// that makes the commands — not per frame, not per camera and not per submesh — which is what lets the cap's
-        /// cross-section be the body's own and a change of colour or of viewpoint never re-make it.
+        /// bounds of the vertices the indices actually reach, measured here once.
         /// </summary>
         private bool TryPrepare(
             VpStoredGeometry geometry,
@@ -2455,102 +2355,6 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
-        /// <summary>
-        /// Room for the candidate, taken before anything is built and well before anything is adopted: the adoption
-        /// itself only trades arrays, so nothing there can grow, allocate or fail.
-        /// </summary>
-        private void EnsureCandidateRoom(int commandCount, int instanceCount, int capRecordCount)
-        {
-            if (_candidateCommands.Length < commandCount)
-            {
-                _candidateCommands = new VpIndirectCommand[commandCount];
-                _candidateCommandMaterials = new Material[commandCount];
-                _candidateCommandProvisional = new bool[commandCount];
-            }
-
-            if (_candidateTransforms.Length < instanceCount)
-            {
-                _candidateTransforms = new Matrix4x4[instanceCount];
-                _candidateClips = new VpInstanceClip[instanceCount];
-            }
-
-            if (_candidateCapRecords.Length < capRecordCount)
-            {
-                _candidateCapRecords = new LogicalCutCapRecord[capRecordCount];
-                _candidateCapVertices = new Vector3[capRecordCount * VpCapBoundsPolygon.MaxVertices];
-            }
-        }
-
-        private static VpIndirectCommand[] Slice(VpIndirectCommand[] source, int count)
-        {
-            if (source.Length == count)
-            {
-                return source;
-            }
-
-            var exact = new VpIndirectCommand[count];
-            Array.Copy(source, exact, count);
-            return exact;
-        }
-
-        private static Matrix4x4[] Slice(Matrix4x4[] source, int count)
-        {
-            if (source.Length == count)
-            {
-                return source;
-            }
-
-            var exact = new Matrix4x4[count];
-            Array.Copy(source, exact, count);
-            return exact;
-        }
-
-        private static VpInstanceClip[] Slice(VpInstanceClip[] source, int count)
-        {
-            if (source.Length == count)
-            {
-                return source;
-            }
-
-            var exact = new VpInstanceClip[count];
-            Array.Copy(source, exact, count);
-            return exact;
-        }
-
-        // What a prepared polygon was made of is compared value by value: Unity's own equality for Vector4, Matrix4x4
-        // and Bounds is approximate, and something merely close to the face the polygon was taken of is a different
-        // face. Nothing here is a tolerance.
-        private static bool Same(float4 a, float4 b)
-        {
-            return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-        }
-
-        private static bool Same(Matrix4x4 a, Matrix4x4 b)
-        {
-            for (int row = 0; row < 4; row++)
-            {
-                for (int column = 0; column < 4; column++)
-                {
-                    if (a[row, column] != b[row, column])
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            return true;
-        }
-
-        private static bool Same(Bounds a, Bounds b)
-        {
-            Vector3 aMin = a.min;
-            Vector3 bMin = b.min;
-            Vector3 aMax = a.max;
-            Vector3 bMax = b.max;
-            return aMin.x == bMin.x && aMin.y == bMin.y && aMin.z == bMin.z
-                && aMax.x == bMax.x && aMax.y == bMax.y && aMax.z == bMax.z;
-        }
-
         private static Vector4 ToVector4(float4 value)
         {
             return new Vector4(value.x, value.y, value.z, value.w);
@@ -2579,6 +2383,16 @@ namespace Zantetsu.MeshCut
             {
                 throw new InvalidOperationException(
                     "a GPU update of this display was interrupted, so what reached the GPU cannot be established; dispose it");
+            }
+        }
+
+        private void ThrowIfHalted()
+        {
+            if (_halted)
+            {
+                throw new InvalidOperationException(
+                    "this display stopped drawing (" + _haltReason + "): what it adopted earlier may show what is no "
+                    + "longer there, so it neither prepares nor draws; dispose it");
             }
         }
     }

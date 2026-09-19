@@ -110,7 +110,8 @@ namespace Zantetsu.MeshCut.Tests
             Material two = withShadows ? ShadowMaterial(CullMode.Off) : null;
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
-                    scene.storage, table, scene.ledger, Materials(), one, two, 16, 16, settings, () => _frame,
+                    scene.storage, table, scene.ledger, Materials(), one, two, 16, 16,
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, () => _frame,
                     out scene.display),
                 Is.True,
                 "create the display");
@@ -466,35 +467,6 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// What each record of a group takes, on written-out groups: a group is kept when any of its caps is seen, then
-        /// every record in it keeps its volumes while only a seen cap is drawn; a group with no cap seen takes nothing.
-        /// The display's own path cannot put two records in one group today — one operation has one source — so the
-        /// mixed group is shown on the selection itself, which the preparation uses.
-        /// </summary>
-        [Test]
-        public void AGroupWithSeenAndUnseenCaps_KeepsEveryVolume_AndDrawsOnlyTheSeenCaps()
-        {
-            bool[] seen = { true, false, false, false };
-            int[] groupOfRecord = { 0, 0, 1, 0 };
-            var groupKept = new bool[] { false, true };
-            var capIssued = new bool[] { true, true, true, true };
-
-            VpLogicalCutDisplay.SelectStencilWork(seen, groupOfRecord, 2, groupKept, capIssued);
-
-            Assert.That(groupKept[0], Is.True, "group 0 has a cap seen");
-            Assert.That(groupKept[1], Is.False, "group 1 has none");
-            Assert.That(capIssued[0], Is.True, "the seen cap is drawn");
-            Assert.That(capIssued[1], Is.False, "an unseen cap of a kept group is not");
-            Assert.That(capIssued[3], Is.False, "nor another");
-            Assert.That(capIssued[2], Is.False, "nor any cap of a group left out");
-            for (int r = 0; r < seen.Length; r++)
-            {
-                bool volumes = groupKept[groupOfRecord[r]];
-                Assert.That(volumes, Is.EqualTo(r != 2), "record " + r + ": volumes kept exactly when its group is");
-            }
-        }
-
-        /// <summary>
         /// The settings are taken as given: a colour limit past what the stencil materials can order, or below one, a
         /// value that is not a finite length, or no camera room, refuses the display rather than being cut down. A full
         /// set of camera slots refuses one more camera, and a camera is registered once.
@@ -522,7 +494,8 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(
                         VpLogicalCutDisplay.TryCreate(
                             storage, table, new LogicalCutLedger(new LogicalCutIncompleteBudget(2)),
-                            Materials(), null, null, 4, 4, settings, out VpLogicalCutDisplay display),
+                            Materials(), null, null, 4, 4,
+                            VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, out VpLogicalCutDisplay display),
                         Is.False, what);
                     Assert.That(display, Is.Null, what);
                 }
@@ -533,7 +506,8 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(
                     VpLogicalCutDisplay.TryCreate(
                         storage, new VpGeometryReferenceTable(storage, 4, 4), new LogicalCutLedger(new LogicalCutIncompleteBudget(2)),
-                        Materials(), null, null, 4, 4, VpStencilTestSettings.Create(ceiling, 1), out VpLogicalCutDisplay display),
+                        Materials(), null, null, 4, 4,
+                        VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(ceiling, 1), out VpLogicalCutDisplay display),
                     Is.True, "the ceiling itself is accepted");
                 using (display)
                 {

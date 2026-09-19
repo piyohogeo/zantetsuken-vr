@@ -206,7 +206,8 @@ namespace Zantetsu.MeshCut.Tests
                 var table = new VpGeometryReferenceTable(storage, 8, 8);
                 Assert.That(
                     VpLogicalCutDisplay.TryCreate(
-                        storage, table, ledger, Materials(), null, null, 4, 8, VpStencilTestSettings.Create(4), () => _frame,
+                        storage, table, ledger, Materials(), null, null, 4, 8,
+                        VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(4), () => _frame,
                         out VpLogicalCutDisplay display),
                     Is.True);
                 using (new AfterTheFrame(() => _frame++, display))
@@ -818,12 +819,15 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// Finite inputs whose sums overflow: two free cuts the same way at a separation of 3e38 add up past a float; a
-        /// placement 3e38 up and a free side moved 3e38 further puts a cap vertex past a float. Both are refused as invalid
-        /// input -- not built, and not turned into an empty cap.
+        /// Finite inputs whose sums overflow: two free cuts the same way at a separation of 3e38 add up past a float; and a
+        /// cube 2e32 wide, cut across (y = 0) and then along (x = 0), at a separation of the largest float -- every offset
+        /// finite and every section computable, but the placed box, 1e32 up, added to an offset of the largest float up,
+        /// passes one. With the epsilon a box that size derives, the section check refuses it first. Both are refused as invalid input by the conservative check before the walk -- with room to spare and with too little room of every kind
+        /// alike, so a shortage never hides them -- and the reason says it was that check. Nothing is readable, and no
+        /// empty cap stands in.
         /// </summary>
         [Test]
-        public void AnOffsetOrACapVertexThatOverflows_IsRefused()
+        public void AnOffsetOrACapVertexThatOverflows_IsRefused_WhateverTheRoom()
         {
             const float huge = 3e38f;
             Assert.That(float.IsInfinity(huge + huge), Is.True, "the layout: the sums overflow");
@@ -832,21 +836,171 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = twice.AddFragment();
             var (_, up, _) = Cut(twice, root, new float4(0f, 1f, 0f, 0f));
             Cut(twice, up, new float4(0f, 1f, 0f, -0.5f));
-            VpMultiCutSnapshot snapshot = NewSnapshot();
-            Assert.That(
-                snapshot.TryBuild(twice, root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, huge, VpCapBoundsPolygon.EpsilonFor(k_box)),
-                Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "6e38 of offset");
-            Assert.That(snapshot.IsBuilt, Is.False);
 
-            LogicalCutLedger once = NewLedger();
-            LogicalFragmentId body = once.AddFragment();
-            Cut(once, body, new float4(0f, 1f, 0f, 0f));
-            Matrix4x4 high = Matrix4x4.Translate(new Vector3(0f, huge, 0f));
+            LogicalCutLedger along = NewLedger();
+            LogicalFragmentId body = along.AddFragment();
+            var (_, bodyPlus, _) = Cut(along, body, new float4(0f, 1f, 0f, 0f));
+            Admit(along, bodyPlus, new float4(1f, 0f, 0f, 0f));
+            // The epsilon is given small: the one EpsilonFor derives from a box this size squares past a float, which the
+            // section check refuses (below) before any offset is asked about.
+            var tall = new Bounds(Vector3.zero, Vector3.one * 2e32f);
+            Assert.That(float.IsInfinity(float.MaxValue + 1e32f), Is.True, "the layout: the largest float and 1e32 overflow");
+
+            foreach ((VpMultiCutSnapshot snapshot, string what) in RoomyAndShort())
+            {
+                Assert.That(
+                    snapshot.TryBuild(twice, root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, huge, VpCapBoundsPolygon.EpsilonFor(k_box)),
+                    Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), what + ": 6e38 of offset");
+                Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.ConservativeOffset), what);
+                Assert.That(snapshot.IsBuilt, Is.False);
+
+                Assert.That(
+                    snapshot.TryBuild(along, body, tall, Matrix4x4.identity, Matrix4x4.identity, k_none, float.MaxValue, 1e-3f),
+                    Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), what + ": a cap vertex 1e32 above the largest float");
+                Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.ConservativeCapVertex), what);
+                Assert.That(snapshot.IsBuilt, Is.False);
+                Assert.That(snapshot.CapCount, Is.Zero, "nothing readable, no empty cap in its place");
+
+                Assert.That(
+                    snapshot.TryBuild(along, body, tall, Matrix4x4.identity, Matrix4x4.identity, k_none, float.MaxValue, VpCapBoundsPolygon.EpsilonFor(tall)),
+                    Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), what + ": the derived epsilon");
+                Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.ConservativeSection), what);
+            }
+        }
+
+        /// <summary>
+        /// The check is conservative by contract: nine cuts up one lineage, every side free, at a separation whose ninth
+        /// multiple is past a float while its eighth is not. L9+ is drawn only inside the aggregate L8+, whose offset is
+        /// eight separations and finite -- nothing drawn would overflow -- and still the input is refused, with room to
+        /// spare or not, as the conservative check's refusal and not as a value drawn. With a separation a little
+        /// smaller the same lineage builds, and a shortage of room is then only a shortage.
+        /// </summary>
+        [Test]
+        public void TheNumericCheck_RefusesWhatIsNotDrawnToo_AndSaysItWasTheCheck()
+        {
+            const float separation = 4e37f;
+            Assert.That(float.IsInfinity(9f * separation), Is.True, "the layout: nine separations overflow");
+            Assert.That(float.IsInfinity(8f * separation), Is.False, "and eight do not");
+
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId at = root;
+            for (int k = 0; k < 9; k++)
+            {
+                at = Cut(ledger, at, new float4(0f, 1f, 0f, 0.8f - (0.15f * k))).positive;
+            }
+
+            foreach ((VpMultiCutSnapshot snapshot, string what) in RoomyAndShort())
+            {
+                Assert.That(
+                    snapshot.TryBuild(ledger, root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, separation, VpCapBoundsPolygon.EpsilonFor(k_box)),
+                    Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), what);
+                Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.ConservativeOffset), what + ": the check, not a drawn value");
+            }
+
+            VpMultiCutSnapshot roomy = NewSnapshot();
             Assert.That(
-                snapshot.TryBuild(once, body, k_box, high, Matrix4x4.identity, k_none, huge, VpCapBoundsPolygon.EpsilonFor(k_box)),
-                Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "a cap vertex 3e38 up, moved 3e38 further");
-            Assert.That(snapshot.IsBuilt, Is.False);
-            Assert.That(snapshot.CapCount, Is.Zero, "nothing readable, no empty cap in its place");
+                roomy.TryBuild(ledger, root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, 3e37f, VpCapBoundsPolygon.EpsilonFor(k_box)),
+                Is.EqualTo(VpMultiCutBuildOutcome.Built), "a smaller separation builds");
+            Assert.That(roomy.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.None));
+            VpMultiCutSnapshot small = NewSnapshot(branches: 2);
+            Assert.That(
+                small.TryBuild(ledger, root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, 3e37f, VpCapBoundsPolygon.EpsilonFor(k_box)),
+                Is.EqualTo(VpMultiCutBuildOutcome.CapacityExceeded), "and short of room it is only short");
+            Assert.That(small.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.None));
+        }
+
+        /// <summary>
+        /// Sections are taken for the caps drawn only: nine cuts take the eight faces the aggregate and its siblings are
+        /// capped by, never the ninth (Ignored) one, and a build reusing that snapshot takes none. The numeric check takes
+        /// none of its own: a snapshot too short of caps to draw any takes no section at all.
+        /// </summary>
+        [Test]
+        public void OnlyTheCapsDrawnTakeSections_TheCheckTakesNone()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId at = root;
+            for (int k = 0; k < 9; k++)
+            {
+                at = Cut(ledger, at, new float4(0f, 1f, 0f, 0.8f - (0.15f * k))).positive;
+            }
+
+            VpMultiCutSnapshot first = NewSnapshot();
+            Assert.That(Build(first, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(first.SectionBuildCount, Is.EqualTo(8), "eight faces drawn; the ninth takes no section");
+
+            VpMultiCutSnapshot second = NewSnapshot();
+            Assert.That(
+                second.TryBuild(ledger, new[] { new VpMultiCutRegistration(root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(k_box)) }, Separation, first),
+                Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(second.SectionBuildCount, Is.Zero, "all reused");
+
+            VpMultiCutSnapshot tight = NewSnapshot(caps: 1);
+            Assert.That(Build(tight, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.CapacityExceeded));
+            Assert.That(tight.SectionBuildCount, Is.Zero, "the check took no section");
+        }
+
+        /// <summary>
+        /// Section arithmetic that could pass a float is refused before the walk, as the conservative section check -- with
+        /// room to spare and short of room of every kind alike -- and never answered as an empty cap: an epsilon whose
+        /// square passes a float (the one derived from a box 1e26 wide), a plane so far off that a corner's distance and
+        /// the difference of two could pass one, and a box wider than a float on an axis, whether a plane crosses that axis
+        /// or not. An ordinary plane that misses the box still builds, with empty caps.
+        /// </summary>
+        [Test]
+        public void SectionArithmeticThatCouldOverflow_IsRefused_NotTakenAsEmpty()
+        {
+            var huge = new Bounds(Vector3.zero, Vector3.one * 1e26f);
+            Assert.That(float.IsInfinity(VpCapBoundsPolygon.EpsilonFor(huge) * VpCapBoundsPolygon.EpsilonFor(huge)), Is.True, "the layout");
+            var wider = new Bounds { center = Vector3.zero, extents = new Vector3(2e38f, 1f, 1f) };
+            var cases = new (string what, Bounds box, float epsilon, float4 plane)[]
+            {
+                ("an epsilon squared past a float", huge, VpCapBoundsPolygon.EpsilonFor(huge), new float4(0f, 1f, 0f, 0f)),
+                ("a plane 3.3e38 off", k_box, VpCapBoundsPolygon.EpsilonFor(k_box), new float4(1f, 0f, 0f, -3.3e38f)),
+                ("a box 4e38 wide, crossed along it", wider, 1e-3f, new float4(1f, 0f, 0f, 0f)),
+                ("a box 4e38 wide, crossed across it", wider, 1e-3f, new float4(0f, 1f, 0f, 0f)),
+            };
+
+            foreach ((string what, Bounds box, float epsilon, float4 plane) in cases)
+            {
+                LogicalCutLedger ledger = NewLedger();
+                LogicalFragmentId root = ledger.AddFragment();
+                Cut(ledger, root, plane);
+                foreach ((VpMultiCutSnapshot snapshot, string room) in RoomyAndShort())
+                {
+                    Assert.That(
+                        snapshot.TryBuild(ledger, root, box, Matrix4x4.identity, Matrix4x4.identity, k_none, Separation, epsilon),
+                        Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), what + ", " + room);
+                    Assert.That(snapshot.InvalidInputReason, Is.EqualTo(VpMultiCutInvalidInput.ConservativeSection), what + ", " + room);
+                    Assert.That(snapshot.IsBuilt, Is.False);
+                }
+            }
+
+            LogicalCutLedger ordinary = NewLedger();
+            LogicalFragmentId body = ordinary.AddFragment();
+            Cut(ordinary, body, new float4(1f, 0f, 0f, -10f));
+            VpMultiCutSnapshot missed = NewSnapshot();
+            Assert.That(Build(missed, ordinary, body), Is.EqualTo(VpMultiCutBuildOutcome.Built), "a plane that misses, ten off");
+            for (int c = 0; c < missed.CapCount; c++)
+            {
+                missed.TryGetCap(c, out VpMultiCutCap cap);
+                Assert.That(cap.vertexCount, Is.Zero, "an empty cap, as ever");
+            }
+        }
+
+        /// <summary>Snapshots with room to spare, and too little room of every kind.</summary>
+        private static (VpMultiCutSnapshot snapshot, string what)[] RoomyAndShort()
+        {
+            return new[]
+            {
+                (NewSnapshot(), "room to spare"),
+                (NewSnapshot(branches: 1), "branches short"),
+                (NewSnapshot(candidates: 1), "candidates short"),
+                (NewSnapshot(renderFragments: 1), "render fragments short"),
+                (NewSnapshot(caps: 1), "caps short"),
+                (NewSnapshot(chain: 1), "chain short"),
+            };
         }
 
         /// <summary>
@@ -891,6 +1045,196 @@ namespace Zantetsu.MeshCut.Tests
             VpMultiCutSnapshot short1 = NewSnapshot(candidates: kept - 1);
             Assert.That(Build(short1, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.CapacityExceeded), "one fewer is refused");
             Assert.That(short1.IsBuilt, Is.False);
+        }
+
+        // ----- several registrations ------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Two registrations built together: each one's branches and render fragments are contiguous and carry its index,
+        /// its box and its placement; nothing is aggregated across them; and the result for each is the one a build of
+        /// that registration alone gives -- the same clip planes, offsets and cap vertices.
+        /// </summary>
+        [Test]
+        public void TwoRegistrations_AreBuiltTogether_EachAsItWouldBeAlone()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId first = ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+            LogicalFragmentId second = ledger.AddFragment();
+            var (_, plus, _) = Cut(ledger, first, new float4(0f, 1f, 0f, 0f));
+            Admit(ledger, plus, new float4(1f, 0f, 0f, 0f));
+            Admit(ledger, second, new float4(0f, 0f, 1f, 0.2f));
+            Matrix4x4 moved = Matrix4x4.TRS(new Vector3(3f, 0f, 0f), Quaternion.Euler(0f, 0f, 20f), Vector3.one);
+            var otherBox = new Bounds(Vector3.zero, new Vector3(1f, 2f, 3f));
+            var registrations = new[]
+            {
+                new VpMultiCutRegistration(first, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(k_box)),
+                new VpMultiCutRegistration(second, otherBox, moved, Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(otherBox)),
+            };
+
+            VpMultiCutSnapshot together = NewSnapshot();
+            Assert.That(together.TryBuild(ledger, registrations, Separation), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(together.RenderFragmentCount, Is.EqualTo(5), "A-, A+ as B's two sides, and the second body's two sides");
+
+            int lastRegistration = 0;
+            for (int b = 0; b < together.BranchCount; b++)
+            {
+                together.TryGetBranch(b, out VpMultiCutBranch branch);
+                Assert.That(branch.registration, Is.GreaterThanOrEqualTo(lastRegistration), "one registration's branches together");
+                lastRegistration = branch.registration;
+            }
+
+            for (int g = 0; g < 2; g++)
+            {
+                VpMultiCutSnapshot alone = NewSnapshot();
+                VpMultiCutRegistration r = registrations[g];
+                Assert.That(
+                    alone.TryBuild(ledger, r.root, r.localBounds, r.geometryLocalToWorld, r.lineageToGeometryLocal, r.reflected, Separation, r.vertexEpsilon),
+                    Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                int k = 0;
+                for (int i = 0; i < together.RenderFragmentCount; i++)
+                {
+                    together.TryGetRenderFragment(i, out VpMultiCutRenderFragment rf);
+                    if (rf.registration != g)
+                    {
+                        continue;
+                    }
+
+                    Assert.That(rf.localBounds, Is.EqualTo(r.localBounds), "its own box");
+                    Assert.That(rf.geometryLocalToWorld, Is.EqualTo(r.geometryLocalToWorld), "its own placement");
+                    alone.TryGetRenderFragment(k++, out VpMultiCutRenderFragment same);
+                    Assert.That(rf.root, Is.EqualTo(same.root));
+                    Assert.That(rf.offset, Is.EqualTo(same.offset));
+                    Assert.That(rf.clip.PlaneCount, Is.EqualTo(same.clip.PlaneCount));
+                    Assert.That(rf.capCount, Is.EqualTo(same.capCount));
+                    for (int c = 0; c < rf.capCount; c++)
+                    {
+                        together.TryGetCap(rf.capStart + c, out VpMultiCutCap cap);
+                        alone.TryGetCap(same.capStart + c, out VpMultiCutCap sameCap);
+                        Assert.That(cap.vertexCount, Is.EqualTo(sameCap.vertexCount));
+                        for (int v = 0; v < cap.vertexCount; v++)
+                        {
+                            together.TryGetCapVertex(rf.capStart + c, v, out Vector3 x);
+                            alone.TryGetCapVertex(same.capStart + c, v, out Vector3 y);
+                            Assert.That(x, Is.EqualTo(y));
+                        }
+                    }
+                }
+
+                Assert.That(k, Is.EqualTo(alone.RenderFragmentCount), "registration " + g + ": every render fragment, once");
+            }
+        }
+
+        /// <summary>
+        /// No registration's root may be on another's lineage: the same root twice, and a root below another, are invalid
+        /// input -- decided before any room is taken, so a snapshot with room for one branch says so too.
+        /// </summary>
+        [Test]
+        public void RootsOnOneLineage_AreRefused()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            var (_, plus, _) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            float epsilon = VpCapBoundsPolygon.EpsilonFor(k_box);
+            var rootAlone = new VpMultiCutRegistration(root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, epsilon);
+            var child = new VpMultiCutRegistration(plus, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, epsilon);
+            foreach (VpMultiCutSnapshot snapshot in new[] { NewSnapshot(), NewSnapshot(branches: 1) })
+            {
+                Assert.That(snapshot.TryBuild(ledger, new[] { rootAlone, rootAlone }, Separation), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "twice");
+                Assert.That(snapshot.TryBuild(ledger, new[] { rootAlone, child }, Separation), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "a descendant");
+                Assert.That(snapshot.TryBuild(ledger, new[] { child, rootAlone }, Separation), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput), "an ancestor");
+                Assert.That(snapshot.IsBuilt, Is.False);
+            }
+
+            Assert.Throws<ArgumentNullException>(() => NewSnapshot().TryBuild(ledger, (IReadOnlyList<VpMultiCutRegistration>)null, Separation));
+            Assert.Throws<ArgumentNullException>(
+                () => NewSnapshot().TryBuild(ledger, new[] { new VpMultiCutRegistration(root, k_box, Matrix4x4.identity, Matrix4x4.identity, null, epsilon) }, Separation));
+        }
+
+        /// <summary>
+        /// A retired fragment inside an aggregate is found before any room is taken: snapshots too small in every way the
+        /// walk could run short -- branches, candidates, chain, render fragments, caps -- still answer
+        /// <see cref="VpMultiCutBuildOutcome.RetiredInsideAggregate"/>, never a shortage that would let an earlier snapshot
+        /// be kept drawing.
+        /// </summary>
+        [Test]
+        public void ARetiredFragmentInsideAnAggregate_IsFoundBeforeAnyRoomIsTaken()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId at = root;
+            for (int k = 0; k < 9; k++)
+            {
+                at = Cut(ledger, at, new float4(0f, 1f, 0f, 0.8f - (0.15f * k))).positive;
+            }
+
+            var small = new (VpMultiCutSnapshot snapshot, string what)[]
+            {
+                (NewSnapshot(branches: 1), "branches"),
+                (NewSnapshot(candidates: 1), "candidates"),
+                (NewSnapshot(chain: 1), "chain"),
+                (NewSnapshot(renderFragments: 1), "render fragments"),
+                (NewSnapshot(caps: 1), "caps"),
+            };
+
+            foreach ((VpMultiCutSnapshot snapshot, string what) in small)
+            {
+                Assert.That(Build(snapshot, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.CapacityExceeded), what + ": the layout, only short");
+            }
+
+            CutOperationId tenth = Admit(ledger, at, new float4(0f, 0f, 1f, 0f));
+            Assert.That(ledger.Abort(tenth), Is.EqualTo(LogicalCutResultOutcome.Applied));
+            foreach ((VpMultiCutSnapshot snapshot, string what) in small)
+            {
+                Assert.That(Build(snapshot, ledger, root), Is.EqualTo(VpMultiCutBuildOutcome.RetiredInsideAggregate), what);
+                Assert.That(snapshot.IsBuilt, Is.False);
+            }
+        }
+
+        /// <summary>
+        /// The sections a build takes are taken once per face, shared by both sides, and taken from the snapshot given to
+        /// reuse from when its key is exactly the same: none is taken again then, and every cap vertex is the same. A
+        /// moved placement is a different key and is taken again.
+        /// </summary>
+        [Test]
+        public void Sections_AreTakenOncePerFace_AndReusedFromTheSnapshotGiven()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            var (_, plus, _) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            Admit(ledger, plus, new float4(1f, 0f, 0f, 0f));
+            var registrations = new[]
+            {
+                new VpMultiCutRegistration(root, k_box, Matrix4x4.identity, Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(k_box)),
+            };
+
+            VpMultiCutSnapshot first = NewSnapshot();
+            Assert.That(first.TryBuild(ledger, registrations, Separation), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(first.CapCount, Is.EqualTo(5), "the layout: A- one cap, A+ B+ and A+ B- two each");
+            Assert.That(first.SectionBuildCount, Is.EqualTo(2), "one section per face");
+
+            VpMultiCutSnapshot second = NewSnapshot();
+            Assert.That(second.TryBuild(ledger, registrations, Separation, first), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(second.SectionBuildCount, Is.Zero, "every section reused");
+            for (int c = 0; c < first.CapCount; c++)
+            {
+                first.TryGetCap(c, out VpMultiCutCap a);
+                second.TryGetCap(c, out VpMultiCutCap b);
+                Assert.That(b.vertexCount, Is.EqualTo(a.vertexCount));
+                for (int v = 0; v < a.vertexCount; v++)
+                {
+                    first.TryGetCapVertex(c, v, out Vector3 x);
+                    second.TryGetCapVertex(c, v, out Vector3 y);
+                    Assert.That(y, Is.EqualTo(x));
+                }
+            }
+
+            var moved = new[]
+            {
+                new VpMultiCutRegistration(root, k_box, Matrix4x4.Translate(new Vector3(0f, 1e-3f, 0f)), Matrix4x4.identity, k_none, VpCapBoundsPolygon.EpsilonFor(k_box)),
+            };
+            VpMultiCutSnapshot third = NewSnapshot();
+            Assert.That(third.TryBuild(ledger, moved, Separation, second), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(third.SectionBuildCount, Is.EqualTo(2), "a moved placement is another key");
         }
 
         // ----- fixture -------------------------------------------------------------------------------------------------

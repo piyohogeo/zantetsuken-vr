@@ -266,8 +266,6 @@ namespace Zantetsu.MeshCut
         {
             int renderFragments = snapshot.RenderFragmentCount;
             int caps = snapshot.CapCount;
-            Bounds box = snapshot.LocalBounds;
-            Matrix4x4 placement = snapshot.GeometryLocalToWorld;
 
             // 1. Each cap: empty, or kept by both eyes' frustum and facing.
             for (int c = 0; c < caps; c++)
@@ -309,8 +307,9 @@ namespace Zantetsu.MeshCut
                     _targetsUsed = targets + 1;
                     var conditions = new VpCapCompatibilityTarget(snapshot.Conditions(rf), rf.offset);
                     _conditions[targets] = conditions;
+                    // Each render fragment is judged against its own registration's box and placement.
                     _targets[targets] = new VpCapProjectionTarget(
-                        conditions, box, placement,
+                        conditions, rf.localBounds, rf.geometryLocalToWorld,
                         new VpArrayRange<VpArrayRange<Vector3>>(_visibleCaps, viewStart, seen), complete);
                     _renderFragmentOfTarget[targets] = r;
                     targets++;

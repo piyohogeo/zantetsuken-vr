@@ -207,6 +207,49 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>Malformed input is refused, and refused without writing anything.</summary>
+        /// <summary>
+        /// Arithmetic that does not come out finite is refused, never answered as an empty section: an epsilon whose square
+        /// passes a float, a corner's distance past a float, and two distances whose difference passes one. A plane that
+        /// misses the box, and an epsilon that merges a whole section into one vertex, are still empty answers -- the
+        /// second is the epsilon's doing and not an error. Nothing is written by any of them.
+        /// </summary>
+        [Test]
+        public void ArithmeticThatDoesNotComeOutFinite_IsRefused_NeverAnsweredAsEmpty()
+        {
+            Vector3[] vertices = Buffer();
+            var polygon = new VpCapBoundsPolygon();
+            var across = new float4(0f, 1f, 0f, -1f);
+
+            Assert.That(
+                polygon.TryBuild(k_box, new float4(0f, 1f, 0f, -9f), Matrix4x4.identity, Epsilon, vertices, 0, out int missed, out _),
+                Is.True, "a plane that misses the box");
+            Assert.That(missed, Is.Zero, "is an empty answer");
+            Assert.That(
+                polygon.TryBuild(k_box, across, Matrix4x4.identity, 1e19f, vertices, 0, out int merged, out _),
+                Is.True, "an epsilon of 1e19, whose square is a float");
+            Assert.That(merged, Is.Zero, "merges the section into one vertex: empty, by the epsilon");
+
+            Assert.That(float.IsInfinity(1e20f * 1e20f), Is.True, "the layout: the square passes a float");
+            Assert.That(
+                polygon.TryBuild(k_box, across, Matrix4x4.identity, 1e20f, vertices, 0, out _, out _),
+                Is.False, "an epsilon whose square is not a float");
+
+            var wide = new Bounds { center = Vector3.zero, extents = new Vector3(1e38f, 1f, 1f) };
+            Assert.That(
+                polygon.TryBuild(wide, new float4(1f, 0f, 0f, -3.3e38f), Matrix4x4.identity, 1e-3f, vertices, 0, out _, out _),
+                Is.False, "a corner 4.3e38 from the plane");
+
+            var wider = new Bounds { center = Vector3.zero, extents = new Vector3(2e38f, 1f, 1f) };
+            Assert.That(
+                polygon.TryBuild(wider, new float4(1f, 0f, 0f, 0f), Matrix4x4.identity, 1e-3f, vertices, 0, out _, out _),
+                Is.False, "two corners 2e38 either side, whose distances differ by 4e38");
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                Assert.That(vertices[i], Is.EqualTo(Vector3.zero), "nothing was written by any of them");
+            }
+        }
+
         [Test]
         public void MalformedInput_IsRefusedAndWritesNothing()
         {

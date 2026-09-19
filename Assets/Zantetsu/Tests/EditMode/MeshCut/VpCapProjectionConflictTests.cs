@@ -45,6 +45,7 @@ namespace Zantetsu.MeshCut.Tests
             }
 
             _objects.Clear();
+            _ledgers.Clear();
         }
 
         // ----- eyes and written-out targets -----------------------------------------------------------------------
@@ -565,10 +566,12 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
                     storage, new VpGeometryReferenceTable(storage, 8, 8), ledger,
-                    new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16, VpStencilTestSettings.Create(), () => 1,
+                    new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16,
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(), () => 1,
                     out VpLogicalCutDisplay display),
                 Is.True);
             display.Separation = Separation;
+            _ledgers[display] = ledger;
             Assert.That(display.TryShow(body, AppendCube(storage), placement), Is.True);
             Assert.That(ledger.Admit(body, new float4(0f, 1f, 0f, -1f), true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
             Assert.That(ledger.PrepareAnchorDistribution(cut, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
@@ -598,23 +601,24 @@ namespace Zantetsu.MeshCut.Tests
             return new VpCapEye(position, Matrix4x4.Perspective(90f, 1f, 0.1f, 100f) * worldToCamera);
         }
 
-        private static VpCapProjectionTarget Adapted(VpLogicalCutDisplay display, VpCapEye left, VpCapEye right)
+        // Each display's ledger, so a target can name its faces under the ledger that issued them.
+        private readonly Dictionary<VpLogicalCutDisplay, LogicalCutLedger> _ledgers = new Dictionary<VpLogicalCutDisplay, LogicalCutLedger>();
+
+        private VpCapProjectionTarget Adapted(VpLogicalCutDisplay display, VpCapEye left, VpCapEye right)
         {
-            Assert.That(
-                VpCapProjectionConflict.TryGetSingleCutTarget(display, PositiveCap(display), left, right, 0.01f, out VpCapProjectionTarget target),
-                Is.True);
-            return target;
+            return VpDisplayRecordTargets.Projection(display, _ledgers[display], PositiveCap(display), left, right, 0.01f);
         }
 
         /// <summary>
         /// Two cubes of two ledgers — incompatible — seen by eyes in front of them. In the same place their positive
         /// caps meet and they must be separated; with the second cube 3.5 to the side, their rectangles are apart. The
-        /// adapter reads the box, the placement and the separated cap the display prepared. Seen from above, where the
-        /// visibility test drops both downward positive caps, neither target's caps are complete, and with their boxes
-        /// meeting the two may overlap: an omitted cap does not show the volumes apart.
+        /// target is made from what the real display published: its render fragment's box and placement, its cap records
+        /// and the separated cap vertices. Seen from above, where the visibility test drops both downward positive caps,
+        /// neither target's caps are complete, and with their boxes meeting the two may overlap: an omitted cap does not
+        /// show the volumes apart.
         /// </summary>
         [Test]
-        public void RealCaps_ThroughTheAdapter()
+        public void RealCaps_FromTheDisplaysRecords()
         {
             using (VpCpuGeometryStorage first = new VpCpuGeometryStorage(2048, 8192, 32, 128, 128, Allocator.Persistent))
             using (VpCpuGeometryStorage second = new VpCpuGeometryStorage(2048, 8192, 32, 128, 128, Allocator.Persistent))

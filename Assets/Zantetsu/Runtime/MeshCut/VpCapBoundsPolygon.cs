@@ -109,7 +109,11 @@ namespace Zantetsu.MeshCut
         /// <paramref name="worldPlane"/>'s normal.
         /// <para>
         /// Returns true with <paramref name="count"/> zero for a plane that misses the box or meets it in a single
-        /// point or along one edge, writing nothing. Returns false, having written nothing, for malformed input.
+        /// point or along one edge, writing nothing -- and also when the epsilon merges what is left into fewer than three
+        /// vertices, which is the epsilon's doing and not an error. Returns false, having written nothing, for malformed
+        /// input, and for arithmetic that does not come out finite: the epsilon squared, a corner's distance to the plane,
+        /// the difference of two distances or a crossing point. Those are refused before any count is looked at, so a
+        /// value that is not finite is never answered as an empty section.
         /// </para>
         /// </summary>
         public bool TryBuild(
@@ -129,6 +133,13 @@ namespace Zantetsu.MeshCut
                 || start > worldVertices.Length - MaxVertices
                 || !(epsilon >= 0f)
                 || float.IsInfinity(epsilon))
+            {
+                return false;
+            }
+
+            // An epsilon whose square is not a float would merge every vertex into one: refused, not answered as empty.
+            float epsilonSquared = epsilon * epsilon;
+            if (float.IsInfinity(epsilonSquared))
             {
                 return false;
             }
@@ -153,6 +164,11 @@ namespace Zantetsu.MeshCut
             for (int c = 0; c < 8; c++)
             {
                 _distances[c] = math.dot(plane.xyz, _corners[c]) + plane.w;
+                if (!math.isfinite(_distances[c]))
+                {
+                    return false;
+                }
+
                 if (_distances[c] == 0f)
                 {
                     _gathered[gathered++] = _corners[c];
@@ -170,8 +186,20 @@ namespace Zantetsu.MeshCut
 
                 // A point between the two ends: da and db have opposite signs, so the fraction is inside (0, 1) and
                 // the point is on the edge, in the box and in the plane, to within the error of doing this in float.
+                float denominator = da - db;
+                if (!math.isfinite(denominator))
+                {
+                    return false;
+                }
+
                 float3 a = _corners[k_edges[e]];
-                _gathered[gathered++] = a + ((_corners[k_edges[e + 1]] - a) * (da / (da - db)));
+                float3 crossing = a + ((_corners[k_edges[e + 1]] - a) * (da / denominator));
+                if (!math.all(math.isfinite(crossing)))
+                {
+                    return false;
+                }
+
+                _gathered[gathered++] = crossing;
             }
 
             // 2. Two points that came out in the same place are one vertex. This is what the epsilon is for, and its
@@ -179,7 +207,6 @@ namespace Zantetsu.MeshCut
             //    that corner, and those are not three vertices. The comparison is a distance between points, in the
             //    same local units as the bounds.
             int kept = 0;
-            float epsilonSquared = epsilon * epsilon;
             for (int g = 0; g < gathered; g++)
             {
                 bool repeated = false;

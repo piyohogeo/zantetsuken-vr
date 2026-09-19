@@ -584,7 +584,8 @@ namespace Zantetsu.MeshCut.Tests
             Material shadow, Material provisionalShadow, out VpLogicalCutDisplay display)
         {
             return VpLogicalCutDisplay.TryCreate(
-                storage, table, ledger, Materials(), shadow, provisionalShadow, 16, 16, VpStencilTestSettings.Create(),
+                storage, table, ledger, Materials(), shadow, provisionalShadow, 16, 16,
+                VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(),
                 () => _frame, out display);
         }
 

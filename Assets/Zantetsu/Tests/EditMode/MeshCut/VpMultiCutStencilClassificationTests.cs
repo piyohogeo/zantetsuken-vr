@@ -92,7 +92,8 @@ namespace Zantetsu.MeshCut.Tests
                     var table = new VpGeometryReferenceTable(storage, 8, 8);
                     VpStencilSettings settings = VpStencilTestSettings.Create(limit);
                     Assert.That(
-                        VpLogicalCutDisplay.TryCreate(storage, table, ledger, Materials(), null, null, 4, 8, settings, () => _frame, out VpLogicalCutDisplay display),
+                        VpLogicalCutDisplay.TryCreate(storage, table, ledger, Materials(), null, null, 4, 8,
+                            VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, () => _frame, out VpLogicalCutDisplay display),
                         Is.True);
                     using (new AfterTheFrame(() => _frame++, display))
                     {

@@ -520,7 +520,8 @@ namespace Zantetsu.MeshCut.Tests
 
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
-                    storage, table, ledger, new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16, VpStencilTestSettings.Create(),
+                    storage, table, ledger, new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16,
+                    VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(),
                     () => _frame, out VpLogicalCutDisplay display),
                 Is.True,
                 "create a display");
@@ -551,22 +552,19 @@ namespace Zantetsu.MeshCut.Tests
             return -1;
         }
 
-        private static VpCapCompatibilityTarget TargetOf(VpLogicalCutDisplay display, float side)
+        private static VpCapCompatibilityTarget TargetOf(VpLogicalCutDisplay display, LogicalCutLedger ledger, float side)
         {
-            Assert.That(
-                VpCapCompatibility.TryGetSingleCutTarget(display, CapIndexOf(display, side), out VpCapCompatibilityTarget target),
-                Is.True,
-                "the single-cut target of side " + side);
-            return target;
+            return VpDisplayRecordTargets.Conditions(display, ledger, CapIndexOf(display, side));
         }
 
         /// <summary>
-        /// The adapter gives the one condition of a single-cut body: the cap's operation under this display's ledger,
-        /// its side, its settled world plane and its offset. The face stays the same face from pending to published.
-        /// A cap the visibility test excludes still has its target. A whole body has none.
+        /// A real display's cap records give the one condition of a single-cut body: the cap's operation under the
+        /// display's ledger, its side, its settled world plane and its offset. The face stays the same face from pending
+        /// to published. A cap the visibility test excludes keeps its record, so its condition is still given. A whole
+        /// body has no record.
         /// </summary>
         [Test]
-        public void TheSingleCutAdapter_GivesTheBodysOneCondition_PendingOrPublished()
+        public void TheDisplaysCapRecords_GiveTheBodysOneCondition_PendingOrPublished()
         {
             using (VpCpuGeometryStorage storage = NewStorage())
             {
@@ -575,14 +573,13 @@ namespace Zantetsu.MeshCut.Tests
                 using (VpLogicalCutDisplay display = Show(storage, ledger, source, Matrix4x4.identity, false, Color.white))
                 {
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.CapRecordCount, Is.Zero);
-                    Assert.That(VpCapCompatibility.TryGetSingleCutTarget(display, 0, out _), Is.False, "a whole body has no cap");
+                    Assert.That(display.CapRecordCount, Is.Zero, "a whole body has no cap");
 
                     CutOperationId cut = AdmitAndPrepare(ledger, source);
                     _frame++;
                     Assert.That(display.TryBeginFrame(), Is.True);
 
-                    VpCapCompatibilityTarget pending = TargetOf(display, 1f);
+                    VpCapCompatibilityTarget pending = TargetOf(display, ledger, 1f);
                     Assert.That(pending.constraints.Count, Is.EqualTo(1), "one body under one cut");
                     VpCapConstraint only = pending.constraints[0];
                     Assert.That(only.face, Is.EqualTo(new VpCapFace(ledger, cut)), "the operation, under this ledger");
@@ -590,7 +587,7 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That((only.worldPlane - new Vector4(0f, 1f, 0f, -1f)).magnitude, Is.LessThan(1e-5f), "y = 1 at the identity");
                     Assert.That((pending.offset - new Vector3(0f, Separation, 0f)).magnitude, Is.LessThan(1e-5f), "the free side's separation");
 
-                    VpCapCompatibilityTarget negative = TargetOf(display, -1f);
+                    VpCapCompatibilityTarget negative = TargetOf(display, ledger, -1f);
                     Assert.That(
                         VpCapCompatibility.AreCompatible(pending, negative, PlaneEpsilon, OffsetEpsilon), Is.False,
                         "the two sides of one cut are apart");
@@ -604,13 +601,12 @@ namespace Zantetsu.MeshCut.Tests
                         Is.True);
                     Assert.That(seen.Keep, Is.False, "this cap is not seen from above");
                     Assert.That(
-                        VpCapCompatibility.TryGetSingleCutTarget(display, CapIndexOf(display, 1f), out _), Is.True,
-                        "and its condition is still given");
+                        TargetOf(display, ledger, 1f).constraints.Count, Is.EqualTo(1), "and its condition is still given");
 
                     Assert.That(ledger.Publish(cut, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
                     _frame++;
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    VpCapCompatibilityTarget published = TargetOf(display, 1f);
+                    VpCapCompatibilityTarget published = TargetOf(display, ledger, 1f);
                     Assert.That(published.constraints[0].face, Is.EqualTo(only.face), "publication does not change the face");
                     Assert.That(
                         VpCapCompatibility.AreCompatible(pending, published, PlaneEpsilon, OffsetEpsilon), Is.True,
@@ -643,7 +639,7 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(one.TryBeginFrame(), Is.True);
                     Assert.That(two.TryBeginFrame(), Is.True);
 
-                    VpCapCompatibilityTarget[] targets = { TargetOf(one, 1f), TargetOf(two, 1f) };
+                    VpCapCompatibilityTarget[] targets = { TargetOf(one, first, 1f), TargetOf(two, second, 1f) };
                     Assert.That(
                         (targets[0].constraints[0].worldPlane - targets[1].constraints[0].worldPlane).magnitude, Is.LessThan(1e-5f),
                         "the layout: the same plane");
@@ -681,7 +677,8 @@ namespace Zantetsu.MeshCut.Tests
 
                     VpCapCompatibilityTarget[] targets =
                     {
-                        TargetOf(plain, 1f), TargetOf(reversed, 1f), TargetOf(raised, 1f), TargetOf(plain, -1f),
+                        TargetOf(plain, ledger, 1f), TargetOf(reversed, ledger, 1f), TargetOf(raised, ledger, 1f),
+                        TargetOf(plain, ledger, -1f),
                     };
                     int[] groups = GroupAndCheck(targets, Relation(4, (0, 1)), "one face drawn three times");
                     Assert.That(groups[1], Is.EqualTo(groups[0]), "inside out and red, the same conditions");
