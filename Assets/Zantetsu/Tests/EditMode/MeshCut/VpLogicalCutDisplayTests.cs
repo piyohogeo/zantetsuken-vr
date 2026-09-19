@@ -32,6 +32,7 @@ namespace Zantetsu.MeshCut.Tests
 
         private readonly List<UnityEngine.Object> _objects = new List<UnityEngine.Object>();
         private int _frame;
+        private Camera _camera;
 
         [SetUp]
         public void ResetFrame()
@@ -51,6 +52,7 @@ namespace Zantetsu.MeshCut.Tests
             }
 
             _objects.Clear();
+            _camera = null;
         }
 
         private T Track<T>(T tracked) where T : UnityEngine.Object
@@ -127,7 +129,8 @@ namespace Zantetsu.MeshCut.Tests
 
         private Dictionary<int, Material> Materials()
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+            // The display path's own shader, so that the frames these tests draw are really drawn.
+            Shader shader = Shader.Find("Zantetsu/VP Indexed Indirect Unlit");
             return new Dictionary<int, Material>
             {
                 { SideMaterial, Track(new Material(shader) { name = "side" }) },
@@ -144,7 +147,42 @@ namespace Zantetsu.MeshCut.Tests
             int instanceCapacity = 16)
         {
             return VpLogicalCutDisplay.TryCreate(
-                storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity, () => _frame, out display);
+                storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity,
+                VpStencilTestSettings.Create(), () => _frame, out display);
+        }
+
+        /// <summary>
+        /// Draws one frame to a camera registered with the display and prepared for this frame -- a draw names its
+        /// camera now -- and renders that camera into a small target, so the draws registered are drawn.
+        /// </summary>
+        private void RenderFrame(VpLogicalCutDisplay display)
+        {
+            if (_camera == null)
+            {
+                var target = Track(new RenderTexture(16, 16, 24, RenderTextureFormat.ARGB32)
+                {
+                    depthStencilFormat = VpStencilAttachment.EightBitStencilFormat,
+                    antiAliasing = 1,
+                });
+                target.Create();
+                _camera = Track(new GameObject("Logical Cut Display Test Camera")).AddComponent<Camera>();
+                _camera.enabled = false;
+                _camera.targetTexture = target;
+                _camera.transform.SetPositionAndRotation(new Vector3(0f, 1f, -6f), Quaternion.identity);
+            }
+
+            display.TryRegisterCamera(_camera);
+            Assert.That(display.TryPrepareCamera(_camera), Is.True, "the camera is prepared for this frame");
+            display.Render(0, _camera);
+            var request = new UnityEngine.Rendering.RenderPipeline.StandardRequest { destination = _camera.targetTexture };
+            if (UnityEngine.Rendering.RenderPipeline.SupportsRenderRequest(_camera, request))
+            {
+                UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(_camera, request);
+            }
+            else
+            {
+                _camera.Render();
+            }
         }
 
         private void NextFrame()
@@ -203,7 +241,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
 
@@ -276,7 +314,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True, "show the body");
                     Assert.That(display.TryBeginFrame(), Is.True);
@@ -349,7 +387,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -396,7 +434,7 @@ namespace Zantetsu.MeshCut.Tests
                     new Vector3(3f, -1f, 2f), Quaternion.Euler(0f, 0f, 90f), Vector3.one);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, placement), Is.True);
@@ -444,7 +482,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
@@ -497,7 +535,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     CutOperationId cut = Admit(ledger, source);
@@ -536,7 +574,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     CutOperationId cut = Admit(ledger, source);
@@ -583,11 +621,11 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    display.Render(0);
+                    RenderFrame(display);
                     Assert.That(display.HasDrawnThisFrame, Is.True);
 
                     int settled = display.SettledCollections;
@@ -634,7 +672,7 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
                 CutOperationId cut;
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     cut = Admit(ledger, source);
@@ -646,7 +684,7 @@ namespace Zantetsu.MeshCut.Tests
                         ledger.Publish(cut, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    display.Render(0);
+                    RenderFrame(display);
                     Assert.That(
                         budget.IncompleteCutOperationCount, Is.EqualTo(1),
                         "showing the published children does not complete the geometry");
@@ -678,7 +716,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(default, geometry, Matrix4x4.identity), Is.False, "an unset fragment");
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -730,7 +768,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the parent is settled");
@@ -783,7 +821,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     CutOperationId first = Admit(ledger, source);
@@ -833,11 +871,11 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry elsewhere = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the parent settles");
-                    display.Render(0);
+                    RenderFrame(display);
 
                     int sides = display.SideCount;
                     int commands = display.DrawCommandCount;
@@ -872,7 +910,7 @@ namespace Zantetsu.MeshCut.Tests
                         "and the refused pass gave back what it had taken");
 
                     // That earlier snapshot is still what this frame draws.
-                    Assert.That(() => display.Render(0), Throws.Nothing, "the snapshot it kept is drawable");
+                    Assert.That(() => RenderFrame(display), Throws.Nothing, "the snapshot it kept is drawable");
                     Assert.That(display.HasDrawnThisFrame, Is.True);
 
                     // The other holder gives its instance back, and the very same display settles what it could not.
@@ -919,11 +957,11 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry other = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(first, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    display.Render(0);
+                    RenderFrame(display);
 
                     int sides = display.SideCount;
                     int commands = display.DrawCommandCount;
@@ -1045,7 +1083,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
@@ -1131,7 +1169,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
@@ -1171,7 +1209,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     CutOperationId first = Admit(ledger, source);
@@ -1229,7 +1267,7 @@ namespace Zantetsu.MeshCut.Tests
                     VpStoredGeometry geometry = Append(storage);
 
                     Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                    using (display)
+                    using (new AfterTheFrame(NextFrame, display))
                     {
                         display.Separation = Separation;
                         Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -1295,7 +1333,7 @@ namespace Zantetsu.MeshCut.Tests
                     VpStoredGeometry geometry = Append(storage);
 
                     Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                    using (display)
+                    using (new AfterTheFrame(NextFrame, display))
                     {
                         Assert.That(display.TryShow(source, geometry, placement), Is.True);
                         CutOperationId cut = Admit(ledger, source);
@@ -1341,7 +1379,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
 
@@ -1378,7 +1416,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry elsewhere = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(first, firstGeometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryShow(second, secondGeometry, Matrix4x4.identity), Is.True);
@@ -1427,7 +1465,7 @@ namespace Zantetsu.MeshCut.Tests
                     }
 
                     // What it kept is still what it draws.
-                    Assert.That(() => display.Render(0), Throws.Nothing, "the snapshot it kept is drawable");
+                    Assert.That(() => RenderFrame(display), Throws.Nothing, "the snapshot it kept is drawable");
                     Assert.That(display.HasDrawnThisFrame, Is.True);
 
                     // The holder gives the instance back, and the very same display settles what it could not.
@@ -1471,7 +1509,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
@@ -1530,7 +1568,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -1618,7 +1656,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry secondGeometry = Append(storage);
 
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     Assert.That(display.TryShow(first, firstGeometry, Matrix4x4.identity), Is.True);
                     CutOperationId firstCut = Admit(ledger, first);

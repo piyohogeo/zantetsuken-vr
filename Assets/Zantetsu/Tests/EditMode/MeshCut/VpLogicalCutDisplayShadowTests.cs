@@ -184,7 +184,7 @@ namespace Zantetsu.MeshCut.Tests
                 Material one = ShadowMaterial(CullMode.Back);
                 Material two = ShadowMaterial(CullMode.Off);
                 Assert.That(TryCreate(storage, table, ledger, one, two, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = Separation;
                     Assert.That(display.TryShow(split, first, Matrix4x4.identity), Is.True);
@@ -202,7 +202,6 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, cut);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2), "the split is shown");
 
                     int twoSidedCommands = 0;
                     for (int c = 0; c < display.CommandCount; c++)
@@ -217,6 +216,14 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(
                         twoSidedCommands, Is.LessThan(display.CommandCount), "the whole body's commands are not");
 
+                    Camera camera = TopDown();
+                    Assert.That(display.TryRegisterCamera(camera), Is.True);
+                    Assert.That(display.TryPrepareCamera(camera), Is.True);
+                    Assert.That(
+                        display.TryGetCameraStencil(camera, out VpStencilPreparation preparation, out VpStencilCameraCounts counts),
+                        Is.True);
+                    Assert.That(preparation.targets, Is.EqualTo(2), "the split is shown: one cap per side");
+
                     int uploads = display.CommandUploads;
                     int stencilUploads = display.StencilUploads;
                     int writes = display.StencilBufferWrites;
@@ -227,7 +234,6 @@ namespace Zantetsu.MeshCut.Tests
                     int oneSided = display.OneSidedShadowIssues;
                     int twoSided = display.TwoSidedShadowIssues;
 
-                    Camera camera = TopDown();
                     display.Render(0, camera);
 
                     Assert.That(
@@ -241,8 +247,11 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "and wrote no buffer");
                     Assert.That(display.VertexTransfers, Is.EqualTo(vertices), "no geometry went again");
                     Assert.That(display.IndexTransfers, Is.EqualTo(indices));
-                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + 2), "the stencil work is what it was");
-                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + 2));
+                    Assert.That(
+                        display.StencilInitIssues, Is.EqualTo(init + preparation.colours),
+                        "one initialisation per colour the preparation made");
+                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + preparation.colours));
+                    Read(camera);
                 }
 
                 // The display owns neither material: both are still here for the caller to destroy.
@@ -362,7 +371,7 @@ namespace Zantetsu.MeshCut.Tests
                 Material provisional = scene == Scene.SplitCastTwoSided ? ShadowMaterial(CullMode.Off) : one;
                 Assert.That(
                     TryCreate(storage, table, ledger, one, provisional, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = separation;
                     Assert.That(display.TryShow(source, geometry, BodyPlacement), Is.True);
@@ -373,12 +382,13 @@ namespace Zantetsu.MeshCut.Tests
                         Prepare(ledger, cut);
                         NextFrame();
                         Assert.That(display.TryBeginFrame(), Is.True);
-                        Assert.That(display.StencilGroupCount, Is.EqualTo(2), "the body is drawn as two sides");
                         Assert.That(
                             display.SideCount, Is.EqualTo(display.CommandCount * 2),
                             "a split draws each command twice, once per side: two sides per command");
                     }
 
+                    Assert.That(display.TryRegisterCamera(camera), Is.True);
+                    Assert.That(display.TryPrepareCamera(camera), Is.True);
                     display.Render(0, camera);
                     return Read(camera);
                 }
@@ -574,7 +584,8 @@ namespace Zantetsu.MeshCut.Tests
             Material shadow, Material provisionalShadow, out VpLogicalCutDisplay display)
         {
             return VpLogicalCutDisplay.TryCreate(
-                storage, table, ledger, Materials(), shadow, provisionalShadow, 16, 16, () => _frame, out display);
+                storage, table, ledger, Materials(), shadow, provisionalShadow, 16, 16, VpStencilTestSettings.Create(),
+                () => _frame, out display);
         }
 
         private void NextFrame()

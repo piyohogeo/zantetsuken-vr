@@ -451,7 +451,7 @@ namespace Zantetsu.MeshCut.Tests
 
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
-                    storage, table, ledger, new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16,
+                    storage, table, ledger, new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16, VpStencilTestSettings.Create(),
                     () => 1, out VpLogicalCutDisplay display),
                 Is.True,
                 "create the display");

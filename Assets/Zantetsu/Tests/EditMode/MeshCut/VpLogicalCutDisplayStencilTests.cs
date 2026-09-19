@@ -51,11 +51,13 @@ namespace Zantetsu.MeshCut.Tests
 
         private readonly List<Object> _objects = new List<Object>();
         private int _frame;
+        private Camera _between;
 
         [SetUp]
         public void ResetFrame()
         {
             _frame = 1;
+            _between = null;
         }
 
         [TearDown]
@@ -92,7 +94,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -101,7 +103,7 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Color32[] whole = Draw(display, LookingDownFromBetween());
                     Assert.That(Count(whole, IsRed), Is.Zero, "the whole body has no cut and no cap");
-                    Assert.That(display.StencilGroupCount, Is.Zero);
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero, "no cap, no colour");
 
                     int vertexTransfers = display.VertexTransfers;
                     int indexTransfers = display.IndexTransfers;
@@ -109,7 +111,6 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, cut);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2), "one group per side");
                     Assert.That(display.CapRecordCount, Is.EqualTo(2), "one cap per side, not per submesh");
                     Assert.That(display.DrawCommandCount, Is.EqualTo(2), "one command per submesh, as before the split");
                     Assert.That(display.VertexTransfers, Is.EqualTo(vertexTransfers), "the split transfers no vertices");
@@ -119,9 +120,18 @@ namespace Zantetsu.MeshCut.Tests
                     int volumesBefore = display.StencilVolumeIssues;
                     int capsBefore = display.StencilCapIssues;
                     Color32[] split = Draw(display, LookingDownFromBetween());
-                    Assert.That(display.StencilInitIssues - initsBefore, Is.EqualTo(2), "one initialisation per group");
-                    Assert.That(display.StencilVolumeIssues - volumesBefore, Is.EqualTo(2), "one volume issue per group");
-                    Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(2), "one cap issue per group, two submeshes notwithstanding");
+
+                    // The moved top side's cap is at y = 4, above this camera at 2.5 and so behind it: no cap of its
+                    // group is seen and the group is left out. The fixed side's cap faces the camera: one group, one
+                    // colour, drawn once.
+                    VpStencilPreparation preparation = PreparationOf(display, LookingDownFromBetween());
+                    Assert.That(preparation.targets, Is.EqualTo(2), "both caps are asked about");
+                    Assert.That(preparation.groups, Is.EqualTo(2), "the two sides are not compatible");
+                    Assert.That(preparation.culledGroups, Is.EqualTo(1), "the side behind the camera is left out");
+                    Assert.That(preparation.colours, Is.EqualTo(1));
+                    Assert.That(display.StencilInitIssues - initsBefore, Is.EqualTo(1), "one initialisation per colour");
+                    Assert.That(display.StencilVolumeIssues - volumesBefore, Is.EqualTo(1), "one volume issue per colour");
+                    Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(1), "one cap issue per colour, two submeshes notwithstanding");
 
                     // Red inside the real cross-section, none on the polygon's overhang, none outside the bounds.
                     Assert.That(IsRed(At(split, World(0f, 0f))), Is.True, "the middle of the cut is capped");
@@ -144,7 +154,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -165,11 +175,11 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(display.TryGetCapRecord(0, out LogicalCutCapRecord record), Is.True);
                     Assert.That(record.published, Is.True);
                     Assert.That(record.fragment, Is.EqualTo(child0));
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2));
 
                     int capsBefore = display.StencilCapIssues;
                     Color32[] after = Draw(display, LookingDownFromBetween());
-                    Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(2), "one cap issue per group, not doubled by publication");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.EqualTo(1), "the same one colour");
+                    Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(1), "one cap issue per colour, not doubled by publication");
                     Assert.That(Count(after, IsRed), Is.EqualTo(redBefore), "the same cap, in the same place");
                     AssertSamePixels(before, after, "publication changes what is drawn");
                 }
@@ -186,7 +196,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -215,7 +225,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -231,9 +241,9 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(ledger.Publish(first, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Stale));
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.StencilGroupCount, Is.Zero, "no split, no group");
                     Assert.That(display.CapRecordCount, Is.Zero);
                     Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.Zero, "no old cap survives the stale result");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero, "no split, no colour");
 
                     // A second cut on the same body, then aborted: the retired source and its cap are both gone.
                     CutOperationId second = Admit(ledger, source);
@@ -245,8 +255,8 @@ namespace Zantetsu.MeshCut.Tests
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Assert.That(display.ShownCount, Is.Zero, "the retired source is dropped");
-                    Assert.That(display.StencilGroupCount, Is.Zero);
                     Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.Zero, "and nothing of its cap is left");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero);
                 }
             }
         }
@@ -272,7 +282,7 @@ namespace Zantetsu.MeshCut.Tests
                 VpStoredGeometry geometry = Append(storage);
                 VpStoredGeometry spare = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -297,17 +307,18 @@ namespace Zantetsu.MeshCut.Tests
                     // Refused: the latest logical state cannot be settled.
                     Assert.That(display.TryBeginFrame(), Is.False, "no instance is free for the split");
                     Assert.That(display.CommandUploads, Is.EqualTo(uploads), "the display batch was not written");
-                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads), "and neither was the stencil batch");
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads), "and no stencil arrangement either");
                     Assert.That(display.CapRecordCount, Is.EqualTo(capRecords), "the caps are the ones it had");
                     Assert.That(display.SideCount, Is.EqualTo(sides), "and so are the sides");
-                    Assert.That(display.StencilGroupCount, Is.Zero, "the stencil batch still holds the whole body's arrangement");
 
                     // And the frame it refused still draws what was adopted before.
                     // Compared as pixels, not as "red or not": the kept snapshot has no cap either way, so a body
                     // that had vanished would pass a red-only comparison.
                     Color32[] stillWhole = Draw(display, LookingDownFromBetween());
                     Assert.That(Count(stillWhole, IsRed), Is.Zero, "the old snapshot, which has no cap");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero, "prepared from the kept snapshot");
                     AssertSamePixels(whole, stillWhole, "the kept snapshot");
+                    int stencilUploadsKept = display.StencilUploads;
 
                     // The slot goes back, and the next collection updates the body and its caps together.
                     Assert.That(table.TryRetireDisplayInstance(heldInstance), Is.True);
@@ -315,12 +326,16 @@ namespace Zantetsu.MeshCut.Tests
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True, "with a slot free the split settles");
                     Assert.That(display.CommandUploads, Is.EqualTo(uploads + 1));
-                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads + 1));
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploadsKept), "collecting writes no stencil arrangement");
                     Assert.That(display.SideCount, Is.EqualTo(4), "two sides per command now");
                     Assert.That(display.CapRecordCount, Is.EqualTo(2), "and a cap for each side");
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2));
+                    Assert.That(
+                        CountsOf(display, LookingDownFromBetween()).preparedNow, Is.False,
+                        "the camera's preparation was for the snapshot just replaced");
 
                     Color32[] split = Draw(display, LookingDownFromBetween());
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploadsKept + 1), "one preparation, one upload");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.EqualTo(1));
                     Assert.That(IsRed(At(split, World(0f, 0f))), Is.True, "the opening is capped after the recovery");
                     Assert.That(IsRed(At(split, World(0.9f, 0.9f))), Is.False, "and the overhang is still kept out");
                 }
@@ -452,7 +467,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = anchors == null ? ledger.AddFragment() : ledger.AddFragment(anchors);
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = 0.4f;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -517,7 +532,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -562,15 +577,17 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     // Monoscopic is what a display is made as, and what every existing caller keeps.
                     Assert.That(display.SinglePassInstanced, Is.False, "made monoscopic");
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
+                    Camera camera = LookingDownFromBetween();
+                    Prepare(display, camera);
                     Assert.That(display.DrawsSinglePassInstanced, Is.False, "the body was written monoscopic");
-                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False, "and so was the stencil work");
+                    Assert.That(CountsOf(display, camera).singlePassInstanced, Is.False, "and so was the stencil work");
 
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
@@ -578,22 +595,27 @@ namespace Zantetsu.MeshCut.Tests
                     // Asked for between two collections: the snapshot on the GPU is not touched by the asking.
                     display.SinglePassInstanced = true;
                     Assert.That(display.DrawsSinglePassInstanced, Is.False, "the adopted body is still as written");
-                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False, "and so are its caps");
+                    Prepare(display, camera);
+                    Assert.That(
+                        CountsOf(display, camera).singlePassInstanced, Is.False,
+                        "and a camera prepared from it now takes the body's condition, not the property");
 
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2), "the split is shown");
+                    Prepare(display, camera);
+                    Assert.That(PreparationOf(display, camera).colours, Is.EqualTo(1), "the split is shown");
                     Assert.That(display.DrawsSinglePassInstanced, Is.True, "the body took the condition");
                     Assert.That(
-                        display.StencilDrawsSinglePassInstanced, Is.True,
+                        CountsOf(display, camera).singlePassInstanced, Is.True,
                         "and the initialisation, the volumes and the caps took the same one");
 
                     // And back: nothing latches, and the two still move together.
                     display.SinglePassInstanced = false;
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
+                    Prepare(display, camera);
                     Assert.That(display.DrawsSinglePassInstanced, Is.False);
-                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.False);
+                    Assert.That(CountsOf(display, camera).singlePassInstanced, Is.False);
                 }
             }
         }
@@ -614,7 +636,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
@@ -632,21 +654,22 @@ namespace Zantetsu.MeshCut.Tests
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Assert.That(display.DrawsSinglePassInstanced, Is.True);
-                    Assert.That(display.StencilDrawsSinglePassInstanced, Is.True);
                     Assert.That(
                         display.CapPolygonBuilds, Is.EqualTo(polygons),
                         "the same box, face and placement: no polygon was taken again");
 
                     Color32[] stereo = Draw(display, LookingDownFromBetween());
+                    Assert.That(CountsOf(display, LookingDownFromBetween()).singlePassInstanced, Is.True, "the stencil work too");
                     AssertSamePixels(monoscopic, stereo, "the same arrangement uploaded for stereo");
                 }
             }
         }
 
         /// <summary>
-        /// Drawing writes nothing. A frame's draws leave the command uploads, the vertex and index transfers and the
-        /// stencil batch's buffer writes exactly where they were, and each stencil step is issued once per group per
-        /// draw -- not once per body, and not once more for a second camera's worth of work within the frame.
+        /// Drawing writes nothing, and preparing writes one arrangement. A camera's preparation is one upload of its
+        /// own batch, whatever its colour count; drawing it then leaves the command uploads, the vertex and index
+        /// transfers and every stencil buffer write where they were, and issues each stencil step once per colour. A
+        /// second camera in the same frame prepares into its own batch and leaves the first camera's untouched.
         /// </summary>
         [Test]
         public void Drawing_AddsNoTransferAndNoPerColourUpload()
@@ -658,7 +681,7 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
-                using (display)
+                using (new AfterTheFrame(NextFrame, display))
                 {
                     display.SinglePassInstanced = true;
                     display.Separation = WideSeparation;
@@ -668,7 +691,12 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, cut);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.StencilGroupCount, Is.EqualTo(2));
+
+                    Camera first = LookingDownFromBetween();
+                    int uploadsBefore = display.StencilUploads;
+                    Prepare(display, first);
+                    Assert.That(display.StencilUploads, Is.EqualTo(uploadsBefore + 1), "one preparation, one upload");
+                    VpStencilCameraCounts firstPrepared = CountsOf(display, first);
 
                     int uploads = display.CommandUploads;
                     int stencilUploads = display.StencilUploads;
@@ -678,25 +706,30 @@ namespace Zantetsu.MeshCut.Tests
                     int init = display.StencilInitIssues;
                     int volumes = display.StencilVolumeIssues;
                     int caps = display.StencilCapIssues;
+                    int colours = PreparationOf(display, first).colours;
 
-                    Draw(display, LookingDownFromBetween());
+                    display.Render(0, first);
                     Assert.That(display.CommandUploads, Is.EqualTo(uploads), "drawing uploaded no commands");
                     Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads), "nor any arrangement");
                     Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "and wrote no buffer");
                     Assert.That(display.VertexTransfers, Is.EqualTo(vertices), "no vertices went again");
                     Assert.That(display.IndexTransfers, Is.EqualTo(indices), "no indices went again");
-                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + 2), "one initialisation per group");
-                    Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes + 2), "one volume call per group");
-                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + 2), "one cap call per group");
+                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + colours), "one initialisation per colour");
+                    Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes + colours), "one volume call per colour");
+                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + colours), "one cap call per colour");
+                    Read(first);
 
-                    // A second camera of the same frame: the same settled data, the same issue counts, no writes.
-                    Draw(display, LookingDown(2.5f, 3f, 2.5f));
-                    Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "a second camera wrote nothing");
-                    Assert.That(display.CommandUploads, Is.EqualTo(uploads));
-                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads));
-                    Assert.That(display.StencilInitIssues, Is.EqualTo(init + 4), "two groups again, not four");
-                    Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes + 4));
-                    Assert.That(display.StencilCapIssues, Is.EqualTo(caps + 4));
+                    // A second camera of the same frame: its own preparation and its own upload, and the first
+                    // camera's batch -- which its registered draws read -- is not written.
+                    Camera second = LookingDown(2.5f, 3f, 2.5f);
+                    Prepare(display, second);
+                    Assert.That(display.StencilUploads, Is.EqualTo(stencilUploads + 1), "the second camera's own upload");
+                    Assert.That(display.CommandUploads, Is.EqualTo(uploads), "and no body upload");
+                    Assert.That(display.VertexTransfers, Is.EqualTo(vertices), "and no geometry");
+                    VpStencilCameraCounts firstAfter = CountsOf(display, first);
+                    Assert.That(firstAfter.uploads, Is.EqualTo(firstPrepared.uploads), "the first camera's batch was not uploaded again");
+                    Assert.That(firstAfter.bufferWrites, Is.EqualTo(firstPrepared.bufferWrites), "nor written");
+                    Draw(display, second);
                 }
             }
         }
@@ -766,7 +799,8 @@ namespace Zantetsu.MeshCut.Tests
             out VpLogicalCutDisplay display, int commandCapacity = 16, int instanceCapacity = 16)
         {
             return VpLogicalCutDisplay.TryCreate(
-                storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity, () => _frame, out display);
+                storage, table, ledger, Materials(), null, null, commandCapacity, instanceCapacity,
+                VpStencilTestSettings.Create(), () => _frame, out display);
         }
 
         private void NextFrame()
@@ -819,14 +853,49 @@ namespace Zantetsu.MeshCut.Tests
             return camera;
         }
 
+        /// <summary>One camera per test for the default view, so that it is registered once and not per draw.</summary>
         private Camera LookingDownFromBetween()
         {
-            return LookingDown(2.5f, 3f);
+            if (_between == null)
+            {
+                _between = LookingDown(2.5f, 3f);
+            }
+
+            return _between;
+        }
+
+        /// <summary>What the camera's last preparation made.</summary>
+        private static VpStencilPreparation PreparationOf(VpLogicalCutDisplay display, Camera camera)
+        {
+            Assert.That(
+                display.TryGetCameraStencil(camera, out VpStencilPreparation preparation, out _), Is.True,
+                "the camera is registered");
+            return preparation;
+        }
+
+        private static VpStencilCameraCounts CountsOf(VpLogicalCutDisplay display, Camera camera)
+        {
+            Assert.That(display.TryGetCameraStencil(camera, out _, out VpStencilCameraCounts counts), Is.True);
+            return counts;
+        }
+
+        /// <summary>Registers the camera when it is not yet, and prepares it for this frame's snapshot.</summary>
+        private static void Prepare(VpLogicalCutDisplay display, Camera camera)
+        {
+            display.TryRegisterCamera(camera);
+            Assert.That(display.TryPrepareCamera(camera), Is.True, "the camera is prepared");
         }
 
         private Color32[] Draw(VpLogicalCutDisplay display, Camera camera)
         {
+            Prepare(display, camera);
             display.Render(0, camera);
+            return Read(camera);
+        }
+
+        /// <summary>Renders the camera, drawing what was registered for it, and reads its target back.</summary>
+        private Color32[] Read(Camera camera)
+        {
             RenderTexture target = camera.targetTexture;
             var request = new RenderPipeline.StandardRequest { destination = target };
             if (RenderPipeline.SupportsRenderRequest(camera, request))

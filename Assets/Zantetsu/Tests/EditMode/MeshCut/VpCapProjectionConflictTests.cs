@@ -514,7 +514,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 VpLogicalCutDisplay.TryCreate(
                     storage, new VpGeometryReferenceTable(storage, 8, 8), ledger,
-                    new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16, () => 1,
+                    new Dictionary<int, Material> { { BodyMaterial, material } }, null, null, 16, 16, VpStencilTestSettings.Create(), () => 1,
                     out VpLogicalCutDisplay display),
                 Is.True);
             display.Separation = Separation;

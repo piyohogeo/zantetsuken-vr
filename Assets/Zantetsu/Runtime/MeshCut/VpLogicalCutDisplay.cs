@@ -214,36 +214,40 @@ namespace Zantetsu.MeshCut
     /// **The provisional caps are prepared and drawn through the stencil.** Each split that has an area prepares the
     /// two <see cref="LogicalCutCapRecord"/>s of DESIGN 5.2 — one per side, one per body and never one per submesh —
     /// with the finite Cap Bounds Polygon each is masked inside. They are prepared with the candidate and adopted with
-    /// it, so what is on screen and what is masked can never disagree, and a refused collection keeps the caps it had
-    /// along with the sides it had. The drawing is DESIGN 5.6's, through a <see cref="VpStencilCapBatch"/> this
-    /// display owns: two fixed stencil groups, one for every positive side and one for every negative side, each
-    /// counting its own side's volumes — the same stored geometry, the same buffers and range, with the side's own
-    /// clip record — and then drawing that side's polygon only where the count says the opening is. The polygon is
-    /// never drawn as an opaque plate; the stencil restricts it to the real cross-section. Both groups are uploaded
-    /// together, once, before any draw is registered, and each is one volume issue and one cap issue per frame.
+    /// it, so a refused collection keeps the caps it had along with the sides it had. The polygon is never drawn as an
+    /// opaque plate; the stencil restricts it to the real cross-section. The provisional cap colour is the red of
+    /// DESIGN 5.3.
     /// </para>
     /// <para>
-    /// **Two batches, one arrangement.** The body's surfaces go to the display batch and the counting and the caps to
-    /// the stencil batch, from one candidate. Neither is written until both have said they will accept the whole of
-    /// it — the stencil batch is asked with its own non-writing judgement first — so an ordinary refusal leaves the
-    /// body and its caps on screen together as they were, never the body new and its caps old. The provisional cap
-    /// colour is the red of DESIGN 5.3.
+    /// **Colours, per camera (DESIGN 5.6).** Which caps are seen, and which bodies may overlap on screen, depend on
+    /// the camera, so the stencil arrangement is made per camera by <see cref="TryPrepareCamera(Camera)"/> from the
+    /// adopted snapshot alone, in DESIGN 5.6's order: each cap's both-eye visibility (<see cref="VpCapVisibility"/>),
+    /// the compatibility groups over every cut condition, seen or not (<see cref="VpCapCompatibility"/>), the groups
+    /// none of whose caps is seen left out altogether — their volumes and their caps, while the body and its shadow
+    /// stay — and the colours within the limit (<see cref="VpStencilColors"/>, with
+    /// <see cref="VpCapProjectionConflict"/> saying who must be kept apart, and caps left out by visibility passed on
+    /// as not complete). A group with a cap still seen keeps the volumes of every target in it. Every colour is uploaded
+    /// together, once per preparation, into that camera's own stencil batch; within a colour the order stays
+    /// initialisation, every volume, every cap. No fixed positive and negative group is used.
     /// </para>
     /// <para>
-    /// **What the two fixed groups do and do not cover.** The scope this is established for is ONE body with ONE
-    /// cut. The groups are two because a side is what a cap belongs to, not because gathering sides is known to be
-    /// safe: DESIGN 5.6's counting is per stencil group, so two bodies whose volumes overlap **on screen** in the
-    /// same group count into one another and the caps that follow are not to be trusted. Several bodies may be shown
-    /// here, and each contributes its own commands to the group of its side, but only an arrangement whose volumes do
-    /// not overlap in the view is covered by what has been checked. Nothing here classifies, separates or arbitrates
-    /// between bodies, and nothing in the ledger limits what may be admitted; deciding a colour per overlapping body
-    /// is later work.
+    /// **One stencil batch per registered camera.** A camera is registered with
+    /// <see cref="TryRegisterCamera"/>, up to the fixed <see cref="VpStencilSettings.cameraCapacity"/>, and owns a stencil
+    /// batch of its own for as long as it is registered, so preparing one camera never writes the buffers another
+    /// camera's registered draws read. The geometry, its GPU buffers and the display batch are shared; only the
+    /// arrangement and its buffers are per camera. Once a camera's draws are registered in a frame it is not prepared
+    /// again and not unregistered in that frame. Other stencil work drawing into the same camera is still outside this
+    /// contract, and this class does not detect it.
     /// </para>
     /// <para>
-    /// **One stencil batch per camera.** DESIGN 5.6 gives one camera one aggregate batch, and the stencil byte is
-    /// shared: a second display drawing its own stencil work into the same camera would initialise and count over
-    /// this one's. So registering two independent displays — or any other stencil batch — for one camera is outside
-    /// this contract, and this class does not detect it.
+    /// **Snapshot and preparation.** Adopting a snapshot needs both the display batch and the stencil side to have
+    /// room for it: the largest stencil arrangement the candidate could need is checked against the stencil capacity,
+    /// and against every registered camera's batch, before anything is written, and an ordinary refusal keeps the
+    /// previous snapshot as before. That check is of capacity and form; it does not promise the later upload, and an
+    /// upload refused against it, like a GPU call that throws, stops the display. A preparation belongs to the frame
+    /// and the adopted snapshot it was made for, so a camera prepared before a newer snapshot was adopted, or in an
+    /// earlier frame, draws nothing until it is prepared again — and <see cref="Render"/> refuses it before
+    /// registering anything, the body included.
     /// </para>
     /// <para>
     /// **Two casters, and who owns them.** A body drawn as a provisional split is cast two-sided and every other body
@@ -263,11 +267,12 @@ namespace Zantetsu.MeshCut
     /// nothing and waits for nothing.
     /// </para>
     /// <para>
-    /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the buffers for
-    /// that frame; <see cref="Render"/> then registers the draws, and every camera and the shadow pass of one frame
-    /// read the same settled data. A frame is identified by the engine's frame counter, so collecting again inside
-    /// one frame changes nothing and nothing rewrites what a frame has already drawn. Capacity is fixed and an
-    /// ordinary shortage is decided **before** anything is uploaded, so a refusal leaves no half-updated draw.
+    /// **When updates happen.** <see cref="TryBeginFrame"/> collects the ledger's state and settles the body's buffers
+    /// for that frame; <see cref="TryPrepareCamera(Camera)"/> then makes one camera's stencil arrangement from what was
+    /// settled, as often as the view changes before that camera draws, without collecting the ledger or transferring
+    /// geometry again; <see cref="Render"/> registers that camera's draws. A frame is identified by the engine's frame
+    /// counter, so collecting again inside one frame changes nothing and nothing rewrites what a frame has already
+    /// drawn. Capacity is fixed and an ordinary shortage is decided **before** anything is uploaded.
     /// </para>
     /// <para>
     /// **A display failure is never a logical one.** When a collection cannot be made, the previous snapshot stays on
@@ -346,8 +351,21 @@ namespace Zantetsu.MeshCut
         private readonly Material _provisionalShadowMaterial;
         private readonly VpGpuIndexedGeometryBuffers _buffers;
         private readonly VpIndexedIndirectDrawBatch _batch;
-        private readonly VpStencilCapBatch _stencil;
         private readonly VpStencilCapMaterials _stencilMaterials;
+        private readonly VpStencilSettings _settings;
+
+        // One slot per camera that may hold stencil work: fixed in number, filled and emptied only by registration.
+        private readonly CameraStencil[] _cameraStencils;
+        private readonly int _stencilCommandCapacity;
+        private readonly int _stencilCapVertexCapacity;
+        private readonly int _stencilCapIndexCapacity;
+
+        // What the stencil batches of cameras no longer registered had counted, so the totals do not go backwards.
+        private int _retiredStencilUploads;
+        private int _retiredStencilBufferWrites;
+        private int _retiredStencilInitIssues;
+        private int _retiredStencilVolumeIssues;
+        private int _retiredStencilCapIssues;
         private readonly MaterialPropertyBlock _properties = new MaterialPropertyBlock();
         private readonly Func<int> _frameSource;
         private readonly int _commandCapacity;
@@ -373,6 +391,15 @@ namespace Zantetsu.MeshCut
         private LogicalCutCapRecord[] _capRecords = Array.Empty<LogicalCutCapRecord>();
         private Vector3[] _capVertices = Array.Empty<Vector3>();
         private int _capRecordCount;
+        private int _capVertexCount;
+
+        // Each instance's transform and clip record, adopted with the rest, so that a camera's stencil arrangement is
+        // made from exactly what the body is drawn with.
+        private Matrix4x4[] _transforms = Array.Empty<Matrix4x4>();
+        private VpInstanceClip[] _clips = Array.Empty<VpInstanceClip>();
+
+        // Counts adoptions. A camera's preparation names the snapshot it was made for, and a newer one voids it.
+        private long _generation;
 
         // The candidate being built. It becomes the adopted snapshot only when the upload succeeds.
         private List<LogicalCutDisplaySide> _candidateSides = new List<LogicalCutDisplaySide>(4);
@@ -387,17 +414,24 @@ namespace Zantetsu.MeshCut
 
         private readonly VpCapBoundsPolygon _capPolygon = new VpCapBoundsPolygon();
 
-        // The stencil arrangement of the candidate: one command per side per body command, the positive sides first
-        // and the negative sides after, so that each stencil group is one contiguous command range; the cap indices
-        // fan each side's polygon; the two groups name their ranges. Built with the candidate, sized once.
+        // A stencil arrangement being made: for the largest one a candidate could need, checked before adoption, and
+        // for one camera's colours when it is prepared. Scratch only; each upload copies what it takes.
         private VpIndirectCommand[] _candidateStencilCommands = Array.Empty<VpIndirectCommand>();
         private Matrix4x4[] _candidateStencilTransforms = Array.Empty<Matrix4x4>();
         private VpInstanceClip[] _candidateStencilClips = Array.Empty<VpInstanceClip>();
         private int[] _candidateCapIndices = Array.Empty<int>();
-        private readonly VpStencilCapColor[] _candidateStencilColors = new VpStencilCapColor[StencilGroups];
+        private readonly VpStencilCapColor[] _candidateStencilColors;
 
-        /// <summary>The two fixed stencil groups: every positive side, then every negative side.</summary>
-        private const int StencilGroups = 2;
+        /// <summary>One registered camera's stencil work: its own batch, and what it was last prepared and drawn for.</summary>
+        private sealed class CameraStencil
+        {
+            public Camera camera;
+            public VpStencilCapBatch batch;
+            public int preparedFrame = int.MinValue;
+            public long preparedGeneration = -1;
+            public int drawnFrame = int.MinValue;
+            public VpStencilPreparation preparation;
+        }
 
         /// <summary>The provisional cap colour of DESIGN 5.3: red until the geometry is committed.</summary>
         private static readonly Color ProvisionalCapColour = Color.red;
@@ -420,8 +454,8 @@ namespace Zantetsu.MeshCut
             Material provisionalShadowMaterial,
             VpGpuIndexedGeometryBuffers buffers,
             VpIndexedIndirectDrawBatch batch,
-            VpStencilCapBatch stencil,
             VpStencilCapMaterials stencilMaterials,
+            VpStencilSettings settings,
             int commandCapacity,
             int instanceCapacity,
             Func<int> frameSource)
@@ -434,8 +468,16 @@ namespace Zantetsu.MeshCut
             _provisionalShadowMaterial = provisionalShadowMaterial;
             _buffers = buffers;
             _batch = batch;
-            _stencil = stencil;
             _stencilMaterials = stencilMaterials;
+            _settings = settings;
+            _cameraStencils = new CameraStencil[settings.cameraCapacity];
+            _candidateStencilColors = new VpStencilCapColor[settings.maxStencilColors];
+
+            // Every body command may be drawn as two sides, one instance each, and every split body has two caps of at
+            // most the polygon's vertex count, fanned. Each camera's batch is made to these sizes.
+            _stencilCommandCapacity = commandCapacity * 2;
+            _stencilCapVertexCapacity = commandCapacity * 2 * VpCapBoundsPolygon.MaxVertices;
+            _stencilCapIndexCapacity = commandCapacity * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
             _frameSource = frameSource;
@@ -455,8 +497,8 @@ namespace Zantetsu.MeshCut
         /// <para>
         /// Whether XR is up, and which stereo mode it settled on, is the caller's to find out: nothing here asks the
         /// engine, waits for frames or changes this on its own. Setting it invalidates no adopted snapshot — what the
-        /// GPU holds keeps the condition of the upload that wrote it, which <see cref="DrawsSinglePassInstanced"/> and
-        /// <see cref="StencilDrawsSinglePassInstanced"/> report — and takes effect from the next settled collection.
+        /// GPU holds keeps the condition of the upload that wrote it, which <see cref="DrawsSinglePassInstanced"/> reports
+        /// and every camera's stencil preparation takes — and takes effect from the next settled collection.
         /// </para>
         /// </summary>
         public bool SinglePassInstanced { get; set; }
@@ -522,26 +564,41 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public int CapPolygonBuilds { get; private set; }
 
-        /// <summary>How many arrangements the stencil batch has taken; one per settled collection.</summary>
-        public int StencilUploads => _stencil.Uploads;
+        /// <summary>How many arrangements the cameras' stencil batches have taken; one per camera preparation.</summary>
+        public int StencilUploads => SumStencil(b => b.Uploads) + _retiredStencilUploads;
 
-        /// <summary>Initialisation issues of the stencil batch: one per group per draw.</summary>
-        public int StencilInitIssues => _stencil.StencilInitIssues;
+        /// <summary>Initialisation issues of the cameras' stencil batches: one per colour per draw.</summary>
+        public int StencilInitIssues => SumStencil(b => b.StencilInitIssues) + _retiredStencilInitIssues;
 
-        /// <summary>Volume issues of the stencil batch: one per group per draw, whatever the group's command count.</summary>
-        public int StencilVolumeIssues => _stencil.VolumeIssues;
+        /// <summary>Volume issues of the cameras' stencil batches: one per colour per draw, whatever its command count.</summary>
+        public int StencilVolumeIssues => SumStencil(b => b.VolumeIssues) + _retiredStencilVolumeIssues;
 
-        /// <summary>Cap issues of the stencil batch: one per group per draw.</summary>
-        public int StencilCapIssues => _stencil.CapIssues;
+        /// <summary>Cap issues of the cameras' stencil batches: one per colour per draw.</summary>
+        public int StencilCapIssues => SumStencil(b => b.CapIssues) + _retiredStencilCapIssues;
 
         /// <summary>
-        /// Buffer writes the stencil batch has made. Drawing makes none: it is upload time that writes, so this
-        /// standing still across a frame's draws is what says no transfer was added per camera or per colour.
+        /// Buffer writes the cameras' stencil batches have made. Drawing makes none: preparation writes, so this
+        /// standing still across a frame's draws is what says no transfer was added per colour.
         /// </summary>
-        public int StencilBufferWrites => _stencil.BufferWrites;
+        public int StencilBufferWrites => SumStencil(b => b.BufferWrites) + _retiredStencilBufferWrites;
 
-        /// <summary>The stencil groups the adopted snapshot holds: 0 with no split shown, otherwise 2.</summary>
-        public int StencilGroupCount => _stencil.ColorCount;
+        /// <summary>The settings this display was made with.</summary>
+        public VpStencilSettings StencilSettings => _settings;
+
+        /// <summary>How many cameras are registered for stencil work now.</summary>
+        public int RegisteredCameraCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (CameraStencil slot in _cameraStencils)
+                {
+                    n += slot != null ? 1 : 0;
+                }
+
+                return n;
+            }
+        }
 
         /// <summary>
         /// The stereo condition the adopted body surfaces are drawn with, as the upload that wrote them settled it.
@@ -550,12 +607,6 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public bool DrawsSinglePassInstanced => _batch.SinglePassInstanced;
 
-        /// <summary>
-        /// The same for the stencil initialisation, the volumes and the caps. It is written from the same
-        /// <see cref="SinglePassInstanced"/> in the same place as the body's, so the two agreeing is what a caller
-        /// checks rather than something it has to arrange.
-        /// </summary>
-        public bool StencilDrawsSinglePassInstanced => _stencil.SinglePassInstanced;
 
         private int CurrentFrame => _frameSource != null ? _frameSource() : Time.frameCount;
 
@@ -572,11 +623,12 @@ namespace Zantetsu.MeshCut
             Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
+            VpStencilSettings stencilSettings,
             out VpLogicalCutDisplay display)
         {
             return TryCreate(
                 storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial,
-                commandCapacity, instanceCapacity, null, out display);
+                commandCapacity, instanceCapacity, stencilSettings, null, out display);
         }
 
         /// <summary>
@@ -593,12 +645,20 @@ namespace Zantetsu.MeshCut
             Material provisionalShadowMaterial,
             int commandCapacity,
             int instanceCapacity,
+            VpStencilSettings stencilSettings,
             Func<int> frameSource,
             out VpLogicalCutDisplay display)
         {
             display = null;
             if (storage == null || table == null || ledger == null || materialsBySourceIndex == null
                 || commandCapacity <= 0 || instanceCapacity <= 0)
+            {
+                return false;
+            }
+
+            // The settings are taken as given: a colour limit past what the materials can order is refused, not cut
+            // down, and there is no default to fall back on.
+            if (!stencilSettings.IsValid(VpStencilCapMaterials.MaxColors, out _))
             {
                 return false;
             }
@@ -615,7 +675,6 @@ namespace Zantetsu.MeshCut
 
             VpGpuIndexedGeometryBuffers buffers = null;
             VpIndexedIndirectDrawBatch batch = null;
-            VpStencilCapBatch stencil = null;
             VpStencilCapMaterials stencilMaterials = null;
             bool taken = false;
             try
@@ -623,23 +682,16 @@ namespace Zantetsu.MeshCut
                 buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
 
-                // The stencil side is sized from the same capacity: every body command may be drawn as two sides, so
-                // twice the commands and one instance each; every split body has two caps of at most the polygon's
-                // vertex count, fanned. The capacity is fixed with the rest and checked before every upload.
-                stencil = new VpStencilCapBatch(
-                    StencilGroups,
-                    commandCapacity * 2,
-                    commandCapacity * 2,
-                    commandCapacity * 2 * VpCapBoundsPolygon.MaxVertices,
-                    commandCapacity * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3);
-                if (!VpStencilCapMaterials.TryCreate(StencilGroups, out stencilMaterials))
+                // One material set for every camera: the queues order the colours, and each camera's batch carries its
+                // own buffers and properties. The stencil batches themselves come with the cameras.
+                if (!VpStencilCapMaterials.TryCreate(stencilSettings.maxStencilColors, out stencilMaterials))
                 {
                     return false;
                 }
 
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
-                    batch, stencil, stencilMaterials, commandCapacity, instanceCapacity, frameSource);
+                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, frameSource);
                 taken = true;
                 return true;
             }
@@ -648,9 +700,383 @@ namespace Zantetsu.MeshCut
                 if (!taken)
                 {
                     stencilMaterials?.Dispose();
-                    stencil?.Dispose();
                     batch?.Dispose();
                     buffers?.Dispose();
+                }
+            }
+        }
+
+        // ----- cameras ---------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Registers <paramref name="camera"/> for stencil work: a stencil batch of its own is made for it, sized like
+        /// every other camera's. False, making nothing, when the camera is null or already registered, or every slot of
+        /// <see cref="VpStencilSettings.cameraCapacity"/> is taken.
+        /// </summary>
+        public bool TryRegisterCamera(Camera camera)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (ReferenceEquals(camera, null) || FindCamera(camera) != null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _cameraStencils.Length; i++)
+            {
+                if (_cameraStencils[i] != null)
+                {
+                    continue;
+                }
+
+                var batch = new VpStencilCapBatch(
+                    _settings.maxStencilColors, _stencilCommandCapacity, _stencilCommandCapacity,
+                    _stencilCapVertexCapacity, _stencilCapIndexCapacity);
+                _cameraStencils[i] = new CameraStencil { camera = camera, batch = batch };
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gives back <paramref name="camera"/>'s stencil batch. Refused while that camera has draws registered in the
+        /// current frame, since they read its buffers until the frame is drawn; a later frame may let it go. False
+        /// also for a camera that is not registered.
+        /// </summary>
+        public bool TryUnregisterCamera(Camera camera)
+        {
+            ThrowIfDisposed();
+            for (int i = 0; i < _cameraStencils.Length; i++)
+            {
+                CameraStencil slot = _cameraStencils[i];
+                if (slot == null || !ReferenceEquals(slot.camera, camera))
+                {
+                    continue;
+                }
+
+                if (slot.drawnFrame == CurrentFrame)
+                {
+                    return false;
+                }
+
+                RetireStencil(slot.batch);
+                _cameraStencils[i] = null;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The monoscopic spelling: the camera's own position and non-GPU projection stand for both eyes.</summary>
+        public bool TryPrepareCamera(Camera camera)
+        {
+            if (ReferenceEquals(camera, null))
+            {
+                throw new ArgumentNullException(nameof(camera));
+            }
+
+            var eye = new VpCapEye(camera.transform.position, camera.projectionMatrix * camera.worldToCameraMatrix);
+            return TryPrepareCamera(camera, eye, eye);
+        }
+
+        /// <summary>
+        /// Makes <paramref name="camera"/>'s stencil arrangement for this frame from the adopted snapshot and uploads
+        /// it, every colour at once, into that camera's own batch. It may be called again, with another view, as long
+        /// as the camera has not drawn in this frame; nothing about the ledger, the body or the geometry is read again
+        /// or transferred.
+        /// <para>
+        /// False when the camera is not registered, has already drawn in this frame, or a cap could not be read into
+        /// the tests; the camera is then not prepared and <see cref="Render"/> refuses it. An upload refused within the
+        /// capacity checked at adoption, or a GPU call that throws, stops the display.
+        /// </para>
+        /// </summary>
+        public bool TryPrepareCamera(Camera camera, in VpCapEye left, in VpCapEye right)
+        {
+            ThrowIfDisposed();
+            ThrowIfBroken();
+            if (ReferenceEquals(camera, null))
+            {
+                throw new ArgumentNullException(nameof(camera));
+            }
+
+            if (!_hasSnapshot || _openFrame != CurrentFrame)
+            {
+                throw new InvalidOperationException(
+                    "TryBeginFrame has not opened this frame, so there is no snapshot to prepare a camera for");
+            }
+
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null || slot.drawnFrame == CurrentFrame)
+            {
+                return false;
+            }
+
+            // Not prepared until this one has been uploaded.
+            slot.preparedFrame = int.MinValue;
+            if (!TryArrange(left, right, out int commands, out int capIndices, out int colours, out VpStencilPreparation preparation))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!slot.batch.TryUpload(
+                        Slice(_candidateStencilCommands, commands), Slice(_candidateStencilTransforms, commands),
+                        Slice(_candidateStencilClips, commands), _capVertices, _capVertexCount, _candidateCapIndices,
+                        capIndices, _candidateStencilColors, colours, _batch.SinglePassInstanced))
+                {
+                    _broken = true;
+                    throw new InvalidOperationException(
+                        "a camera's stencil batch refused an arrangement inside the capacity checked when the snapshot "
+                        + "was adopted; this display stops");
+                }
+            }
+            catch
+            {
+                _broken = true;
+                throw;
+            }
+
+            slot.preparedFrame = CurrentFrame;
+            slot.preparedGeneration = _generation;
+            slot.preparation = preparation;
+            return true;
+        }
+
+        /// <summary>What <paramref name="camera"/>'s last preparation made, and what its stencil batch has counted.</summary>
+        public bool TryGetCameraStencil(Camera camera, out VpStencilPreparation preparation, out VpStencilCameraCounts counts)
+        {
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null)
+            {
+                preparation = default;
+                counts = default;
+                return false;
+            }
+
+            preparation = slot.preparation;
+            counts = new VpStencilCameraCounts(
+                slot.batch.Uploads, slot.batch.BufferWrites, slot.batch.StencilInitIssues, slot.batch.VolumeIssues,
+                slot.batch.CapIssues, slot.batch.ColorCount, slot.batch.SinglePassInstanced,
+                slot.preparedFrame == CurrentFrame && slot.preparedGeneration == _generation);
+            return true;
+        }
+
+        private CameraStencil FindCamera(Camera camera)
+        {
+            foreach (CameraStencil slot in _cameraStencils)
+            {
+                if (slot != null && ReferenceEquals(slot.camera, camera))
+                {
+                    return slot;
+                }
+            }
+
+            return null;
+        }
+
+        private int SumStencil(Func<VpStencilCapBatch, int> count)
+        {
+            int n = 0;
+            foreach (CameraStencil slot in _cameraStencils)
+            {
+                if (slot != null)
+                {
+                    n += count(slot.batch);
+                }
+            }
+
+            return n;
+        }
+
+        private void RetireStencil(VpStencilCapBatch batch)
+        {
+            _retiredStencilUploads += batch.Uploads;
+            _retiredStencilBufferWrites += batch.BufferWrites;
+            _retiredStencilInitIssues += batch.StencilInitIssues;
+            _retiredStencilVolumeIssues += batch.VolumeIssues;
+            _retiredStencilCapIssues += batch.CapIssues;
+            batch.Dispose();
+        }
+
+        /// <summary>
+        /// DESIGN 5.6's order over the adopted snapshot, for two eyes: visibility, compatibility groups over every cut
+        /// condition, the groups with no cap seen left out, colours within the limit, and the arrangement, colour by
+        /// colour, into the stencil scratch.
+        /// </summary>
+        private bool TryArrange(
+            in VpCapEye left, in VpCapEye right, out int commandCount, out int capIndexCount, out int colourCount,
+            out VpStencilPreparation preparation)
+        {
+            commandCount = 0;
+            capIndexCount = 0;
+            colourCount = 0;
+            preparation = default;
+            int records = _capRecordCount;
+            var targets = new VpCapProjectionTarget[records];
+            var conditions = new VpCapCompatibilityTarget[records];
+            var seen = new bool[records];
+            for (int r = 0; r < records; r++)
+            {
+                if (!VpCapVisibility.TryClassify(this, r, left, right, _settings.facingEpsilon, out VpCapVisibilityVerdict verdict)
+                    || !VpCapProjectionConflict.TryGetSingleCutTarget(this, r, left, right, _settings.facingEpsilon, out targets[r]))
+                {
+                    return false;
+                }
+
+                seen[r] = verdict.Keep;
+                conditions[r] = targets[r].conditions;
+            }
+
+            var groupOfRecord = new int[records];
+            int groups = records == 0
+                ? 0
+                : VpCapCompatibility.Classify(conditions, _settings.planeEpsilon, _settings.offsetEpsilon, groupOfRecord);
+
+            // A group is drawn when any cap in it is seen; then every target in it keeps its volumes, and only the
+            // caps that were seen are drawn.
+            var groupSeen = new bool[groups];
+            var capIssued = new bool[records];
+            SelectStencilWork(seen, groupOfRecord, groups, groupSeen, capIssued);
+
+            var keptGroup = new int[groups];
+            int kept = 0;
+            for (int g = 0; g < groups; g++)
+            {
+                keptGroup[g] = groupSeen[g] ? kept++ : -1;
+            }
+
+            var keptRecords = new List<int>(records);
+            for (int r = 0; r < records; r++)
+            {
+                if (keptGroup[groupOfRecord[r]] >= 0)
+                {
+                    keptRecords.Add(r);
+                }
+            }
+
+            var keptTargets = new VpCapProjectionTarget[keptRecords.Count];
+            var keptGroupOf = new int[keptRecords.Count];
+            for (int k = 0; k < keptRecords.Count; k++)
+            {
+                keptTargets[k] = targets[keptRecords[k]];
+                keptGroupOf[k] = keptGroup[groupOfRecord[keptRecords[k]]];
+            }
+
+            var colourOfGroup = new int[kept];
+            int max = _settings.maxStencilColors;
+            if (kept > 0)
+            {
+                VpStencilColors.Assign(
+                    keptTargets, keptGroupOf, kept, left, right, _settings.ndcMargin, _settings.planeEpsilon,
+                    _settings.offsetEpsilon, max, colourOfGroup);
+            }
+
+            // The arrangement, colour by colour in their order: each colour's volumes and then its caps are contiguous.
+            EnsureStencilRoom(_commandCount);
+            int inLast = 0;
+            for (int g = 0; g < kept; g++)
+            {
+                inLast += colourOfGroup[g] == max - 1 ? 1 : 0;
+            }
+
+            int ordinary = 0;
+            int volumeTargets = 0;
+            int capsDrawn = 0;
+            for (int colour = 0; colour < max; colour++)
+            {
+                int volumeStart = commandCount;
+                int capStart = capIndexCount;
+                bool any = false;
+                for (int k = 0; k < keptRecords.Count; k++)
+                {
+                    if (colourOfGroup[keptGroupOf[k]] != colour)
+                    {
+                        continue;
+                    }
+
+                    any = true;
+                    LogicalCutCapRecord record = _capRecords[keptRecords[k]];
+                    AppendVolumes(record, ref commandCount);
+                    volumeTargets++;
+                    if (!capIssued[keptRecords[k]])
+                    {
+                        continue;
+                    }
+
+                    capsDrawn++;
+                    for (int v = 1; v + 1 < record.vertexCount; v++)
+                    {
+                        _candidateCapIndices[capIndexCount++] = record.vertexStart;
+                        _candidateCapIndices[capIndexCount++] = record.vertexStart + v;
+                        _candidateCapIndices[capIndexCount++] = record.vertexStart + v + 1;
+                    }
+                }
+
+                if (!any)
+                {
+                    continue;
+                }
+
+                if (colour < max - 1)
+                {
+                    ordinary++;
+                }
+
+                _candidateStencilColors[colourCount++] = new VpStencilCapColor(
+                    volumeStart, commandCount - volumeStart, capStart, capIndexCount - capStart, ProvisionalCapColour);
+            }
+
+            preparation = new VpStencilPreparation(
+                records, groups, groups - kept, colourCount, ordinary, inLast, volumeTargets, capsDrawn);
+            return true;
+        }
+
+        /// <summary>
+        /// Which stencil work each cap record takes: a group is kept when any of its caps is seen, every record of a
+        /// kept group has its volumes issued, and a record's cap is issued only when it was seen itself. A cap that was
+        /// not seen still counted towards its group's compatibility; it is only not drawn.
+        /// </summary>
+        /// <param name="groupKept">Written: per group, whether any of its caps is seen.</param>
+        /// <param name="capIssued">Written: per record, whether its cap is drawn.</param>
+        internal static void SelectStencilWork(
+            bool[] seen, int[] groupOfRecord, int groupCount, bool[] groupKept, bool[] capIssued)
+        {
+            Array.Clear(groupKept, 0, groupCount);
+            for (int r = 0; r < seen.Length; r++)
+            {
+                groupKept[groupOfRecord[r]] |= seen[r];
+            }
+
+            for (int r = 0; r < seen.Length; r++)
+            {
+                capIssued[r] = seen[r] && groupKept[groupOfRecord[r]];
+            }
+        }
+
+        /// <summary>
+        /// The volumes of the side a cap closes: every adopted command of that body, once, with that side's own
+        /// instance transform and clip record -- the same geometry and range the body is drawn with.
+        /// </summary>
+        private void AppendVolumes(LogicalCutCapRecord record, ref int commandCount)
+        {
+            int instance = 0;
+            for (int c = 0; c < _commandCount; c++)
+            {
+                VpIndirectCommand source = _commands[c];
+                for (int i = 0; i < source.instanceCount; i++, instance++)
+                {
+                    LogicalCutDisplaySide side = _sides[instance];
+                    if (side.source != record.source || side.side != record.side)
+                    {
+                        continue;
+                    }
+
+                    _candidateStencilCommands[commandCount] = new VpIndirectCommand(source.range, source.localBounds, 1);
+                    _candidateStencilTransforms[commandCount] = _transforms[instance];
+                    _candidateStencilClips[commandCount] = _clips[instance];
+                    commandCount++;
                 }
             }
         }
@@ -792,14 +1218,22 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Registers this frame's draws: one forward call per run of commands sharing a material, each followed by its
-        /// shadow call when a shadow material was given. Drawing settles nothing by itself, so a second camera of the
-        /// same frame draws exactly the same data.
+        /// Registers this frame's draws for <paramref name="camera"/>: one forward call per run of commands sharing a
+        /// material, each followed by its shadow call when a shadow material was given, and then that camera's own
+        /// stencil work as <see cref="TryPrepareCamera(Camera)"/> made it. Drawing writes nothing. The camera must be
+        /// registered and prepared in this frame for the adopted snapshot; otherwise this throws before registering
+        /// anything.
         /// </summary>
-        public void Render(int layer, Camera camera = null)
+        public void Render(int layer, Camera camera)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+
+            if (camera == null)
+            {
+                throw new ArgumentNullException(
+                    nameof(camera), "the stencil work is prepared per camera, so a draw names the camera it is for");
+            }
 
             if (!_hasSnapshot || _openFrame != CurrentFrame)
             {
@@ -807,7 +1241,22 @@ namespace Zantetsu.MeshCut
                     "TryBeginFrame has not opened this frame, so there is nothing to draw. Call it once per frame, before drawing.");
             }
 
+            // Everything is checked before anything is registered: a camera that is not registered, not prepared this
+            // frame, or prepared for an earlier snapshot draws nothing at all -- not the body without its stencil.
+            CameraStencil cameraStencil = FindCamera(camera);
+            if (cameraStencil == null)
+            {
+                throw new InvalidOperationException("this camera is not registered with the display");
+            }
+
+            if (cameraStencil.preparedFrame != CurrentFrame || cameraStencil.preparedGeneration != _generation)
+            {
+                throw new InvalidOperationException(
+                    "this camera is not prepared for this frame's adopted snapshot; call TryPrepareCamera first");
+            }
+
             _drawRegisteredThisFrame = true;
+            cameraStencil.drawnFrame = CurrentFrame;
 
             // The surfaces, grouped by material exactly as before: one forward call per run of commands sharing one.
             int start = 0;
@@ -857,7 +1306,7 @@ namespace Zantetsu.MeshCut
 
             // The counting and the caps, after the surfaces: their queues put them after the opaque bodies, so each
             // cap is depth-tested against the surfaces of this frame and drawn only inside its side's opening.
-            _stencil.Render(_stencilMaterials, _buffers, layer, camera);
+            cameraStencil.batch.Render(_stencilMaterials, _buffers, layer, camera);
         }
 
         /// <summary>How this display is showing that fragment, whether as a body of its own or as a published child.</summary>
@@ -997,8 +1446,9 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Gives back everything this display owns: the buffers, the batch, and every geometry registration and
-        /// display instance it took, each exactly once. The ledger, the storage and the borrowed materials are left
+        /// Gives back everything this display owns: the buffers, the batches, and every geometry registration and
+        /// display instance it took, each exactly once. Refused, changing nothing, while any camera has draws
+        /// registered in the current frame; a later frame may dispose. The ledger, the storage and the borrowed materials are left
         /// alone — in particular no cut is completed, terminated or aborted by a display ending.
         /// </summary>
         public void Dispose()
@@ -1006,6 +1456,17 @@ namespace Zantetsu.MeshCut
             if (_disposed)
             {
                 return;
+            }
+
+            // Draws registered in this frame read these buffers until the frame is drawn, so nothing is let go before
+            // the frame boundary. This is the frame boundary, not a confirmation that the GPU has finished.
+            foreach (CameraStencil slot in _cameraStencils)
+            {
+                if (slot != null && slot.drawnFrame == CurrentFrame)
+                {
+                    throw new InvalidOperationException(
+                        "a camera has draws registered in this frame; dispose the display after the frame has been drawn");
+                }
             }
 
             _disposed = true;
@@ -1021,8 +1482,16 @@ namespace Zantetsu.MeshCut
             _capRecordCount = 0;
             _candidateCapRecordCount = 0;
             _hasSnapshot = false;
+            for (int i = 0; i < _cameraStencils.Length; i++)
+            {
+                if (_cameraStencils[i] != null)
+                {
+                    RetireStencil(_cameraStencils[i].batch);
+                    _cameraStencils[i] = null;
+                }
+            }
+
             _stencilMaterials.Dispose();
-            _stencil.Dispose();
             _batch.Dispose();
             _buffers.Dispose();
         }
@@ -1153,22 +1622,38 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // 5. The stencil arrangement of the same candidate: each split body's commands once per side, the positive
-            //    sides first, and each side's polygon fanned into the cap index range of its group.
-            BuildStencilArrangement(command, out int stencilCommands, out int capIndexCount, out int stencilGroups);
+            // 5. The largest stencil arrangement this candidate could need, of every side and every cap in one
+            //    colour: no camera's arrangement of it has more commands, cap vertices or cap indices.
+            BuildLargestStencilArrangement(command, out int stencilCommands, out int capIndexCount, out int stencilColours);
 
-            // 6. Both batches are asked before either is written. The display batch's conditions are the capacity
-            //    settled in step 2 and the shapes built here; the stencil batch says for itself, without writing. So
-            //    an ordinary refusal from either leaves the body and its caps on screen together as they were.
+            // 6. Both sides are asked before anything is written: the display batch's conditions are the capacity
+            //    settled in step 2 and the shapes built here; the stencil side's are its fixed sizes and every
+            //    registered camera's own non-writing judgement. So an ordinary refusal keeps the previous snapshot.
+            //    This is a judgement of capacity and form, not a promise that each camera's later upload succeeds.
             VpIndirectCommand[] commands = Slice(_candidateCommands, command);
             Matrix4x4[] transforms = Slice(_candidateTransforms, instance);
             VpInstanceClip[] clips = Slice(_candidateClips, instance);
-            VpIndirectCommand[] stencilCommandsSlice = Slice(_candidateStencilCommands, stencilCommands);
-            Matrix4x4[] stencilTransforms = Slice(_candidateStencilTransforms, stencilCommands);
-            VpInstanceClip[] stencilClips = Slice(_candidateStencilClips, stencilCommands);
-            if (!_stencil.CanUpload(
-                    stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
-                    _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups))
+            bool stencilFits = stencilCommands <= _stencilCommandCapacity
+                && capVertex <= _stencilCapVertexCapacity
+                && capIndexCount <= _stencilCapIndexCapacity;
+            if (stencilFits)
+            {
+                VpIndirectCommand[] stencilCommandsSlice = Slice(_candidateStencilCommands, stencilCommands);
+                Matrix4x4[] stencilTransforms = Slice(_candidateStencilTransforms, stencilCommands);
+                VpInstanceClip[] stencilClips = Slice(_candidateStencilClips, stencilCommands);
+                foreach (CameraStencil slot in _cameraStencils)
+                {
+                    if (slot != null && !slot.batch.CanUpload(
+                            stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
+                            _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilColours))
+                    {
+                        stencilFits = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!stencilFits)
             {
                 GiveBackSecondInstancesTakenThisPass();
                 _candidateSides.Clear();
@@ -1176,27 +1661,15 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // 7. The uploads. An ordinary refusal from the display batch here would contradict step 2 and leaves
-            //    nothing written; a refusal from the stencil batch after the display batch has been written would
-            //    contradict step 6 and cannot be undone, so it stops the display like a GPU failure. A GPU call that
-            //    throws is different, as elsewhere: what reached it cannot be established.
-            //    The stereo condition is read once, here, and given to both: the body's surfaces and the stencil work
-            //    of one arrangement are never written for different eye counts, whatever the property does later.
+            // 7. The body's upload. The stencil arrangement is each camera's, uploaded when that camera is prepared
+            //    from the snapshot adopted here. The stereo condition is read once, here; the cameras' stencil work
+            //    takes the condition this upload settled, so the body and its caps are never on different eye counts.
+            //    A GPU call that throws stops the display: what reached it cannot be established.
             bool singlePassInstanced = SinglePassInstanced;
             bool uploaded;
             try
             {
                 uploaded = _batch.TryUpload(commands, transforms, clips, singlePassInstanced);
-                if (uploaded && !_stencil.TryUpload(
-                        stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
-                        _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilGroups,
-                        singlePassInstanced))
-                {
-                    _broken = true;
-                    throw new InvalidOperationException(
-                        "the stencil batch refused an arrangement it had said it would accept, after the display batch "
-                        + "was written; the body and its caps could no longer be kept together, so this display stops");
-                }
             }
             catch
             {
@@ -1216,7 +1689,7 @@ namespace Zantetsu.MeshCut
             }
 
             // The candidate becomes the adopted snapshot, and the arrays change places rather than being copied.
-            AdoptCandidate(command);
+            AdoptCandidate(command, capVertex);
             CommandUploads++;
 
             // 6. Only now, with the GPU holding this arrangement, is the display's own state changed.
@@ -1328,23 +1801,15 @@ namespace Zantetsu.MeshCut
         /// or copied. Each side's polygon is then fanned into its group's index range, and with no split shown there
         /// are no groups at all.
         /// </summary>
-        private void BuildStencilArrangement(
-            int commandCount, out int stencilCommands, out int capIndexCount, out int groups)
+        /// <summary>
+        /// Every split side's commands and every cap's fan, in one colour: the most any camera's arrangement of this
+        /// candidate could hold. It is only asked about, never uploaded.
+        /// </summary>
+        private void BuildLargestStencilArrangement(
+            int commandCount, out int stencilCommands, out int capIndexCount, out int colours)
         {
             EnsureStencilRoom(commandCount);
-            int positive = 0;
-            int negative = 0;
-            int splitCommands = 0;
-            for (int c = 0; c < commandCount; c++)
-            {
-                if (_candidateCommands[c].instanceCount == 2)
-                {
-                    splitCommands++;
-                }
-            }
-
-            // Positive sides occupy [0, splitCommands), negative sides [splitCommands, 2 * splitCommands). The
-            // candidate's instances run command by command, the positive instance before the negative one.
+            stencilCommands = 0;
             int instance = 0;
             for (int c = 0; c < commandCount; c++)
             {
@@ -1356,59 +1821,32 @@ namespace Zantetsu.MeshCut
                 }
 
                 var one = new VpIndirectCommand(source.range, source.localBounds, 1);
-                _candidateStencilCommands[positive] = one;
-                _candidateStencilTransforms[positive] = _candidateTransforms[instance];
-                _candidateStencilClips[positive] = _candidateClips[instance];
-                positive++;
-                instance++;
-
-                int at = splitCommands + negative;
-                _candidateStencilCommands[at] = one;
-                _candidateStencilTransforms[at] = _candidateTransforms[instance];
-                _candidateStencilClips[at] = _candidateClips[instance];
-                negative++;
-                instance++;
+                for (int side = 0; side < 2; side++, instance++)
+                {
+                    _candidateStencilCommands[stencilCommands] = one;
+                    _candidateStencilTransforms[stencilCommands] = _candidateTransforms[instance];
+                    _candidateStencilClips[stencilCommands] = _candidateClips[instance];
+                    stencilCommands++;
+                }
             }
 
-            stencilCommands = positive + negative;
-
-            // The caps: the positive records' polygons fanned first, then the negative ones, so that each group's cap
-            // index range is contiguous. A record's vertices are already in the candidate's cap vertex array.
             int index = 0;
-            int positiveIndexStart = 0;
-            for (int pass = 0; pass < 2; pass++)
+            for (int r = 0; r < _candidateCapRecordCount; r++)
             {
-                float side = pass == 0 ? 1f : -1f;
-                if (pass == 1)
+                LogicalCutCapRecord record = _candidateCapRecords[r];
+                for (int v = 1; v + 1 < record.vertexCount; v++)
                 {
-                    positiveIndexStart = index;
-                }
-
-                for (int r = 0; r < _candidateCapRecordCount; r++)
-                {
-                    LogicalCutCapRecord record = _candidateCapRecords[r];
-                    if (record.side != side)
-                    {
-                        continue;
-                    }
-
-                    for (int v = 1; v + 1 < record.vertexCount; v++)
-                    {
-                        _candidateCapIndices[index++] = record.vertexStart;
-                        _candidateCapIndices[index++] = record.vertexStart + v;
-                        _candidateCapIndices[index++] = record.vertexStart + v + 1;
-                    }
+                    _candidateCapIndices[index++] = record.vertexStart;
+                    _candidateCapIndices[index++] = record.vertexStart + v;
+                    _candidateCapIndices[index++] = record.vertexStart + v + 1;
                 }
             }
 
             capIndexCount = index;
-            groups = splitCommands > 0 ? StencilGroups : 0;
-            if (groups > 0)
+            colours = stencilCommands > 0 || index > 0 ? 1 : 0;
+            if (colours > 0)
             {
-                _candidateStencilColors[0] = new VpStencilCapColor(
-                    0, splitCommands, 0, positiveIndexStart, ProvisionalCapColour);
-                _candidateStencilColors[1] = new VpStencilCapColor(
-                    splitCommands, splitCommands, positiveIndexStart, index - positiveIndexStart, ProvisionalCapColour);
+                _candidateStencilColors[0] = new VpStencilCapColor(0, stencilCommands, 0, index, ProvisionalCapColour);
             }
         }
 
@@ -1521,8 +1959,15 @@ namespace Zantetsu.MeshCut
         /// Nothing is copied and nothing can grow here, which is what keeps the adopted CPU state and what the GPU
         /// now holds from ever disagreeing.
         /// </summary>
-        private void AdoptCandidate(int commandCount)
+        private void AdoptCandidate(int commandCount, int capVertexCount)
         {
+            Matrix4x4[] transforms = _transforms;
+            VpInstanceClip[] clips = _clips;
+            _transforms = _candidateTransforms;
+            _clips = _candidateClips;
+            _candidateTransforms = transforms;
+            _candidateClips = clips;
+
             VpIndirectCommand[] commands = _commands;
             Material[] materials = _commandMaterials;
             bool[] provisional = _commandProvisional;
@@ -1548,7 +1993,11 @@ namespace Zantetsu.MeshCut
             _candidateCapRecordCount = 0;
 
             _commandCount = commandCount;
+            _capVertexCount = capVertexCount;
             _hasSnapshot = true;
+
+            // Every camera's preparation was for the snapshot just replaced.
+            _generation++;
         }
 
         /// <summary>
