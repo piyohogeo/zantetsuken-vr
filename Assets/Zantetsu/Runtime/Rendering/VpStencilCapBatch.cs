@@ -235,11 +235,58 @@ namespace Zantetsu.Rendering
             int colorCount,
             bool singlePassInstanced)
         {
+            return Upload(
+                commands, commands == null ? 0 : commands.Length, objectToWorlds, clips, capVertices, capVertexCount,
+                capIndices, capIndexCount, colors, colorCount, singlePassInstanced, true);
+        }
+
+        /// <summary>
+        /// The same upload of only the first <paramref name="commandCount"/> volume commands and the instances they
+        /// name -- the first transforms and clip records -- together with the first <paramref name="capVertexCount"/>
+        /// cap vertices, the first <paramref name="capIndexCount"/> cap indices and the first
+        /// <paramref name="colorCount"/> colours. The arrays may be longer; what lies past those counts is neither
+        /// checked nor transferred nor drawn, so a caller keeping fixed-size arrays filled to a count each time never
+        /// sends what an earlier, longer fill left behind. Accepted and refused exactly as
+        /// <see cref="CanUpload(VpIndirectCommand[], int, Matrix4x4[], VpInstanceClip[], Vector3[], int, int[], int, VpStencilCapColor[], int)"/>
+        /// says, before the first write.
+        /// </summary>
+        public bool TryUpload(
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool singlePassInstanced)
+        {
+            return Upload(
+                commands, commandCount, objectToWorlds, clips, capVertices, capVertexCount, capIndices, capIndexCount,
+                colors, colorCount, singlePassInstanced, false);
+        }
+
+        private bool Upload(
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool singlePassInstanced,
+            bool exactLengths)
+        {
             ThrowIfDisposed();
             ThrowIfBroken();
 
             if (!IsWellFormed(
-                    commands, capVertices, capVertexCount, capIndices, capIndexCount, colors, colorCount,
+                    commands, commandCount, capVertices, capVertexCount, capIndices, capIndexCount, colors, colorCount,
                     out int volumeWrites))
             {
                 return false;
@@ -248,8 +295,11 @@ namespace Zantetsu.Rendering
             // Every check is behind us; from here the buffers are written.
             try
             {
-                if (!_volumes.TryUpload(
-                        commands ?? Array.Empty<VpIndirectCommand>(), objectToWorlds, clips, singlePassInstanced))
+                VpIndirectCommand[] volumeCommands = commands ?? Array.Empty<VpIndirectCommand>();
+                bool volumesTaken = exactLengths
+                    ? _volumes.TryUpload(volumeCommands, objectToWorlds, clips, singlePassInstanced)
+                    : _volumes.TryUpload(volumeCommands, commandCount, objectToWorlds, clips, singlePassInstanced);
+                if (!volumesTaken)
                 {
                     return false;
                 }
@@ -316,9 +366,50 @@ namespace Zantetsu.Rendering
             VpStencilCapColor[] colors,
             int colorCount)
         {
+            return Can(
+                commands, commands == null ? 0 : commands.Length, objectToWorlds, clips, capVertices, capVertexCount,
+                capIndices, capIndexCount, colors, colorCount, true);
+        }
+
+        /// <summary>
+        /// Whether the counted <see cref="TryUpload(VpIndirectCommand[], int, Matrix4x4[], VpInstanceClip[], Vector3[], int, int[], int, VpStencilCapColor[], int, bool)"/>
+        /// would accept this input, decided without writing anything: the same counts, read over the same ranges.
+        /// </summary>
+        public bool CanUpload(
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount)
+        {
+            return Can(
+                commands, commandCount, objectToWorlds, clips, capVertices, capVertexCount, capIndices, capIndexCount,
+                colors, colorCount, false);
+        }
+
+        private bool Can(
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            Vector3[] capVertices,
+            int capVertexCount,
+            int[] capIndices,
+            int capIndexCount,
+            VpStencilCapColor[] colors,
+            int colorCount,
+            bool exactLengths)
+        {
             ThrowIfDisposed();
             ThrowIfBroken();
-            if (!IsWellFormed(commands, capVertices, capVertexCount, capIndices, capIndexCount, colors, colorCount, out _))
+            if (!IsWellFormed(
+                    commands, commandCount, capVertices, capVertexCount, capIndices, capIndexCount, colors, colorCount,
+                    out _))
             {
                 return false;
             }
@@ -326,8 +417,10 @@ namespace Zantetsu.Rendering
             // The volume half is the draw batch's own judgement, asked of it rather than repeated here, so the two
             // cannot drift apart: a negative index range, a count over the capacity or a transform or clip count
             // that does not match the instances is refused by the same code that would refuse the upload.
-            return _volumes.CanUpload(
-                commands ?? Array.Empty<VpIndirectCommand>(), objectToWorlds, clips);
+            VpIndirectCommand[] volumeCommands = commands ?? Array.Empty<VpIndirectCommand>();
+            return exactLengths
+                ? _volumes.CanUpload(volumeCommands, objectToWorlds, clips)
+                : _volumes.CanUpload(volumeCommands, commandCount, objectToWorlds, clips);
         }
 
         /// <summary>
@@ -337,6 +430,7 @@ namespace Zantetsu.Rendering
         /// </summary>
         private bool IsWellFormed(
             VpIndirectCommand[] commands,
+            int commandCount,
             Vector3[] capVertices,
             int capVertexCount,
             int[] capIndices,
@@ -370,7 +464,13 @@ namespace Zantetsu.Rendering
                 }
             }
 
-            int commandTotal = commands == null ? 0 : commands.Length;
+            // Only the commands counted are read; a null array holds none.
+            if (commandCount < 0 || commandCount > (commands == null ? 0 : commands.Length))
+            {
+                return false;
+            }
+
+            int commandTotal = commandCount;
             long instanceTotal = 0;
             for (int c = 0; c < commandTotal; c++)
             {

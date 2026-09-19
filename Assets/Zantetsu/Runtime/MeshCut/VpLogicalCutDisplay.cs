@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Unity.Mathematics;
 using UnityEngine;
@@ -250,6 +251,17 @@ namespace Zantetsu.MeshCut
     /// registering anything, the body included.
     /// </para>
     /// <para>
+    /// **A preparation allocates nothing once the display is made.** Everything a camera's preparation works in — the
+    /// targets, their conditions and caps, the visibility, the groups, what is kept, the colours and the arrangement
+    /// itself — is this display's own scratch, made when the display is made at the sizes its fixed capacity gives
+    /// (every body command drawn as two sides, and two caps per split body), filled to a count each time and never
+    /// grown. A cap is read as a look at the adopted snapshot's own vertices, not copied; those looks last only while
+    /// the preparation runs and are cleared when it ends, so nothing kept by a camera, and nothing kept from one
+    /// adoption to the next, refers to them. The arrangement is uploaded by count, so nothing an earlier, larger
+    /// arrangement left in the scratch is checked, sent or drawn. A preparation runs to its end before another
+    /// starts: a call into this display made while one is running is refused before it changes anything.
+    /// </para>
+    /// <para>
     /// **Two casters, and who owns them.** A body drawn as a provisional split is cast two-sided and every other body
     /// one-sided, which is DESIGN 5.4's division: no cap is drawn into the shadow map, so what occludes behind the
     /// opening is the back of the shell, and only a two-sided caster puts it there. Both materials are the caller's,
@@ -416,11 +428,87 @@ namespace Zantetsu.MeshCut
 
         // A stencil arrangement being made: for the largest one a candidate could need, checked before adoption, and
         // for one camera's colours when it is prepared. Scratch only; each upload copies what it takes.
-        private VpIndirectCommand[] _candidateStencilCommands = Array.Empty<VpIndirectCommand>();
-        private Matrix4x4[] _candidateStencilTransforms = Array.Empty<Matrix4x4>();
-        private VpInstanceClip[] _candidateStencilClips = Array.Empty<VpInstanceClip>();
-        private int[] _candidateCapIndices = Array.Empty<int>();
+        // Made once, at the stencil capacity, and never grown: the arrangement is filled to a count and uploaded by it.
+        private readonly VpIndirectCommand[] _candidateStencilCommands;
+        private readonly Matrix4x4[] _candidateStencilTransforms;
+        private readonly VpInstanceClip[] _candidateStencilClips;
+        private readonly int[] _candidateCapIndices;
         private readonly VpStencilCapColor[] _candidateStencilColors;
+
+        // One preparation's scratch, one slot per cap record the capacity allows: made once, filled to a count, never
+        // grown, and read no further than that count. The targets hold looks at the adopted cap vertices and at the
+        // two scratch arrays below them; those are cleared when the preparation ends.
+        private readonly int _capRecordCapacity;
+        private readonly VpCapProjectionTarget[] _prepTargets;
+        private readonly VpCapCompatibilityTarget[] _prepConditions;
+        private readonly bool[] _prepSeen;
+        private readonly int[] _prepGroupOfRecord;
+        private readonly bool[] _prepGroupSeen;
+        private readonly bool[] _prepCapIssued;
+        private readonly int[] _prepKeptGroup;
+        private readonly int[] _prepKeptRecords;
+        private readonly VpCapProjectionTarget[] _prepKeptTargets;
+        private readonly int[] _prepKeptGroupOf;
+        private readonly int[] _prepColourOfGroup;
+        private readonly VpCapConstraint[] _prepConstraints;
+        private readonly VpArrayRange<Vector3>[] _prepCaps;
+        private readonly CountedList<VpCapCompatibilityTarget> _prepConditionList;
+        private readonly CountedList<VpCapProjectionTarget> _prepKeptTargetList;
+        private readonly CountedList<int> _prepKeptGroupOfList;
+        private int _prepRecordsUsed;
+        private int _preparationRecordLimit;
+        private bool _preparing;
+
+        /// <summary>
+        /// A read-only look at the first <see cref="Count"/> items of an array this display owns, for the classifiers
+        /// that take lists. Made once with its array; only the count changes, so nothing is allocated when it is handed
+        /// over, and nothing past the count -- an earlier, longer fill -- is ever read through it.
+        /// </summary>
+        private sealed class CountedList<T> : IReadOnlyList<T>
+        {
+            private readonly T[] _items;
+            private int _count;
+
+            public CountedList(T[] items)
+            {
+                _items = items;
+            }
+
+            public int Count => _count;
+
+            public T this[int index]
+            {
+                get
+                {
+                    if ((uint)index >= (uint)_count)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(index));
+                    }
+
+                    return _items[index];
+                }
+            }
+
+            public void SetCount(int count)
+            {
+                if ((uint)count > (uint)_items.Length)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(count));
+                }
+
+                _count = count;
+            }
+
+            public IEnumerator<T> GetEnumerator()
+            {
+                for (int i = 0; i < _count; i++)
+                {
+                    yield return _items[i];
+                }
+            }
+
+            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        }
 
         /// <summary>One registered camera's stencil work: its own batch, and what it was last prepared and drawn for.</summary>
         private sealed class CameraStencil
@@ -458,6 +546,7 @@ namespace Zantetsu.MeshCut
             VpStencilSettings settings,
             int commandCapacity,
             int instanceCapacity,
+            in DerivedCapacities derived,
             Func<int> frameSource)
         {
             _storage = storage;
@@ -474,13 +563,97 @@ namespace Zantetsu.MeshCut
             _candidateStencilColors = new VpStencilCapColor[settings.maxStencilColors];
 
             // Every body command may be drawn as two sides, one instance each, and every split body has two caps of at
-            // most the polygon's vertex count, fanned. Each camera's batch is made to these sizes.
-            _stencilCommandCapacity = commandCapacity * 2;
-            _stencilCapVertexCapacity = commandCapacity * 2 * VpCapBoundsPolygon.MaxVertices;
-            _stencilCapIndexCapacity = commandCapacity * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
+            // most the polygon's vertex count, fanned. Each camera's batch is made to these sizes, derived and checked
+            // before anything was made (DeriveCapacities).
+            _stencilCommandCapacity = derived.stencilCommands;
+            _stencilCapVertexCapacity = derived.capVertices;
+            _stencilCapIndexCapacity = derived.capIndices;
+            _candidateStencilCommands = new VpIndirectCommand[_stencilCommandCapacity];
+            _candidateStencilTransforms = new Matrix4x4[_stencilCommandCapacity];
+            _candidateStencilClips = new VpInstanceClip[_stencilCommandCapacity];
+            _candidateCapIndices = new int[_stencilCapIndexCapacity];
+
+            // Two caps per split body, and a body takes at least one command: a collection with more is refused before
+            // it is adopted, so no preparation meets more records than this.
+            _capRecordCapacity = derived.capRecords;
+            int records = _capRecordCapacity;
+            _prepTargets = new VpCapProjectionTarget[records];
+            _prepConditions = new VpCapCompatibilityTarget[records];
+            _prepSeen = new bool[records];
+            _prepGroupOfRecord = new int[records];
+            _prepGroupSeen = new bool[records];
+            _prepCapIssued = new bool[records];
+            _prepKeptGroup = new int[records];
+            _prepKeptRecords = new int[records];
+            _prepKeptTargets = new VpCapProjectionTarget[records];
+            _prepKeptGroupOf = new int[records];
+            _prepColourOfGroup = new int[records];
+            _prepConstraints = new VpCapConstraint[derived.constraints];
+            _prepCaps = new VpArrayRange<Vector3>[derived.caps];
+            _prepConditionList = new CountedList<VpCapCompatibilityTarget>(_prepConditions);
+            _prepKeptTargetList = new CountedList<VpCapProjectionTarget>(_prepKeptTargets);
+            _prepKeptGroupOfList = new CountedList<int>(_prepKeptGroupOf);
+            _preparationRecordLimit = records;
             _commandCapacity = commandCapacity;
             _instanceCapacity = instanceCapacity;
             _frameSource = frameSource;
+        }
+
+        /// <summary>The sizes a display of one command capacity is made to, every one of them an int.</summary>
+        internal readonly struct DerivedCapacities
+        {
+            public DerivedCapacities(int stencilCommands, int capVertices, int capIndices, int capRecords, int constraints, int caps)
+            {
+                this.stencilCommands = stencilCommands;
+                this.capVertices = capVertices;
+                this.capIndices = capIndices;
+                this.capRecords = capRecords;
+                this.constraints = constraints;
+                this.caps = caps;
+            }
+
+            public readonly int stencilCommands;
+            public readonly int capVertices;
+            public readonly int capIndices;
+            public readonly int capRecords;
+            public readonly int constraints;
+            public readonly int caps;
+        }
+
+        /// <summary>
+        /// Every size a display of <paramref name="commandCapacity"/> commands is made to -- the stencil commands, cap
+        /// vertices and cap indices of each camera's batch, and the cap records, conditions and cap looks of a
+        /// preparation -- worked out in 64-bit arithmetic. False when any of them is not a positive int, which is a
+        /// capacity that cannot be represented; nothing is decided here beyond that, and no limit of its own is set.
+        /// </summary>
+        internal static bool TryDeriveCapacities(int commandCapacity, out DerivedCapacities derived)
+        {
+            derived = default;
+            if (commandCapacity <= 0)
+            {
+                return false;
+            }
+
+            long stencilCommands = (long)commandCapacity * 2;
+            long capVertices = stencilCommands * VpCapBoundsPolygon.MaxVertices;
+            long capIndices = stencilCommands * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
+            long capRecords = stencilCommands;
+            long constraints = capRecords * VpCapCompatibility.SingleCutConstraints;
+            long caps = capRecords * VpCapProjectionConflict.SingleCutCaps;
+            if (!FitsInt(stencilCommands) || !FitsInt(capVertices) || !FitsInt(capIndices) || !FitsInt(capRecords)
+                || !FitsInt(constraints) || !FitsInt(caps))
+            {
+                return false;
+            }
+
+            derived = new DerivedCapacities(
+                (int)stencilCommands, (int)capVertices, (int)capIndices, (int)capRecords, (int)constraints, (int)caps);
+            return true;
+        }
+
+        private static bool FitsInt(long value)
+        {
+            return value > 0 && value <= int.MaxValue;
         }
 
         /// <summary>
@@ -656,6 +829,13 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
+            // Every size derived from the command capacity is worked out wide and must be an int, before any GPU
+            // buffer, material or scratch is made.
+            if (!TryDeriveCapacities(commandCapacity, out DerivedCapacities derived))
+            {
+                return false;
+            }
+
             // The settings are taken as given: a colour limit past what the materials can order is refused, not cut
             // down, and there is no default to fall back on.
             if (!stencilSettings.IsValid(VpStencilCapMaterials.MaxColors, out _))
@@ -691,7 +871,7 @@ namespace Zantetsu.MeshCut
 
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
-                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, frameSource);
+                    batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, derived, frameSource);
                 taken = true;
                 return true;
             }
@@ -717,6 +897,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfPreparing();
             if (ReferenceEquals(camera, null) || FindCamera(camera) != null)
             {
                 return false;
@@ -747,6 +928,7 @@ namespace Zantetsu.MeshCut
         public bool TryUnregisterCamera(Camera camera)
         {
             ThrowIfDisposed();
+            ThrowIfPreparing();
             for (int i = 0; i < _cameraStencils.Length; i++)
             {
                 CameraStencil slot = _cameraStencils[i];
@@ -786,15 +968,21 @@ namespace Zantetsu.MeshCut
         /// as the camera has not drawn in this frame; nothing about the ledger, the body or the geometry is read again
         /// or transferred.
         /// <para>
-        /// False when the camera is not registered, has already drawn in this frame, or a cap could not be read into
-        /// the tests; the camera is then not prepared and <see cref="Render"/> refuses it. An upload refused within the
-        /// capacity checked at adoption, or a GPU call that throws, stops the display.
+        /// False when the camera is not registered, has already drawn in this frame, a cap could not be read into
+        /// the tests, or the snapshot holds more cap records than a preparation has room for; the camera is then not
+        /// prepared, nothing is uploaded, and <see cref="Render"/> refuses it. An upload refused within the capacity
+        /// checked at adoption, or a GPU call that throws, stops the display.
+        /// </para>
+        /// <para>
+        /// Works in this display's own scratch and allocates nothing (see the class notes). Calling into this display
+        /// while a preparation is running -- from inside it -- throws before anything is changed.
         /// </para>
         /// </summary>
         public bool TryPrepareCamera(Camera camera, in VpCapEye left, in VpCapEye right)
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfPreparing();
             if (ReferenceEquals(camera, null))
             {
                 throw new ArgumentNullException(nameof(camera));
@@ -812,36 +1000,132 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // Not prepared until this one has been uploaded.
-            slot.preparedFrame = int.MinValue;
-            if (!TryArrange(left, right, out int commands, out int capIndices, out int colours, out VpStencilPreparation preparation))
+            _preparing = true;
+            try
             {
+                // Not prepared until this one has been uploaded.
+                slot.preparedFrame = int.MinValue;
+                if (!TryArrange(
+                        left, right, out int commands, out int capIndices, out int colours,
+                        out VpStencilPreparation preparation))
+                {
+                    return false;
+                }
+
+                // Uploaded by count: the scratch is the stencil capacity long, and only what this arrangement filled
+                // is checked, sent and drawn.
+                try
+                {
+                    if (!slot.batch.TryUpload(
+                            _candidateStencilCommands, commands, _candidateStencilTransforms, _candidateStencilClips,
+                            _capVertices, _capVertexCount, _candidateCapIndices, capIndices, _candidateStencilColors,
+                            colours, _batch.SinglePassInstanced))
+                    {
+                        _broken = true;
+                        throw new InvalidOperationException(
+                            "a camera's stencil batch refused an arrangement inside the capacity checked when the "
+                            + "snapshot was adopted; this display stops");
+                    }
+                }
+                catch
+                {
+                    _broken = true;
+                    throw;
+                }
+
+                slot.preparedFrame = CurrentFrame;
+                slot.preparedGeneration = _generation;
+                slot.preparation = preparation;
+                return true;
+            }
+            finally
+            {
+                ClearPreparationScratch();
+                _preparing = false;
+            }
+        }
+
+        /// <summary>
+        /// How many cap records one preparation may take, at most the room its scratch was made with. Lowered only by
+        /// tests, to reach the refusal of a snapshot that holds more records than a preparation has room for, which
+        /// the collection's own refusal otherwise keeps from happening.
+        /// </summary>
+        internal int PreparationRecordLimit
+        {
+            get => _preparationRecordLimit;
+            set
+            {
+                if (value < 0 || value > _capRecordCapacity)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+
+                _preparationRecordLimit = value;
+            }
+        }
+
+        /// <summary>Whether a preparation is running now. For tests, which look in from a frame source.</summary>
+        internal bool IsPreparing => _preparing;
+
+        /// <summary>
+        /// How many looks the preparation scratch still holds -- at cap vertices, conditions or caps. Zero whenever no
+        /// preparation is running. For tests.
+        /// </summary>
+        internal int HeldPreparationLooks
+        {
+            get
+            {
+                int held = 0;
+                for (int i = 0; i < _prepTargets.Length; i++)
+                {
+                    held += _prepTargets[i].visibleCaps.IsNull && _prepTargets[i].conditions.constraints.IsNull ? 0 : 1;
+                    held += _prepKeptTargets[i].visibleCaps.IsNull && _prepKeptTargets[i].conditions.constraints.IsNull ? 0 : 1;
+                    held += _prepConditions[i].constraints.IsNull ? 0 : 1;
+                }
+
+                for (int i = 0; i < _prepCaps.Length; i++)
+                {
+                    held += _prepCaps[i].IsNull ? 0 : 1;
+                }
+
+                for (int i = 0; i < _prepConstraints.Length; i++)
+                {
+                    held += _prepConstraints[i].face.scope == null ? 0 : 1;
+                }
+
+                return held;
+            }
+        }
+
+        /// <summary>One colour range of what <paramref name="camera"/>'s batch holds from its last upload. For tests.</summary>
+        internal bool TryGetPreparedColor(Camera camera, int index, out VpStencilCapColor color)
+        {
+            CameraStencil slot = FindCamera(camera);
+            if (slot == null)
+            {
+                color = default;
                 return false;
             }
 
-            try
-            {
-                if (!slot.batch.TryUpload(
-                        Slice(_candidateStencilCommands, commands), Slice(_candidateStencilTransforms, commands),
-                        Slice(_candidateStencilClips, commands), _capVertices, _capVertexCount, _candidateCapIndices,
-                        capIndices, _candidateStencilColors, colours, _batch.SinglePassInstanced))
-                {
-                    _broken = true;
-                    throw new InvalidOperationException(
-                        "a camera's stencil batch refused an arrangement inside the capacity checked when the snapshot "
-                        + "was adopted; this display stops");
-                }
-            }
-            catch
-            {
-                _broken = true;
-                throw;
-            }
+            return slot.batch.TryGetColor(index, out color);
+        }
 
-            slot.preparedFrame = CurrentFrame;
-            slot.preparedGeneration = _generation;
-            slot.preparation = preparation;
-            return true;
+        /// <summary>
+        /// The looks a preparation took -- at the adopted cap vertices, and at its own conditions and caps -- are let
+        /// go when it ends, so that none of them outlives it or crosses into another adoption.
+        /// </summary>
+        private void ClearPreparationScratch()
+        {
+            int used = _prepRecordsUsed;
+            Array.Clear(_prepTargets, 0, used);
+            Array.Clear(_prepConditions, 0, used);
+            Array.Clear(_prepKeptTargets, 0, used);
+            Array.Clear(_prepConstraints, 0, used * VpCapCompatibility.SingleCutConstraints);
+            Array.Clear(_prepCaps, 0, used * VpCapProjectionConflict.SingleCutCaps);
+            _prepConditionList.SetCount(0);
+            _prepKeptTargetList.SetCount(0);
+            _prepKeptGroupOfList.SetCount(0);
+            _prepRecordsUsed = 0;
         }
 
         /// <summary>What <paramref name="camera"/>'s last preparation made, and what its stencil batch has counted.</summary>
@@ -914,13 +1198,25 @@ namespace Zantetsu.MeshCut
             colourCount = 0;
             preparation = default;
             int records = _capRecordCount;
-            var targets = new VpCapProjectionTarget[records];
-            var conditions = new VpCapCompatibilityTarget[records];
-            var seen = new bool[records];
+
+            // Room is decided before anything is read into the scratch, let alone uploaded.
+            if (records > _preparationRecordLimit)
+            {
+                return false;
+            }
+
+            // Every slot up to here may hold a look from this preparation from now on, and is cleared when it ends.
+            _prepRecordsUsed = records;
+            VpCapProjectionTarget[] targets = _prepTargets;
+            VpCapCompatibilityTarget[] conditions = _prepConditions;
+            bool[] seen = _prepSeen;
             for (int r = 0; r < records; r++)
             {
                 if (!VpCapVisibility.TryClassify(this, r, left, right, _settings.facingEpsilon, out VpCapVisibilityVerdict verdict)
-                    || !VpCapProjectionConflict.TryGetSingleCutTarget(this, r, left, right, _settings.facingEpsilon, out targets[r]))
+                    || !VpCapProjectionConflict.TryGetSingleCutTarget(
+                        this, r, left, right, _settings.facingEpsilon,
+                        _prepConstraints, r * VpCapCompatibility.SingleCutConstraints,
+                        _prepCaps, r * VpCapProjectionConflict.SingleCutCaps, out targets[r]))
                 {
                     return false;
                 }
@@ -929,52 +1225,55 @@ namespace Zantetsu.MeshCut
                 conditions[r] = targets[r].conditions;
             }
 
-            var groupOfRecord = new int[records];
+            int[] groupOfRecord = _prepGroupOfRecord;
+            _prepConditionList.SetCount(records);
             int groups = records == 0
                 ? 0
-                : VpCapCompatibility.Classify(conditions, _settings.planeEpsilon, _settings.offsetEpsilon, groupOfRecord);
+                : VpCapCompatibility.Classify(_prepConditionList, _settings.planeEpsilon, _settings.offsetEpsilon, groupOfRecord);
 
             // A group is drawn when any cap in it is seen; then every target in it keeps its volumes, and only the
             // caps that were seen are drawn.
-            var groupSeen = new bool[groups];
-            var capIssued = new bool[records];
-            SelectStencilWork(seen, groupOfRecord, groups, groupSeen, capIssued);
+            bool[] groupSeen = _prepGroupSeen;
+            bool[] capIssued = _prepCapIssued;
+            SelectStencilWork(seen, records, groupOfRecord, groups, groupSeen, capIssued);
 
-            var keptGroup = new int[groups];
+            int[] keptGroup = _prepKeptGroup;
             int kept = 0;
             for (int g = 0; g < groups; g++)
             {
                 keptGroup[g] = groupSeen[g] ? kept++ : -1;
             }
 
-            var keptRecords = new List<int>(records);
+            int[] keptRecords = _prepKeptRecords;
+            int keptCount = 0;
             for (int r = 0; r < records; r++)
             {
                 if (keptGroup[groupOfRecord[r]] >= 0)
                 {
-                    keptRecords.Add(r);
+                    keptRecords[keptCount++] = r;
                 }
             }
 
-            var keptTargets = new VpCapProjectionTarget[keptRecords.Count];
-            var keptGroupOf = new int[keptRecords.Count];
-            for (int k = 0; k < keptRecords.Count; k++)
+            VpCapProjectionTarget[] keptTargets = _prepKeptTargets;
+            int[] keptGroupOf = _prepKeptGroupOf;
+            for (int k = 0; k < keptCount; k++)
             {
                 keptTargets[k] = targets[keptRecords[k]];
                 keptGroupOf[k] = keptGroup[groupOfRecord[keptRecords[k]]];
             }
 
-            var colourOfGroup = new int[kept];
+            int[] colourOfGroup = _prepColourOfGroup;
             int max = _settings.maxStencilColors;
             if (kept > 0)
             {
+                _prepKeptTargetList.SetCount(keptCount);
+                _prepKeptGroupOfList.SetCount(keptCount);
                 VpStencilColors.Assign(
-                    keptTargets, keptGroupOf, kept, left, right, _settings.ndcMargin, _settings.planeEpsilon,
-                    _settings.offsetEpsilon, max, colourOfGroup);
+                    _prepKeptTargetList, _prepKeptGroupOfList, kept, left, right, _settings.ndcMargin,
+                    _settings.planeEpsilon, _settings.offsetEpsilon, max, colourOfGroup);
             }
 
             // The arrangement, colour by colour in their order: each colour's volumes and then its caps are contiguous.
-            EnsureStencilRoom(_commandCount);
             int inLast = 0;
             for (int g = 0; g < kept; g++)
             {
@@ -989,7 +1288,7 @@ namespace Zantetsu.MeshCut
                 int volumeStart = commandCount;
                 int capStart = capIndexCount;
                 bool any = false;
-                for (int k = 0; k < keptRecords.Count; k++)
+                for (int k = 0; k < keptCount; k++)
                 {
                     if (colourOfGroup[keptGroupOf[k]] != colour)
                     {
@@ -1043,13 +1342,20 @@ namespace Zantetsu.MeshCut
         internal static void SelectStencilWork(
             bool[] seen, int[] groupOfRecord, int groupCount, bool[] groupKept, bool[] capIssued)
         {
+            SelectStencilWork(seen, seen.Length, groupOfRecord, groupCount, groupKept, capIssued);
+        }
+
+        /// <summary>The same over the first <paramref name="recordCount"/> records only.</summary>
+        internal static void SelectStencilWork(
+            bool[] seen, int recordCount, int[] groupOfRecord, int groupCount, bool[] groupKept, bool[] capIssued)
+        {
             Array.Clear(groupKept, 0, groupCount);
-            for (int r = 0; r < seen.Length; r++)
+            for (int r = 0; r < recordCount; r++)
             {
                 groupKept[groupOfRecord[r]] |= seen[r];
             }
 
-            for (int r = 0; r < seen.Length; r++)
+            for (int r = 0; r < recordCount; r++)
             {
                 capIssued[r] = seen[r] && groupKept[groupOfRecord[r]];
             }
@@ -1095,6 +1401,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfPreparing();
 
             // A frame this display has already settled, or already drawn, is not changed from here: taking a body
             // now would transfer and register into the very frame that is done with. The caller offers it again
@@ -1183,6 +1490,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfPreparing();
 
             int frame = CurrentFrame;
             if (_hasSnapshot && _settledFrame == frame)
@@ -1228,6 +1536,7 @@ namespace Zantetsu.MeshCut
         {
             ThrowIfDisposed();
             ThrowIfBroken();
+            ThrowIfPreparing();
 
             if (camera == null)
             {
@@ -1432,6 +1741,24 @@ namespace Zantetsu.MeshCut
             return true;
         }
 
+        /// <summary>
+        /// One prepared cap's polygon as a look at the adopted snapshot's own vertices, in the order they are wound:
+        /// nothing is copied. It is good only until another snapshot is adopted, which reuses those vertices, and is
+        /// for a preparation to read while it runs; <see cref="TryGetCapVertex"/> is how anything else reads a cap.
+        /// </summary>
+        internal bool TryGetCapPolygon(int capIndex, out VpArrayRange<Vector3> polygon)
+        {
+            if (capIndex < 0 || capIndex >= _capRecordCount)
+            {
+                polygon = default;
+                return false;
+            }
+
+            LogicalCutCapRecord record = _capRecords[capIndex];
+            polygon = new VpArrayRange<Vector3>(_capVertices, record.vertexStart, record.vertexCount);
+            return true;
+        }
+
         /// <summary>One instance of the settled collection, in the order it is drawn.</summary>
         public bool TryGetSide(int index, out LogicalCutDisplaySide side)
         {
@@ -1457,6 +1784,8 @@ namespace Zantetsu.MeshCut
             {
                 return;
             }
+
+            ThrowIfPreparing();
 
             // Draws registered in this frame read these buffers until the frame is drawn, so nothing is let go before
             // the frame boundary. This is the frame boundary, not a confirmation that the GPU has finished.
@@ -1533,8 +1862,11 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            // 2. The fixed capacity is decided here, before anything is taken or uploaded.
-            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity)
+            // 2. The fixed capacity is decided here, before anything is taken or uploaded. The cap records are bounded
+            //    by the commands already -- two per split body, and a body has a command -- and are checked all the
+            //    same, because a camera's preparation has room for no more than that.
+            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity
+                || capRecordsNeeded > _capRecordCapacity)
             {
                 return false;
             }
@@ -1638,14 +1970,13 @@ namespace Zantetsu.MeshCut
                 && capIndexCount <= _stencilCapIndexCapacity;
             if (stencilFits)
             {
-                VpIndirectCommand[] stencilCommandsSlice = Slice(_candidateStencilCommands, stencilCommands);
-                Matrix4x4[] stencilTransforms = Slice(_candidateStencilTransforms, stencilCommands);
-                VpInstanceClip[] stencilClips = Slice(_candidateStencilClips, stencilCommands);
+                // Asked by count, as each camera's preparation uploads.
                 foreach (CameraStencil slot in _cameraStencils)
                 {
                     if (slot != null && !slot.batch.CanUpload(
-                            stencilCommandsSlice, stencilTransforms, stencilClips, _candidateCapVertices, capVertex,
-                            _candidateCapIndices, capIndexCount, _candidateStencilColors, stencilColours))
+                            _candidateStencilCommands, stencilCommands, _candidateStencilTransforms,
+                            _candidateStencilClips, _candidateCapVertices, capVertex, _candidateCapIndices,
+                            capIndexCount, _candidateStencilColors, stencilColours))
                     {
                         stencilFits = false;
                         break;
@@ -1808,7 +2139,8 @@ namespace Zantetsu.MeshCut
         private void BuildLargestStencilArrangement(
             int commandCount, out int stencilCommands, out int capIndexCount, out int colours)
         {
-            EnsureStencilRoom(commandCount);
+            // The scratch is the stencil capacity long, made with the display: twice the commands this candidate was
+            // allowed, and every cap fanned.
             stencilCommands = 0;
             int instance = 0;
             for (int c = 0; c < commandCount; c++)
@@ -1847,23 +2179,6 @@ namespace Zantetsu.MeshCut
             if (colours > 0)
             {
                 _candidateStencilColors[0] = new VpStencilCapColor(0, stencilCommands, 0, index, ProvisionalCapColour);
-            }
-        }
-
-        private void EnsureStencilRoom(int commandCount)
-        {
-            int commands = commandCount * 2;
-            if (_candidateStencilCommands.Length < commands)
-            {
-                _candidateStencilCommands = new VpIndirectCommand[commands];
-                _candidateStencilTransforms = new Matrix4x4[commands];
-                _candidateStencilClips = new VpInstanceClip[commands];
-            }
-
-            int indices = commandCount * 2 * (VpCapBoundsPolygon.MaxVertices - 2) * 3;
-            if (_candidateCapIndices.Length < indices)
-            {
-                _candidateCapIndices = new int[indices];
             }
         }
 
@@ -2246,6 +2561,15 @@ namespace Zantetsu.MeshCut
             if (_disposed)
             {
                 throw new ObjectDisposedException(nameof(VpLogicalCutDisplay));
+            }
+        }
+
+        private void ThrowIfPreparing()
+        {
+            if (_preparing)
+            {
+                throw new InvalidOperationException(
+                    "a camera is being prepared; this display takes one call at a time and nothing from inside a preparation");
             }
         }
 

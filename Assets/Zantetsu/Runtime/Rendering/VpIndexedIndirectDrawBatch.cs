@@ -178,23 +178,45 @@ namespace Zantetsu.Rendering
         public bool CanUpload(VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips)
         {
             ThrowIfDisposed();
-            return commands != null && objectToWorlds != null && Accepts(commands, objectToWorlds, clips, out _);
+            return commands != null && objectToWorlds != null
+                && Accepts(commands, commands.Length, objectToWorlds, clips, true, out _);
+        }
+
+        /// <summary>
+        /// Whether <see cref="TryUpload(VpIndirectCommand[], int, Matrix4x4[], VpInstanceClip[], bool)"/> would accept
+        /// the first <paramref name="commandCount"/> commands and the instances they name, decided without writing
+        /// anything and by the same judgement that upload makes.
+        /// </summary>
+        public bool CanUpload(
+            VpIndirectCommand[] commands, int commandCount, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips)
+        {
+            ThrowIfDisposed();
+            return commands != null && objectToWorlds != null
+                && Accepts(commands, commandCount, objectToWorlds, clips, false, out _);
         }
 
         // Every ordinary condition of an upload, in one place: the command count, each command's own numbers, the
         // instance total against the capacity, and one transform -- and one clip record, when clips are given -- per
-        // instance. Nothing here writes or reserves anything.
+        // instance. Only the first commandCount commands are read. The whole-array uploads ask for exactly one
+        // transform and clip per instance; the counted ones for at least that many, the rest of each array being left
+        // unread. Nothing here writes or reserves anything.
         private bool Accepts(
-            VpIndirectCommand[] commands, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips, out long instanceTotal)
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            bool exactLengths,
+            out long instanceTotal)
         {
             instanceTotal = 0;
-            if (commands.Length > CommandCapacity)
+            if (commandCount < 0 || commandCount > commands.Length || commandCount > CommandCapacity)
             {
                 return false;
             }
 
-            foreach (VpIndirectCommand command in commands)
+            for (int c = 0; c < commandCount; c++)
             {
+                VpIndirectCommand command = commands[c];
                 if (command.instanceCount < 0 || command.range.indexStart < 0 || command.range.indexCount < 0)
                 {
                     return false;
@@ -203,8 +225,14 @@ namespace Zantetsu.Rendering
                 instanceTotal += command.instanceCount;
             }
 
-            return instanceTotal <= InstanceCapacity && objectToWorlds.Length == instanceTotal
-                && (clips == null || clips.Length == instanceTotal);
+            if (instanceTotal > InstanceCapacity)
+            {
+                return false;
+            }
+
+            return exactLengths
+                ? objectToWorlds.Length == instanceTotal && (clips == null || clips.Length == instanceTotal)
+                : objectToWorlds.Length >= instanceTotal && (clips == null || clips.Length >= instanceTotal);
         }
 
         /// <summary>
@@ -240,17 +268,44 @@ namespace Zantetsu.Rendering
                 throw new ArgumentNullException(nameof(commands));
             }
 
+            return Upload(commands, commands.Length, objectToWorlds, clips, singlePassInstanced, true);
+        }
+
+        /// <summary>
+        /// The same upload of only the first <paramref name="commandCount"/> commands, and of the instances they name:
+        /// the first transforms and clip records, one per instance. The arrays may be longer; what lies past those
+        /// counts is neither checked nor transferred, so an array kept at a fixed size and filled to a count each time
+        /// never sends what an earlier, longer fill left behind. Accepted and refused exactly as
+        /// <see cref="CanUpload(VpIndirectCommand[], int, Matrix4x4[], VpInstanceClip[])"/> says, and a count outside the
+        /// array or the capacity is refused, changing nothing.
+        /// </summary>
+        public bool TryUpload(
+            VpIndirectCommand[] commands, int commandCount, Matrix4x4[] objectToWorlds, VpInstanceClip[] clips,
+            bool singlePassInstanced)
+        {
+            ThrowIfDisposed();
+            if (commands == null)
+            {
+                throw new ArgumentNullException(nameof(commands));
+            }
+
+            return Upload(commands, commandCount, objectToWorlds, clips, singlePassInstanced, false);
+        }
+
+        private bool Upload(
+            VpIndirectCommand[] commands,
+            int commandCount,
+            Matrix4x4[] objectToWorlds,
+            VpInstanceClip[] clips,
+            bool singlePassInstanced,
+            bool exactLengths)
+        {
             if (objectToWorlds == null)
             {
                 throw new ArgumentNullException(nameof(objectToWorlds));
             }
 
-            if (commands.Length > CommandCapacity)
-            {
-                return false;
-            }
-
-            if (!Accepts(commands, objectToWorlds, clips, out long instanceTotal))
+            if (!Accepts(commands, commandCount, objectToWorlds, clips, exactLengths, out long instanceTotal))
             {
                 return false;
             }
@@ -260,7 +315,7 @@ namespace Zantetsu.Rendering
             int startInstance = 0;
             bool anyInstance = false;
             Bounds worldBounds = default;
-            for (int c = 0; c < commands.Length; c++)
+            for (int c = 0; c < commandCount; c++)
             {
                 VpIndirectCommand command = commands[c];
                 _shadowArguments[c] = new GraphicsBuffer.IndirectDrawIndexedArgs
@@ -306,10 +361,10 @@ namespace Zantetsu.Rendering
                 startInstance += command.instanceCount;
             }
 
-            if (commands.Length > 0)
+            if (commandCount > 0)
             {
-                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commands.Length);
-                _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commands.Length);
+                _forwardArgumentBuffer.SetData(_forwardArguments, 0, 0, commandCount);
+                _shadowArgumentBuffer.SetData(_shadowArguments, 0, 0, commandCount);
             }
 
             if (instanceTotal > 0)
@@ -327,7 +382,7 @@ namespace Zantetsu.Rendering
                 _instanceClipBuffer.SetData(_instanceClips, 0, 0, (int)instanceTotal);
             }
 
-            CommandCount = commands.Length;
+            CommandCount = commandCount;
             InstanceCount = (int)instanceTotal;
             SinglePassInstanced = singlePassInstanced;
             WorldBounds = worldBounds;

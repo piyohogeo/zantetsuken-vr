@@ -70,16 +70,30 @@ namespace Zantetsu.MeshCut
     /// One drawn target to group: **every** cut condition it is under, in any order, and the one separation it is drawn
     /// at. Every condition counts, including a face whose cap the visibility test left out — whether a cap is seen
     /// is not part of what the stencil of this target has to share.
+    /// <para>
+    /// The conditions are read, never copied: made from a list, the target reads that list itself, so a change the
+    /// caller makes to it afterwards is what the next judgement sees, as it always was; made from a
+    /// <see cref="VpArrayRange{T}"/>, it reads that part of the range owner's array, for as long as the owner keeps it
+    /// as it was. Both are judged by the same code.
+    /// </para>
     /// </summary>
     public readonly struct VpCapCompatibilityTarget
     {
+        /// <summary>A target that reads <paramref name="constraints"/> itself, not a copy; a null list stays null.</summary>
         public VpCapCompatibilityTarget(IReadOnlyList<VpCapConstraint> constraints, Vector3 offset)
         {
-            this.constraints = constraints;
+            this.constraints = new VpReadOnlyItems<VpCapConstraint>(constraints);
             this.offset = offset;
         }
 
-        public readonly IReadOnlyList<VpCapConstraint> constraints;
+        /// <summary>A target that reads its conditions from <paramref name="constraints"/>, copying nothing.</summary>
+        public VpCapCompatibilityTarget(VpArrayRange<VpCapConstraint> constraints, Vector3 offset)
+        {
+            this.constraints = new VpReadOnlyItems<VpCapConstraint>(constraints);
+            this.offset = offset;
+        }
+
+        public readonly VpReadOnlyItems<VpCapConstraint> constraints;
 
         /// <summary>The separation, in world space, the target is drawn at.</summary>
         public readonly Vector3 offset;
@@ -246,8 +260,8 @@ namespace Zantetsu.MeshCut
 
         private static void CheckShape(in VpCapCompatibilityTarget target, int index)
         {
-            IReadOnlyList<VpCapConstraint> constraints = target.constraints;
-            if (constraints == null)
+            VpReadOnlyItems<VpCapConstraint> constraints = target.constraints;
+            if (constraints.IsNull)
             {
                 throw new ArgumentNullException("targets", "Target " + index + " has no list of conditions.");
             }
@@ -331,9 +345,37 @@ namespace Zantetsu.MeshCut
             int capIndex,
             out VpCapCompatibilityTarget target)
         {
+            return TryGetSingleCutTarget(display, capIndex, new VpCapConstraint[SingleCutConstraints], 0, out target);
+        }
+
+        /// <summary>How many conditions <see cref="TryGetSingleCutTarget(VpLogicalCutDisplay, int, VpCapConstraint[], int, out VpCapCompatibilityTarget)"/> writes: the single-cut display's one.</summary>
+        internal const int SingleCutConstraints = 1;
+
+        /// <summary>
+        /// The same target, its conditions written into <paramref name="scratch"/> from <paramref name="start"/> on
+        /// (<see cref="SingleCutConstraints"/> of them) and read from there: nothing is allocated, and the target is good
+        /// for as long as the caller leaves that part of <paramref name="scratch"/> as it is.
+        /// </summary>
+        internal static bool TryGetSingleCutTarget(
+            VpLogicalCutDisplay display,
+            int capIndex,
+            VpCapConstraint[] scratch,
+            int start,
+            out VpCapCompatibilityTarget target)
+        {
             if (display == null)
             {
                 throw new ArgumentNullException(nameof(display));
+            }
+
+            if (scratch == null)
+            {
+                throw new ArgumentNullException(nameof(scratch));
+            }
+
+            if (start < 0 || start > scratch.Length - SingleCutConstraints)
+            {
+                throw new ArgumentOutOfRangeException(nameof(start), "There is room for the target's conditions.");
             }
 
             target = default;
@@ -367,8 +409,9 @@ namespace Zantetsu.MeshCut
             }
 
             var face = new VpCapFace(display.Ledger, record.operation);
+            scratch[start] = new VpCapConstraint(face, record.side, record.worldPlane);
             target = new VpCapCompatibilityTarget(
-                new[] { new VpCapConstraint(face, record.side, record.worldPlane) }, record.offset);
+                new VpArrayRange<VpCapConstraint>(scratch, start, SingleCutConstraints), record.offset);
             return true;
         }
     }

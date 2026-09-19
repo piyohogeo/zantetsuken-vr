@@ -1349,6 +1349,139 @@ namespace Zantetsu.Rendering.Tests
         }
 
         /// <summary>
+        /// The counted upload reads, checks, sends and draws only what it counts. Every array is longer than its count,
+        /// and each tail holds what would be refused -- a command with a negative instance count, a transform that is
+        /// not finite, cap indices far past the vertices, a colour with ranges nowhere -- yet counted to the one valid
+        /// entry the upload is accepted and the opening is capped as by a plain upload. Counted into the tail, or given a
+        /// count outside its array, it is refused, and the non-writing judgement says the same thing every time. The
+        /// whole-array upload, handed the same arrays, still reads them whole. The volume batch underneath reports only
+        /// what was counted.
+        /// </summary>
+        [Test]
+        public void TheCountedUpload_ReadsOnlyWhatItCounts_AndIsJudgedTheSameWay()
+        {
+            RenderTexture target = StencilTarget();
+            Camera camera = TestCamera(target);
+
+            Color32[] image;
+            using (Fixture fixture = NewFixture())
+            {
+                VpGeometryRange box = AppendBox(fixture.pool, Vector3.zero, 1f);
+                Assert.That(fixture.buffers.TryUpload(fixture.pool), Is.True, "geometry to the GPU");
+
+                Matrix4x4 nan = NanMatrix();
+                var commands = new[]
+                {
+                    new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1),
+                    new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), -1),
+                };
+                var transforms = new[] { Matrix4x4.identity, nan, nan };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero), VpInstanceClip.None, VpInstanceClip.None };
+                Vector3[] polygon = CapPolygon();
+                var capVertices = new Vector3[polygon.Length + 3];
+                Array.Copy(polygon, capVertices, polygon.Length);
+                int[] fan = FanIndices(0, polygon.Length);
+                var capIndices = new int[fan.Length + 3];
+                Array.Copy(fan, capIndices, fan.Length);
+                capIndices[fan.Length] = capIndices[fan.Length + 1] = capIndices[fan.Length + 2] = 999;
+                var colors = new[]
+                {
+                    new VpStencilCapColor(0, 1, 0, fan.Length, Color.red),
+                    new VpStencilCapColor(5, 7, 100, 3, Color.blue),
+                };
+
+                var refused = new (int commands, int vertices, int indices, int colours, string what)[]
+                {
+                    (2, polygon.Length, fan.Length, 1, "a command counted into the tail"),
+                    (3, polygon.Length, fan.Length, 1, "a command count past the array"),
+                    (-1, polygon.Length, fan.Length, 1, "a negative command count"),
+                    (1, polygon.Length, fan.Length + 3, 1, "cap indices counted into the tail"),
+                    (1, polygon.Length, fan.Length, 2, "a colour counted into the tail"),
+                };
+                foreach ((int commandCount, int vertexCount, int indexCount, int colourCount, string what) in refused)
+                {
+                    Assert.That(
+                        fixture.batch.CanUpload(
+                            commands, commandCount, transforms, clips, capVertices, vertexCount, capIndices, indexCount,
+                            colors, colourCount),
+                        Is.False, "asked: " + what);
+                    Assert.That(
+                        fixture.batch.TryUpload(
+                            commands, commandCount, transforms, clips, capVertices, vertexCount, capIndices, indexCount,
+                            colors, colourCount, false),
+                        Is.False, "uploaded: " + what);
+                }
+
+                var reachingPast = new[] { new VpStencilCapColor(0, 2, 0, fan.Length, Color.red) };
+                Assert.That(
+                    fixture.batch.CanUpload(
+                        commands, 1, transforms, clips, capVertices, polygon.Length, capIndices, fan.Length, reachingPast, 1),
+                    Is.False, "asked: a colour's volumes reaching past the count");
+                Assert.That(
+                    fixture.batch.TryUpload(
+                        commands, 1, transforms, clips, capVertices, polygon.Length, capIndices, fan.Length, reachingPast,
+                        1, false),
+                    Is.False, "uploaded: a colour's volumes reaching past the count");
+
+                Assert.That(
+                    fixture.batch.CanUpload(
+                        commands, transforms, clips, capVertices, polygon.Length, capIndices, fan.Length, colors, 1),
+                    Is.False, "the whole-array judgement still reads every command");
+                Assert.That(fixture.batch.Uploads, Is.Zero, "nothing refused was uploaded");
+                Assert.That(fixture.batch.BufferWrites, Is.Zero, "or written");
+
+                Assert.That(
+                    fixture.batch.CanUpload(
+                        commands, 1, transforms, clips, capVertices, polygon.Length, capIndices, fan.Length, colors, 1),
+                    Is.True, "asked: counted to the valid entries");
+                Assert.That(
+                    fixture.batch.TryUpload(
+                        commands, 1, transforms, clips, capVertices, polygon.Length, capIndices, fan.Length, colors, 1,
+                        false),
+                    Is.True, "uploaded: counted to the valid entries");
+                Assert.That(fixture.batch.ColorCount, Is.EqualTo(1), "one colour settled");
+                Assert.That(fixture.batch.TryGetColor(1, out _), Is.False, "and not the one in the tail");
+                Assert.That(fixture.batch.BufferWrites, Is.EqualTo(6), "the ordinary six writes");
+
+                fixture.batch.Render(fixture.materials, fixture.buffers, 0, camera);
+                image = RenderAndRead(camera, target);
+            }
+
+            Assert.That(Count(image, IsRedish), Is.GreaterThan(400), "the opening is filled");
+            Assert.That(IsRedish(At(image, Size / 2, Size / 2)), Is.True, "the middle of the opening is capped");
+            Assert.That(IsBackground(At(image, 1, 1)), Is.True, "and the corner of the image is not");
+
+            using (var volumes = new VpIndexedIndirectDrawBatch(4, 4))
+            {
+                var three = new[]
+                {
+                    new VpIndirectCommand(new VpGeometryRange(0, 24, 0, 36), BoxBounds(Vector3.zero, 1f), 1),
+                    new VpIndirectCommand(new VpGeometryRange(0, 24, 0, 36), BoxBounds(Vector3.zero, 1f), 2),
+                    new VpIndirectCommand(new VpGeometryRange(0, 24, 0, 36), BoxBounds(Vector3.zero, 1f), -5),
+                };
+                var fourTransforms = new[] { Matrix4x4.identity, Matrix4x4.identity, Matrix4x4.identity, NanMatrix() };
+                Assert.That(volumes.CanUpload(three, 2, fourTransforms, null), Is.True, "two commands, three instances");
+                Assert.That(volumes.TryUpload(three, 2, fourTransforms, null, false), Is.True);
+                Assert.That(volumes.CommandCount, Is.EqualTo(2), "only the counted commands");
+                Assert.That(volumes.InstanceCount, Is.EqualTo(3), "and the instances they name");
+                Assert.That(volumes.CanUpload(three, 3, fourTransforms, null), Is.False, "the third is read when counted");
+                Assert.That(volumes.TryUpload(three, 3, fourTransforms, null, false), Is.False);
+                Assert.That(volumes.CanUpload(three, 2, new[] { Matrix4x4.identity }, null), Is.False, "too few transforms");
+                Assert.That(volumes.TryUpload(three, 2, new[] { Matrix4x4.identity }, null, false), Is.False);
+                Assert.That(volumes.CanUpload(three, 2, fourTransforms, new VpInstanceClip[2]), Is.False, "too few clips");
+                Assert.That(volumes.TryUpload(three, 2, fourTransforms, new VpInstanceClip[2], false), Is.False);
+                Assert.That(volumes.CommandCount, Is.EqualTo(2), "a refusal changes nothing");
+            }
+        }
+
+        private static Matrix4x4 NanMatrix()
+        {
+            var m = Matrix4x4.identity;
+            m.m00 = float.NaN;
+            return m;
+        }
+
+        /// <summary>
         /// The scene that was already drawn survives all of it. An ordinary lit quad stands behind the bodies; the
         /// stencil byte is set to 128 twice over, volumes are counted twice and caps are drawn twice, and the quad is
         /// still there in its own colour where no cap covered it, and still behind the caps where one did.

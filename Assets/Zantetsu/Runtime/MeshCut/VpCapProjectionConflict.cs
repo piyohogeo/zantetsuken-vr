@@ -24,9 +24,16 @@ namespace Zantetsu.MeshCut
     /// One target as the projection conflict test reads it: its cut conditions (which also carry the separation it is
     /// drawn at), its body box in its own frame and the placement of that box, the caps of it that the visibility test
     /// kept, as world-space polygons with the separation already in them, and whether those caps are all of its caps.
+    /// <para>
+    /// The caps are read, never copied (<see cref="VpCapPolygons"/>): made from a list of arrays, the target reads that
+    /// list and those arrays themselves, so a change the caller makes to either afterwards is what the next judgement
+    /// sees, as it always was; made from ranges, it reads the parts of the owners' arrays the ranges name, as many caps
+    /// and vertices as they count, for as long as the owners keep them as they were. Both are judged by the same code.
+    /// </para>
     /// </summary>
     public readonly struct VpCapProjectionTarget
     {
+        /// <summary>A target that reads <paramref name="visibleCaps"/> and its arrays themselves, not copies.</summary>
         public VpCapProjectionTarget(
             VpCapCompatibilityTarget conditions,
             Bounds localBounds,
@@ -37,7 +44,22 @@ namespace Zantetsu.MeshCut
             this.conditions = conditions;
             this.localBounds = localBounds;
             this.objectToWorld = objectToWorld;
-            this.visibleCaps = visibleCaps;
+            this.visibleCaps = new VpCapPolygons(visibleCaps);
+            this.capsComplete = capsComplete;
+        }
+
+        /// <summary>A target that reads its caps from <paramref name="visibleCaps"/>, copying nothing.</summary>
+        public VpCapProjectionTarget(
+            VpCapCompatibilityTarget conditions,
+            Bounds localBounds,
+            Matrix4x4 objectToWorld,
+            VpArrayRange<VpArrayRange<Vector3>> visibleCaps,
+            bool capsComplete)
+        {
+            this.conditions = conditions;
+            this.localBounds = localBounds;
+            this.objectToWorld = objectToWorld;
+            this.visibleCaps = new VpCapPolygons(visibleCaps);
             this.capsComplete = capsComplete;
         }
 
@@ -53,7 +75,7 @@ namespace Zantetsu.MeshCut
         /// The caps the visibility test kept, each a convex polygon of world-space vertices with the separation in it.
         /// Empty when none was kept.
         /// </summary>
-        public readonly IReadOnlyList<Vector3[]> visibleCaps;
+        public readonly VpCapPolygons visibleCaps;
 
         /// <summary>
         /// Whether <see cref="visibleCaps"/> is every cap bound of this target — none left out by the visibility test
@@ -62,6 +84,60 @@ namespace Zantetsu.MeshCut
         /// show the two apart. That the volume is not drawn at all is not something this input says.
         /// </summary>
         public readonly bool capsComplete;
+    }
+
+    /// <summary>
+    /// A target's cap polygons, read either from a list of arrays the caller handed over -- the list and each array
+    /// referenced, never copied, a whole array being one polygon -- or from a range of vertex ranges. Either way each
+    /// polygon is read as a <see cref="VpArrayRange{T}"/> of its vertices, by the same code, and nothing is allocated.
+    /// <c>default</c>, like a null list, has no polygons behind it at all; a null array in a list is a null polygon.
+    /// </summary>
+    public readonly struct VpCapPolygons
+    {
+        private readonly IReadOnlyList<Vector3[]> _arrays;
+        private readonly VpArrayRange<VpArrayRange<Vector3>> _ranges;
+        private readonly bool _fromArrays;
+
+        /// <summary>Reads <paramref name="arrays"/> and its arrays themselves, as they are at each read.</summary>
+        public VpCapPolygons(IReadOnlyList<Vector3[]> arrays)
+        {
+            _arrays = arrays;
+            _ranges = default;
+            _fromArrays = true;
+        }
+
+        /// <summary>Reads <paramref name="ranges"/>, as their owners' arrays are at each read.</summary>
+        public VpCapPolygons(VpArrayRange<VpArrayRange<Vector3>> ranges)
+        {
+            _arrays = null;
+            _ranges = ranges;
+            _fromArrays = false;
+        }
+
+        /// <summary>Whether there is no list of polygons at all.</summary>
+        public bool IsNull => _fromArrays ? _arrays == null : _ranges.IsNull;
+
+        /// <summary>How many polygons there are now.</summary>
+        public int Count => _fromArrays ? (_arrays == null ? 0 : _arrays.Count) : _ranges.Count;
+
+        /// <summary>The polygon at <paramref name="index"/>, read now: the whole of its array, or its range.</summary>
+        public VpArrayRange<Vector3> this[int index]
+        {
+            get
+            {
+                if (!_fromArrays)
+                {
+                    return _ranges[index];
+                }
+
+                if (_arrays == null)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
+
+                return VpArrayRange<Vector3>.Whole(_arrays[index]);
+            }
+        }
     }
 
     /// <summary>What the projection conflict test decided for one pair of targets.</summary>
@@ -208,9 +284,9 @@ namespace Zantetsu.MeshCut
 
             // 2. Every visible cap of one against every visible cap of the other — only when both lists are all of
             //    their target's caps and neither is empty. Otherwise the boxes, which meet, are all there is to go on.
-            IReadOnlyList<Vector3[]> capsA = a.visibleCaps;
-            IReadOnlyList<Vector3[]> capsB = b.visibleCaps;
-            if (!a.capsComplete || !b.capsComplete || capsA == null || capsB == null || capsA.Count == 0 || capsB.Count == 0)
+            VpCapPolygons capsA = a.visibleCaps;
+            VpCapPolygons capsB = b.visibleCaps;
+            if (!a.capsComplete || !b.capsComplete || capsA.IsNull || capsB.IsNull || capsA.Count == 0 || capsB.Count == 0)
             {
                 return VpCapProjectionOverlap.MayOverlap;
             }
@@ -227,13 +303,13 @@ namespace Zantetsu.MeshCut
 
             for (int i = 0; i < capsA.Count; i++)
             {
-                Vector3[] polygonA = capsA[i];
-                if (polygonA == null || polygonA.Length < 1 || polygonA.Length > VpCapBoundsPolygon.MaxVertices)
+                VpArrayRange<Vector3> polygonA = capsA[i];
+                if (!IsWellFormed(polygonA))
                 {
                     return VpCapProjectionOverlap.MayOverlap;
                 }
 
-                Projection projectionA = Project(polygonA, worldToClip, margin, capA);
+                Projection projectionA = Project(polygonA.AsSpan(), worldToClip, margin, capA);
                 if (projectionA == Projection.Nothing)
                 {
                     continue;
@@ -241,13 +317,13 @@ namespace Zantetsu.MeshCut
 
                 for (int j = 0; j < capsB.Count; j++)
                 {
-                    Vector3[] polygonB = capsB[j];
-                    if (polygonB == null || polygonB.Length < 1 || polygonB.Length > VpCapBoundsPolygon.MaxVertices)
+                    VpArrayRange<Vector3> polygonB = capsB[j];
+                    if (!IsWellFormed(polygonB))
                     {
                         return VpCapProjectionOverlap.MayOverlap;
                     }
 
-                    Projection projectionB = Project(polygonB, worldToClip, margin, capB);
+                    Projection projectionB = Project(polygonB.AsSpan(), worldToClip, margin, capB);
                     if (projectionB == Projection.Nothing)
                     {
                         continue;
@@ -257,7 +333,7 @@ namespace Zantetsu.MeshCut
                         || projectionB == Projection.Everywhere
                         || projectionA == Projection.NotFinite
                         || projectionB == Projection.NotFinite
-                        || !PolygonsApart(capA.Slice(0, polygonA.Length), capB.Slice(0, polygonB.Length), margin))
+                        || !PolygonsApart(capA.Slice(0, polygonA.Count), capB.Slice(0, polygonB.Count), margin))
                     {
                         return VpCapProjectionOverlap.MayOverlap;
                     }
@@ -269,19 +345,24 @@ namespace Zantetsu.MeshCut
 
         /// <summary>Whether a cap is malformed or projects to a value that is not finite.</summary>
         private static bool AnyNotFinite(
-            IReadOnlyList<Vector3[]> caps, in Matrix4x4 worldToClip, Vector2 margin, Span<Vector2> scratch)
+            VpCapPolygons caps, in Matrix4x4 worldToClip, Vector2 margin, Span<Vector2> scratch)
         {
             for (int i = 0; i < caps.Count; i++)
             {
-                Vector3[] polygon = caps[i];
-                if (polygon == null || polygon.Length < 1 || polygon.Length > VpCapBoundsPolygon.MaxVertices
-                    || Project(polygon, worldToClip, margin, scratch) == Projection.NotFinite)
+                VpArrayRange<Vector3> polygon = caps[i];
+                if (!IsWellFormed(polygon) || Project(polygon.AsSpan(), worldToClip, margin, scratch) == Projection.NotFinite)
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        /// <summary>A polygon there is something of, and no more of than the projection has room for.</summary>
+        private static bool IsWellFormed(VpArrayRange<Vector3> polygon)
+        {
+            return !polygon.IsNull && polygon.Count >= 1 && polygon.Count <= VpCapBoundsPolygon.MaxVertices;
         }
 
         private enum Projection
@@ -503,6 +584,10 @@ namespace Zantetsu.MeshCut
         /// <see cref="VpCapVisibility"/> keeps it for these eyes. When it does not, the target has no visible cap and
         /// its caps are **not complete**: the omitted cap leaves only the box to decide by.
         /// </summary>
+        /// <para>
+        /// The target holds copies of its own: its condition and its cap polygon stay as they are whatever the display
+        /// adopts afterwards.
+        /// </para>
         public static bool TryGetSingleCutTarget(
             VpLogicalCutDisplay display,
             int capIndex,
@@ -511,30 +596,79 @@ namespace Zantetsu.MeshCut
             float facingEpsilon,
             out VpCapProjectionTarget target)
         {
-            target = default;
-            if (!VpCapCompatibility.TryGetSingleCutTarget(display, capIndex, out VpCapCompatibilityTarget conditions)
-                || !display.TryGetCapBody(capIndex, out Bounds localBounds, out Matrix4x4 objectToWorld)
-                || !VpCapVisibility.TryClassify(display, capIndex, left, right, facingEpsilon, out VpCapVisibilityVerdict seen)
-                || !display.TryGetCapRecord(capIndex, out LogicalCutCapRecord record))
+            if (display == null)
+            {
+                throw new ArgumentNullException(nameof(display));
+            }
+
+            var caps = new VpArrayRange<Vector3>[SingleCutCaps];
+            if (!TryGetSingleCutTarget(
+                    display, capIndex, left, right, facingEpsilon,
+                    new VpCapConstraint[VpCapCompatibility.SingleCutConstraints], 0, caps, 0, out target))
             {
                 return false;
             }
 
-            Vector3[] visible = seen.Keep ? new Vector3[record.vertexCount] : null;
-            if (visible != null)
+            if (target.visibleCaps.Count > 0)
             {
-                for (int i = 0; i < visible.Length; i++)
-                {
-                    if (!display.TryGetCapVertex(capIndex, i, out visible[i]))
-                    {
-                        return false;
-                    }
-                }
+                // The polygon read from the display is a look at its adopted vertices; this target keeps a copy.
+                caps[0] = VpArrayRange<Vector3>.Whole(target.visibleCaps[0].AsSpan().ToArray());
+            }
+
+            return true;
+        }
+
+        /// <summary>How many caps a single-cut target can hold: the one cap of its own side.</summary>
+        internal const int SingleCutCaps = 1;
+
+        /// <summary>
+        /// The same target, allocating nothing. Its condition is written into <paramref name="constraintScratch"/> at
+        /// <paramref name="constraintStart"/>, its cap -- when seen -- into <paramref name="capScratch"/> at
+        /// <paramref name="capStart"/>, and that cap is a look at the display's adopted cap vertices, not a copy. The
+        /// target is therefore good only while the caller leaves those two places as they are **and** the display keeps
+        /// the snapshot it has now: adopting another one reuses those vertices. It is for use within one preparation.
+        /// </summary>
+        internal static bool TryGetSingleCutTarget(
+            VpLogicalCutDisplay display,
+            int capIndex,
+            in VpCapEye left,
+            in VpCapEye right,
+            float facingEpsilon,
+            VpCapConstraint[] constraintScratch,
+            int constraintStart,
+            VpArrayRange<Vector3>[] capScratch,
+            int capStart,
+            out VpCapProjectionTarget target)
+        {
+            if (capScratch == null)
+            {
+                throw new ArgumentNullException(nameof(capScratch));
+            }
+
+            if (capStart < 0 || capStart > capScratch.Length - SingleCutCaps)
+            {
+                throw new ArgumentOutOfRangeException(nameof(capStart), "There is room for the target's cap.");
+            }
+
+            target = default;
+            if (!VpCapCompatibility.TryGetSingleCutTarget(
+                    display, capIndex, constraintScratch, constraintStart, out VpCapCompatibilityTarget conditions)
+                || !display.TryGetCapBody(capIndex, out Bounds localBounds, out Matrix4x4 objectToWorld)
+                || !VpCapVisibility.TryClassify(display, capIndex, left, right, facingEpsilon, out VpCapVisibilityVerdict seen)
+                || !display.TryGetCapPolygon(capIndex, out VpArrayRange<Vector3> polygon))
+            {
+                return false;
+            }
+
+            int caps = seen.Keep ? SingleCutCaps : 0;
+            if (caps > 0)
+            {
+                capScratch[capStart] = polygon;
             }
 
             target = new VpCapProjectionTarget(
                 conditions, localBounds, objectToWorld,
-                visible != null ? new[] { visible } : Array.Empty<Vector3[]>(), capsComplete: visible != null);
+                new VpArrayRange<VpArrayRange<Vector3>>(capScratch, capStart, caps), capsComplete: caps > 0);
             return true;
         }
     }

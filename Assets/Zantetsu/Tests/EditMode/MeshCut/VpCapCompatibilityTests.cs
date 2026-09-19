@@ -367,6 +367,46 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
+        /// A target made from a list reads that list itself, not a copy: a condition the caller changes, adds or takes
+        /// away after the target was made is what the next judgement and grouping see, whether the list is an array or
+        /// a <c>List</c>.
+        /// </summary>
+        [Test]
+        public void ATargetMadeFromAList_ReadsThatListAsItIsNow()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            VpCapFace a = Face(ledger, 1);
+            VpCapFace b = Face(ledger, 2);
+            var mine = new List<VpCapConstraint> { C(a, 1f, k_p) };
+            VpCapConstraint[] theirs = { C(a, 1f, k_p) };
+            var first = new VpCapCompatibilityTarget(mine, Vector3.zero);
+            var second = new VpCapCompatibilityTarget(theirs, Vector3.zero);
+            var targets = new[] { first, second };
+            var groups = new int[2];
+
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.True, "the layout: the same condition");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(1));
+
+            theirs[0] = C(a, 1f, new Vector4(0f, 1f, 0f, -2f));
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.False, "the array's plane was moved afterwards");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(2), "and the grouping sees it");
+
+            theirs[0] = C(a, 1f, k_p);
+            mine.Add(C(b, -1f, k_q));
+            Assert.That(first.constraints.Count, Is.EqualTo(2), "the list grew afterwards, and the target sees two conditions");
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.False, "an extra boundary, added afterwards");
+
+            mine.RemoveAt(1);
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.True, "taken away again");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(1));
+
+            mine.Clear();
+            Assert.Throws<System.ArgumentException>(
+                () => VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon),
+                "emptied afterwards: a target under no condition is refused, as it would be if made empty");
+        }
+
+        /// <summary>
         /// A value that is not finite is near nothing, so that target stands alone; malformed inputs and epsilons are
         /// refused.
         /// </summary>

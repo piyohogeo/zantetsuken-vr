@@ -181,6 +181,57 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
+        /// A target made from a list of cap arrays reads that list and those arrays themselves, not copies: the meeting
+        /// boxes of the test above, apart by their caps, meet once a vertex of one cap array is moved afterwards, are
+        /// apart again when it is moved back, and meet again when a cap is added to the list afterwards. Its conditions,
+        /// made from an array, are read the same way.
+        /// </summary>
+        [Test]
+        public void ATargetMadeFromCapArrays_ReadsThemAsTheyAreNow()
+        {
+            var minA = new Vector3(-1.5f, -1f, 5f);
+            var maxA = new Vector3(0.5f, 1f, 7f);
+            var minB = new Vector3(-0.5f, -1f, 5f);
+            var maxB = new Vector3(1.5f, 1f, 7f);
+            var boxA = new Bounds();
+            boxA.SetMinMax(minA, maxA);
+            var boxB = new Bounds();
+            boxB.SetMinMax(minB, maxB);
+
+            Vector3[] capOfA = Board(-1.5f, -1f, -1f, 1f, 6f);
+            var capsOfA = new List<Vector3[]> { capOfA };
+            VpCapConstraint[] conditionsOfA =
+            {
+                new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(1)), 1f, k_plane),
+            };
+            var a = new VpCapProjectionTarget(
+                new VpCapCompatibilityTarget(conditionsOfA, Vector3.zero), boxA, Matrix4x4.identity, capsOfA, true);
+            VpCapProjectionTarget b = Target(2, minB, maxB, Board(1f, 1.5f, -1f, 1f, 6f));
+
+            Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.ApartByCaps), "the layout");
+
+            Vector3 kept = capOfA[1];
+            capOfA[1] = new Vector3(1.2f, -1f, 6f);
+            capOfA[2] = new Vector3(1.2f, 1f, 6f);
+            Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap),
+                "the cap array was widened afterwards and now meets the other cap");
+
+            capOfA[1] = kept;
+            capOfA[2] = new Vector3(-1f, 1f, 6f);
+            Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.ApartByCaps), "put back");
+
+            capsOfA.Add(Board(0.9f, 1.1f, -0.2f, 0.2f, 6f));
+            Assert.That(a.visibleCaps.Count, Is.EqualTo(2), "a cap added to the list afterwards is seen");
+            Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap),
+                "and it meets the other cap");
+
+            capsOfA.RemoveAt(1);
+            conditionsOfA[0] = new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(2)), 1f, k_plane);
+            Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).compatible, Is.True,
+                "the condition array was changed afterwards to b's own condition: now compatible");
+        }
+
+        /// <summary>
         /// A target whose caps are not all given — one was left out by the visibility test — is not shown apart by the
         /// caps step: its volume may still leave stencil under the other's cap. With the boxes meeting, the pair may
         /// overlap; with the boxes apart, the boxes still decide. An empty cap list is no evidence either, even when it
