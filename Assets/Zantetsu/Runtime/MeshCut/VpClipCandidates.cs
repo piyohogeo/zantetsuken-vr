@@ -150,28 +150,97 @@ namespace Zantetsu.MeshCut
             }
 
             into.Clear();
-            if (!ledger.TryGetFragmentState(fragment, out LogicalFragmentState state) || state != LogicalFragmentState.Live)
+
+            // The chain is at most every operation plus the pending one, and the candidates at most every operation,
+            // so these are always enough; the rule itself is the one CollectInto applies for every caller.
+            var chain = new VpClipBoundary[ledger.OperationCount + 1];
+            var candidates = new VpClipCandidate[ledger.OperationCount];
+            if (CollectInto(ledger, fragment, pendingSide, true, reflected, chain, candidates, 0, candidates.Length, out int count)
+                != CollectOutcome.Collected)
             {
                 return false;
             }
 
+            for (int i = 0; i < count; i++)
+            {
+                into.Add(candidates[i]);
+            }
+
+            return true;
+        }
+
+        /// <summary>What <see cref="CollectInto"/> did.</summary>
+        internal enum CollectOutcome
+        {
+            /// <summary>The candidates are written.</summary>
+            Collected,
+
+            /// <summary>
+            /// Nothing to collect: the fragment is unknown, not live when that was required, or a pending side was asked
+            /// of a fragment with no pending cut.
+            /// </summary>
+            NotCollectable,
+
+            /// <summary>The chain is longer than the chain scratch.</summary>
+            ChainOverflow,
+
+            /// <summary>There are more candidates than the room given.</summary>
+            CandidateOverflow,
+        }
+
+        /// <summary>
+        /// The one collection rule, writing into fixed arrays: <paramref name="fragment"/>'s chain into
+        /// <paramref name="chain"/>, and its candidates into <paramref name="into"/> from <paramref name="start"/>, at most
+        /// <paramref name="capacity"/> of them. Nothing grows and nothing is allocated; a shortage is answered, never cut
+        /// short. With <paramref name="requireLive"/> false the chain of a fragment that is replaced or retired is read
+        /// too -- still only through the ledger's read-only calls, and only with a pending side of 0.
+        /// </summary>
+        internal static CollectOutcome CollectInto(
+            LogicalCutLedger ledger,
+            LogicalFragmentId fragment,
+            float pendingSide,
+            bool requireLive,
+            IReadOnlyCollection<VpClipBoundary> reflected,
+            VpClipBoundary[] chain,
+            VpClipCandidate[] into,
+            int start,
+            int capacity,
+            out int count)
+        {
+            count = 0;
+            if (!ledger.TryGetFragmentState(fragment, out LogicalFragmentState state)
+                || (requireLive && state != LogicalFragmentState.Live)
+                || (pendingSide != 0f && state != LogicalFragmentState.Live))
+            {
+                return CollectOutcome.NotCollectable;
+            }
+
             // The chain, from the fragment up, as boundaries: the side each ancestor's fragment is on.
-            var chain = new List<VpClipBoundary>();
-            CutOperationId pendingOperation = default;
+            int length = 0;
             if (pendingSide != 0f)
             {
-                if (!ledger.TryGetActiveOperation(fragment, out pendingOperation))
+                if (!ledger.TryGetActiveOperation(fragment, out CutOperationId pendingOperation))
                 {
-                    return false;
+                    return CollectOutcome.NotCollectable;
                 }
 
-                chain.Add(new VpClipBoundary(new VpCapFace(ledger, pendingOperation), pendingSide));
+                if (length >= chain.Length)
+                {
+                    return CollectOutcome.ChainOverflow;
+                }
+
+                chain[length++] = new VpClipBoundary(new VpCapFace(ledger, pendingOperation), pendingSide);
             }
 
             LogicalFragmentId at = fragment;
             while (ledger.TryGetOrigin(at, out CutOperationId origin, out float side))
             {
-                chain.Add(new VpClipBoundary(new VpCapFace(ledger, origin), side));
+                if (length >= chain.Length)
+                {
+                    return CollectOutcome.ChainOverflow;
+                }
+
+                chain[length++] = new VpClipBoundary(new VpCapFace(ledger, origin), side);
                 if (!ledger.TryGetOperation(origin, out LogicalCutOperation operation))
                 {
                     break;
@@ -185,7 +254,7 @@ namespace Zantetsu.MeshCut
             for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
             {
                 var face = new VpCapFace(ledger, operation.id);
-                int index = IndexOfFace(chain, face);
+                int index = IndexOfFace(chain, length, face);
                 if (index < 0)
                 {
                     continue;
@@ -197,12 +266,18 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
+                if (count >= capacity)
+                {
+                    count = 0;
+                    return CollectOutcome.CandidateOverflow;
+                }
+
                 bool pending = operation.state == LogicalCutOperationState.Admitted;
-                into.Add(new VpClipCandidate(boundary, operation.plane, pending, previous));
+                into[start + count++] = new VpClipCandidate(boundary, operation.plane, pending, previous);
                 previous = boundary;
             }
 
-            return true;
+            return CollectOutcome.Collected;
         }
 
         /// <summary>
@@ -222,14 +297,24 @@ namespace Zantetsu.MeshCut
                 throw new ArgumentException("There is a state slot for every candidate.", nameof(states));
             }
 
+            return Select(candidates, 0, candidates.Count, states);
+        }
+
+        /// <summary>
+        /// The same selection over <paramref name="count"/> candidates from <paramref name="start"/>, writing the states
+        /// at the same indices. The one selection rule, for every caller.
+        /// </summary>
+        internal static int Select(
+            IReadOnlyList<VpClipCandidate> candidates, int start, int count, VpClipSelectionState[] states)
+        {
             int selected = 0;
             bool broken = false;
-            for (int i = 0; i < candidates.Count; i++)
+            for (int i = 0; i < count; i++)
             {
                 if (!broken)
                 {
-                    VpClipBoundary requires = candidates[i].requires;
-                    if (requires.IsSet && IndexOf(candidates, requires, i) < 0)
+                    VpClipBoundary requires = candidates[start + i].requires;
+                    if (requires.IsSet && IndexOf(candidates, start, requires, i) < 0)
                     {
                         // Its requirement is not before it: after it, or not listed. Not repaired by reordering.
                         broken = true;
@@ -238,25 +323,25 @@ namespace Zantetsu.MeshCut
 
                 if (broken)
                 {
-                    states[i] = VpClipSelectionState.IgnoredOrder;
+                    states[start + i] = VpClipSelectionState.IgnoredOrder;
                 }
                 else if (selected < Capacity)
                 {
-                    states[i] = VpClipSelectionState.Selected;
+                    states[start + i] = VpClipSelectionState.Selected;
                     selected++;
                 }
                 else
                 {
-                    states[i] = VpClipSelectionState.IgnoredCapacity;
+                    states[start + i] = VpClipSelectionState.IgnoredCapacity;
                 }
             }
 
             return selected;
         }
 
-        private static int IndexOfFace(List<VpClipBoundary> chain, VpCapFace face)
+        private static int IndexOfFace(VpClipBoundary[] chain, int length, VpCapFace face)
         {
-            for (int i = 0; i < chain.Count; i++)
+            for (int i = 0; i < length; i++)
             {
                 if (chain[i].face == face)
                 {
@@ -281,11 +366,11 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>The index of <paramref name="boundary"/> among the candidates before <paramref name="before"/>, or -1.</summary>
-        private static int IndexOf(IReadOnlyList<VpClipCandidate> candidates, VpClipBoundary boundary, int before)
+        private static int IndexOf(IReadOnlyList<VpClipCandidate> candidates, int start, VpClipBoundary boundary, int before)
         {
             for (int i = 0; i < before; i++)
             {
-                if (candidates[i].boundary == boundary)
+                if (candidates[start + i].boundary == boundary)
                 {
                     return i;
                 }

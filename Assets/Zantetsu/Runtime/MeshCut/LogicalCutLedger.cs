@@ -447,6 +447,40 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// The distribution result an operation settled when it was prepared -- its status and how many anchors each
+        /// side received -- read from the operation's own record, which keeps it after the prepared point sets are let
+        /// go. True for a prepared operation that is Admitted, Published, Completed or Terminated. The pending-time
+        /// contract of <see cref="TryGetPreparedAnchorDistribution"/> is unchanged; this is the same result, kept, and
+        /// nothing is stored or reclassified for it.
+        /// <para>
+        /// False for an operation never prepared, which is not the same as a prepared one that gave both sides nothing
+        /// (true, both counts zero); and false for one Aborted or reclaimed as Stale, or unknown. Being able to read a
+        /// distribution says nothing about whether a fragment is live or may be shown, and Completed or Terminated is not
+        /// a geometry commit.
+        /// </para>
+        /// </summary>
+        public bool TryGetSettledAnchorDistribution(CutOperationId id, out AnchorDistributionResult distribution)
+        {
+            distribution = default;
+            if (!TryIndex(id, out int index) || !_operations[index].anchorsPrepared)
+            {
+                return false;
+            }
+
+            LogicalCutOperationState state = _operations[index].state;
+            if (state != LogicalCutOperationState.Admitted
+                && state != LogicalCutOperationState.Published
+                && state != LogicalCutOperationState.Completed
+                && state != LogicalCutOperationState.Terminated)
+            {
+                return false;
+            }
+
+            distribution = _operations[index].anchorDistribution;
+            return true;
+        }
+
+        /// <summary>
         /// Final physics established on both sides (DESIGN 7.1.2): publishes the positive and negative child, the
         /// operation, and each child's inherited anchor set, all together, and ends the source as a current target.
         /// The budget does not change. Refused as <see cref="LogicalCutResultOutcome.Stale"/> if the source's
