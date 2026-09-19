@@ -121,14 +121,16 @@ namespace Zantetsu.MeshCut.Tests
                     int capsBefore = display.StencilCapIssues;
                     Color32[] split = Draw(display, LookingDownFromBetween());
 
-                    // The moved top side's cap is at y = 4, above this camera at 2.5 and so behind it: no cap of its
-                    // group is seen and the group is left out. The fixed side's cap faces the camera: one group, one
-                    // colour, drawn once.
+                    // The moved top side's cap is at y = 4, above this camera at 2.5 and so behind it: it is no job.
+                    // The fixed side's cap faces the camera: one job, one volume group, one colour, drawn once -- its
+                    // volume one command per submesh.
                     VpStencilPreparation preparation = PreparationOf(display, LookingDownFromBetween());
-                    Assert.That(preparation.targets, Is.EqualTo(2), "both caps are asked about");
-                    Assert.That(preparation.groups, Is.EqualTo(2), "the two sides are not compatible");
-                    Assert.That(preparation.culledGroups, Is.EqualTo(1), "the side behind the camera is left out");
+                    Assert.That(preparation.capRecords, Is.EqualTo(2), "both caps are asked about");
+                    Assert.That(preparation.hiddenCaps, Is.EqualTo(1), "the side behind the camera is left out");
+                    Assert.That(preparation.jobs, Is.EqualTo(1));
+                    Assert.That(preparation.volumeGroups, Is.EqualTo(1));
                     Assert.That(preparation.colours, Is.EqualTo(1));
+                    Assert.That(preparation.volumeCommands, Is.EqualTo(2), "one volume command per submesh");
                     Assert.That(display.StencilInitIssues - initsBefore, Is.EqualTo(1), "one initialisation per colour");
                     Assert.That(display.StencilVolumeIssues - volumesBefore, Is.EqualTo(1), "one volume issue per colour");
                     Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(1), "one cap issue per colour, two submeshes notwithstanding");

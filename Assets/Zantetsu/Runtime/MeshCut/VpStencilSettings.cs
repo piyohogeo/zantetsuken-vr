@@ -32,22 +32,33 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// The stencil colour limit of DESIGN 5.6: colours 0 to this - 2 are ordinary and this - 1 is the last, merged
-        /// one. At least one, and no more than the stencil materials can order (<c>VpStencilCapMaterials.MaxColors</c>);
-        /// a larger value is refused, never cut down.
+        /// The stencil colour limit of DESIGN 5.6 / D-183: every colour up to it is an ordinary one, and there is no
+        /// merged last colour -- a camera whose volume groups cannot be given colours within it is refused its
+        /// preparation (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>). At least one, and no more than the
+        /// stencil materials can order (<c>VpStencilCapMaterials.MaxColors</c>); a larger value is refused, never cut down.
         /// </summary>
         public readonly int maxStencilColors;
 
         /// <summary>The facing epsilon of <see cref="VpCapVisibility"/>, a world-space length.</summary>
         public readonly float facingEpsilon;
 
-        /// <summary>The world plane epsilon of <see cref="VpCapCompatibility"/>.</summary>
+        /// <summary>
+        /// The world plane epsilon of the older render-fragment compatibility test (<see cref="VpCapCompatibility"/>).
+        /// Kept only for those older classifiers; the display's cap-job preparation (D-183) does not read it -- one volume
+        /// stands for two jobs only when their inputs are identical, never within an epsilon.
+        /// </summary>
         public readonly float planeEpsilon;
 
-        /// <summary>The offset epsilon of <see cref="VpCapCompatibility"/>, a world-space length.</summary>
+        /// <summary>
+        /// The offset epsilon of the older render-fragment compatibility test, a world-space length. Kept only for those
+        /// older classifiers; the display's cap-job preparation does not read it.
+        /// </summary>
         public readonly float offsetEpsilon;
 
-        /// <summary>The projection margin of <see cref="VpCapProjectionConflict"/>, in normalized device coordinates per axis.</summary>
+        /// <summary>
+        /// The projection margin, in normalized device coordinates per axis, that the display's cap-job preparation grows
+        /// every initial section by before deciding two volume groups may share a colour.
+        /// </summary>
         public readonly Vector2 ndcMargin;
 
         /// <summary>
@@ -88,45 +99,77 @@ namespace Zantetsu.MeshCut
         }
     }
 
-    /// <summary>What one camera's last preparation made of the adopted snapshot.</summary>
+    /// <summary>How one camera's last preparation ended.</summary>
+    public enum VpStencilPreparationOutcome
+    {
+        /// <summary>Not prepared: never asked, or a later attempt has begun.</summary>
+        None = 0,
+
+        /// <summary>Prepared and uploaded: the camera may draw this frame's adopted snapshot.</summary>
+        Prepared = 1,
+
+        /// <summary>
+        /// Refused for room: the snapshot holds more caps than a preparation has room for. Nothing was uploaded.
+        /// </summary>
+        CapacityExceeded = 2,
+
+        /// <summary>
+        /// Refused because the volume groups could not be given colours within the limit without two that may overlap
+        /// on the screen sharing one (D-183). Nothing was uploaded and the camera may not draw; another attempt -- from
+        /// another view -- may be made before it draws. Not a shortage of room, and not a stop of the display.
+        /// </summary>
+        ColorLimitExceeded = 3,
+    }
+
+    /// <summary>
+    /// What one camera's last preparation made of the adopted snapshot, in the terms of DESIGN 5.6 / D-183: cap records,
+    /// cap jobs, volume groups and colours. The counts are those of the last attempt; a refused attempt keeps the counts it
+    /// reached before the refusal only where they are settled (the cap records), and zero elsewhere.
+    /// </summary>
     public readonly struct VpStencilPreparation
     {
         internal VpStencilPreparation(
-            int targets, int groups, int culledGroups, int colours, int ordinaryColours, int groupsInLastColour,
-            int volumeTargets, int capsDrawn)
+            VpStencilPreparationOutcome outcome, int capRecords, int emptyCaps, int hiddenCaps, int jobs, int volumeGroups,
+            int colours, int volumeCommands, int capsDrawn)
         {
-            this.volumeTargets = volumeTargets;
-            this.capsDrawn = capsDrawn;
-            this.targets = targets;
-            this.groups = groups;
-            this.culledGroups = culledGroups;
+            this.outcome = outcome;
+            this.capRecords = capRecords;
+            this.emptyCaps = emptyCaps;
+            this.hiddenCaps = hiddenCaps;
+            this.jobs = jobs;
+            this.volumeGroups = volumeGroups;
             this.colours = colours;
-            this.ordinaryColours = ordinaryColours;
-            this.groupsInLastColour = groupsInLastColour;
+            this.volumeCommands = volumeCommands;
+            this.capsDrawn = capsDrawn;
         }
 
-        /// <summary>The caps asked about: every prepared cap record, seen or not.</summary>
-        public readonly int targets;
+        public readonly VpStencilPreparationOutcome outcome;
 
-        /// <summary>The compatibility groups they formed.</summary>
-        public readonly int groups;
+        /// <summary>Every cap record of the adopted snapshot, seen or not.</summary>
+        public readonly int capRecords;
 
-        /// <summary>The groups none of whose caps was seen, whose volumes and caps were left out.</summary>
-        public readonly int culledGroups;
+        /// <summary>Cap records whose drawing polygon is empty: never jobs.</summary>
+        public readonly int emptyCaps;
 
-        /// <summary>The colours uploaded: ordinary ones, and the last one if any group is in it.</summary>
+        /// <summary>Non-empty cap records the both-eye visibility test left out.</summary>
+        public readonly int hiddenCaps;
+
+        /// <summary>Cap jobs: the non-empty caps the visibility test kept, each drawn once.</summary>
+        public readonly int jobs;
+
+        /// <summary>Volume groups: each issued once, whatever number of jobs shares it.</summary>
+        public readonly int volumeGroups;
+
+        /// <summary>The colours uploaded, every one an ordinary one.</summary>
         public readonly int colours;
 
-        /// <summary>The ordinary colours in use.</summary>
-        public readonly int ordinaryColours;
+        /// <summary>
+        /// The volume commands uploaded: each volume group's render fragment's commands, one per submesh -- the GPU draws
+        /// the volume issues stand for, not the CPU issues (one per colour).
+        /// </summary>
+        public readonly int volumeCommands;
 
-        /// <summary>The groups put in the last, merged colour.</summary>
-        public readonly int groupsInLastColour;
-
-        /// <summary>The targets whose volumes were issued: every target of every group kept.</summary>
-        public readonly int volumeTargets;
-
-        /// <summary>The caps drawn: only those seen, within the groups kept.</summary>
+        /// <summary>The cap polygons fanned for drawing: one per job.</summary>
         public readonly int capsDrawn;
     }
 
@@ -134,7 +177,7 @@ namespace Zantetsu.MeshCut
     public readonly struct VpStencilCameraCounts
     {
         internal VpStencilCameraCounts(
-            int uploads, int bufferWrites, int initIssues, int volumeIssues, int capIssues, int colours,
+            int uploads, int bufferWrites, int initIssues, int volumeIssues, int capIssues, int volumeGpuDraws, int colours,
             bool singlePassInstanced, bool preparedNow)
         {
             this.uploads = uploads;
@@ -142,6 +185,7 @@ namespace Zantetsu.MeshCut
             this.initIssues = initIssues;
             this.volumeIssues = volumeIssues;
             this.capIssues = capIssues;
+            this.volumeGpuDraws = volumeGpuDraws;
             this.colours = colours;
             this.singlePassInstanced = singlePassInstanced;
             this.preparedNow = preparedNow;
@@ -149,9 +193,18 @@ namespace Zantetsu.MeshCut
 
         public readonly int uploads;
         public readonly int bufferWrites;
+
+        /// <summary>Initialisation issues on the CPU: one per colour drawn.</summary>
         public readonly int initIssues;
+
+        /// <summary>Volume issues on the CPU: one per colour with volumes, whatever its command count.</summary>
         public readonly int volumeIssues;
+
+        /// <summary>Cap issues on the CPU: one per colour with caps.</summary>
         public readonly int capIssues;
+
+        /// <summary>The GPU volume draws the volume issues stood for: one per volume command.</summary>
+        public readonly int volumeGpuDraws;
 
         /// <summary>The colours of the arrangement the batch holds.</summary>
         public readonly int colours;

@@ -247,17 +247,26 @@ namespace Zantetsu.MeshCut
     /// this display took is given back exactly once.
     /// </para>
     /// <para>
-    /// **Body, depth, shadow and stencil volume read one record.** Each render fragment's clip record (its selected
-    /// half-spaces, before the separation) and its separation are what the surfaces, the depth, both casters and its
-    /// stencil volume are drawn with. The kerf is zero: no plane is moved to open a gap.
+    /// **Body, depth and shadow read one record; a stencil volume reads its own face.** Each render fragment's clip
+    /// record (every selected half-space, before the separation) and its separation are what the surfaces, the depth
+    /// and both casters are drawn with. A stencil volume is drawn with the same geometry, placement and separation but
+    /// clipped by one face only -- the cap's own face and kept side (<see cref="VpCapJob.volumeClip"/>) -- never by the
+    /// render fragment's other selected faces. The kerf is zero: no plane is moved to open a gap.
     /// </para>
     /// <para>
-    /// **Caps, per camera (DESIGN 5.6).** One cap per render fragment and selected boundary, up to fourteen vertices;
-    /// every camera's arrangement comes from <see cref="VpMultiCutStencilClassification"/> over every registration's
-    /// render fragments together: visibility per cap, compatibility and projection over every render fragment's
-    /// conditions, a group with any cap seen keeping every member's volume (once each, whatever the submesh count --
-    /// one command per submesh), only the caps seen drawn, and the colours within the limit. Within a colour the order
-    /// stays initialisation, every volume, every cap.
+    /// **Caps, per camera (DESIGN 5.6, D-183).** One cap per render fragment and selected boundary, up to fourteen
+    /// vertices; every camera's arrangement comes from <see cref="VpCapJobClassification"/> over every registration's
+    /// render fragments together, and from nothing else. A cap whose drawing polygon is not empty and which the both-eye
+    /// visibility test keeps is a cap job. Jobs whose volumes are exactly the same volume form one volume group, whose
+    /// volume is issued once: the representative render fragment's draw ranges (one command per submesh) and placement,
+    /// clipped by the cap's own face only (<see cref="VpCapJob.volumeClip"/>) at its separation, applied once -- never the
+    /// render fragment's clip of every selected face, which stays the body's, the depth's and the shadow's. Each job's
+    /// cap is its clipped drawing polygon, fanned. Groups are given colours from the initial sections' projection in
+    /// both eyes; every colour is an ordinary one, and a camera whose groups do not fit the limit is refused its
+    /// preparation (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>) and may be prepared again -- there is
+    /// no merged colour. Within a colour the order is initialisation, every volume group of the colour, every cap job of
+    /// the colour. The draw ranges each registration's volumes are compared and drawn with are a table built with the
+    /// snapshot, in its registration order, and adopted with it.
     /// </para>
     /// <para>
     /// **One stencil batch per registered camera.** A camera is registered with <see cref="TryRegisterCamera"/>, up to
@@ -329,6 +338,10 @@ namespace Zantetsu.MeshCut
             public VpIndirectCommand[] commands;
             public Material[] commandMaterials;
 
+            // The draw range of every command, in order: what this registration's stencil volumes are drawn from, and
+            // what tells one volume from another (VpCapJobGeometry). Made once, when the body is taken in.
+            public VpGeometryRange[] ranges;
+
             /// <summary>
             /// The bounds of the vertices this geometry's indices reach, in the geometry's own frame, measured once
             /// when the body was taken in: the whole body's, not one submesh's.
@@ -384,7 +397,15 @@ namespace Zantetsu.MeshCut
         // just replaced is what the next collection builds in, and sections are reused from the adopted one.
         private VpMultiCutSnapshot _snapshot;
         private VpMultiCutSnapshot _building;
-        private readonly VpMultiCutStencilClassification _classification;
+        private readonly VpCapJobClassification _capJobs;
+
+        // The draw ranges of every registration of the adopted snapshot, and of the one being built, in the snapshot's
+        // registration order -- a registration drawn as nothing and one being let go included. They change places with
+        // the snapshots on adoption, so a preparation reads the table its snapshot was built with. Both are made with the
+        // display at the instance capacity -- every registration holds at least one instance, so there are never more
+        // registrations than instances -- and never grown.
+        private GeometryTable _geometries;
+        private GeometryTable _candidateGeometries;
 
         // The adopted draw data: what the GPU holds and what is being drawn. Nothing here is touched until an upload
         // has succeeded, so a refused collection leaves exactly this on screen. Each has a candidate twin of the same
@@ -430,6 +451,95 @@ namespace Zantetsu.MeshCut
         private int _preparationRecordLimit;
         private bool _preparing;
 
+        // What the last preparation's arrangement filled of the scratch above; for tests.
+        private int _arrangedVolumes;
+        private int _arrangedCapIndices;
+
+        /// <summary>
+        /// Every registration's draw ranges, in the order of the snapshot they were built with. Its room is fixed when it
+        /// is made and never grown; a collection fills it, and a preparation only reads it.
+        /// </summary>
+        private sealed class GeometryTable : IReadOnlyList<VpCapJobGeometry>
+        {
+            private readonly VpCapJobGeometry[] _items;
+
+            public GeometryTable(int capacity)
+            {
+                _items = new VpCapJobGeometry[capacity];
+            }
+
+            public int Capacity => _items.Length;
+
+            public int Count { get; private set; }
+
+            public VpCapJobGeometry this[int index]
+            {
+                get
+                {
+                    if ((uint)index >= (uint)Count)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(index));
+                    }
+
+                    return _items[index];
+                }
+            }
+
+            /// <summary>
+            /// Lets go of every range the table refers to and empties it, after confirming that
+            /// <paramref name="count"/> entries fit its fixed room. Nothing is made.
+            /// </summary>
+            /// <exception cref="InvalidOperationException">More entries than the room; never grown.</exception>
+            public void Restart(int count)
+            {
+                Array.Clear(_items, 0, Count);
+                Count = 0;
+                if (count > _items.Length)
+                {
+                    throw new InvalidOperationException(
+                        "more registrations (" + count + ") than the draw-range table's fixed room (" + _items.Length + ")");
+                }
+            }
+
+            public void Add(VpGeometryRange[] ranges)
+            {
+                if (Count >= _items.Length)
+                {
+                    throw new InvalidOperationException("the draw-range table's fixed room is full");
+                }
+
+                _items[Count++] = new VpCapJobGeometry(VpArrayRange<VpGeometryRange>.Whole(ranges));
+            }
+
+            /// <summary>Slots past the count that still refer to a range: always zero. For tests.</summary>
+            public int HeldPastCount
+            {
+                get
+                {
+                    int held = 0;
+                    for (int i = Count; i < _items.Length; i++)
+                    {
+                        held += _items[i].ranges.IsNull ? 0 : 1;
+                    }
+
+                    return held;
+                }
+            }
+
+            public IEnumerator<VpCapJobGeometry> GetEnumerator()
+            {
+                for (int i = 0; i < Count; i++)
+                {
+                    yield return _items[i];
+                }
+            }
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            {
+                return GetEnumerator();
+            }
+        }
+
         /// <summary>One registered camera's stencil work: its own batch, and what it was last prepared and drawn for.</summary>
         private sealed class CameraStencil
         {
@@ -473,7 +583,7 @@ namespace Zantetsu.MeshCut
             in DerivedCapacities derived,
             VpMultiCutSnapshot snapshot,
             VpMultiCutSnapshot building,
-            VpMultiCutStencilClassification classification,
+            VpCapJobClassification capJobs,
             Func<int> frameSource)
         {
             _storage = storage;
@@ -488,13 +598,16 @@ namespace Zantetsu.MeshCut
             _settings = settings;
             _snapshot = snapshot;
             _building = building;
-            _classification = classification;
+            _capJobs = capJobs;
+            _geometries = new GeometryTable(instanceCapacity);
+            _candidateGeometries = new GeometryTable(instanceCapacity);
             _cameraStencils = new CameraStencil[settings.cameraCapacity];
             _candidateStencilColors = new VpStencilCapColor[settings.maxStencilColors];
 
-            // Every render fragment's volume is one stencil command per command of its body, which is at most one per
-            // instance; every cap is fanned. Each camera's batch is made to these sizes, derived and checked before
-            // anything was made (TryDeriveCapacities).
+            // Every volume group is one stencil command per command of its body; a render fragment has at most eight
+            // groups, one per selected boundary, so there are at most eight volume commands per instance. Every cap is
+            // fanned. Each camera's batch is made to these sizes, derived and checked before anything was made
+            // (TryDeriveCapacities).
             _stencilCommandCapacity = derived.stencilCommands;
             _stencilCapVertexCapacity = derived.capVertices;
             _stencilCapIndexCapacity = derived.capIndices;
@@ -561,8 +674,11 @@ namespace Zantetsu.MeshCut
         /// <summary>
         /// Every size a display is made to, worked out in 64-bit arithmetic from its explicit capacities: a render
         /// fragment takes at least one instance, since every body has a command, so there are at most as many render
-        /// fragments -- and stencil volume commands -- as instances; eight caps per render fragment; fourteen vertices
-        /// and twelve fanned triangles per cap. The logical branches, candidates and chain depth are not derived from
+        /// fragments as instances; eight caps per render fragment; fourteen vertices and twelve fanned triangles per
+        /// cap. Stencil volume commands are instances times eight: a volume group is issued with one command per command
+        /// of its body, and a render fragment has at most one group per selected boundary -- at most eight -- so one
+        /// render fragment's volume commands are at most eight times its body's commands, each of which is one of its
+        /// instances. The logical branches, candidates and chain depth are not derived from
         /// anything: they are the caller's. False when any input is out of range or any size is not an int; nothing
         /// is decided here beyond that, and no limit of its own is set.
         /// </summary>
@@ -583,16 +699,18 @@ namespace Zantetsu.MeshCut
 
             long renderFragments = instanceCapacity;
             long caps = renderFragments * VpClipCandidates.Capacity;
+            long stencilCommands = (long)instanceCapacity * VpClipCandidates.Capacity;
             long capVertices = caps * VpCapPolygonClip.MaxVertices;
             long capIndices = caps * (VpCapPolygonClip.MaxVertices - 2) * 3;
             long stack = ((long)branchCapacity * 2) + 2;
-            if (!FitsInt(caps) || !FitsInt(capVertices) || !FitsInt(capIndices) || !FitsInt(stack))
+            if (!FitsInt(caps) || !FitsInt(stencilCommands) || !FitsInt(capVertices) || !FitsInt(capIndices)
+                || !FitsInt(stack))
             {
                 return false;
             }
 
             derived = new DerivedCapacities(
-                instanceCapacity, (int)capVertices, (int)capIndices, instanceCapacity, (int)caps, branchCapacity,
+                (int)stencilCommands, (int)capVertices, (int)capIndices, instanceCapacity, (int)caps, branchCapacity,
                 candidateCapacity, chainDepth);
             return true;
         }
@@ -764,8 +882,8 @@ namespace Zantetsu.MeshCut
         /// </summary>
         /// <param name="commandCapacity">Draw commands: one per submesh of every body drawn.</param>
         /// <param name="instanceCapacity">
-        /// Draw instances: per body, its commands times its render fragments. Render fragments, stencil volume commands,
-        /// caps (eight per render fragment), cap vertices and cap indices are derived from it.
+        /// Draw instances: per body, its commands times its render fragments. Render fragments, stencil volume commands
+        /// (eight per instance), caps (eight per render fragment), cap vertices and cap indices are derived from it.
         /// </param>
         /// <param name="branchCapacity">Logical branches over every registration together.</param>
         /// <param name="candidateCapacity">Clip candidates kept over every branch together; not cut at eight.</param>
@@ -847,7 +965,7 @@ namespace Zantetsu.MeshCut
                 VpMultiCutCapacities snapshotCapacities = derived.Snapshot;
                 var snapshot = new VpMultiCutSnapshot(snapshotCapacities);
                 var building = new VpMultiCutSnapshot(snapshotCapacities);
-                var classification = new VpMultiCutStencilClassification(snapshotCapacities);
+                var capJobs = new VpCapJobClassification(snapshotCapacities);
 
                 buffers = new VpGpuIndexedGeometryBuffers(storage.VertexCapacity, storage.IndexCapacity);
                 batch = new VpIndexedIndirectDrawBatch(commandCapacity, instanceCapacity);
@@ -861,7 +979,7 @@ namespace Zantetsu.MeshCut
                 display = new VpLogicalCutDisplay(
                     storage, table, ledger, materialsBySourceIndex, shadowMaterial, provisionalShadowMaterial, buffers,
                     batch, stencilMaterials, stencilSettings, commandCapacity, instanceCapacity, derived, snapshot,
-                    building, classification, frameSource);
+                    building, capJobs, frameSource);
                 taken = true;
                 return true;
             }
@@ -958,10 +1076,15 @@ namespace Zantetsu.MeshCut
         /// as the camera has not drawn in this frame; nothing about the ledger, the body or the geometry is read again
         /// or transferred.
         /// <para>
-        /// False when the camera is not registered, has already drawn in this frame, or the snapshot holds more caps
-        /// than a preparation has room for; the camera is then not prepared, nothing is uploaded, and
-        /// <see cref="Render"/> refuses it. An upload refused within the capacity checked at adoption, or a GPU call
-        /// that throws, stops the display as broken. A display that has stopped throws.
+        /// False when the camera is not registered or has already drawn in this frame -- changing nothing -- or when this
+        /// attempt is refused: the snapshot holds more caps than a preparation has room for
+        /// (<see cref="VpStencilPreparationOutcome.CapacityExceeded"/>), or its volume groups cannot be given colours
+        /// within the limit from this view (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>). A refused
+        /// attempt has already voided the camera's earlier preparation: the camera is not prepared, nothing is uploaded
+        /// or written, <see cref="Render"/> refuses it, and <see cref="TryGetCameraStencil"/> tells which refusal it was.
+        /// Neither refusal stops the display or touches another camera; the camera may be prepared again before it
+        /// draws. An upload refused within the capacity checked at adoption, or a GPU call that throws, stops the display
+        /// as broken. A display that has stopped throws.
         /// </para>
         /// <para>
         /// Works in this display's own room and allocates nothing (see the class notes). Calling into this display
@@ -994,12 +1117,18 @@ namespace Zantetsu.MeshCut
             _preparing = true;
             try
             {
-                // Not prepared until this one has been uploaded.
+                // Not prepared until this one has been uploaded: whatever this attempt comes to, the camera's earlier
+                // preparation is gone from here on, and a refusal leaves it unprepared, so Render refuses it.
                 slot.preparedFrame = int.MinValue;
+                slot.preparedGeneration = -1;
+                slot.preparation = default;
                 if (!TryArrange(
                         left, right, out int commands, out int capIndices, out int colours,
                         out VpStencilPreparation preparation))
                 {
+                    // Refused -- for room or for the colour limit -- before anything was uploaded or written. The batch
+                    // still holds its last upload, which nothing draws: Render asks the preparation, not the batch.
+                    slot.preparation = preparation;
                     return false;
                 }
 
@@ -1031,6 +1160,9 @@ namespace Zantetsu.MeshCut
             }
             finally
             {
+                // The classification is shared by every camera and is nobody's result: what a camera keeps is its own
+                // batch and its own counts. Its looks at the snapshot and its ledger references go here.
+                _capJobs.Release();
                 _preparing = false;
             }
         }
@@ -1061,10 +1193,64 @@ namespace Zantetsu.MeshCut
         /// How many looks at the adopted snapshot the classification's room still holds. Zero whenever no preparation
         /// is running. For tests.
         /// </summary>
-        internal int HeldPreparationLooks => _classification.HeldViews;
+        internal int HeldPreparationLooks => _capJobs.HeldViews;
 
-        /// <summary>The classification the last preparation made, for tests that read it through its results.</summary>
-        internal VpMultiCutStencilClassification Classification => _classification;
+        /// <summary>
+        /// The shared cap-job classification. It is readable only while a preparation runs -- every preparation lets it
+        /// go in the end -- so tests read it from <see cref="CapJobsClassifiedForTest"/>, or check it holds nothing.
+        /// </summary>
+        internal VpCapJobClassification CapJobs => _capJobs;
+
+        /// <summary>
+        /// Called inside a preparation, once its classification has succeeded for the adopted snapshot and before
+        /// anything is arranged or uploaded, with that classification. For tests only, which read it and change nothing;
+        /// null otherwise.
+        /// </summary>
+        internal Action<VpCapJobClassification> CapJobsClassifiedForTest { get; set; }
+
+        /// <summary>The draw-range table the adopted snapshot was built with, for tests.</summary>
+        internal IReadOnlyList<VpCapJobGeometry> AdoptedGeometries => _geometries;
+
+        /// <summary>
+        /// Both draw-range tables' room, as the objects it is held in, their fixed capacity, and the slots past each count
+        /// still referring to a range. For tests, which check that the room is never replaced and nothing is left held.
+        /// </summary>
+        internal void GeometryTableRoomForTest(out object adopted, out object candidate, out int capacity, out int heldPastCount)
+        {
+            adopted = _geometries;
+            candidate = _candidateGeometries;
+            capacity = _geometries.Capacity;
+            heldPastCount = _geometries.HeldPastCount + _candidateGeometries.HeldPastCount;
+        }
+
+        /// <summary>The adopted snapshot itself, for tests that classify it again on their own.</summary>
+        internal VpMultiCutSnapshot AdoptedSnapshot => _snapshot;
+
+        /// <summary>
+        /// How many volume commands and cap indices the last arrangement made -- of whichever camera, successful or not.
+        /// For tests, which read it right after the preparation it came from.
+        /// </summary>
+        internal int ArrangedVolumeCount => _arrangedVolumes;
+
+        internal int ArrangedCapIndexCount => _arrangedCapIndices;
+
+        /// <summary>One volume command of the last arrangement, as it was (or would have been) uploaded. For tests.</summary>
+        internal bool TryGetArrangedVolume(int index, out VpIndirectCommand command, out Matrix4x4 transform, out VpInstanceClip clip)
+        {
+            bool ok = index >= 0 && index < _arrangedVolumes;
+            command = ok ? _candidateStencilCommands[index] : default;
+            transform = ok ? _candidateStencilTransforms[index] : default;
+            clip = ok ? _candidateStencilClips[index] : default;
+            return ok;
+        }
+
+        /// <summary>One cap index of the last arrangement: a place in the adopted snapshot's cap vertices. For tests.</summary>
+        internal bool TryGetArrangedCapIndex(int index, out int vertex)
+        {
+            bool ok = index >= 0 && index < _arrangedCapIndices;
+            vertex = ok ? _candidateCapIndices[index] : -1;
+            return ok;
+        }
 
         /// <summary>One colour range of what <paramref name="camera"/>'s batch holds from its last upload. For tests.</summary>
         internal bool TryGetPreparedColor(Camera camera, int index, out VpStencilCapColor color)
@@ -1093,7 +1279,7 @@ namespace Zantetsu.MeshCut
             preparation = slot.preparation;
             counts = new VpStencilCameraCounts(
                 slot.batch.Uploads, slot.batch.BufferWrites, slot.batch.StencilInitIssues, slot.batch.VolumeIssues,
-                slot.batch.CapIssues, slot.batch.ColorCount, slot.batch.SinglePassInstanced,
+                slot.batch.CapIssues, slot.batch.VolumeGpuDraws, slot.batch.ColorCount, slot.batch.SinglePassInstanced,
                 slot.preparedFrame == CurrentFrame && slot.preparedGeneration == _generation);
             return true;
         }
@@ -1136,10 +1322,13 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// DESIGN 5.6's order over the adopted snapshot, for two eyes, through the one classification of every
-        /// registration's render fragments together; then the arrangement, colour by colour, into the stencil scratch:
-        /// each colour's volumes -- every kept render fragment once, one command per command of its body, with its own
-        /// transform and clip record -- and then its seen caps, fanned.
+        /// DESIGN 5.6 / D-183 over the adopted snapshot, for two eyes, through the one cap-job classification of every
+        /// registration's render fragments together, with the draw-range table adopted with that snapshot; then the
+        /// arrangement, colour by colour, into the stencil scratch: each of the colour's volume groups once -- its
+        /// representative render fragment's commands, one per command of its body, with that render fragment's
+        /// transform and the group's own-face clip -- and then each of the colour's cap jobs, its drawing polygon fanned.
+        /// False, with the refusal said in <paramref name="preparation"/>, for room or for the colour limit; nothing is
+        /// uploaded either way here.
         /// </summary>
         private bool TryArrange(
             in VpCapEye left, in VpCapEye right, out int commandCount, out int capIndexCount, out int colourCount,
@@ -1148,77 +1337,92 @@ namespace Zantetsu.MeshCut
             commandCount = 0;
             capIndexCount = 0;
             colourCount = 0;
-            preparation = default;
+            _arrangedVolumes = 0;
+            _arrangedCapIndices = 0;
+            int capRecords = _snapshot.CapCount;
 
             // Room is decided before anything is read, let alone uploaded.
-            if (_snapshot.CapCount > _preparationRecordLimit)
+            if (capRecords > _preparationRecordLimit)
             {
+                preparation = Refusal(VpStencilPreparationOutcome.CapacityExceeded, capRecords);
                 return false;
             }
 
-            if (!_classification.TryClassify(_snapshot, left, right, _settings))
+            VpCapJobOutcome outcome = _capJobs.TryClassify(
+                _snapshot, _geometries, left, right, _settings.facingEpsilon, _settings.ndcMargin,
+                _settings.maxStencilColors);
+            if (outcome != VpCapJobOutcome.Classified)
             {
+                preparation = Refusal(
+                    outcome == VpCapJobOutcome.ColorLimitExceeded
+                        ? VpStencilPreparationOutcome.ColorLimitExceeded
+                        : VpStencilPreparationOutcome.CapacityExceeded,
+                    capRecords);
                 return false;
             }
 
-            int renderFragments = _snapshot.RenderFragmentCount;
-            int max = _settings.maxStencilColors;
-            int ordinary = 0;
-            int volumeTargets = 0;
+            // The result names the snapshot it was made from; nothing of another build is arranged.
+            if (!_capJobs.IsFor(_snapshot))
+            {
+                throw new InvalidOperationException("the cap-job classification is not of the adopted snapshot");
+            }
+
+            CapJobsClassifiedForTest?.Invoke(_capJobs);
+
             int capsDrawn = 0;
-            for (int colour = 0; colour < max; colour++)
+            int colours = _capJobs.ColourCount;
+            for (int colour = 0; colour < colours; colour++)
             {
+                _capJobs.TryGetColour(colour, out VpCapJobColour range);
                 int volumeStart = commandCount;
                 int capStart = capIndexCount;
-                bool any = false;
-                for (int r = 0; r < renderFragments; r++)
+
+                // Every volume group of the colour, each once, before any cap of the colour.
+                for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
                 {
-                    _classification.TryGetRenderFragment(r, out VpMultiCutStencilRenderFragment result);
-                    if (!result.volumeIssued || result.colour != colour)
-                    {
-                        continue;
-                    }
+                    _capJobs.TryGetGroupOfColour(p, out int g);
+                    _capJobs.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
+                    AppendVolume(
+                        group.renderFragment, group.volumeClip, _commands, _rfCommandStart, _rfCommandCount, _rfTransform,
+                        ref commandCount);
+                }
 
-                    any = true;
-                    _snapshot.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                    AppendVolume(r, rf.clip, _commands, _rfCommandStart, _rfCommandCount, _rfTransform, ref commandCount);
-                    volumeTargets++;
-                    for (int c = 0; c < rf.capCount; c++)
+                // Then every cap job of those groups: its own cap's clipped drawing polygon, never the initial section.
+                for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
+                {
+                    _capJobs.TryGetGroupOfColour(p, out int g);
+                    _capJobs.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
+                    for (int k = group.jobStart; k < group.jobStart + group.jobCount; k++)
                     {
-                        _classification.TryGetCap(rf.capStart + c, out VpMultiCutStencilCap cap);
-                        if (!cap.issued)
-                        {
-                            continue;
-                        }
-
+                        _capJobs.TryGetJobOfGroup(k, out int j);
+                        _capJobs.TryGetJob(j, out VpCapJob job);
+                        AppendFan(_capRecords[job.capIndex], ref capIndexCount);
                         capsDrawn++;
-                        AppendFan(_capRecords[rf.capStart + c], ref capIndexCount);
                     }
-                }
-
-                if (!any)
-                {
-                    continue;
-                }
-
-                if (colour < max - 1)
-                {
-                    ordinary++;
                 }
 
                 _candidateStencilColors[colourCount++] = new VpStencilCapColor(
                     volumeStart, commandCount - volumeStart, capStart, capIndexCount - capStart, ProvisionalCapColour);
             }
 
+            _arrangedVolumes = commandCount;
+            _arrangedCapIndices = capIndexCount;
             preparation = new VpStencilPreparation(
-                _snapshot.CapCount, _classification.GroupCount, _classification.CulledGroupCount, colourCount, ordinary,
-                _classification.GroupsInLastColour, volumeTargets, capsDrawn);
+                VpStencilPreparationOutcome.Prepared, capRecords, _capJobs.EmptyCapCount, _capJobs.HiddenCapCount,
+                _capJobs.JobCount, _capJobs.VolumeGroupCount, colourCount, commandCount, capsDrawn);
             return true;
         }
 
+        /// <summary>A refused preparation: the cap records are settled by the snapshot, and nothing else was made.</summary>
+        private static VpStencilPreparation Refusal(VpStencilPreparationOutcome outcome, int capRecords)
+        {
+            return new VpStencilPreparation(outcome, capRecords, 0, 0, 0, 0, 0, 0, 0);
+        }
+
         /// <summary>
-        /// One render fragment's volume: every command of its body, once, with one instance, the body's transform and
-        /// this render fragment's clip record -- the same geometry and range the body is drawn with.
+        /// One volume: every command of the render fragment's body, once, with one instance, the body's transform and
+        /// the clip given -- the same geometry and range the body is drawn with. The clip is the volume's own (one face),
+        /// its separation applied once, by the shader, as it is for the body.
         /// </summary>
         private void AppendVolume(
             int renderFragment,
@@ -1372,6 +1576,12 @@ namespace Zantetsu.MeshCut
                 reflectedCopy[k++] = boundary;
             }
 
+            var ranges = new VpGeometryRange[commands.Length];
+            for (int c = 0; c < commands.Length; c++)
+            {
+                ranges[c] = commands[c].range;
+            }
+
             var entry = new Shown
             {
                 fragment = fragment,
@@ -1382,6 +1592,7 @@ namespace Zantetsu.MeshCut
                 reflected = reflectedCopy,
                 commands = commands,
                 commandMaterials = commandMaterials,
+                ranges = ranges,
                 localBounds = localBounds,
             };
             entry.instances.Add(instance);
@@ -1725,6 +1936,9 @@ namespace Zantetsu.MeshCut
 
             _shown.Clear();
             _registrations.Clear();
+            _geometries.Restart(0);
+            _candidateGeometries.Restart(0);
+            _capJobs.Release();
             _sides.Clear();
             _candidateSides.Clear();
             _commandCount = 0;
@@ -1818,8 +2032,12 @@ namespace Zantetsu.MeshCut
             }
 
             // Fixed capacity, decided before anything is taken or uploaded. The stencil side's room follows from these:
-            // no more volume commands than instances, no more caps than the snapshot holds.
-            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity)
+            // no more volume commands than eight per instance, no more caps than the snapshot holds.
+            // The draw-range table holds one entry per registration in its fixed room. TryShow keeps every registration
+            // at an instance or more within the instance capacity, so this is never short; it is asked here all the
+            // same, before anything is taken, rather than found out while the candidate is built.
+            if (commandCount > _commandCapacity || instanceCount > _instanceCapacity
+                || _shown.Count > _candidateGeometries.Capacity)
             {
                 return RefuseForRoom();
             }
@@ -1834,9 +2052,10 @@ namespace Zantetsu.MeshCut
             // 5. The candidate, beside the adopted draw data.
             BuildCandidate(out int commands, out int instances);
 
-            // 6. The largest stencil arrangement this candidate could need -- every render fragment's volume and every
-            //    cap in one colour -- asked of the fixed sizes and of every registered camera's batch, by count, before
-            //    anything is written. A judgement of capacity and form, not a promise of each later upload.
+            // 6. The largest stencil arrangement this candidate could need -- every non-empty cap a job of its own, its
+            //    own-face volume and its fan, in one colour -- asked of the fixed sizes and of every registered camera's
+            //    batch, by count, before anything is written. A judgement of capacity and form, not a promise of each
+            //    later upload, and not an approval of any sharing.
             BuildLargestStencilArrangement(out int stencilCommands, out int capIndexCount, out int stencilColours);
             int capVertices = _building.CapVertexCount;
             bool stencilFits = stencilCommands <= _stencilCommandCapacity
@@ -1980,8 +2199,9 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// The candidate draw data from the built snapshot: per registration and command, one command whose instances
-        /// are its render fragments in order, each with the body's transform and that render fragment's clip record;
-        /// each render fragment's volume commands; and one cap record per snapshot cap.
+        /// are its render fragments in order, each with the body's transform and that render fragment's clip record of
+        /// every selected face; where each render fragment's commands and transform are, which a stencil volume is later
+        /// drawn from with its own face's clip; every registration's draw ranges; and one cap record per snapshot cap.
         /// </summary>
         private void BuildCandidate(out int commandCount, out int instanceCount)
         {
@@ -2029,9 +2249,13 @@ namespace Zantetsu.MeshCut
                 _candidateRoots = new LogicalFragmentId[_shown.Count];
             }
 
+            // The draw ranges of every registration the snapshot was built from, in its order and as many -- those drawn
+            // as nothing and those being let go included -- so that the table is the snapshot's, adopted with it.
+            _candidateGeometries.Restart(_shown.Count);
             for (int g = 0; g < _shown.Count; g++)
             {
                 _candidateRoots[g] = _shown[g].fragment;
+                _candidateGeometries.Add(_shown[g].ranges);
             }
 
             int caps = _building.CapCount;
@@ -2094,31 +2318,32 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Every render fragment's volume and every cap's fan, in one colour: the most any camera's arrangement of this
-        /// candidate could hold. It is only asked about, never uploaded. A render fragment under no condition is no
-        /// stencil target and has no volume.
+        /// The most any camera's arrangement of this candidate could hold, in one colour: every cap whose drawing polygon
+        /// is not empty taken as a job of its own -- no two sharing a volume -- with its own-face volume, and every such
+        /// cap's fan. It is only asked about, never uploaded, and it judges room and form alone: that the volume groups
+        /// of a real preparation may share, or fit the colour limit, is not decided here, and a camera's colour limit is
+        /// never a reason to refuse an adoption.
         /// </summary>
         private void BuildLargestStencilArrangement(out int stencilCommands, out int capIndexCount, out int colours)
         {
             stencilCommands = 0;
             capIndexCount = 0;
-            int renderFragments = _building.RenderFragmentCount;
-            for (int r = 0; r < renderFragments; r++)
+            _arrangedVolumes = 0;
+            _arrangedCapIndices = 0;
+            int caps = _building.CapCount;
+            for (int i = 0; i < caps; i++)
             {
-                _building.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                if (rf.conditionCount == 0)
+                _building.TryGetCap(i, out VpMultiCutCap cap);
+                if (cap.vertexCount == 0)
                 {
                     continue;
                 }
 
+                _building.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment rf);
+                var world = new Vector4(cap.worldPlane.x, cap.worldPlane.y, cap.worldPlane.z, cap.worldPlane.w);
                 AppendVolume(
-                    r, rf.clip, _candidateCommands, _candidateRfCommandStart, _candidateRfCommandCount,
-                    _candidateRfTransform, ref stencilCommands);
-            }
-
-            int caps = _building.CapCount;
-            for (int i = 0; i < caps; i++)
-            {
+                    cap.renderFragment, VpInstanceClip.Keep(world, cap.boundary.side, rf.offset), _candidateCommands,
+                    _candidateRfCommandStart, _candidateRfCommandCount, _candidateRfTransform, ref stencilCommands);
                 AppendFan(_candidateCapRecords[i], ref capIndexCount);
             }
 
@@ -2147,6 +2372,7 @@ namespace Zantetsu.MeshCut
             Swap(ref _rfCommandCount, ref _candidateRfCommandCount);
             Swap(ref _rfTransform, ref _candidateRfTransform);
             Swap(ref _roots, ref _candidateRoots);
+            Swap(ref _geometries, ref _candidateGeometries);
             Swap(ref _sides, ref _candidateSides);
             _candidateSides.Clear();
 

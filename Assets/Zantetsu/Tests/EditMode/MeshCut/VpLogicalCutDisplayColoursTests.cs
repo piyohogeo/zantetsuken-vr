@@ -12,8 +12,8 @@ namespace Zantetsu.MeshCut.Tests
 {
     /// <summary>
     /// The stencil connection of <see cref="VpLogicalCutDisplay"/> with several bodies and several cameras (DESIGN 5.6,
-    /// T-066): visibility, compatibility groups and bounded colours made per camera from the adopted snapshot, and
-    /// drawn through each camera's own stencil batch. Non-XR, one cut per body, fixed placements.
+    /// T-066, D-183): cap jobs, volume groups and bounded colours made per camera from the adopted snapshot, and drawn
+    /// through each camera's own stencil batch. Non-XR, one cut per body, fixed placements.
     /// <para>
     /// The bodies are the truncated pyramid of the single-body stencil tests (bottom [-1, 1]², top [-0.5, 0.5]² at
     /// y = 2), cut at their own y = 1 with the anchor below, so each fixed bottom keeps an opening of [-0.75, 0.75]²
@@ -167,13 +167,14 @@ namespace Zantetsu.MeshCut.Tests
                 Color32[] image = Draw(scene.display, camera);
 
                 VpStencilPreparation preparation = PreparationOf(scene.display, camera);
-                Assert.That(preparation.targets, Is.EqualTo(4), "two caps per body");
-                Assert.That(preparation.groups, Is.EqualTo(4), "every cap is under its own cut and side");
-                Assert.That(preparation.culledGroups, Is.EqualTo(2), "the two moved tops are behind the camera");
+                Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared));
+                Assert.That(preparation.capRecords, Is.EqualTo(4), "two caps per body");
+                Assert.That(preparation.emptyCaps, Is.Zero);
+                Assert.That(preparation.hiddenCaps, Is.EqualTo(2), "the two moved tops are behind the camera");
+                Assert.That(preparation.jobs, Is.EqualTo(2), "the two seen caps");
+                Assert.That(preparation.volumeGroups, Is.EqualTo(2), "each under its own cut");
                 Assert.That(preparation.colours, Is.EqualTo(2), "the two seen caps overlap: two colours");
-                Assert.That(preparation.ordinaryColours, Is.EqualTo(2));
-                Assert.That(preparation.groupsInLastColour, Is.Zero);
-                Assert.That(preparation.volumeTargets, Is.EqualTo(2), "the volumes of the two kept sides");
+                Assert.That(preparation.volumeCommands, Is.EqualTo(4), "two groups, two submeshes each");
                 Assert.That(preparation.capsDrawn, Is.EqualTo(2), "and their two seen caps");
 
                 Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.True, "the first opening");
@@ -196,9 +197,9 @@ namespace Zantetsu.MeshCut.Tests
                 Color32[] image = Draw(scene.display, camera);
 
                 VpStencilPreparation preparation = PreparationOf(scene.display, camera);
-                Assert.That(preparation.culledGroups, Is.EqualTo(2));
+                Assert.That(preparation.hiddenCaps, Is.EqualTo(2));
+                Assert.That(preparation.volumeGroups, Is.EqualTo(2));
                 Assert.That(preparation.colours, Is.EqualTo(1), "one colour for both");
-                Assert.That(preparation.ordinaryColours, Is.EqualTo(1));
                 Assert.That(IsRed(At(image, camera, -1.3f, 0f)), Is.True);
                 Assert.That(IsRed(At(image, camera, 1.3f, 0f)), Is.True);
                 Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.False, "between them");
@@ -206,31 +207,55 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The overlapping pair under a limit of 2 — one ordinary colour — and of 1 — none: what does not fit goes to
-        /// the last colour, no cap is lost, and no more colours are drawn than the limit. The last colour's image is
-        /// not held to anything beyond that.
+        /// The overlapping pair under a limit of 2 fits, both colours ordinary, and both openings are capped. Under a
+        /// limit of 1 there is no merged last colour to put the second group in: the preparation is refused as
+        /// <see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>, nothing is uploaded, and the camera is not drawn
+        /// at all -- not its bodies either. The display has not stopped: a camera not refused still draws.
         /// </summary>
         [Test]
-        public void ASmallLimit_PutsWhatDoesNotFitInTheLastColour_WithinTheLimit()
+        public void ASmallLimit_RefusesThePreparation_WithNoMergedColour()
         {
-            foreach (int limit in new[] { 2, 1 })
+            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(2), false, 0f, 1.2f))
             {
-                using (Scene scene = CutPyramids(VpStencilTestSettings.Create(limit), false, 0f, 1.2f))
-                {
-                    Camera camera = TopDown(0.6f, 3f);
-                    int inits = scene.display.StencilInitIssues;
-                    Color32[] image = Draw(scene.display, camera);
+                Camera camera = TopDown(0.6f, 3f);
+                int inits = scene.display.StencilInitIssues;
+                Color32[] image = Draw(scene.display, camera);
 
-                    VpStencilPreparation preparation = PreparationOf(scene.display, camera);
-                    Assert.That(preparation.colours, Is.InRange(1, limit), "limit " + limit + ": within the limit");
-                    Assert.That(preparation.ordinaryColours, Is.EqualTo(limit - 1), "limit " + limit);
-                    Assert.That(preparation.groupsInLastColour, Is.EqualTo(2 - (limit - 1)), "limit " + limit + ": the rest in the last");
-                    Assert.That(
-                        scene.display.StencilInitIssues - inits, Is.EqualTo(preparation.colours),
-                        "limit " + limit + ": one initialisation per colour drawn, none past the limit");
-                    Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.True, "limit " + limit + ": the first body is capped");
-                    Assert.That(IsRed(At(image, camera, 1.2f, 0f)), Is.True, "limit " + limit + ": and so is the second");
-                }
+                VpStencilPreparation preparation = PreparationOf(scene.display, camera);
+                Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared), "limit 2");
+                Assert.That(preparation.colours, Is.EqualTo(2), "limit 2: both colours ordinary");
+                Assert.That(scene.display.StencilInitIssues - inits, Is.EqualTo(2), "limit 2: one initialisation per colour");
+                Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.True, "limit 2: the first body is capped");
+                Assert.That(IsRed(At(image, camera, 1.2f, 0f)), Is.True, "limit 2: and so is the second");
+            }
+
+            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(1, 2), false, 0f, 1.2f))
+            {
+                VpLogicalCutDisplay display = scene.display;
+                Camera camera = TopDown(0.6f, 3f);
+                Camera apart = TopDown(-0.5f, 0.5f);
+                Assert.That(display.TryRegisterCamera(camera), Is.True);
+                Assert.That(display.TryRegisterCamera(apart), Is.True);
+                int uploads = display.StencilUploads;
+                int writes = display.StencilBufferWrites;
+                int oneSided = display.OneSidedShadowIssues;
+                int twoSided = display.TwoSidedShadowIssues;
+
+                Assert.That(display.TryPrepareCamera(camera), Is.False, "limit 1: the two groups overlap");
+                VpStencilPreparation refused = PreparationOf(display, camera);
+                Assert.That(refused.outcome, Is.EqualTo(VpStencilPreparationOutcome.ColorLimitExceeded));
+                Assert.That(refused.colours, Is.Zero, "no colour, and none merged");
+                Assert.That(display.StencilUploads, Is.EqualTo(uploads), "nothing uploaded");
+                Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "nothing written");
+                Assert.That(CountsOf(display, camera).preparedNow, Is.False);
+                Assert.Throws<InvalidOperationException>(() => display.Render(0, camera), "not drawn");
+                Assert.That(display.HasDrawnThisFrame, Is.False, "not even its bodies");
+                Assert.That(display.OneSidedShadowIssues + display.TwoSidedShadowIssues, Is.EqualTo(oneSided + twoSided));
+                Assert.That(display.IsHalted || display.IsBroken, Is.False, "the display has not stopped");
+
+                Assert.That(display.TryPrepareCamera(apart), Is.True, "a camera seeing one body fits one colour");
+                Color32[] image = RenderAndRead(display, apart);
+                Assert.That(IsRed(At(image, apart, -0.5f, 0f)), Is.True, "and draws");
             }
         }
 
@@ -266,7 +291,8 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(display.TryPrepareCamera(camera), Is.True);
                 VpStencilPreparation away = PreparationOf(display, camera);
                 Assert.That(away.colours, Is.Zero, "looking away from every cap");
-                Assert.That(away.culledGroups, Is.EqualTo(4));
+                Assert.That(away.hiddenCaps, Is.EqualTo(4));
+                Assert.That(away.jobs, Is.Zero);
 
                 camera.transform.SetPositionAndRotation(position, down);
                 Assert.That(display.TryPrepareCamera(camera), Is.True);
@@ -304,10 +330,13 @@ namespace Zantetsu.MeshCut.Tests
 
                 Color32[] image = Draw(display, camera);
                 VpStencilPreparation preparation = PreparationOf(display, camera);
-                Assert.That(preparation.targets, Is.EqualTo(4));
-                Assert.That(preparation.culledGroups, Is.EqualTo(preparation.groups), "every group is left out");
+                Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared));
+                Assert.That(preparation.capRecords, Is.EqualTo(4));
+                Assert.That(preparation.hiddenCaps + preparation.emptyCaps, Is.EqualTo(4), "every cap is left out");
+                Assert.That(preparation.jobs, Is.Zero);
+                Assert.That(preparation.volumeGroups, Is.Zero);
                 Assert.That(preparation.colours, Is.Zero);
-                Assert.That(preparation.volumeTargets, Is.Zero, "no volume");
+                Assert.That(preparation.volumeCommands, Is.Zero, "no volume");
                 Assert.That(preparation.capsDrawn, Is.Zero);
                 Assert.That(display.StencilInitIssues, Is.EqualTo(inits), "no initialisation");
                 Assert.That(display.StencilVolumeIssues, Is.EqualTo(volumes), "no volume");
@@ -347,7 +376,8 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(PreparationOf(display, wide).colours, Is.EqualTo(2), "the wide camera sees both overlapping caps");
                 VpStencilPreparation narrowed = PreparationOf(display, narrow);
                 Assert.That(narrowed.colours, Is.EqualTo(1), "the narrow one sees only the first body's");
-                Assert.That(narrowed.culledGroups, Is.EqualTo(3));
+                Assert.That(narrowed.hiddenCaps, Is.EqualTo(3));
+                Assert.That(narrowed.jobs, Is.EqualTo(1));
 
                 Color32[] wideImage = RenderAndRead(display, wide);
                 Color32[] narrowImage = RenderAndRead(display, narrow);

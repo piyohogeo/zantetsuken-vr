@@ -459,6 +459,22 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
+        /// Makes the last result unreadable and lets go of every snapshot and ledger it referred to, for a caller that
+        /// has read what it needs and keeps no result of its own here (a display, after a camera's preparation). Refused
+        /// while a classification of this instance is running.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Called while a classification of this instance is running.</exception>
+        public void Release()
+        {
+            if (_classifying)
+            {
+                throw new InvalidOperationException("a classification of this instance is running");
+            }
+
+            Reset();
+        }
+
+        /// <summary>
         /// Makes nothing readable, and lets go of what the used part of the result room refers to -- each job's and each
         /// group's boundary names its ledger -- before the counts are set back, so that no slot outside a readable
         /// result keeps an earlier ledger alive. The room itself is kept.

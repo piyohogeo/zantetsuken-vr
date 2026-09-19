@@ -20,7 +20,7 @@ namespace Zantetsu.MeshCut.Tests
     /// answer only -- red inside a cap, not red where there is none.
     /// </para>
     /// </summary>
-    public class VpLogicalCutDisplayMultiCutTests
+    public partial class VpLogicalCutDisplayMultiCutTests
     {
         private const int SideMaterial = 3;
         private const int EndMaterial = 4;
@@ -204,9 +204,10 @@ namespace Zantetsu.MeshCut.Tests
         /// <summary>
         /// The cube cut through its centre along its diagonal gives a hexagonal section; a second cut on the fixed side
         /// takes one corner off it, so that side's cap of the first cut has seven vertices. It is uploaded and drawn: its
-        /// record holds seven vertices, the camera's colour ranges carry its fan, and the pixels inside it are capped,
-        /// with the corner capped by the other side's triangle. A camera between the fixed part and the moved one looks
-        /// into the opening.
+        /// record holds seven vertices, it is a cap job, the camera's colour ranges carry its fan, and the pixels inside
+        /// it are capped, with the corner capped by the other side's triangle. Its render fragment is under two faces:
+        /// the body is clipped by both, while the job's volume is clipped by its own face alone. A camera between the
+        /// fixed part and the moved one looks into the opening.
         /// </summary>
         [Test]
         public void ASevenVertexCap_IsUploadedAndDrawn()
@@ -223,9 +224,11 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(seven, Is.Not.EqualTo(-1), "a cap of seven vertices");
                 Camera camera = Looking(n * 1.5f, -n, 1.6f);
+                CapturedJobs captured = CaptureJobs(display);
                 Color32[] image = Draw(display, camera);
-                Assert.That(display.Classification.TryGetCap(seven, out VpMultiCutStencilCap classified), Is.True);
-                Assert.That(classified.issued, Is.True, "it is issued");
+                display.CapJobsClassifiedForTest = null;
+                Assert.That(captured.JobOf(seven, out VpCapJob sevenJob), Is.True, "it is a cap job");
+                Assert.That(sevenJob.polygonVertexCount, Is.EqualTo(7));
                 Assert.That(display.TryGetCameraStencil(camera, out VpStencilPreparation preparation, out _), Is.True);
                 int fanned = 0;
                 for (int c = 0; c < preparation.colours; c++)
@@ -236,26 +239,23 @@ namespace Zantetsu.MeshCut.Tests
 
                 Assert.That(fanned, Is.GreaterThanOrEqualTo(3 * 5), "its five triangles are among the uploaded indices");
 
-                // Its render fragment's other cap, on B, faces away from this eye: not seen and not drawn, while the
-                // render fragment's volume is issued once for the cap that is seen.
+                // Its render fragment's other cap, on B, faces away from this eye: it is no job and is not drawn, while
+                // the seven-vertex cap's volume is issued, clipped by its own face only -- the body keeps both.
                 display.TryGetCapRecord(seven, out LogicalCutCapRecord sevenRecord);
                 display.TryGetRenderFragment(sevenRecord.renderFragment, out VpMultiCutRenderFragment sevenFragment);
                 Assert.That(sevenFragment.capCount, Is.EqualTo(2));
+                Assert.That(sevenFragment.clip.PlaneCount, Is.EqualTo(2), "the body is clipped by both faces");
                 int unseen = 0;
                 for (int c = sevenFragment.capStart; c < sevenFragment.capStart + sevenFragment.capCount; c++)
                 {
-                    display.Classification.TryGetCap(c, out VpMultiCutStencilCap other);
-                    if (!other.visible)
-                    {
-                        unseen++;
-                        Assert.That(other.issued, Is.False, "an unseen cap of a kept group is not drawn");
-                    }
+                    unseen += captured.JobOf(c, out _) ? 0 : 1;
                 }
 
-                Assert.That(unseen, Is.EqualTo(1), "the layout: B's cap faces away");
-                display.Classification.TryGetRenderFragment(sevenRecord.renderFragment, out VpMultiCutStencilRenderFragment kept);
-                Assert.That(kept.volumeIssued, Is.True, "its volume is issued");
-                Assert.That(kept.capsComplete, Is.False, "and its caps are not complete for the projection test");
+                Assert.That(unseen, Is.EqualTo(1), "the layout: B's cap faces away and is no job");
+                VpCapVolumeGroup sevenGroup = captured.groups[sevenJob.volumeGroup];
+                Assert.That(sevenGroup.volumeClip.PlaneCount, Is.EqualTo(1), "its volume is clipped by its own face alone");
+                Assert.That(sevenGroup.volumeClip.Equals(sevenJob.volumeClip), Is.True);
+                Assert.That(preparation.hiddenCaps, Is.GreaterThanOrEqualTo(1));
                 Assert.That(IsRed(At(image, camera, new Vector3(0f, 0f, 0f))), Is.True, "capped at the centre");
                 Assert.That(IsRed(At(image, camera, new Vector3(0.6f, -0.6f, 0f))), Is.True, "capped near the cut corner");
                 Assert.That(IsRed(At(image, camera, new Vector3(-0.5f, 0.5f, 0f))), Is.True, "capped across the hexagon");
@@ -355,8 +355,8 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Two registrations of one ledger whose openings overlap on screen: they are classified together, their caps
-        /// are apart (different faces), and so they take different ordinary colours; both openings and their overlap are
-        /// capped, and nothing is capped outside them.
+        /// are different volume groups (different registrations and faces), and so they take different ordinary colours;
+        /// both openings and their overlap are capped, and nothing is capped outside them.
         /// </summary>
         [Test]
         public void OverlappingRegistrations_TakeDifferentColours()
@@ -375,16 +375,17 @@ namespace Zantetsu.MeshCut.Tests
                 Collect(scene);
 
                 Camera camera = Looking(new Vector3(0.5f, 1.5f, 0.25f), Vector3.down, 2f);
+                CapturedJobs captured = CaptureJobs(display);
                 Color32[] image = Draw(display, camera);
-                VpMultiCutStencilClassification classification = display.Classification;
-                Assert.That(classification.TargetCount, Is.EqualTo(4), "every registration's render fragments, together");
+                display.CapJobsClassifiedForTest = null;
+                Assert.That(display.AdoptedGeometries.Count, Is.EqualTo(2), "every registration's draw ranges, together");
                 int firstBottom = RenderFragmentOf(display, first, -1f);
                 int secondBottom = RenderFragmentOf(display, second, -1f);
-                classification.TryGetRenderFragment(firstBottom, out VpMultiCutStencilRenderFragment a);
-                classification.TryGetRenderFragment(secondBottom, out VpMultiCutStencilRenderFragment b);
-                Assert.That(a.volumeIssued && b.volumeIssued, Is.True, "both bottoms are seen");
-                Assert.That(a.colour, Is.Not.EqualTo(b.colour), "overlapping and apart: different colours");
-                Assert.That(Math.Max(a.colour, b.colour), Is.LessThan(display.StencilSettings.maxStencilColors - 1), "both ordinary");
+                Assert.That(captured.JobOfRenderFragment(firstBottom, out VpCapJob a), Is.True, "the first bottom is seen");
+                Assert.That(captured.JobOfRenderFragment(secondBottom, out VpCapJob b), Is.True, "and the second");
+                Assert.That(a.volumeGroup, Is.Not.EqualTo(b.volumeGroup), "different registrations: different volumes");
+                Assert.That(a.colour, Is.Not.EqualTo(b.colour), "overlapping: different colours");
+                Assert.That(captured.colours, Is.LessThanOrEqualTo(display.StencilSettings.maxStencilColors), "every colour ordinary");
                 Assert.That(IsRed(At(image, camera, new Vector3(-0.5f, 0f, -0.5f))), Is.True, "the first alone");
                 Assert.That(IsRed(At(image, camera, new Vector3(1.5f, 0f, 1.2f))), Is.True, "the second alone");
                 Assert.That(IsRed(At(image, camera, new Vector3(0.5f, 0f, 0.25f))), Is.True, "the overlap");
@@ -424,6 +425,66 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(IsRed(At(wideImage, wide, Vector3.zero)), Is.True, "and the centre");
                 Assert.That(IsRed(At(narrowImage, narrow, narrowCentre)), Is.True, "the narrow camera caps what it sees");
             }
+        }
+
+        /// <summary>What the display's cap-job classification held during the last preparation, copied out as it ran.</summary>
+        private sealed class CapturedJobs
+        {
+            public readonly List<VpCapJob> jobs = new List<VpCapJob>();
+            public readonly List<VpCapVolumeGroup> groups = new List<VpCapVolumeGroup>();
+            public int colours;
+
+            public bool JobOf(int capIndex, out VpCapJob job)
+            {
+                foreach (VpCapJob j in jobs)
+                {
+                    if (j.capIndex == capIndex)
+                    {
+                        job = j;
+                        return true;
+                    }
+                }
+
+                job = default;
+                return false;
+            }
+
+            public bool JobOfRenderFragment(int renderFragment, out VpCapJob job)
+            {
+                foreach (VpCapJob j in jobs)
+                {
+                    if (j.renderFragment == renderFragment)
+                    {
+                        job = j;
+                        return true;
+                    }
+                }
+
+                job = default;
+                return false;
+            }
+        }
+
+        private static CapturedJobs CaptureJobs(VpLogicalCutDisplay display)
+        {
+            var captured = new CapturedJobs();
+            display.CapJobsClassifiedForTest = classification =>
+            {
+                captured.jobs.Clear();
+                captured.groups.Clear();
+                for (int j = 0; classification.TryGetJob(j, out VpCapJob job); j++)
+                {
+                    captured.jobs.Add(job);
+                }
+
+                for (int g = 0; classification.TryGetVolumeGroup(g, out VpCapVolumeGroup group); g++)
+                {
+                    captured.groups.Add(group);
+                }
+
+                captured.colours = classification.ColourCount;
+            };
+            return captured;
         }
 
         // ----- capacity ------------------------------------------------------------------------------------------------

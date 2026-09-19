@@ -222,7 +222,7 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(
                         display.TryGetCameraStencil(camera, out VpStencilPreparation preparation, out VpStencilCameraCounts counts),
                         Is.True);
-                    Assert.That(preparation.targets, Is.EqualTo(2), "the split is shown: one cap per side");
+                    Assert.That(preparation.capRecords, Is.EqualTo(2), "the split is shown: one cap per side");
 
                     int uploads = display.CommandUploads;
                     int stencilUploads = display.StencilUploads;

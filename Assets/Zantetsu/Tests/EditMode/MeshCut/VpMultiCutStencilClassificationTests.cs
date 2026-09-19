@@ -13,9 +13,9 @@ namespace Zantetsu.MeshCut.Tests
 {
     /// <summary>
     /// The multi-cut snapshot run through the existing stencil classifiers on the CPU: visibility per cap, compatibility
-    /// and colours per render fragment. Built on the snapshot tests' real-ledger fixture; the single cut is compared
-    /// with the current display's own preparation, which runs the same classifiers over its cap records. Eyes are real
-    /// cameras' matrices; which caps they see is read off the layouts.
+    /// and colours per render fragment. Built on the snapshot tests' real-ledger fixture. The display no longer prepares
+    /// its cameras with this classification (it uses <see cref="VpCapJobClassification"/>, D-183), so nothing here is
+    /// compared with a display. Eyes are real cameras' matrices; which caps they see is read off the layouts.
     /// </summary>
     public class VpMultiCutStencilClassificationTests
     {
@@ -23,13 +23,6 @@ namespace Zantetsu.MeshCut.Tests
         private const int Iterations = 100;
 
         private readonly List<Object> _objects = new List<Object>();
-        private int _frame;
-
-        [SetUp]
-        public void ResetFrame()
-        {
-            _frame = 1;
-        }
 
         [TearDown]
         public void DestroyObjects()
@@ -65,90 +58,6 @@ namespace Zantetsu.MeshCut.Tests
 
         private static VpMultiCutStencilClassification NewClassification() =>
             new VpMultiCutStencilClassification(new VpMultiCutCapacities(64, 1024, 64, 512, 64));
-
-        // ----- single cut against the current display ----------------------------------------------------------------------
-
-        /// <summary>
-        /// The pyramid cut at x = 0, both sides free and moved only 0.02 apart, under colour limits 4, 2 and 1, seen from
-        /// the front (both caps seen, overlapping on screen), from the side and from above: every cap's visibility and the
-        /// counts of groups, groups left out, colours, ordinary colours, groups in the last colour, volumes and caps drawn
-        /// are the current display's own for the same eyes.
-        /// </summary>
-        [Test]
-        public void ASingleCut_ClassifiesAsTheCurrentDisplayDoes()
-        {
-            var views = new (Vector3 position, Vector3 lookAt, string what)[]
-            {
-                (new Vector3(0f, 1f, -5f), new Vector3(0f, 1f, 0f), "front"),
-                (new Vector3(5f, 1f, 0.3f), new Vector3(0f, 1f, 0f), "side"),
-                (new Vector3(0.1f, 6f, 0f), new Vector3(0f, 0f, 0f), "above"),
-            };
-
-            foreach (int limit in new[] { 4, 2, 1 })
-            {
-                using (var storage = new VpCpuGeometryStorage(4096, 16384, 32, 128, 128, Allocator.Persistent))
-                {
-                    LogicalCutLedger ledger = S.NewLedger();
-                    var table = new VpGeometryReferenceTable(storage, 8, 8);
-                    VpStencilSettings settings = VpStencilTestSettings.Create(limit);
-                    Assert.That(
-                        VpLogicalCutDisplay.TryCreate(storage, table, ledger, Materials(), null, null, 4, 8,
-                            VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, () => _frame, out VpLogicalCutDisplay display),
-                        Is.True);
-                    using (new AfterTheFrame(() => _frame++, display))
-                    {
-                        display.Separation = 0.02f;
-                        LogicalFragmentId body = ledger.AddFragment();
-                        Assert.That(display.TryShow(body, S.AppendPyramid(storage), Matrix4x4.identity), Is.True);
-                        Assert.That(display.TryBeginFrame(), Is.True);
-                        S.Cut(ledger, body, new float4(1f, 0f, 0f, 0f));
-                        _frame++;
-                        Assert.That(display.TryBeginFrame(), Is.True);
-
-                        var box = new Bounds(new Vector3(0f, 1f, 0f), new Vector3(2f, 2f, 2f));
-                        var snapshot = S.NewSnapshot();
-                        Assert.That(
-                            snapshot.TryBuild(ledger, body, box, Matrix4x4.identity, Matrix4x4.identity, S.k_none, 0.02f, VpCapBoundsPolygon.EpsilonFor(box)),
-                            Is.EqualTo(VpMultiCutBuildOutcome.Built));
-                        VpMultiCutStencilClassification classification = NewClassification();
-
-                        foreach ((Vector3 position, Vector3 lookAt, string what) in views)
-                        {
-                            Camera camera = NewCamera(position, lookAt);
-                            VpCapEye eye = EyeOf(camera);
-                            Assert.That(display.TryRegisterCamera(camera), Is.True);
-                            Assert.That(display.TryPrepareCamera(camera, eye, eye), Is.True);
-                            Assert.That(display.TryGetCameraStencil(camera, out VpStencilPreparation expected, out _), Is.True);
-                            Assert.That(classification.TryClassify(snapshot, eye, eye, settings), Is.True);
-                            string at = "limit " + limit + ", " + what;
-
-                            Assert.That(classification.CapCount, Is.EqualTo(display.CapRecordCount), at);
-                            for (int c = 0; c < display.CapRecordCount; c++)
-                            {
-                                Assert.That(VpCapVisibility.TryClassify(display, c, eye, eye, settings.facingEpsilon, out VpCapVisibilityVerdict verdict), Is.True);
-                                classification.TryGetCap(c, out VpMultiCutStencilCap cap);
-                                Assert.That(cap.visible, Is.EqualTo(verdict.Keep), at + ": cap " + c + " visibility");
-                            }
-
-                            Assert.That(classification.TargetCount, Is.EqualTo(expected.targets), at + ": targets");
-                            Assert.That(classification.GroupCount, Is.EqualTo(expected.groups), at + ": groups");
-                            Assert.That(classification.CulledGroupCount, Is.EqualTo(expected.culledGroups), at + ": groups left out");
-                            Assert.That(classification.ColourCount, Is.EqualTo(expected.colours), at + ": colours");
-                            Assert.That(classification.OrdinaryColourCount, Is.EqualTo(expected.ordinaryColours), at + ": ordinary colours");
-                            Assert.That(classification.GroupsInLastColour, Is.EqualTo(expected.groupsInLastColour), at + ": in the last colour");
-                            Assert.That(classification.VolumeTargetCount, Is.EqualTo(expected.volumeTargets), at + ": volumes");
-                            Assert.That(classification.IssuedCapCount, Is.EqualTo(expected.capsDrawn), at + ": caps drawn");
-                            if (what == "front")
-                            {
-                                Assert.That(classification.IssuedCapCount, Is.EqualTo(2), at + ": the layout: both caps seen");
-                                Assert.That(classification.OrdinaryColourCount, Is.EqualTo(Math.Min(2, limit - 1)), at + ": overlapping caps are kept apart in ordinary colours");
-                                Assert.That(classification.GroupsInLastColour, Is.EqualTo(2 - Math.Min(2, limit - 1)), at + ": the rest in the last colour");
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // ----- several cuts -------------------------------------------------------------------------------------------------
 
@@ -557,15 +466,6 @@ namespace Zantetsu.MeshCut.Tests
             recorder.CollectFromAllThreads();
             heapDifference = usedAtEnd - usedAtStart;
             return recorder.sampleBlockCount;
-        }
-
-        private Dictionary<int, Material> Materials()
-        {
-            Shader shader = Shader.Find("Zantetsu/VP Indexed Indirect Unlit");
-            Assert.That(shader, Is.Not.Null);
-            var side = new Material(shader) { name = "side" };
-            _objects.Add(side);
-            return new Dictionary<int, Material> { { S.SideMaterial, side } };
         }
     }
 }

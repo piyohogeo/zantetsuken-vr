@@ -1404,6 +1404,9 @@ namespace Zantetsu.MeshCut.Tests
                     RenderFrame(display);
                     Assert.That(display.TryGetCameraStencil(_camera, out VpStencilPreparation preparation, out _), Is.True);
                     Assert.That(preparation.capsDrawn, Is.Zero, "no triangle of an empty cap is issued");
+                    Assert.That(preparation.emptyCaps, Is.EqualTo(display.CapRecordCount), "every cap is empty");
+                    Assert.That(preparation.jobs, Is.Zero, "and no empty cap is a job");
+                    Assert.That(preparation.volumeCommands, Is.Zero, "so no volume either");
                 }
             }
         }
