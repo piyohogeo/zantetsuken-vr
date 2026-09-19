@@ -32,10 +32,10 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// The stencil colour limit of DESIGN 5.6 / D-183: every colour up to it is an ordinary one, and there is no
-        /// merged last colour -- a camera whose volume groups cannot be given colours within it is refused its
-        /// preparation (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>). At least one, and no more than the
-        /// stencil materials can order (<c>VpStencilCapMaterials.MaxColors</c>); a larger value is refused, never cut down.
+        /// The stencil colour limit N of DESIGN 5.6 / D-185, D-186: at most N - 1 ordinary colours, and the last one
+        /// reserved for what they cannot take, drawn the old way. The limit is never a reason to refuse a camera. At least
+        /// one -- with one, everything is drawn in the last colour -- and no more than the stencil materials can order
+        /// (<c>VpStencilCapMaterials.MaxColors</c>); a larger value is refused, never cut down.
         /// </summary>
         public readonly int maxStencilColors;
 
@@ -114,24 +114,28 @@ namespace Zantetsu.MeshCut
         CapacityExceeded = 2,
 
         /// <summary>
-        /// Refused because the volume groups could not be given colours within the limit without two that may overlap
-        /// on the screen sharing one (D-183). Nothing was uploaded and the camera may not draw; another attempt -- from
-        /// another view -- may be made before it draws. Not a shortage of room, and not a stop of the display.
+        /// **No longer produced** (DESIGN D-185, D-186): the colour limit is never a refusal; what the ordinary colours
+        /// cannot take is drawn in the last colour. Kept so that no other value is renumbered.
         /// </summary>
         ColorLimitExceeded = 3,
     }
 
     /// <summary>
-    /// What one camera's last preparation made of the adopted snapshot, in the terms of DESIGN 5.6 / D-183: cap records,
-    /// cap jobs, volume groups and colours. The counts are those of the last attempt; a refused attempt keeps the counts it
+    /// What one camera's last preparation made of the adopted snapshot, in the terms of DESIGN 5.6 / D-183, D-186: cap
+    /// records, cap jobs, volume groups, colours, and what went to the last colour -- counted apart, never added into
+    /// one another. The counts are those of the last attempt; a refused attempt keeps the counts it
     /// reached before the refusal only where they are settled (the cap records), and zero elsewhere.
     /// </summary>
     public readonly struct VpStencilPreparation
     {
         internal VpStencilPreparation(
             VpStencilPreparationOutcome outcome, int capRecords, int emptyCaps, int hiddenCaps, int jobs, int volumeGroups,
-            int colours, int volumeCommands, int capsDrawn)
+            int colours, int volumeCommands, int capsDrawn, int ordinaryVolumeGroups, int lastColourRenderFragments,
+            int lastColourCaps)
         {
+            this.ordinaryVolumeGroups = ordinaryVolumeGroups;
+            this.lastColourRenderFragments = lastColourRenderFragments;
+            this.lastColourCaps = lastColourCaps;
             this.outcome = outcome;
             this.capRecords = capRecords;
             this.emptyCaps = emptyCaps;
@@ -157,19 +161,32 @@ namespace Zantetsu.MeshCut
         /// <summary>Cap jobs: the non-empty caps the visibility test kept, each drawn once.</summary>
         public readonly int jobs;
 
-        /// <summary>Volume groups: each issued once, whatever number of jobs shares it.</summary>
+        /// <summary>Volume groups made, whichever colour they went to.</summary>
         public readonly int volumeGroups;
 
-        /// <summary>The colours uploaded, every one an ordinary one.</summary>
+        /// <summary>Volume groups in ordinary colours: each issued once as an own-face volume, whatever number of jobs shares it.</summary>
+        public readonly int ordinaryVolumeGroups;
+
+        /// <summary>
+        /// The render fragments the last colour issued a volume for, each once, clipped by every selected face. Zero when
+        /// the last colour was not used. Render fragments, not groups.
+        /// </summary>
+        public readonly int lastColourRenderFragments;
+
+        /// <summary>The caps drawn in the last colour, one per job sent there. Zero when it was not used.</summary>
+        public readonly int lastColourCaps;
+
+        /// <summary>The colours uploaded: the ordinary ones used, and the last colour when anything went to it.</summary>
         public readonly int colours;
 
         /// <summary>
-        /// The volume commands uploaded: each volume group's render fragment's commands, one per submesh -- the GPU draws
-        /// the volume issues stand for, not the CPU issues (one per colour).
+        /// The volume commands uploaded: each ordinary volume group's render fragment's commands and each last-colour
+        /// render fragment's commands, one per submesh -- the GPU draws the volume issues stand for, not the CPU issues
+        /// (one per colour).
         /// </summary>
         public readonly int volumeCommands;
 
-        /// <summary>The cap polygons fanned for drawing: one per job.</summary>
+        /// <summary>The cap polygons fanned for drawing: one per job, the last colour's included.</summary>
         public readonly int capsDrawn;
     }
 

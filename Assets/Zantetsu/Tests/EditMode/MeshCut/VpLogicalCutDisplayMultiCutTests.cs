@@ -432,7 +432,10 @@ namespace Zantetsu.MeshCut.Tests
         {
             public readonly List<VpCapJob> jobs = new List<VpCapJob>();
             public readonly List<VpCapVolumeGroup> groups = new List<VpCapVolumeGroup>();
+            public readonly List<int> lastRenderFragments = new List<int>();
             public int colours;
+            public int ordinaryColours;
+            public int lastColour = -1;
 
             public bool JobOf(int capIndex, out VpCapJob job)
             {
@@ -483,6 +486,13 @@ namespace Zantetsu.MeshCut.Tests
                 }
 
                 captured.colours = classification.ColourCount;
+                captured.ordinaryColours = classification.OrdinaryColourCount;
+                captured.lastColour = classification.LastColourIndex;
+                captured.lastRenderFragments.Clear();
+                for (int p = 0; classification.TryGetLastColourRenderFragment(p, out int rf); p++)
+                {
+                    captured.lastRenderFragments.Add(rf);
+                }
             };
             return captured;
         }

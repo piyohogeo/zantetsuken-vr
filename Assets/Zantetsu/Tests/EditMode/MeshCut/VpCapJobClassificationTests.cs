@@ -11,8 +11,8 @@ using S = Zantetsu.MeshCut.Tests.VpMultiCutSnapshotTests;
 namespace Zantetsu.MeshCut.Tests
 {
     /// <summary>
-    /// The cap-job stencil preparation of DESIGN 5.6 / D-183 on the CPU: jobs per visible cap, volume groups of exactly
-    /// the same volume, colours from the initial sections. Snapshots are built from real ledgers; what each case expects
+    /// The cap-job stencil preparation of DESIGN 5.6 / D-183, D-186 on the CPU: jobs per visible cap, volume groups of
+    /// exactly the same volume, ordinary colours from the initial sections, and the last colour for what they cannot take. Snapshots are built from real ledgers; what each case expects
     /// is worked out from its own layout -- which way a cap faces, where the boxes are -- never read back from the
     /// classification under test.
     /// </summary>
@@ -291,7 +291,8 @@ namespace Zantetsu.MeshCut.Tests
         /// <summary>
         /// The same halves with only the negative one anchored and a separation of 1e-6: the positive half is moved by
         /// (1e-6, 0, 0). Its top cap is the same face and side as the fixed half's, but not the same volume -- two groups
-        /// -- and, their initial sections overlapping, two colours; with one colour allowed the preparation is refused.
+        /// -- and, their initial sections overlapping, two colours. With one colour allowed there is no ordinary colour:
+        /// both groups go, whole, to the last colour, which lists each of their render fragments once.
         /// </summary>
         [Test]
         public void VolumesAMillionthApart_AreNotOne()
@@ -310,8 +311,13 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(movedTop.volumeGroup, Is.Not.EqualTo(fixedTop.volumeGroup));
             Assert.That(movedTop.colour, Is.Not.EqualTo(fixedTop.colour));
 
-            Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.ColorLimitExceeded));
-            Assert.That(classification.IsClassified, Is.False);
+            Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.OrdinaryColourCount, Is.Zero);
+            Assert.That(classification.ColourCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourIndex, Is.Zero);
+            Assert.That(classification.LastColourGroupCount, Is.EqualTo(classification.VolumeGroupCount), "every group");
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(classification.JobCount), "every job");
+            AssertLastColourRenderFragmentsListedOnce(classification);
         }
 
         /// <summary>
@@ -358,7 +364,8 @@ namespace Zantetsu.MeshCut.Tests
         /// cut again by the plane x + y = 0 (its anchor on the positive side). Seen from above, the first box's top
         /// drawing polygon spans x -1..1 and the second box's positive top spans x 1.3..2.3 (checked here on the
         /// snapshot's own vertices): apart. Their initial sections -- x -1..1 and 0.3..2.3 -- overlap, so they are not
-        /// given one colour, and one colour is not enough.
+        /// given one colour. With a limit of two -- one ordinary colour -- one of them is left for the last colour; with a
+    /// limit of one, both are there.
         /// </summary>
         [Test]
         public void DrawingPolygonsApart_ButInitialSectionsOverlapping_AreSeparated()
@@ -388,7 +395,20 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(initialMin2, Is.LessThan(initialMax1), "initial sections overlapping");
 
             Assert.That(j1.colour, Is.Not.EqualTo(j2.colour));
-            Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.ColorLimitExceeded));
+
+            Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified));
+            j1 = JobOf(classification, 0, a1, -1f, Vector3.zero);
+            j2 = JobOf(classification, 1, a2, -1f, Vector3.zero);
+            Assert.That(classification.OrdinaryColourCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourIndex, Is.EqualTo(1));
+            Assert.That(j1.colour, Is.Not.EqualTo(j2.colour), "limit 2: one ordinary, the other last");
+            Assert.That(Math.Max(j1.colour, j2.colour), Is.EqualTo(classification.LastColourIndex));
+
+            Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            j1 = JobOf(classification, 0, a1, -1f, Vector3.zero);
+            j2 = JobOf(classification, 1, a2, -1f, Vector3.zero);
+            Assert.That(j1.colour, Is.EqualTo(0).And.EqualTo(j2.colour), "limit 1: both in the last colour");
+            Assert.That(classification.LastColourIndex, Is.Zero);
         }
 
         private static void Extent(VpArrayRange<Vector3> polygon, out float min, out float max)
@@ -477,7 +497,7 @@ namespace Zantetsu.MeshCut.Tests
         /// <summary>
         /// The pair that is apart from above: with one eye's matrix not finite, that eye settles nothing -- the visibility
         /// test then leaves no cap out, so each box's moved-up bottom is a job too (four jobs) -- and every pair may
-        /// overlap: four colours, and refused with one. Then an eye standing over the first top at y = 0.5, looking level
+        /// overlap: four colours, and with a limit of one all four in the last colour. Then an eye standing over the first top at y = 0.5, looking level
         /// along +z, has half of that section behind it: that projection cannot be bounded, and the pair is separated.
         /// </summary>
         [Test]
@@ -496,7 +516,9 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(classification.TryClassify(apart, Geometries(2), notFinite, above, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.JobCount, Is.EqualTo(4));
             Assert.That(classification.ColourCount, Is.EqualTo(4));
-            Assert.That(classification.TryClassify(apart, Geometries(2), notFinite, above, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.ColorLimitExceeded));
+            Assert.That(classification.TryClassify(apart, Geometries(2), notFinite, above, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.ColourCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(4));
 
             var (far, _) = Tops(0.25f, Vector3.zero, new Vector3(0f, 0f, 12f));
             VpCapEye standing = Eye(new Vector3(0f, 0.5f, 0f), new Vector3(0f, 0.5f, 5f));
@@ -549,35 +571,142 @@ namespace Zantetsu.MeshCut.Tests
             return false;
         }
 
-        // ----- the colour limit, room and failures ---------------------------------------------------------------------
+        // ----- the colour limit and the last colour, room and failures ------------------------------------------------
 
         /// <summary>
-        /// Limit 1, with the two tops of different heights of the one-eye case: from the side they are apart, one colour
-        /// (success); from the front they overlap (refused, and the earlier success is not readable); from the side
-        /// again, a little moved, success, equal to a fresh instance's.
+        /// The two tops of different heights of the one-eye case, under a limit of 2 (one ordinary colour and the last).
+        /// From the side they are apart: one ordinary colour, and no last colour at all. From the front they overlap:
+        /// the first in the ordinary colour, the second, whole, in the last -- never refused. From the side again, a
+        /// little moved, no last colour again, equal to a fresh instance's. Under a limit of 1 even the side view has
+        /// both in the last colour, and no ordinary colour.
         /// </summary>
         [Test]
-        public void TheColourLimit_RefusesWithoutMixing_AndAllowsTheNextTry()
+        public void TheColourLimit_SendsWhatDoesNotFitToTheLastColour_AndNothingWhenAllFits()
         {
-            var (apart, _) = Tops(0.25f, Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
+            var (apart, cuts) = Tops(0.25f, Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
             VpCapEye above = Eye(new Vector3(9f, 5f, -1.2f), new Vector3(0f, 0.6f, -1.2f));
             VpCapEye low = Eye(new Vector3(0f, 5f, -6f), Vector3.zero);
             VpCapEye aboveAgain = Eye(new Vector3(9f, 5.2f, -1.1f), new Vector3(0f, 0.6f, -1.2f));
             VpCapJobClassification classification = NewClassification();
 
-            Assert.That(classification.TryClassify(apart, Geometries(2), above, above, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
-            Assert.That(classification.ColourCount, Is.EqualTo(1));
-            Assert.That(classification.TryClassify(apart, Geometries(2), low, low, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.ColorLimitExceeded));
-            Assert.That(classification.IsClassified, Is.False);
-            Assert.That(classification.JobCount, Is.Zero);
-            Assert.That(classification.TryGetJob(0, out _), Is.False);
-            Assert.That(classification.TryGetColour(0, out _), Is.False);
-            Assert.That(classification.IsFor(apart), Is.False);
+            Assert.That(classification.TryClassify(apart, Geometries(2), above, above, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.ColourCount, Is.EqualTo(1), "apart: one ordinary colour");
+            Assert.That(classification.LastColourIndex, Is.EqualTo(-1), "nothing left: no last colour");
+            Assert.That(classification.LastColourRenderFragmentCount + classification.LastColourJobCount + classification.LastColourGroupCount, Is.Zero);
+            Assert.That(classification.TryGetLastColourRenderFragment(0, out _), Is.False);
 
-            Assert.That(classification.TryClassify(apart, Geometries(2), aboveAgain, aboveAgain, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.TryClassify(apart, Geometries(2), low, low, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified), "never refused");
+            Assert.That(classification.OrdinaryColourCount, Is.EqualTo(1));
+            Assert.That(classification.ColourCount, Is.EqualTo(2), "the colours used, the last included");
+            Assert.That(classification.LastColourIndex, Is.EqualTo(1), "after the ordinary colour");
+            Assert.That(classification.OrdinaryVolumeGroupCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourGroupCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourRenderFragmentCount, Is.EqualTo(1));
+            Assert.That(ColourOfTop(classification, 0, cuts[0]), Is.Not.EqualTo(ColourOfTop(classification, 1, cuts[1])));
+            Assert.That(classification.TryGetColour(1, out VpCapJobColour lastColour), Is.True);
+            Assert.That(lastColour.last, Is.True);
+            Assert.That(classification.TryGetColour(0, out VpCapJobColour ordinary), Is.True);
+            Assert.That(ordinary.last, Is.False);
+            AssertLastColourRenderFragmentsListedOnce(classification);
+
+            Assert.That(classification.TryClassify(apart, Geometries(2), aboveAgain, aboveAgain, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.LastColourIndex, Is.EqualTo(-1));
             VpCapJobClassification fresh = NewClassification();
-            Assert.That(fresh.TryClassify(apart, Geometries(2), aboveAgain, aboveAgain, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(fresh.TryClassify(apart, Geometries(2), aboveAgain, aboveAgain, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified));
             AssertSame(classification, fresh);
+
+            Assert.That(classification.TryClassify(apart, Geometries(2), above, above, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.OrdinaryColourCount, Is.Zero, "limit 1: no ordinary colour");
+            Assert.That(classification.ColourCount, Is.EqualTo(1));
+            Assert.That(classification.LastColourIndex, Is.Zero);
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(classification.JobCount), "every visible, non-empty job");
+            AssertLastColourRenderFragmentsListedOnce(classification);
+        }
+
+        /// <summary>
+        /// Two jobs of one volume group on two render fragments (the halves' top caps of the sharing case) never part:
+        /// under every limit both are in one colour. Under a limit of 1 that colour is the last, whose render fragments are
+        /// both halves, each once, while the group is still one group of two jobs.
+        /// </summary>
+        [Test]
+        public void AGroupAcrossRenderFragments_IsNeverSplit_AndTheLastColourListsEachOfItsRenderFragments()
+        {
+            LogicalCutLedger ledger = S.NewLedger();
+            LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f), new float3(0.5f, -0.5f, 0f) });
+            var (a, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
+            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
+            VpCapJobClassification classification = NewClassification();
+
+            foreach (int limit in new[] { 8, 2, 1 })
+            {
+                Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, limit), Is.EqualTo(VpCapJobOutcome.Classified));
+                var tops = new List<VpCapJob>();
+                foreach (VpCapJob job in Jobs(classification))
+                {
+                    if (job.boundary.face.operation == a)
+                    {
+                        tops.Add(job);
+                    }
+                }
+
+                Assert.That(tops.Count, Is.EqualTo(2), "limit " + limit + ": the layout");
+                Assert.That(tops[0].volumeGroup, Is.EqualTo(tops[1].volumeGroup), "limit " + limit + ": one group");
+                Assert.That(tops[0].colour, Is.EqualTo(tops[1].colour), "limit " + limit + ": never split");
+                Assert.That(classification.TryGetVolumeGroup(tops[0].volumeGroup, out VpCapVolumeGroup group), Is.True);
+                Assert.That(group.jobCount, Is.EqualTo(2));
+                Assert.That(group.inLastColour, Is.EqualTo(tops[0].colour == classification.LastColourIndex));
+                AssertLastColourRenderFragmentsListedOnce(classification);
+                if (limit == 1)
+                {
+                    Assert.That(group.inLastColour, Is.True);
+                    var listed = new HashSet<int>();
+                    for (int p = 0; classification.TryGetLastColourRenderFragment(p, out int rf); p++)
+                    {
+                        listed.Add(rf);
+                    }
+
+                    Assert.That(listed.Contains(tops[0].renderFragment) && listed.Contains(tops[1].renderFragment), Is.True, "both halves");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The last colour's render fragments are exactly those of its jobs, each once; every group and job in it says so,
+        /// and every other is in an ordinary colour below it.
+        /// </summary>
+        private static void AssertLastColourRenderFragmentsListedOnce(VpCapJobClassification classification)
+        {
+            int last = classification.LastColourIndex;
+            var expected = new HashSet<int>();
+            int lastJobs = 0;
+            foreach (VpCapJob job in Jobs(classification))
+            {
+                Assert.That(classification.TryGetVolumeGroup(job.volumeGroup, out VpCapVolumeGroup group), Is.True);
+                Assert.That(group.inLastColour, Is.EqualTo(job.colour == last && last >= 0));
+                if (last >= 0 && job.colour == last)
+                {
+                    expected.Add(job.renderFragment);
+                    lastJobs++;
+                }
+                else
+                {
+                    Assert.That(job.colour, Is.LessThan(classification.OrdinaryColourCount), "an ordinary colour");
+                }
+            }
+
+            var listed = new List<int>();
+            for (int p = 0; classification.TryGetLastColourRenderFragment(p, out int rf); p++)
+            {
+                listed.Add(rf);
+            }
+
+            Assert.That(listed.Count, Is.EqualTo(classification.LastColourRenderFragmentCount));
+            Assert.That(new HashSet<int>(listed).Count, Is.EqualTo(listed.Count), "each render fragment once");
+            Assert.That(new HashSet<int>(listed).SetEquals(expected), Is.True, "exactly those of its jobs");
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(lastJobs));
         }
 
         private static void AssertSame(VpCapJobClassification a, VpCapJobClassification b)
@@ -842,7 +971,7 @@ namespace Zantetsu.MeshCut.Tests
             VpCapEye many = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapEye fewer = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapEye none = Eye(new Vector3(0f, 0.5f, -6f), new Vector3(0f, 0.5f, -12f));
-            VpCapJobClassification classification = NewClassification();
+            VpCapJobClassification classification = NewClassification(snapshot.CapCount);
 
             int HeldByResult() => classification.JobCount + classification.VolumeGroupCount;
 
@@ -850,8 +979,16 @@ namespace Zantetsu.MeshCut.Tests
             int manyJobs = classification.JobCount;
             Assert.That(classification.LedgerReferencesHeld, Is.EqualTo(HeldByResult()));
 
-            Assert.That(classification.TryClassify(snapshot, Geometries(1), many, many, FacingEpsilon, new Vector2(10f, 10f), 1), Is.EqualTo(VpCapJobOutcome.ColorLimitExceeded));
-            Assert.That(classification.LedgerReferencesHeld, Is.Zero, "after a refusal");
+            // Everything in the last colour: its groups still hold their ledgers, exactly as many as the result.
+            Assert.That(classification.TryClassify(snapshot, Geometries(1), many, many, FacingEpsilon, new Vector2(10f, 10f), 1), Is.EqualTo(VpCapJobOutcome.Classified));
+            Assert.That(classification.LastColourJobCount, Is.EqualTo(classification.JobCount));
+            Assert.That(classification.LedgerReferencesHeld, Is.EqualTo(HeldByResult()), "after a success in the last colour");
+
+            // A refusal that still exists -- room short -- on the same instance: a snapshot of more caps than its room.
+            var (larger, _) = Tops(0.25f, Vector3.zero, new Vector3(3f, 0f, 0f), new Vector3(6f, 0f, 0f));
+            Assert.That(larger.CapCount, Is.GreaterThan(snapshot.CapCount), "the layout");
+            Assert.That(classification.TryClassify(larger, Geometries(3), many, many, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.CapacityExceeded));
+            Assert.That(classification.LedgerReferencesHeld, Is.Zero, "after a refusal for room");
 
             Assert.That(classification.TryClassify(snapshot, Geometries(1), many, many, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
             classification.AfterJobWritten = count => throw new InvalidProgramException("partway");

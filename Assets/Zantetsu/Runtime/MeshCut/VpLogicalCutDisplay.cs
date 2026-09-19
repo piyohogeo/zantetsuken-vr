@@ -247,11 +247,13 @@ namespace Zantetsu.MeshCut
     /// this display took is given back exactly once.
     /// </para>
     /// <para>
-    /// **Body, depth and shadow read one record; a stencil volume reads its own face.** Each render fragment's clip
-    /// record (every selected half-space, before the separation) and its separation are what the surfaces, the depth
-    /// and both casters are drawn with. A stencil volume is drawn with the same geometry, placement and separation but
-    /// clipped by one face only -- the cap's own face and kept side (<see cref="VpCapJob.volumeClip"/>) -- never by the
-    /// render fragment's other selected faces. The kerf is zero: no plane is moved to open a gap.
+    /// **Body, depth and shadow read one record; an ordinary colour's stencil volume reads its own face.** Each render
+    /// fragment's clip record (every selected half-space, before the separation) and its separation are what the
+    /// surfaces, the depth and both casters are drawn with. In an ordinary colour a stencil volume is drawn with the same
+    /// geometry, placement and separation but clipped by one face only -- the cap's own face and kept side
+    /// (<see cref="VpCapJob.volumeClip"/>) -- never by the render fragment's other selected faces. The last colour's
+    /// volumes are the old kind: the render fragment's own clip record, every selected face (D-186). The kerf is zero:
+    /// no plane is moved to open a gap.
     /// </para>
     /// <para>
     /// **Caps, per camera (DESIGN 5.6, D-183).** One cap per render fragment and selected boundary, up to fourteen
@@ -261,12 +263,16 @@ namespace Zantetsu.MeshCut
     /// volume is issued once: the representative render fragment's draw ranges (one command per submesh) and placement,
     /// clipped by the cap's own face only (<see cref="VpCapJob.volumeClip"/>) at its separation, applied once -- never the
     /// render fragment's clip of every selected face, which stays the body's, the depth's and the shadow's. Each job's
-    /// cap is its clipped drawing polygon, fanned. Groups are given colours from the initial sections' projection in
-    /// both eyes; every colour is an ordinary one, and a camera whose groups do not fit the limit is refused its
-    /// preparation (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>) and may be prepared again -- there is
-    /// no merged colour. Within a colour the order is initialisation, every volume group of the colour, every cap job of
-    /// the colour. The draw ranges each registration's volumes are compared and drawn with are a table built with the
-    /// snapshot, in its registration order, and adopted with it.
+    /// cap is its clipped drawing polygon, fanned. Groups are given ordinary colours from the initial sections'
+    /// projection in both eyes, at most the limit less one of them (DESIGN D-185, D-186). The groups that fit no ordinary
+    /// colour go, whole, to the last colour, which is drawn the old way: after its initialisation, one volume per render
+    /// fragment of its jobs, each once -- that render fragment's commands (every submesh) with its body's own clip record
+    /// of every selected face -- and then those jobs' caps, each once; a cap drawn in an ordinary colour is never drawn
+    /// again there. When nothing is left the last colour is not issued at all. What the last colour draws wrongly is
+    /// accepted (DESIGN 5.2, exception 8); the colour limit alone never refuses a camera. Within an ordinary colour the
+    /// order is initialisation, every volume group of the colour, every cap job of the colour. The draw ranges each
+    /// registration's volumes are compared and drawn with are a table built with the snapshot, in its registration
+    /// order, and adopted with it.
     /// </para>
     /// <para>
     /// **One stencil batch per registered camera.** A camera is registered with <see cref="TryRegisterCamera"/>, up to
@@ -1077,10 +1083,10 @@ namespace Zantetsu.MeshCut
         /// or transferred.
         /// <para>
         /// False when the camera is not registered or has already drawn in this frame -- changing nothing -- or when this
-        /// attempt is refused: the snapshot holds more caps than a preparation has room for
-        /// (<see cref="VpStencilPreparationOutcome.CapacityExceeded"/>), or its volume groups cannot be given colours
-        /// within the limit from this view (<see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>). A refused
-        /// attempt has already voided the camera's earlier preparation: the camera is not prepared, nothing is uploaded
+        /// attempt is refused because the snapshot holds more caps than a preparation has room for
+        /// (<see cref="VpStencilPreparationOutcome.CapacityExceeded"/>). The colour limit is never a refusal: what the
+        /// ordinary colours cannot take is drawn in the last colour (D-185, D-186). A refused attempt has already voided
+        /// the camera's earlier preparation: the camera is not prepared, nothing is uploaded
         /// or written, <see cref="Render"/> refuses it, and <see cref="TryGetCameraStencil"/> tells which refusal it was.
         /// Neither refusal stops the display or touches another camera; the camera may be prepared again before it
         /// draws. An upload refused within the capacity checked at adoption, or a GPU call that throws, stops the display
@@ -1126,7 +1132,7 @@ namespace Zantetsu.MeshCut
                         left, right, out int commands, out int capIndices, out int colours,
                         out VpStencilPreparation preparation))
                 {
-                    // Refused -- for room or for the colour limit -- before anything was uploaded or written. The batch
+                    // Refused for room before anything was uploaded or written. The batch
                     // still holds its last upload, which nothing draws: Render asks the preparation, not the batch.
                     slot.preparation = preparation;
                     return false;
@@ -1322,13 +1328,23 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// DESIGN 5.6 / D-183 over the adopted snapshot, for two eyes, through the one cap-job classification of every
-        /// registration's render fragments together, with the draw-range table adopted with that snapshot; then the
-        /// arrangement, colour by colour, into the stencil scratch: each of the colour's volume groups once -- its
-        /// representative render fragment's commands, one per command of its body, with that render fragment's
-        /// transform and the group's own-face clip -- and then each of the colour's cap jobs, its drawing polygon fanned.
-        /// False, with the refusal said in <paramref name="preparation"/>, for room or for the colour limit; nothing is
-        /// uploaded either way here.
+        /// DESIGN 5.6 / D-183, D-185, D-186 over the adopted snapshot, for two eyes, through the one cap-job classification
+        /// of every registration's render fragments together, with the draw-range table adopted with that snapshot; then
+        /// the arrangement, colour by colour, into the stencil scratch. An ordinary colour: each of its volume groups
+        /// once -- its representative render fragment's commands, one per command of its body, with that render
+        /// fragment's transform and the group's own-face clip -- and then each of its cap jobs, its drawing polygon
+        /// fanned. The last colour, when anything went to it: each render fragment of its jobs once -- its commands, its
+        /// transform and its body's own clip record of every selected face -- and then each of its cap jobs. A group's
+        /// representative render fragment never stands in for the last colour's volumes.
+        /// <para>
+        /// **Room.** No arrangement is larger than the largest one asked of the batches at adoption, which takes every
+        /// non-empty cap as a job with an own-face volume of its render fragment's commands. A render fragment whose
+        /// jobs are all in ordinary colours issues at most that; one with any job in the last colour issues one volume
+        /// less for each such job and one volume -- the same commands -- in the last colour, which is never more.
+        /// The commands per volume are the render fragment's body commands either way, and the clip record is one fixed-size
+        /// record whatever its plane count, so the adoption's check of counts and form covers the last colour's volumes too.
+        /// </para>
+        /// False, with the refusal said in <paramref name="preparation"/>, for room only; nothing is uploaded here.
         /// </summary>
         private bool TryArrange(
             in VpCapEye left, in VpCapEye right, out int commandCount, out int capIndexCount, out int colourCount,
@@ -1351,14 +1367,16 @@ namespace Zantetsu.MeshCut
             VpCapJobOutcome outcome = _capJobs.TryClassify(
                 _snapshot, _geometries, left, right, _settings.facingEpsilon, _settings.ndcMargin,
                 _settings.maxStencilColors);
+            if (outcome == VpCapJobOutcome.CapacityExceeded)
+            {
+                preparation = Refusal(VpStencilPreparationOutcome.CapacityExceeded, capRecords);
+                return false;
+            }
+
             if (outcome != VpCapJobOutcome.Classified)
             {
-                preparation = Refusal(
-                    outcome == VpCapJobOutcome.ColorLimitExceeded
-                        ? VpStencilPreparationOutcome.ColorLimitExceeded
-                        : VpStencilPreparationOutcome.CapacityExceeded,
-                    capRecords);
-                return false;
+                // The colour limit no longer ends a classification (D-185); nothing else is expected here.
+                throw new InvalidOperationException("the cap-job classification ended unexpectedly: " + outcome);
             }
 
             // The result names the snapshot it was made from; nothing of another build is arranged.
@@ -1377,17 +1395,32 @@ namespace Zantetsu.MeshCut
                 int volumeStart = commandCount;
                 int capStart = capIndexCount;
 
-                // Every volume group of the colour, each once, before any cap of the colour.
-                for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
+                if (range.last)
                 {
-                    _capJobs.TryGetGroupOfColour(p, out int g);
-                    _capJobs.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
-                    AppendVolume(
-                        group.renderFragment, group.volumeClip, _commands, _rfCommandStart, _rfCommandCount, _rfTransform,
-                        ref commandCount);
+                    // The last colour, the old way: every render fragment of its jobs once, clipped by every selected
+                    // face -- the body's own record -- before any of its caps.
+                    for (int p = 0; p < _capJobs.LastColourRenderFragmentCount; p++)
+                    {
+                        _capJobs.TryGetLastColourRenderFragment(p, out int rf);
+                        _snapshot.TryGetRenderFragment(rf, out VpMultiCutRenderFragment fragment);
+                        AppendVolume(rf, fragment.clip, _commands, _rfCommandStart, _rfCommandCount, _rfTransform, ref commandCount);
+                    }
+                }
+                else
+                {
+                    // Every volume group of the colour, each once, before any cap of the colour.
+                    for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
+                    {
+                        _capJobs.TryGetGroupOfColour(p, out int g);
+                        _capJobs.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
+                        AppendVolume(
+                            group.renderFragment, group.volumeClip, _commands, _rfCommandStart, _rfCommandCount,
+                            _rfTransform, ref commandCount);
+                    }
                 }
 
-                // Then every cap job of those groups: its own cap's clipped drawing polygon, never the initial section.
+                // Then every cap job of those groups, each once: its own cap's clipped drawing polygon, never the initial
+                // section. A job is in exactly one colour, so no cap is drawn in two.
                 for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
                 {
                     _capJobs.TryGetGroupOfColour(p, out int g);
@@ -1409,14 +1442,15 @@ namespace Zantetsu.MeshCut
             _arrangedCapIndices = capIndexCount;
             preparation = new VpStencilPreparation(
                 VpStencilPreparationOutcome.Prepared, capRecords, _capJobs.EmptyCapCount, _capJobs.HiddenCapCount,
-                _capJobs.JobCount, _capJobs.VolumeGroupCount, colourCount, commandCount, capsDrawn);
+                _capJobs.JobCount, _capJobs.VolumeGroupCount, colourCount, commandCount, capsDrawn,
+                _capJobs.OrdinaryVolumeGroupCount, _capJobs.LastColourRenderFragmentCount, _capJobs.LastColourJobCount);
             return true;
         }
 
         /// <summary>A refused preparation: the cap records are settled by the snapshot, and nothing else was made.</summary>
         private static VpStencilPreparation Refusal(VpStencilPreparationOutcome outcome, int capRecords)
         {
-            return new VpStencilPreparation(outcome, capRecords, 0, 0, 0, 0, 0, 0, 0);
+            return new VpStencilPreparation(outcome, capRecords, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
 
         /// <summary>
@@ -2321,8 +2355,9 @@ namespace Zantetsu.MeshCut
         /// The most any camera's arrangement of this candidate could hold, in one colour: every cap whose drawing polygon
         /// is not empty taken as a job of its own -- no two sharing a volume -- with its own-face volume, and every such
         /// cap's fan. It is only asked about, never uploaded, and it judges room and form alone: that the volume groups
-        /// of a real preparation may share, or fit the colour limit, is not decided here, and a camera's colour limit is
-        /// never a reason to refuse an adoption.
+        /// of a real preparation may share is not decided here, and a camera's colour limit is never a reason to refuse
+        /// an adoption. It also bounds the last colour (D-186): a render fragment's one volume there replaces at least
+        /// one own-face volume of the same commands (see <see cref="TryArrange"/>).
         /// </summary>
         private void BuildLargestStencilArrangement(out int stencilCommands, out int capIndexCount, out int colours)
         {

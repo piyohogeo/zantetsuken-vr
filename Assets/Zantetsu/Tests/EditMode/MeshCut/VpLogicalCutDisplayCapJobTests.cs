@@ -11,8 +11,9 @@ namespace Zantetsu.MeshCut.Tests
     /// The cap-job preparation of DESIGN 5.6 / D-183 connected to the display: every camera's stencil work comes from
     /// <see cref="VpCapJobClassification"/> over the adopted snapshot and the draw-range table adopted with it. A job's
     /// volume is clipped by its own face alone while the body keeps every selected face; identical volumes are issued
-    /// once; a colour limit that cannot be met refuses one camera's preparation and nothing else; and the table follows
-    /// the snapshot through a registration let go and through an adoption refused. Same fixture as the rest of this
+    /// once; what the ordinary colours cannot take goes to the last colour and nothing is refused for the colour limit
+    /// (D-185, D-186; the last colour's own cases are in VpLogicalCutDisplayLastColourTests); and the table follows the
+    /// snapshot through a registration let go and through an adoption refused. Same fixture as the rest of this
     /// class: the cube [-1, 1]^3, test capacities, a coarse pixel answer.
     /// </summary>
     public partial class VpLogicalCutDisplayMultiCutTests
@@ -195,7 +196,8 @@ namespace Zantetsu.MeshCut.Tests
         /// X5: the same cuts, but B's minus side has no anchor and moves along -x. A-B-'s and A-B+'s top caps close the
         /// same face on the same side, at different separations: two volume groups. Their drawing polygons are apart
         /// on the screen, but the initial sections -- the whole square of each, moved -- overlap, so the groups take two
-        /// colours. Under a limit of one there is no colour for the second: the preparation is refused.
+        /// colours. Under a limit of one there is no ordinary colour: both groups go to the last colour, which issues each
+    /// of the two render fragments once -- prepared, not refused.
         /// </summary>
         [Test]
         public void X5_DifferentSeparations_AreSeparateGroups_ColouredByTheirInitialSections()
@@ -213,9 +215,13 @@ namespace Zantetsu.MeshCut.Tests
                     display.TryGetCameraStencil(camera, out VpStencilPreparation preparation, out _);
                     if (colours == 1)
                     {
-                        Assert.That(prepared, Is.False, "limit 1: refused");
-                        Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.ColorLimitExceeded));
-                        Assert.Throws<InvalidOperationException>(() => display.Render(0, camera));
+                        Assert.That(prepared, Is.True, "limit 1: prepared, in the last colour");
+                        AssertArrangementFollowsTheClassification(display, camera, captured, "X5, limit 1");
+                        Assert.That(captured.lastColour, Is.Zero);
+                        Assert.That(preparation.lastColourRenderFragments, Is.EqualTo(captured.lastRenderFragments.Count));
+                        display.Render(0, camera);
+                        Assert.That(display.HasDrawnThisFrame, Is.True, "the bodies are drawn too");
+                        Read(camera);
                         continue;
                     }
 
@@ -250,7 +256,9 @@ namespace Zantetsu.MeshCut.Tests
             Scene scene = NewScene(colours: colours);
             LogicalCutLedger ledger = scene.ledger;
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0.5f, -0.5f, 0f) });
-            Assert.That(scene.display.TryShow(root, AppendCube(scene.storage, false), Matrix4x4.identity), Is.True);
+            VpStoredGeometry cube = AppendCube(scene.storage, false);
+            Assert.That(scene.display.TryShow(root, cube, Matrix4x4.identity), Is.True);
+            ExpectBodies(scene, (cube, Matrix4x4.identity));
             scene.display.Separation = 0.5f;
             var (_, _, aMinus) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             Cut(ledger, aMinus, new float4(1f, 0f, 0f, 0f));
@@ -259,83 +267,46 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         // ----- the colour limit, per camera ----------------------------------------------------------------------------
+        // The view changes that went from a success to a refusal for the colour limit and back are now
+        // OrdinaryOnly_ThenLast_ThenNothing_ThenRefusals_ThenOrdinaryAgain: the same views, with what is arranged checked.
 
         /// <summary>
-        /// Under a limit of one on X5: prepared looking at A-B+ alone; refused as ColorLimitExceeded looking at both --
-        /// nothing uploaded or written, the camera not prepared and its draw refused, the display not stopped; prepared
-        /// again once the view moves back. The shared classification holds nothing after any of them.
+        /// Two cameras both prepared and both registered before either is rendered, under a limit of 2 on X5: the one
+        /// looking at A-B+ alone uses one ordinary colour and no last colour; the one seeing both uses the ordinary colour
+        /// and the last. Each camera's arrangement is its own and follows its own classification; preparing the second
+        /// does not touch the first, and both draw.
         /// </summary>
         [Test]
-        public void TheColourLimit_RefusesOneView_AndAnotherViewIsPreparedAgain()
+        public void TwoCameras_OneWithTheLastColour_TheOtherOrdinaryOnly_EachItsOwn()
         {
-            using (Scene scene = X5Scene(1))
-            {
-                VpLogicalCutDisplay display = scene.display;
-                Camera camera = Looking(new Vector3(0.5f, 0.25f, 0f), Vector3.down, 0.3f);
-                Assert.That(display.TryRegisterCamera(camera), Is.True);
-                VpCapEye narrow = EyeOf(camera);
-                camera.transform.position = new Vector3(0f, 0.25f, 0f);
-                camera.orthographicSize = 2f;
-                VpCapEye wide = EyeOf(camera);
-
-                Assert.That(display.TryPrepareCamera(camera, narrow, narrow), Is.True, "one group seen: one colour");
-                AssertTheClassificationHoldsNothing(display, "after a success");
-                display.TryGetCameraStencil(camera, out VpStencilPreparation first, out VpStencilCameraCounts before);
-                Assert.That(first.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared));
-                Assert.That(before.preparedNow, Is.True);
-
-                Assert.That(display.TryPrepareCamera(camera, wide, wide), Is.False, "two overlapping groups under a limit of one");
-                AssertTheClassificationHoldsNothing(display, "after a refusal");
-                display.TryGetCameraStencil(camera, out VpStencilPreparation refused, out VpStencilCameraCounts after);
-                Assert.That(refused.outcome, Is.EqualTo(VpStencilPreparationOutcome.ColorLimitExceeded), "told apart from room");
-                Assert.That(refused.capRecords, Is.EqualTo(display.CapRecordCount));
-                Assert.That(refused.colours + refused.volumeCommands + refused.capsDrawn, Is.Zero, "nothing arranged is reported");
-                Assert.That(after.uploads, Is.EqualTo(before.uploads), "nothing uploaded");
-                Assert.That(after.bufferWrites, Is.EqualTo(before.bufferWrites), "nothing written");
-                Assert.That(after.preparedNow, Is.False, "the earlier preparation is voided");
-                Assert.Throws<InvalidOperationException>(() => display.Render(0, camera), "its draw is refused");
-                Assert.That(display.HasDrawnThisFrame, Is.False, "before anything is registered");
-                Assert.That(display.IsHalted || display.IsBroken, Is.False, "not a stop");
-
-                Assert.That(display.TryPrepareCamera(camera, narrow, narrow), Is.True, "the view moved back: prepared again");
-                display.TryGetCameraStencil(camera, out VpStencilPreparation again, out VpStencilCameraCounts last);
-                Assert.That(again.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared));
-                Assert.That(last.uploads, Is.EqualTo(before.uploads + 1), "one upload for the new success");
-                display.Render(0, camera);
-                Read(camera);
-                AssertTheClassificationHoldsNothing(display, "after drawing");
-            }
-        }
-
-        /// <summary>
-        /// Two cameras both prepared and both registered before either is rendered, under a limit of one on X5: the one
-        /// looking at A-B+ alone is prepared and draws its cap; the one seeing both is refused and draws nothing, and
-        /// the first is untouched by it. The refused camera, not yet drawn, is prepared from another view and draws.
-        /// </summary>
-        [Test]
-        public void TwoCameras_OneRefusedForColours_TheOtherDrawsItsOwn()
-        {
-            using (Scene scene = X5Scene(1))
+            using (Scene scene = X5Scene(2))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera narrow = Looking(new Vector3(0.5f, 0.25f, 0f), Vector3.down, 0.3f);
                 Camera wide = Looking(new Vector3(0f, 0.25f, 0f), Vector3.down, 2f);
                 Assert.That(display.TryRegisterCamera(narrow), Is.True);
                 Assert.That(display.TryRegisterCamera(wide), Is.True);
+                CapturedJobs captured = CaptureJobs(display);
                 Assert.That(display.TryPrepareCamera(narrow), Is.True);
-                Assert.That(display.TryPrepareCamera(wide), Is.False, "refused for colours");
-                display.TryGetCameraStencil(narrow, out VpStencilPreparation narrowPreparation, out VpStencilCameraCounts narrowCounts);
-                Assert.That(narrowPreparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared), "the other camera is untouched");
+                AssertArrangementFollowsTheClassification(display, narrow, captured, "narrow");
+                Assert.That(captured.lastColour, Is.EqualTo(-1), "narrow: ordinary only");
+                display.TryGetCameraStencil(narrow, out VpStencilPreparation narrowBefore, out VpStencilCameraCounts narrowCountsBefore);
+
+                Assert.That(display.TryPrepareCamera(wide), Is.True, "not refused for colours");
+                AssertArrangementFollowsTheClassification(display, wide, captured, "wide");
+                Assert.That(captured.lastColour, Is.EqualTo(1), "wide: the ordinary colour and the last");
+                display.CapJobsClassifiedForTest = null;
+
+                display.TryGetCameraStencil(narrow, out VpStencilPreparation narrowAfter, out VpStencilCameraCounts narrowCounts);
+                Assert.That(narrowAfter.colours, Is.EqualTo(narrowBefore.colours), "the other camera is untouched");
+                Assert.That(narrowAfter.lastColourCaps, Is.Zero);
+                Assert.That(narrowCounts.uploads, Is.EqualTo(narrowCountsBefore.uploads));
                 Assert.That(narrowCounts.preparedNow, Is.True);
 
                 display.Render(0, narrow);
-                Assert.Throws<InvalidOperationException>(() => display.Render(0, wide), "the refused camera draws nothing");
-                Color32[] narrowImage = Read(narrow);
-                Assert.That(IsRed(At(narrowImage, narrow, new Vector3(0.5f, 0f, 0f))), Is.True, "the prepared camera caps A-B+");
-
-                VpCapEye aside = EyeOf(narrow);
-                Assert.That(display.TryPrepareCamera(wide, aside, aside), Is.True, "not drawn yet: prepared from another view");
                 display.Render(0, wide);
+                Color32[] narrowImage = Read(narrow);
+                Assert.That(IsRed(At(narrowImage, narrow, new Vector3(0.5f, 0f, 0f))), Is.True, "the narrow camera caps A-B+");
                 Read(wide);
                 Assert.That(display.TryPrepareCamera(narrow), Is.False, "a drawn camera is not prepared again");
                 Assert.That(display.TryUnregisterCamera(narrow), Is.False, "nor let go this frame");

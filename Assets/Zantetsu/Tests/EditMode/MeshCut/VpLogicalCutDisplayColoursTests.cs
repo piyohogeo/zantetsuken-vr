@@ -207,55 +207,39 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The overlapping pair under a limit of 2 fits, both colours ordinary, and both openings are capped. Under a
-        /// limit of 1 there is no merged last colour to put the second group in: the preparation is refused as
-        /// <see cref="VpStencilPreparationOutcome.ColorLimitExceeded"/>, nothing is uploaded, and the camera is not drawn
-        /// at all -- not its bodies either. The display has not stopped: a camera not refused still draws.
+        /// The overlapping pair (two single-cut pyramids) under a limit of 3 fits in two ordinary colours, and no last
+        /// colour is issued. Under a limit of 2 -- one ordinary colour -- the second group goes to the last colour: two
+        /// colours used, two initialisations, one ordinary group and one render fragment in the last colour. Under a
+        /// limit of 1 both are in the last colour. Never refused; the bodies are drawn every time (this layout casts no shadow). A single
+        /// cut per render fragment makes the last colour's every-face clip the same one face, so both openings are
+        /// capped in each case; that is this layout's, not a claim about the last colour in general.
         /// </summary>
         [Test]
-        public void ASmallLimit_RefusesThePreparation_WithNoMergedColour()
+        public void ASmallLimit_SendsTheRestToTheLastColour_AndNothingIsRefused()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(2), false, 0f, 1.2f))
+            foreach ((int limit, int ordinaryGroups, int lastRenderFragments) in new[] { (3, 2, 0), (2, 1, 1), (1, 0, 2) })
             {
-                Camera camera = TopDown(0.6f, 3f);
-                int inits = scene.display.StencilInitIssues;
-                Color32[] image = Draw(scene.display, camera);
+                using (Scene scene = CutPyramids(VpStencilTestSettings.Create(limit), false, 0f, 1.2f))
+                {
+                    VpLogicalCutDisplay display = scene.display;
+                    Camera camera = TopDown(0.6f, 3f);
+                    int inits = display.StencilInitIssues;
+                    Color32[] image = Draw(display, camera);
+                    string what = "limit " + limit;
 
-                VpStencilPreparation preparation = PreparationOf(scene.display, camera);
-                Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared), "limit 2");
-                Assert.That(preparation.colours, Is.EqualTo(2), "limit 2: both colours ordinary");
-                Assert.That(scene.display.StencilInitIssues - inits, Is.EqualTo(2), "limit 2: one initialisation per colour");
-                Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.True, "limit 2: the first body is capped");
-                Assert.That(IsRed(At(image, camera, 1.2f, 0f)), Is.True, "limit 2: and so is the second");
-            }
-
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(1, 2), false, 0f, 1.2f))
-            {
-                VpLogicalCutDisplay display = scene.display;
-                Camera camera = TopDown(0.6f, 3f);
-                Camera apart = TopDown(-0.5f, 0.5f);
-                Assert.That(display.TryRegisterCamera(camera), Is.True);
-                Assert.That(display.TryRegisterCamera(apart), Is.True);
-                int uploads = display.StencilUploads;
-                int writes = display.StencilBufferWrites;
-                int oneSided = display.OneSidedShadowIssues;
-                int twoSided = display.TwoSidedShadowIssues;
-
-                Assert.That(display.TryPrepareCamera(camera), Is.False, "limit 1: the two groups overlap");
-                VpStencilPreparation refused = PreparationOf(display, camera);
-                Assert.That(refused.outcome, Is.EqualTo(VpStencilPreparationOutcome.ColorLimitExceeded));
-                Assert.That(refused.colours, Is.Zero, "no colour, and none merged");
-                Assert.That(display.StencilUploads, Is.EqualTo(uploads), "nothing uploaded");
-                Assert.That(display.StencilBufferWrites, Is.EqualTo(writes), "nothing written");
-                Assert.That(CountsOf(display, camera).preparedNow, Is.False);
-                Assert.Throws<InvalidOperationException>(() => display.Render(0, camera), "not drawn");
-                Assert.That(display.HasDrawnThisFrame, Is.False, "not even its bodies");
-                Assert.That(display.OneSidedShadowIssues + display.TwoSidedShadowIssues, Is.EqualTo(oneSided + twoSided));
-                Assert.That(display.IsHalted || display.IsBroken, Is.False, "the display has not stopped");
-
-                Assert.That(display.TryPrepareCamera(apart), Is.True, "a camera seeing one body fits one colour");
-                Color32[] image = RenderAndRead(display, apart);
-                Assert.That(IsRed(At(image, apart, -0.5f, 0f)), Is.True, "and draws");
+                    VpStencilPreparation preparation = PreparationOf(display, camera);
+                    Assert.That(preparation.outcome, Is.EqualTo(VpStencilPreparationOutcome.Prepared), what);
+                    Assert.That(preparation.volumeGroups, Is.EqualTo(2), what);
+                    Assert.That(preparation.ordinaryVolumeGroups, Is.EqualTo(ordinaryGroups), what);
+                    Assert.That(preparation.lastColourRenderFragments, Is.EqualTo(lastRenderFragments), what);
+                    Assert.That(preparation.lastColourCaps, Is.EqualTo(lastRenderFragments), what + ": one cap per render fragment here");
+                    int colours = ordinaryGroups + (lastRenderFragments > 0 ? 1 : 0);
+                    Assert.That(preparation.colours, Is.EqualTo(colours), what + ": the colours used");
+                    Assert.That(display.StencilInitIssues - inits, Is.EqualTo(colours), what + ": one initialisation per colour used");
+                    Assert.That(display.HasDrawnThisFrame, Is.True, what + ": drawn, bodies included");
+                    Assert.That(IsRed(At(image, camera, 0f, 0f)), Is.True, what + ": the first body is capped");
+                    Assert.That(IsRed(At(image, camera, 1.2f, 0f)), Is.True, what + ": and so is the second");
+                }
             }
         }
 

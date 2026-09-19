@@ -183,15 +183,16 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// Under a limit of one colour, views that fit (one body seen, or none) alternate with a view that does not (both
-        /// overlapping bodies): the job, group and colour counts change, every third preparation is refused as
-        /// ColorLimitExceeded, and still no GC.Alloc sample is seen on this thread -- a refusal allocates nothing either.
+        /// Under a limit of 2 colours -- one ordinary and the last -- views with one body seen (ordinary only), both
+        /// overlapping bodies (the ordinary colour and the last) and none (nothing) alternate: the job, group, colour and
+        /// last-colour counts change, every preparation succeeds, and still no GC.Alloc sample is seen on this thread --
+        /// neither the last colour's render fragment list nor its arrangement allocates.
         /// </summary>
         [Test]
-        public void RefusalsForTheColourLimit_AmongSuccesses_ShowNoManagedAllocation()
+        public void TheLastColour_AmongOrdinaryViews_ShowsNoManagedAllocation()
         {
             AssertTheMeasuresSeeAllocation();
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(1), 16, false, 0f, 1.2f))
+            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(2), 16, false, 0f, 1.2f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera camera = TopDown(0.6f, 3f);
@@ -204,11 +205,14 @@ namespace Zantetsu.MeshCut.Tests
                 VpCapEye none = EyeOf(camera);
 
                 var views = new[] { one, both, none };
-                var expected = new[] { VpStencilPreparationOutcome.Prepared, VpStencilPreparationOutcome.ColorLimitExceeded, VpStencilPreparationOutcome.Prepared };
+                var colours = new[] { 1, 2, 0 };
+                var lastCaps = new[] { 0, 1, 0 };
                 for (int v = 0; v < views.Length; v++)
                 {
-                    display.TryPrepareCamera(camera, views[v], views[v]);
-                    Assert.That(PreparationOf(display, camera).outcome, Is.EqualTo(expected[v]), "view " + v);
+                    Assert.That(display.TryPrepareCamera(camera, views[v], views[v]), Is.True, "view " + v);
+                    VpStencilPreparation preparation = PreparationOf(display, camera);
+                    Assert.That(preparation.colours, Is.EqualTo(colours[v]), "view " + v);
+                    Assert.That(preparation.lastColourCaps, Is.EqualTo(lastCaps[v]), "view " + v);
                 }
 
                 for (int i = 0; i < Warmup; i++)
@@ -229,9 +233,9 @@ namespace Zantetsu.MeshCut.Tests
                 }
 
                 Measurement measured = Close(recorder, start, Iterations);
-                TestContext.WriteLine("successes and refusals: " + measured + ", " + prepared + " prepared");
-                Assert.That(Iterations - prepared, Is.EqualTo(Iterations / views.Length), "every third view refused");
-                Assert.That(display.StencilUploads - uploads, Is.EqualTo(prepared), "only the successes uploaded");
+                TestContext.WriteLine("ordinary, last colour and empty views: " + measured + ", " + prepared + " prepared");
+                Assert.That(prepared, Is.EqualTo(Iterations), "none refused");
+                Assert.That(display.StencilUploads - uploads, Is.EqualTo(prepared), "one upload per preparation");
                 Assert.That(measured.samples, Is.Zero, "no GC.Alloc sample on this thread");
                 Assert.That(display.HeldPreparationLooks, Is.Zero);
                 Assert.That(display.TryPrepareCamera(camera, one, one), Is.True);
@@ -439,7 +443,7 @@ namespace Zantetsu.MeshCut.Tests
 
                 display.PreparationRecordLimit = records - 1;
                 Assert.That(display.TryPrepareCamera(camera), Is.False, "one record more than there is room for");
-                Assert.That(PreparationOf(display, camera).outcome, Is.EqualTo(VpStencilPreparationOutcome.CapacityExceeded), "told apart from the colour limit");
+                Assert.That(PreparationOf(display, camera).outcome, Is.EqualTo(VpStencilPreparationOutcome.CapacityExceeded), "a refusal for room");
 
                 VpStencilCameraCounts after = CountsOf(display, camera);
                 Assert.That(after.uploads, Is.EqualTo(before.uploads), "nothing uploaded");

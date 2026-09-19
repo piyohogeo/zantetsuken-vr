@@ -16,9 +16,8 @@ namespace Zantetsu.MeshCut
         CapacityExceeded = 1,
 
         /// <summary>
-        /// The volume groups could not all be given a colour within the limit without two groups that may overlap on
-        /// the screen sharing one. Nothing is merged; this preparation is refused, and another may be tried (DESIGN 5.6,
-        /// D-183). Not a shortage of room.
+        /// **No longer returned** (DESIGN D-185, D-186): what does not fit the ordinary colours is drawn in the last
+        /// colour instead of refusing. Kept so that no other value is renumbered; nothing produces it.
         /// </summary>
         ColorLimitExceeded = 2,
     }
@@ -102,8 +101,9 @@ namespace Zantetsu.MeshCut
     {
         internal VpCapVolumeGroup(
             int registration, int renderFragment, VpClipBoundary boundary, Vector4 signedPlane, Vector3 offset,
-            VpInstanceClip volumeClip, int colour, int jobStart, int jobCount)
+            VpInstanceClip volumeClip, int colour, bool inLastColour, int jobStart, int jobCount)
         {
+            this.inLastColour = inLastColour;
             this.registration = registration;
             this.renderFragment = renderFragment;
             this.boundary = boundary;
@@ -126,21 +126,35 @@ namespace Zantetsu.MeshCut
         public readonly VpInstanceClip volumeClip;
         public readonly int colour;
 
+        /// <summary>
+        /// Whether the group fitted no ordinary colour and went, whole, to the last colour (D-186). Its own-face volume
+        /// is then not issued: the last colour issues one volume per render fragment, clipped by every selected face.
+        /// </summary>
+        public readonly bool inLastColour;
+
         /// <summary>The group's jobs: <see cref="VpCapJobClassification.TryGetJobOfGroup"/> from this start, this many.</summary>
         public readonly int jobStart;
 
         public readonly int jobCount;
     }
 
-    /// <summary>One colour: its volume groups, all drawn before any of its cap jobs.</summary>
+    /// <summary>
+    /// One colour: its volume groups, all drawn before any of its cap jobs. An ordinary colour issues each group's
+    /// own-face volume; the last colour (<see cref="last"/>) issues instead one volume per render fragment of its jobs
+    /// (<see cref="VpCapJobClassification.TryGetLastColourRenderFragment"/>), clipped by every selected face.
+    /// </summary>
     public readonly struct VpCapJobColour
     {
-        internal VpCapJobColour(int groupStart, int groupCount, int jobCount)
+        internal VpCapJobColour(int groupStart, int groupCount, int jobCount, bool last)
         {
             this.groupStart = groupStart;
             this.groupCount = groupCount;
             this.jobCount = jobCount;
+            this.last = last;
         }
+
+        /// <summary>Whether this is the last colour of D-186, drawn the old way; false for an ordinary colour.</summary>
+        public readonly bool last;
 
         /// <summary>The colour's groups: <see cref="VpCapJobClassification.TryGetGroupOfColour"/> from this start, this many.</summary>
         public readonly int groupStart;
@@ -175,10 +189,18 @@ namespace Zantetsu.MeshCut
     /// shown apart on the screen from every initial section of the other, each grown by the margin -- the sections
     /// before the other faces cut them, the region a volume's count can be left in, never the smaller drawing polygon.
     /// Touching, lying within the margin, reaching the eye's plane, and anything missing, malformed or not finite are
-    /// "may overlap". A group is checked against every group already in a colour, not a representative. Every colour up
-    /// to the limit is an ordinary colour; there is no merged last colour, and a group that fits nowhere refuses the
-    /// whole preparation (<see cref="VpCapJobOutcome.ColorLimitExceeded"/>). A job that could leave a negative count is
-    /// not left out of the test.
+    /// "may overlap". A group is checked against every group already in a colour, not a representative. A job that could
+    /// leave a negative count is not left out of the test.
+    /// </para>
+    /// <para>
+    /// **The last colour (DESIGN D-185, D-186).** Of a limit of N colours, at most the first N - 1 are ordinary colours
+    /// and the last one is reserved. A group that fits no ordinary colour goes, whole, to the last colour -- its jobs are
+    /// never split between the two -- so with N = 1 every job is there. The last colour's volumes are not its groups':
+    /// it lists the render fragments of its jobs, each once (<see cref="TryGetLastColourRenderFragment"/>), whose
+    /// volumes are drawn clipped by every selected face, and then its jobs' caps. It exists only when something is left
+    /// for it; it then takes the colour index after the ordinary ones, so <see cref="ColourCount"/> is the colours used,
+    /// not the reserved slot's number. What it draws wrongly is accepted (DESIGN 5.2, exception 8); the ordinary colours'
+    /// rule is not loosened. A classification is never refused for the colour limit.
     /// </para>
     /// <para>
     /// **Sections.** The initial section is the snapshot's own, kept for the drawn cap when it was built
@@ -187,8 +209,8 @@ namespace Zantetsu.MeshCut
     /// </para>
     /// <para>
     /// **Room and lifetime.** All room is made once from the snapshot capacities: jobs and groups at most one per cap.
-    /// Only a successful classification is readable; any other ending -- an argument refused, room short, the colour
-    /// limit, an exception partway -- leaves nothing readable, not even an earlier success, and changes no input. The
+    /// Only a successful classification is readable; any other ending -- an argument refused, room short, an exception
+    /// partway -- leaves nothing readable, not even an earlier success, and changes no input. The
     /// looks at the snapshot and the caller's list are held only while a classification runs and let go in a finally.
     /// The results are indices and values; they belong to the snapshot and the build they were made from and mean
     /// nothing once it is built again. The getters do not check that: a caller confirms <see cref="IsFor"/> before using
@@ -219,6 +241,8 @@ namespace Zantetsu.MeshCut
         private readonly bool[] _sectionValid;
         private readonly Vector2[] _leftPoints;
         private readonly Vector2[] _rightPoints;
+        private readonly int[] _lastRenderFragments;
+        private readonly bool[] _renderFragmentListed;
 
         // Held only while a classification runs.
         private VpMultiCutSnapshot _reading;
@@ -232,6 +256,10 @@ namespace Zantetsu.MeshCut
         private int _jobCount;
         private int _groupCount;
         private int _colourCount;
+        private int _lastColour = -1;
+        private int _lastGroupCount;
+        private int _lastJobCount;
+        private int _lastRenderFragmentCount;
 
         /// <summary>
         /// Makes the room for snapshots made with <paramref name="capacities"/>. Every size is worked out in 64-bit
@@ -268,6 +296,8 @@ namespace Zantetsu.MeshCut
             _sectionValid = new bool[caps];
             _leftPoints = new Vector2[(int)points];
             _rightPoints = new Vector2[(int)points];
+            _lastRenderFragments = new int[capacities.renderFragments];
+            _renderFragmentListed = new bool[capacities.renderFragments];
         }
 
         public VpMultiCutCapacities Capacities => _capacities;
@@ -279,8 +309,30 @@ namespace Zantetsu.MeshCut
         public VpCapJobOutcome LastOutcome { get; private set; }
 
         public int JobCount => IsClassified ? _jobCount : 0;
+
+        /// <summary>Every volume group made, whichever colour it went to.</summary>
         public int VolumeGroupCount => IsClassified ? _groupCount : 0;
+
+        /// <summary>The colours used: the ordinary ones, and the last colour when anything went to it.</summary>
         public int ColourCount => IsClassified ? _colourCount : 0;
+
+        /// <summary>The ordinary colours used, at most the limit less one.</summary>
+        public int OrdinaryColourCount => IsClassified ? (_lastColour >= 0 ? _colourCount - 1 : _colourCount) : 0;
+
+        /// <summary>The volume groups given an ordinary colour: each issued as one own-face volume.</summary>
+        public int OrdinaryVolumeGroupCount => IsClassified ? _groupCount - _lastGroupCount : 0;
+
+        /// <summary>The index of the last colour among the colours used, or -1 when nothing went to it.</summary>
+        public int LastColourIndex => IsClassified ? _lastColour : -1;
+
+        /// <summary>The volume groups sent to the last colour. Their own-face volumes are not issued.</summary>
+        public int LastColourGroupCount => IsClassified ? _lastGroupCount : 0;
+
+        /// <summary>The cap jobs sent to the last colour: its caps, each drawn once.</summary>
+        public int LastColourJobCount => IsClassified ? _lastJobCount : 0;
+
+        /// <summary>The render fragments of the last colour's jobs, each once: its volumes. Not a count of groups.</summary>
+        public int LastColourRenderFragmentCount => IsClassified ? _lastRenderFragmentCount : 0;
 
         /// <summary>Caps of the last successful classification's snapshot whose drawing polygon was empty.</summary>
         public int EmptyCapCount { get; private set; }
@@ -336,6 +388,17 @@ namespace Zantetsu.MeshCut
             return ok;
         }
 
+        /// <summary>
+        /// The render fragment at <paramref name="position"/> of the last colour's list: the render fragments its jobs
+        /// belong to, each once, in the order its jobs are listed.
+        /// </summary>
+        public bool TryGetLastColourRenderFragment(int position, out int renderFragment)
+        {
+            bool ok = IsClassified && position >= 0 && position < _lastRenderFragmentCount;
+            renderFragment = ok ? _lastRenderFragments[position] : -1;
+            return ok;
+        }
+
         /// <summary>Called with the count of jobs written so far, each time one is written. For tests only.</summary>
         internal Action<int> AfterJobWritten { get; set; }
 
@@ -353,6 +416,9 @@ namespace Zantetsu.MeshCut
         /// <exception cref="ArgumentException">
         /// The snapshot is not built, or the list does not have one entry of at least one draw range per registration.
         /// </exception>
+        /// <param name="maxColours">
+        /// The colour limit N: at most N - 1 ordinary colours, and the last one for what they cannot take (D-186).
+        /// </param>
         /// <exception cref="ArgumentOutOfRangeException">The epsilon, the margin or the colour limit is out of range.</exception>
         /// <exception cref="InvalidOperationException">Called while a classification of this instance is running.</exception>
         public VpCapJobOutcome TryClassify(
@@ -490,6 +556,10 @@ namespace Zantetsu.MeshCut
             _jobCount = 0;
             _groupCount = 0;
             _colourCount = 0;
+            _lastColour = -1;
+            _lastGroupCount = 0;
+            _lastJobCount = 0;
+            _lastRenderFragmentCount = 0;
             EmptyCapCount = 0;
             HiddenCapCount = 0;
         }
@@ -608,8 +678,12 @@ namespace Zantetsu.MeshCut
                 _rightState[j] = ProjectFor(section, offset, right, margin, j, _rightPoints);
             }
 
-            // 4. Colours, first fit; every colour an ordinary one.
+            // 4. Ordinary colours, first fit, at most the limit less one; a group that fits none goes whole to the last.
+            const int ToLast = -2;
+            int ordinaryLimit = maxColours - 1;
             int colours = 0;
+            int lastGroups = 0;
+            int lastJobs = 0;
             for (int g = 0; g < groups; g++)
             {
                 int chosen = -1;
@@ -627,20 +701,40 @@ namespace Zantetsu.MeshCut
                     chosen = conflict ? -1 : c;
                 }
 
+                if (chosen < 0 && colours < ordinaryLimit)
+                {
+                    chosen = colours++;
+                }
+
                 if (chosen < 0)
                 {
-                    if (colours >= maxColours)
-                    {
-                        return VpCapJobOutcome.ColorLimitExceeded;
-                    }
-
-                    chosen = colours++;
+                    chosen = ToLast;
+                    lastGroups++;
+                    lastJobs += _groupJobCount[g];
                 }
 
                 _colourOfGroup[g] = chosen;
             }
 
+            // The last colour takes the index after the ordinary colours used, and exists only when something went to it.
+            int last = lastGroups > 0 ? colours : -1;
+            if (last >= 0)
+            {
+                for (int g = 0; g < groups; g++)
+                {
+                    if (_colourOfGroup[g] == ToLast)
+                    {
+                        _colourOfGroup[g] = last;
+                    }
+                }
+
+                colours++;
+            }
+
             _colourCount = colours;
+            _lastColour = last;
+            _lastGroupCount = lastGroups;
+            _lastJobCount = lastJobs;
 
             // 5. The groups listed colour by colour, and the results written out.
             position = 0;
@@ -657,15 +751,38 @@ namespace Zantetsu.MeshCut
                     }
                 }
 
-                _colours[c] = new VpCapJobColour(start, position - start, jobsInColour);
+                _colours[c] = new VpCapJobColour(start, position - start, jobsInColour, c == last);
             }
+
+            // The last colour's render fragments: those of its jobs, each once, in the order its jobs are listed.
+            int listed = 0;
+            if (last >= 0)
+            {
+                Array.Clear(_renderFragmentListed, 0, snapshot.RenderFragmentCount);
+                VpCapJobColour lastColour = _colours[last];
+                for (int p = lastColour.groupStart; p < lastColour.groupStart + lastColour.groupCount; p++)
+                {
+                    int g = _groupOfColour[p];
+                    for (int k = _groupFirstJob[g]; k < _groupFirstJob[g] + _groupJobCount[g]; k++)
+                    {
+                        int rf = _jobs[_jobOfGroup[k]].renderFragment;
+                        if (!_renderFragmentListed[rf])
+                        {
+                            _renderFragmentListed[rf] = true;
+                            _lastRenderFragments[listed++] = rf;
+                        }
+                    }
+                }
+            }
+
+            _lastRenderFragmentCount = listed;
 
             for (int g = 0; g < groups; g++)
             {
                 VpCapJob first = _jobs[_jobOfGroup[_groupFirstJob[g]]];
                 _groups[g] = new VpCapVolumeGroup(
                     first.registration, first.renderFragment, first.boundary, first.signedPlane, first.offset, first.volumeClip,
-                    _colourOfGroup[g], _groupFirstJob[g], _groupJobCount[g]);
+                    _colourOfGroup[g], _colourOfGroup[g] == last, _groupFirstJob[g], _groupJobCount[g]);
             }
 
             for (int j = 0; j < jobs; j++)
