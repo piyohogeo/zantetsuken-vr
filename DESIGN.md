@@ -7,7 +7,7 @@
 | 文書目的 | Codexで継続更新するプロジェクト設計上の正本 |
 | ステータス | Draft v1.5 / PoC実装準備・観測／未来評価設計段階 |
 | 作成日 | 2026-08-21 |
-| 最終更新 | 2026-09-18 |
+| 最終更新 | 2026-09-20 |
 | 想定エンジン | Unity 6.3 LTS 6000.3.22f1 + OpenXR + URP |
 | 採用アセット | Synty POLYGON City Pack（主素材）、Poly Pro Universe（比較・補助素材） |
 | 初期対象 | PCVR、90Hz基準。Quest単体版は当面スコープ外 |
@@ -1120,7 +1120,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 | D-018 | 自由飛行剛体の直接予測 | 剛体の未来運動は19.3の直接予測Gate内だけをPhase 4.54でO(1)予測し、対象外・前提不一致は4.51へ進む。静止／姿勢固定の4.53とAnimation／MobPlan評価は維持する | 人間承認済み、2026-09-13。接触・転動の先行率改善を製品範囲から外し、命中後の処理費用・準備待ちは現在状態経路で引き受ける |
 | D-019 | 文書管理 | 本Markdownを唯一の設計正本とし、DOCXは使用しない | 確定 |
 | D-020 | 観測基盤 | 21章のProfiler・Trace・Captureで性能、因果関係、対応画像を確認する | 確定。検証用形式と手順は17章の実装詳細とする |
-| D-021 | ログ方針 | 状態遷移をenumと整数IDで記録し、高頻度の文字列生成とDebug.Log連打を避ける | 確定 |
+| D-021 | ログ方針 | 任意の開発診断の記録は21.17の簡易JSONLロガーへ統一する。既存Traceの状態遷移はenumと整数IDで記録し、高頻度の文字列生成とDebug.Log連打を避ける。簡易ロガーの費用・欠落許容は21.17に従う | 人間承認済み、2026-09-20。既存Profiler・Trace・Captureと幾何・物理の整合性は維持する |
 | D-025 | 公開Repo | Licensed入力と派生Assetはローカル／許可された非公開環境に限定し、公開Git履歴・Artifact・共有Cacheへ含めない。詳細は10.8に従う | 確定 |
 | D-029 | Unity実行環境 | Unity Hub管理領域のUnity 6.3 LTS 6000.3.22f1を使用し、ProjectVersion.txtで完全固定する | 確定 |
 | D-030 | Repository構成 | 専用Repo直下をUnity Project Rootとし、ユーザーパスは%USERNAME%で匿名化する | 確定 |
@@ -1242,7 +1242,7 @@ NPCのCurrent／Futureは19.3の共通Table評価を使い、RootとAnimation入
 
 ## 14. 技術検証項目
 
-製品Playerの性能合否・実行予算を判断する測定は、3.3のIL2CPP Playerを基準とする。性能測定は必要になる既存Phaseで行い、3.3の初回Player動作確認へ測定や性能目標の達成を前倒ししない。Editor／Monoの測定は開発中の参考値とし、機能確認やKernel単体の比較・退行調査に利用できるが、製品性能の確認を代替しない。Development／非Development、観測有無等の実行構成は既存の測定記録で区別し、IL2CPPという名称だけで同条件と扱わない。保存形式は17章の実装詳細とする。本変更だけを理由に完了済みPhaseを再開せず、全試験・過去測定の再実行を要求しない。
+製品Playerの性能合否・実行予算を判断する測定は、3.3のIL2CPP Playerを基準とする。性能測定は必要になる既存Phaseで行い、3.3の初回Player動作確認へ測定や性能目標の達成を前倒ししない。Editor／Monoの測定は開発中の参考値とし、機能確認やKernel単体の比較・退行調査に利用できるが、製品性能の確認を代替しない。Development／非Development、観測と21.17の簡易ログ出力の有無等の実行構成は既存の測定記録で区別し、IL2CPPという名称だけで同条件と扱わない。保存形式は17章の実装詳細とする。本変更だけを理由に完了済みPhaseを再開せず、全試験・過去測定の再実行を要求しない。
 
 CPU性能の測定では実行先・並列度・Main配置条件を区別し、取得できるクロック／CPU performance状態を診断に使ってよい。固定値や意味が不確かなcounterを実効クロックの証明にせず、取得不能を完了Gateにしない。記録方法・項目・周期は実装詳細とし、常設collector・clock固定・専用schemaを要求しない。
 
@@ -1272,7 +1272,7 @@ Phase 5.6／5.7の任意機能固有の確認は7.9.7、任意Phase 7.1は7.10�
 | T-017 | 自由飛行剛体の直接予測 | 19.3の直接予測が本体状態と統合され、対象外・前提不一致は現在状態経路へ進む | Phase 4.54で開始Snapshot、重心／Actor原点、回転、WorldPhysicsProfile、FixedStep境界、予測Horizon、Gate対象外を確認する。点Anchor、接触／転動、既知Constraint付き対象を直接予測へ入れない。面リベースはT-093で確認し、外部Probeの測定値を製品保証にしない |
 | T-018 | Pose Table評価 | 19.3の同じ有効入力からCurrent／Future共通のPoseを要求順に依存せず生成する | Phase 4.61で任意時刻評価・追加時刻進行なし、Loop／Clamp・終端・明示Clip切替、入力不一致拒否、D-136のscopeを少数例で確認する。採用Rig／ClipのBake・サンプル間補間品質と現在骨への適用を確認し、費用・容量は21.2に従う。計画統合は4.70、切断成果物Commitは条件付き4.72へ残す |
 | T-019 | Trace相関と完全性 | 21.3／21.4の因果関係と欠落の扱いを満たす | 代表的な処理の公開・完了・破棄を追跡し、不完全な記録を完全な再現根拠にしないことを確認する。保存形式や旧Readerを固定しない |
-| T-020 | Trace負荷 | 観測処理がGameplayを待たせず、競合や性能判断を歪めない | 代表負荷で観測有無の費用・メモリ・記録欠落を確認する |
+| T-020 | Trace負荷 | Trace観測処理がGameplayを待たせず、競合や性能判断を歪めない | 代表負荷でTrace観測有無の費用・メモリ・記録欠落を確認する。21.17の簡易ロガーに非待機・無割当・無影響を要求する試験にはしない |
 | T-026 | 公開Repo分離 | 公開履歴と成果物にSynty入力・派生Assetが混入せず、原本が非公開Git LFS Repoだけに存在する | ignore、CI検査、履歴スキャン、LFS追跡状態、private remoteのアクセス権を確認 |
 | T-032 | Unity版固定 | PATHやHub既定版に関係なく6000.3.22f1だけで開き、誤版起動を拒否できる | ProjectVersion、明示exe、batchmode、Package Lockと別版併存を検査 |
 | T-033 | Repository衛生 | 公開Repoに生成Cache、ユーザー実名パス、Synty Assetが混入しない | ignore、機密パターン、絶対パス、履歴をCIで検査 |
@@ -1362,7 +1362,7 @@ Phase 2.9の初期移植元は `zantetsuken-mesh-cut-probe` の `FINAL_REPORT.md
 
 3.9の初期移植元は独立Probe `zantetsuken-convex-cut-cook-probe` の `REPORT.md`（2026-09-13追補）のA-Walk、Burst R0→R1、double質量計算とする。これは初期実装選択であり方式の恒久固定ではない。Probe全体、比較Backend、旧managed prototype、全測定の再現はmerge条件にせず、公開SyntheticとLicensed入力の既存分離を維持する。
 
-今回追加・細分化するPhaseは既存実装を段階的に完成させる境界とし、後続機能の仮実装やPhase専用のRuntime状態・Coordinator・Scene・Assembly・Logger・Schema・Receipt／Proof・引渡しartifactを追加しない。0.5～0.55は一つのSandbox Sceneを継続使用し、0.5時点の空Sceneを恒久保存しない。0.53のCoreは4.50へ、1.51／1.52のShader・PassはPhase 2へ接続する。観測は既存Trace／Profiler、画面・Consoleと19.1.12の開発情報を使う。調整値は暫定とし、操作値は0.55、製品Wave容量は4.50前、Stencil予算はPhase 2以降の既存Open Itemで判断する。
+今回追加・細分化するPhaseは既存実装を段階的に完成させる境界とし、後続機能の仮実装やPhase専用のRuntime状態・Coordinator・Scene・Assembly・Logger・Schema・Receipt／Proof・引渡しartifactを追加しない。0.5～0.55は一つのSandbox Sceneを継続使用し、0.5時点の空Sceneを恒久保存しない。0.53のCoreは4.50へ、1.51／1.52のShader・PassはPhase 2へ接続する。観測は既存Trace／Profiler、画面・Consoleと19.1.12の開発情報を使い、任意診断の記録は21.17へ統一する。調整値は暫定とし、操作値は0.55、製品Wave容量は4.50前、Stencil予算はPhase 2以降の既存Open Itemで判断する。
 
 1.50～1.52は、既存またはテスト内で手続き生成した少数の固定合成Fixtureで能力を確認する。固定Descriptor／Color割当てを新しい製品modeとして残さず、Dataset・Generator Framework・別描画Backendを追加しない。不成立でも事実と再現条件を本書へ記録すればProbeは閉じられるが、依存する後続PhaseとPhase 2へは進まない。代替経路・部分Bit・Stencilなし継続・同期Fallback・Recoveryは自動追加せず、別の人間判断へ戻す。T-011／T-067／T-089は共通の低レベル確認を再利用し、Phase 2で製品状態との接続を確認する。新Test IDや同じ試験行列の複製は作らない。
 
@@ -1532,7 +1532,11 @@ Temporary Stencil Capの見え方に関する本章の受入れ基準には、5.
 
 ## 17. Codexでの継続更新ルール
 
-開発用検証（Test、Benchmark、Probe、Fixture、Harness、Capture、Trace）の保存形式・Schema・Codec・Golden・Manifest・Receipt・Report・Index・Profile・file構成・hash・version・Loader・実行／再開手順・反復回数・試験階層は、本書で製品Runtimeの外部形式またはSubsystem間の意味的互換契約として明示したものを除き実装詳細とする。DESIGNは成立させる能力を定め、検証方法だけの変更に改訂を要求しない。Runtimeの所有権・資源寿命・非待機・容量境界・安全な失敗・公開状態・Geometry／Physics契約は維持する。これには、所有権移転、対象ファイルを操作する権限、安全なteardown、完成済み出力の公開に必要な意味的条件を含む。その確認・受渡し方法と型・保存表現は実装詳細とし、既存ReceiptやOS lockそのものの維持を義務にしない。
+開発用検証（Test、Benchmark、Probe、Fixture、Harness、Capture、Trace）の保存形式・Schema・Codec・Golden・Manifest・Receipt・Report・Index・Profile・file構成・hash・version・Loader・実行／再開手順・反復回数・試験階層は、本書で製品Runtimeの外部形式またはSubsystem間の意味的互換契約として明示したもの、および21.17の簡易ロガーに明示する契約を除き実装詳細とする。DESIGNは成立させる能力を定め、検証方法だけの変更に改訂を要求しない。Runtimeの所有権・資源寿命・非待機・容量境界・安全な失敗・公開状態・Geometry／Physics契約は維持する。これには、所有権移転、対象ファイルを操作する権限、安全なteardown、完成済み出力の公開に必要な意味的条件を含む。その確認・受渡し方法と型・保存表現は実装詳細とし、既存ReceiptやOS lockそのものの維持を義務にしない。
+
+任意の開発診断の記録は21.17へ統一し、別のLogger、診断Dump、独自の診断ファイル出力・収集機構を新設しない。既存の同用途処理は必要な記録を移すか削除し、互換ラッパー・二重記録・旧形式移行ツールを残さない。Profiler・Trace・Capture、調整用Preset・再生用Pose列、テスト／計測成果物は維持し、それらを名目とした任意診断の別経路は作らない。同じ実装内に同居する場合も用途で分け、再生・再計算に必要な入力と条件を削除しない。文字列定数や値変換だけの補助処理、画面・操作UIは維持でき、Unity／外部PackageのConsole改造や全Console出力の捕捉を要求しない。
+
+この一本化で置換するログ規定と任意診断保存の旧仕様は、以下の履歴保持規則の例外として直接削除・置換し、経緯をGitへ委ねる。同じ責務のDecision／Test IDを継続し、旧仕様や互換経路を温存しない。Phase 0.55のDump等の完了記録は過去の事実として維持するが、継続使用する任意診断保存は一本化の対象とする。
 
 10.2.3の参考Dataset更新・検証方法の変更と既存要求を確認する個別ケースの追加・差替えは通常作業とし、個別承認制にしない。必須対象・評価基準・Phase完了条件の拡大は同節の人間判断に従う。日々のSHAやケース一覧を本書へ転記しない。
 
@@ -1976,7 +1980,7 @@ Phase 0.5で作った一つのQuest Link Sandbox Sceneを使い、0.51～0.53で
 
 同じ記録Pose列を再生し、Current／Pinned設定と実装済み方式を比較できるようにする。Latch／Frameの切替は未Latch評価へ、Span Candidate／Closeの切替は後続Waveへ反映し、生存Waveの方式・設定と利用中参照は19.1.4に従う。この調整・再生・比較能力は後続開発Buildでも維持する。Shipping同梱は要求せず、同じ出力境界内の方式交換・調整だけで本書改訂や0.51～0.55の再開を要求しない。
 
-観測は既存Observability／Trace、Unity Profiler、Sandbox画面・Consoleと必要時の簡単な開発用出力を使い、独自Loggerを追加しない。調整・再評価用Preset、Pose列と内部値の保持・出力形式は実装詳細とし、旧形式互換や専用保存契約を要求しない。診断出力を製品状態・Commit・Recovery・Trace完全性の正本にしないが、生存Waveが実際に使用する確定済み設定の不変性は維持する。
+観測は既存Observability／Trace、Unity Profiler、Sandbox画面・Consoleを使い、任意の開発診断の記録は17章／21.17へ統一する。調整・再評価用Presetと再生用Pose列の保持・保存形式、および内部値の表現は実装詳細とし、旧形式互換や専用保存契約を要求しない。診断出力を製品状態・Commit・Recovery・Trace完全性の正本にせず、生存Waveが実際に使用する確定済み設定の不変性は維持する。
 
 ### 19.2 ゲーム専用の遅延評価・投機実行器
 
@@ -2124,7 +2128,7 @@ Phase 0／0.1は完了済みの観測・非同期Capture能力として扱う。
 
 ### 21.1 目的と責務分離
 
-再現困難な競合、世代不一致、予測の無効化、古い成果物のCommitを調査できるよう、性能はProfiler、状態と因果関係はTrace、描画内容はCaptureで確認し、時刻・フレーム・対象IDで突き合わせる。映像だけでゲーム状態や処理の因果関係を判定しない。
+再現困難な競合、世代不一致、予測の無効化、古い成果物のCommitを調査できるよう、性能はProfiler、状態と因果関係はTrace、描画内容はCaptureで確認し、時刻・フレーム・対象IDで突き合わせる。映像だけでゲーム状態や処理の因果関係を判定しない。任意の開発診断の記録は21.17へ統一し、既存Profiler・Trace・Captureとは責務を分ける。
 
 7.9の任意処理は既存Task lifecycleと少数Counterで通常切断と区別する。所有者再編成全体を復元する専用Trace束を要求せず、Operationの記録は実際の切断履歴を表す。
 
@@ -2154,7 +2158,7 @@ PlayerLocomotionRejectedは固定Occupancyへの候補次姿勢Overlapによる�
 
 ### 21.4 履歴と診断保存
 
-観測用の履歴・Queue・保存処理はboundedとし、過負荷でGameplayを待機させない。記録の欠落、履歴上書き、不完全なOperation履歴や保存の不成立を、完全な再現根拠として扱わない。保存Traceが完全であるという判断には、必要な記録が揃っていることを含める。判定の符号化や保存検証の方式は実装詳細とする。
+本節は既存Traceを対象とし、簡易ロガーの追記・外部読取り・終了は21.17に従う。Traceの履歴・Queue・保存処理はboundedとし、過負荷でGameplayを待機させない。記録の欠落、履歴上書き、不完全なOperation履歴や保存の不成立を、完全な再現根拠として扱わない。保存Traceが完全であるという判断には、必要な記録が揃っていることを含める。判定の符号化や保存検証の方式は実装詳細とする。
 
 診断保存ではproducerと読者の資源寿命を守り、書込み中の領域を完成済みとして公開・再利用しない。通常の手動・診断保存は利用できるが、4章の共通Player終了時には保存の開始・完了を保証しない。過去形式を将来も読めることや、失敗した保存のRecoveryを恒久契約にしない。
 
@@ -2164,7 +2168,7 @@ PlayerLocomotionRejectedは固定Occupancyへの候補次姿勢Overlapによる�
 
 ### 21.6 性能上の規則
 
-ホットパスでTaskごとのDebug.Log、文字列化、全状態の毎フレームSnapshotを行わない。観測資源をboundedに管理し、記録・回収・保存の負荷と欠落を既存Profilerで確認する。Development Buildでは通常有効、非Development Buildでは無効または重大異常だけとする。
+既存観測ではホットパスでTaskごとのDebug.Log、文字列化、全状態の毎フレームSnapshotを行わない。観測資源をboundedに管理し、記録・回収・保存の負荷と欠落を既存Profilerで確認する。Development Buildでは通常有効、非Development Buildでは無効または重大異常だけとする。21.17の簡易ロガーには同節の同期処理・allocation・遅延許容を適用し、既存Traceの制約は緩めない。
 
 ### 21.7 映像キャプチャとTrace同期
 
@@ -2204,7 +2208,7 @@ Run開始前にimmutableなTrace Profileから固定Event mask、producerごと�
 
 Runtime Index Entryは`RecordKind`、64 bit単調増加`PayloadStart`、`PayloadLength`だけを持ち、永続schemaではない。payloadの符号化と種別値の管理は実装詳細とする。WriterはIndex 1件と末尾paddingを含むPayload領域の空きを確認し、payload全体をコピーしてprivate index slotを書いた後、index write positionをrelease公開する。この公開だけをlane上のrecord commit pointとし、consumerはacquire済みentryが指すpayloadだけを読む。容量不足、oversize、内部Rejectは待機、拡張、別lane探索を行わず失敗を返し、lane-local Drop Countをsaturating加算する。Event単位の詳細な失敗Reasonは保存しない。Profileで無効なEventはDropへ数えない。
 
-通常Drainはlaneを固定順round-robinで巡回し、構成された最大record件数で終了する。時間budget、動的quota、厳密なlane間公平性、producer間global sequenceを導入しない。単一lane FIFOだけを保証し、lane間の因果関係はTimestamp、FrameId、FixedStepIdおよびpayload内Domain IDで解釈する。正規停止順は`新規producer受付停止 -> 投入済みWork終了／Worker停止 -> 全ownerがWriter使用終了 -> 全lane最終Drain -> Drop集約 -> seal`とする。Release Loggerはこのstop／joinを信頼し、Registry、Lease、Receipt、per-event Active Writerで再証明しない。stop／join後のstale Writer使用はReleaseで未定義動作とする。
+通常Drainはlaneを固定順round-robinで巡回し、構成された最大record件数で終了する。時間budget、動的quota、厳密なlane間公平性、producer間global sequenceを導入しない。単一lane FIFOだけを保証し、lane間の因果関係はTimestamp、FrameId、FixedStepIdおよびpayload内Domain IDで解釈する。正規停止順は`新規producer受付停止 -> 投入済みWork終了／Worker停止 -> 全ownerがWriter使用終了 -> 全lane最終Drain -> Drop集約 -> seal`とする。Trace Writerはこのstop／joinを信頼し、Registry、Lease、Receipt、per-event Active Writerで再証明しない。stop／join後のstale Writer使用はReleaseで未定義動作とする。
 
 #### 21.16.3 MemoryBounded Paged History
 
@@ -2231,6 +2235,26 @@ seal済みHistoryのcommitted prefixを、全recordの別配列を作らずbound
 投機成果物はLatch済みSlashFrame、LogicalFragmentRef、BaseObjectGeneration、必要なGeometry／Physics／MobPlan世代とAnimation入力Identity、到達Step／時刻へ既存Snapshotで相関し、Commitには対応するSlashHitConfirmedを要求する。Estimator identityやSegmentIdを追加しない。相関の意味を全Recordの共通field列へ固定せず、保存形式・旧Reader・Goldenは17章に従う。
 
 Slashの調整・再評価用入力と開発情報の扱いは19.1.12に従う。
+
+### 21.17 開発用簡易ロガー
+
+任意の開発診断用に、managedコードから直接使える単一のシングルトンを置く。公開記録APIは`write_log(writer_id, tag, value)`だけとし、各recordへ時刻・フレームカウンタ・writer_id・tag・valueの5項目を保存する。Burst内部へmanaged呼出しや別ロガーを追加せず、必要な記録は既存のmanaged境界で行う。別threadの記録を厳密な描画フレームへ帰属させる同期は要求せず、フレーム値の取得方法は実装詳細とする。
+
+時刻は各呼出し中に取得したUTCのPOSIX秒（1970-01-01T00:00:00Z起点、うるう秒を累積加算しない）をJSON数値で保存する。初期実装では100ns単位に相当する小数点以下7桁までの取得値を保持し、秒・ミリ秒への切捨てやfloat／double経由の桁落ちを行わない。時計の実分解能・絶対精度・単調増加は保証せず、独自の時刻補間・補正を設けない。
+
+writer_idとtagは利用者が選ぶ文字列で、ロガーは解釈・正規化・ID発行・登録・衝突検査をしない。writer_idの別用途との衝突は後から追加する側が回避する。tagの表記・意味にJSON構造や共有Schemaを要求しない。valueの初期対応は数値・文字列と、それらを列挙するiteratorとする。iteratorは呼出し中に列挙して同じ1 recordのJSON arrayへ格納し、呼出し後までlazyに保持しない。必要なUnity Vector等の型対応は同じロガーへ追加でき、値の表現・型対応の追加に共有Schema・登録・旧形式互換・本書の改訂を要求しない。
+
+有効条件はUnity標準の`DEBUG`だけとし、独自フラグを設けない。未定義時は初期化・記録処理を条件付きコンパイルで外し、通常のC#呼出しは引数評価ごと除去する。残るAPI本体も列挙・シリアライズ・記録せず直ちに戻る。呼出し前の別文による値生成や、API宣言等の最終バイナリからの完全除去は保証しない。
+
+DEBUG有効時は各Play Mode開始／Player起動で、旧Writerをbest effortで閉じ、`C:\log\zantetsuken-vr\logger`以下へ開始タイムスタンプとコミットハッシュを含む名前の新しい`.jsonl`を開く。以前のログを上書きしない。開いた`StreamWriter`を保持して`AutoFlush = true`とし、呼出元threadで値の列挙とJSON生成を同期処理した後、完成recordを共通lock内で1行ずつ追記する。複数threadの行混在を防ぐが、厳密な記録順序は要求しない。初期実装にQueue・専用Workerを設けず、非同期化は必要になってから判断する。
+
+出力はUTF-8（BOMなし）のJSONL、行終端はLFとし、Writerを開いたまま別プロセスが読めるようにする。読者はLF終端の正常なJSON行を使い、末尾の未完了・破損部分や最新recordがまだ読めないことを許容する。外部読者との同期、record書込みの原子性、ファイル全体の一貫したSnapshot、電源断への永続化は保証しない。AI等による直接読取りを用途とし、専用Reader／Viewerは作らない。
+
+Play停止／Player終了の標準通知でWriterをbest effortで閉じる。切替・破棄は書込みと同じlockで行い、Writer不在時は記録を無視して自動再生成しない。終了時の全ログ回収・異常終了時のcloseは保証しない。ロガー自身の初期化・I/O失敗は診断の欠落として扱い、Gameplay・Commit・共通Player終了要求へ波及させない。4章の終了前記録を本ロガーへ置き換えず、そのlock取得・同期保存・close成功を終了API呼出しの前提にしない。再試行・代替Logger・Recovery・新しい共通Player終了条件を要求しない。
+
+2026-09-20の人間承認により、DEBUG有効時の同期I/O・lock待ち・allocation・GCによるフレーム停止とタイミング変化、ログ欠落・ファイル増加を許容する。非Development Playerではこの任意診断を取得しない。ローテーション・自動削除・耐障害保存を要求せず、ログの増加と後処理は開発時の運用で扱う。製品性能目標、幾何・物理整合性と既存Profiler・Trace・Captureの契約は維持し、測定構成を14章で区別する。記録を製品状態・Commit・Recovery・Trace完全性の正本にせず、Trace Run・Profile・producer登録・History・seal・終了時保存を利用条件にしない。既存の必須Trace記録をJSONLだけで代替しない。
+
+導入は通常の共通コード変更とし、17章の同用途出力の移行・削除を含める。導入時は少数例で値・時刻の桁保持、複数threadの行混在なしと外部読取り、Domain Reload無効を含むPlay再開始・終了、DEBUG未定義時の引数評価・列挙・ファイル生成なしと移行範囲を確認する。既存Phaseを再実行せず、専用Phase・Test ID・Benchmark・Logger台帳・CI検出器を追加しない。Player確認は3.3を共用する。開始・終了callback、ファイル名の細部、コミット情報の取得・Playerへの受渡し、JSONキー・型対応の細部は実装詳細とする。3.3のユーザーパス匿名化と10.8の公開／非公開・利用許可境界を維持し、ローカル保存を公開許可とみなさない。
 
 ## 22. 参考資料
 
