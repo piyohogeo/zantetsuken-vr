@@ -80,10 +80,23 @@ namespace Zantetsu.MeshCut.Tests
         private static VpMultiCutRegistration Registration(LogicalFragmentId root, Matrix4x4 placement) =>
             new VpMultiCutRegistration(root, S.k_box, placement, Matrix4x4.identity, S.k_none, VpCapBoundsPolygon.EpsilonFor(S.k_box));
 
-        private static VpMultiCutSnapshot Built(LogicalCutLedger ledger, float separation, params VpMultiCutRegistration[] registrations)
+        private static VpMultiCutSnapshot Built(LogicalCutLedger ledger, params VpMultiCutRegistration[] registrations)
         {
             VpMultiCutSnapshot snapshot = S.NewSnapshot();
-            Assert.That(snapshot.TryBuild(ledger, registrations, separation), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            return snapshot;
+        }
+
+        /// <summary>
+        /// The same, with the branches standing where <paramref name="placements"/> puts them: for a case that needs
+        /// the two sides of a cut really apart, so that both sections face a camera at all.
+        /// </summary>
+        private static VpMultiCutSnapshot BuiltAt(
+            LogicalCutLedger ledger, VpTestPlacements placements, params VpMultiCutRegistration[] registrations)
+        {
+            VpMultiCutSnapshot snapshot = S.NewSnapshot();
+            Assert.That(
+                snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             return snapshot;
         }
 
@@ -99,33 +112,32 @@ namespace Zantetsu.MeshCut.Tests
             return jobs;
         }
 
-        private static VpCapJob JobOf(VpCapJobClassification classification, int registration, CutOperationId cut, float side, Vector3 offset)
+        private static VpCapJob JobOf(VpCapJobClassification classification, int registration, CutOperationId cut, float side)
         {
             foreach (VpCapJob job in Jobs(classification))
             {
-                if (job.registration == registration && job.boundary.face.operation == cut && job.boundary.side == side
-                    && job.offset.x == offset.x && job.offset.y == offset.y && job.offset.z == offset.z)
+                if (job.registration == registration && job.boundary.face.operation == cut && job.boundary.side == side)
                 {
                     return job;
                 }
             }
 
-            Assert.Fail("no job for registration " + registration + ", side " + side + ", offset " + offset);
+            Assert.Fail("no job for registration " + registration + ", side " + side);
             return default;
         }
 
         /// <summary>A box cut at y = 0 (anchor below, so the lower side is fixed), its upper side cut at x = 0 with no anchor.</summary>
-        private static (VpMultiCutSnapshot snapshot, LogicalCutLedger ledger, CutOperationId a, CutOperationId b) Orthogonal(float separation)
+        private static (VpMultiCutSnapshot snapshot, LogicalCutLedger ledger, CutOperationId a, CutOperationId b) Orthogonal()
         {
             LogicalCutLedger ledger = S.NewLedger();
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
             var (a, plus, _) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             var (b, _, _) = S.Cut(ledger, plus, new float4(1f, 0f, 0f, 0f));
-            return (Built(ledger, separation, Registration(root, Matrix4x4.identity)), ledger, a, b);
+            return (Built(ledger, Registration(root, Matrix4x4.identity)), ledger, a, b);
         }
 
         /// <summary>Boxes of their own registrations, each cut at y = 0 with its anchor below: one top cap each, at y = 0.</summary>
-        private static (VpMultiCutSnapshot snapshot, CutOperationId[] cuts) Tops(float separation, params Vector3[] places)
+        private static (VpMultiCutSnapshot snapshot, CutOperationId[] cuts) Tops(params Vector3[] places)
         {
             LogicalCutLedger ledger = S.NewLedger();
             var registrations = new VpMultiCutRegistration[places.Length];
@@ -137,12 +149,12 @@ namespace Zantetsu.MeshCut.Tests
                 registrations[i] = Registration(root, Matrix4x4.Translate(places[i]));
             }
 
-            return (Built(ledger, separation, registrations), cuts);
+            return (Built(ledger, registrations), cuts);
         }
 
         private static int ColourOfTop(VpCapJobClassification classification, int registration, CutOperationId cut)
         {
-            return JobOf(classification, registration, cut, -1f, Vector3.zero).colour;
+            return JobOf(classification, registration, cut, -1f).colour;
         }
 
         // ----- cap jobs ------------------------------------------------------------------------------------------------
@@ -157,7 +169,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void EachVisibleCap_IsAJobOfItsOwn_ClippedByItsOwnFaceOnly()
         {
-            var (snapshot, _, a, b) = Orthogonal(0.25f);
+            var (snapshot, _, a, b) = Orthogonal();
             VpCapEye eye = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapJobClassification classification = NewClassification();
 
@@ -167,8 +179,8 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(classification.EmptyCapCount, Is.Zero);
 
             var corner = new Vector3(0.25f, 0.25f, 0f);
-            VpCapJob aJob = JobOf(classification, 0, a, 1f, corner);
-            VpCapJob bJob = JobOf(classification, 0, b, 1f, corner);
+            VpCapJob aJob = JobOf(classification, 0, a, 1f);
+            VpCapJob bJob = JobOf(classification, 0, b, 1f);
             Assert.That(aJob.renderFragment, Is.EqualTo(bJob.renderFragment), "both caps are of one render fragment");
             Assert.That(snapshot.TryGetRenderFragment(aJob.renderFragment, out VpMultiCutRenderFragment rf), Is.True);
             Assert.That(rf.clip.PlaneCount, Is.EqualTo(2), "the body's clip keeps both faces");
@@ -177,12 +189,11 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(aJob.volumeClip.SignedPlane(0), Is.EqualTo(new Vector4(0f, 1f, 0f, 0f)));
             Assert.That(bJob.volumeClip.PlaneCount, Is.EqualTo(1));
             Assert.That(bJob.volumeClip.SignedPlane(0), Is.EqualTo(new Vector4(1f, 0f, 0f, 0f)));
-            Assert.That(aJob.volumeClip.Offset, Is.EqualTo(corner));
             Assert.That(aJob.volumeGroup, Is.Not.EqualTo(bJob.volumeGroup), "different faces are different volumes");
             Assert.That(aJob.polygonVertexCount, Is.EqualTo(4));
             Assert.That(aJob.initialVertexCount, Is.EqualTo(4));
 
-            JobOf(classification, 0, a, 1f, new Vector3(-0.25f, 0.25f, 0f));
+            JobOf(classification, 0, a, 1f);
         }
 
         /// <summary>
@@ -197,7 +208,7 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
             var (a, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, -0.5f));
             S.Cut(ledger, minus, new float4(0f, 1f, 0f, -0.7f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(0.5f, 5f, -3f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
 
@@ -208,7 +219,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(job.polygonVertexCount, Is.GreaterThan(0));
             }
 
-            JobOf(classification, 0, a, -1f, Vector3.zero);
+            JobOf(classification, 0, a, -1f);
         }
 
         /// <summary>Nine cuts down one lineage: the ninth boundary is Ignored, so no cap and no job is of it.</summary>
@@ -229,7 +240,7 @@ namespace Zantetsu.MeshCut.Tests
                 last = cut;
             }
 
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.15f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(3f, 6f, -6f), new Vector3(0f, 0.5f, 0f));
             VpCapJobClassification classification = NewClassification();
 
@@ -262,7 +273,7 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f), new float3(0.5f, -0.5f, 0f) });
             var (a, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             var (b, _, _) = S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
 
@@ -285,31 +296,91 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(tops[0].colour, Is.EqualTo(tops[1].colour));
             Assert.That(classification.TryGetVolumeGroup(tops[0].volumeGroup, out VpCapVolumeGroup group), Is.True);
             Assert.That(group.jobCount, Is.EqualTo(2));
-            JobOf(classification, 0, b, -1f, Vector3.zero);
+            JobOf(classification, 0, b, -1f);
         }
 
         /// <summary>
-        /// The same halves with only the negative one anchored and a separation of 1e-6: the positive half is moved by
-        /// (1e-6, 0, 0). Its top cap is the same face and side as the fixed half's, but not the same volume -- two groups
-        /// -- and, their initial sections overlapping, two colours. With one colour allowed there is no ordinary colour:
-        /// both groups go, whole, to the last colour, which lists each of their render fragments once.
+        /// The other half of D-183's condition: two branches under one face whose **base placements really differ**
+        /// are not one volume, however small the difference. The two stand a millionth apart because their own
+        /// placements put them there -- nothing of the display moves them -- and the comparison is of what each
+        /// volume is drawn with, component by component, with no epsilon.
+        /// <para>
+        /// The volume and the colour are two questions and are asked separately: two volumes always, and two colours
+        /// because these two sections also overlap on the screen.
+        /// </para>
         /// </summary>
         [Test]
-        public void VolumesAMillionthApart_AreNotOne()
+        public void BranchesWhosePlacementsDiffer_AreNotOneVolume_AndTakeTwoColours()
+        {
+            LogicalCutLedger ledger = S.NewLedger();
+            LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f) });
+            var (a, plus, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            var (_, minusPlus, minusMinus) = S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
+
+            // One of the two branches is placed a millionth along x. Both still carry
+            // face a on its negative side, and their sections still overlap on the screen.
+            var placements = new VpTestPlacements()
+                .Put(minusPlus, new Vector3(1e-6f, 0f, 0f))
+                .Put(minusMinus, Vector3.zero)
+                .Static(plus);
+            VpMultiCutSnapshot snapshot = BuiltAt(ledger, placements, Registration(root, Matrix4x4.identity));
+            VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
+            VpCapJobClassification classification = NewClassification();
+
+            Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
+            var underA = new List<VpCapJob>();
+            foreach (VpCapJob job in Jobs(classification))
+            {
+                if (job.registration == 0 && job.boundary.face.operation == a && job.boundary.side == -1f)
+                {
+                    underA.Add(job);
+                }
+            }
+
+            Assert.That(underA.Count, Is.EqualTo(2), "the layout: two branches carry that face and side");
+            Assert.That(underA[0].renderFragment, Is.Not.EqualTo(underA[1].renderFragment), "each is its own render fragment");
+
+            // The volume: a placement that differs at all is another volume, with no epsilon.
+            Assert.That(
+                underA[1].volumeGroup, Is.Not.EqualTo(underA[0].volumeGroup),
+                "a millionth of a difference in the placement is still a difference");
+
+            // The colour: a separate question, and these two sections overlap where they are drawn.
+            Assert.That(
+                underA[1].colour, Is.Not.EqualTo(underA[0].colour),
+                "their sections overlap on the screen, so the two volumes cannot share a colour");
+        }
+
+        /// <summary>
+        /// Two branches under one face, with nothing at all differing between what their volumes are drawn with:
+        /// D-183's condition is met exactly, so they are **one** volume group and one colour. Nothing of the display
+        /// moves either of them apart any more, which is what makes the two identical.
+        /// </summary>
+        [Test]
+        public void TwoBranchesUnderOneFace_WithNothingDiffering_AreOneVolume()
         {
             LogicalCutLedger ledger = S.NewLedger();
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f) });
             var (a, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 1e-6f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
 
             Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
-            VpCapJob fixedTop = JobOf(classification, 0, a, -1f, Vector3.zero);
-            VpCapJob movedTop = JobOf(classification, 0, a, -1f, new Vector3(1e-6f, 0f, 0f));
-            Assert.That(movedTop.volumeGroup, Is.Not.EqualTo(fixedTop.volumeGroup));
-            Assert.That(movedTop.colour, Is.Not.EqualTo(fixedTop.colour));
+            var underA = new List<VpCapJob>();
+            foreach (VpCapJob job in Jobs(classification))
+            {
+                if (job.registration == 0 && job.boundary.face.operation == a && job.boundary.side == -1f)
+                {
+                    underA.Add(job);
+                }
+            }
+
+            Assert.That(underA.Count, Is.EqualTo(2), "the layout: two branches carry that face and side");
+            Assert.That(underA[0].renderFragment, Is.Not.EqualTo(underA[1].renderFragment), "two render fragments");
+            Assert.That(underA[1].volumeGroup, Is.EqualTo(underA[0].volumeGroup), "one volume, issued once");
+            Assert.That(underA[1].colour, Is.EqualTo(underA[0].colour), "and one colour");
 
             Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.OrdinaryColourCount, Is.Zero);
@@ -329,15 +400,22 @@ namespace Zantetsu.MeshCut.Tests
         {
             LogicalCutLedger ledger = S.NewLedger();
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
-            var (a, _, _) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
-            VpCapEye eye = Eye(new Vector3(4f, 0.1f, -3f), new Vector3(0f, 0.1f, 0f));
+            var (a, plus, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+
+            // The two caps of one face point opposite ways, so where the sides coincide a camera can only ever see
+            // one of them. Each side is given a base placement of its own, far enough that both sections face the
+            // camera: the negative side's cap looks up from y = -1, the positive side's looks down from y = +1.
+            var placements = new VpTestPlacements()
+                .Put(plus, new Vector3(0f, 1f, 0f))
+                .Put(minus, new Vector3(0f, -1f, 0f));
+            VpMultiCutSnapshot snapshot = BuiltAt(ledger, placements, Registration(root, Matrix4x4.identity));
+            VpCapEye eye = Eye(new Vector3(4f, 0f, -3f), new Vector3(0f, 0f, 0f));
             VpCapJobClassification classification = NewClassification();
 
             Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
-            VpCapJob top = JobOf(classification, 0, a, -1f, Vector3.zero);
-            VpCapJob bottom = JobOf(classification, 0, a, 1f, new Vector3(0f, 0.25f, 0f));
-            Assert.That(top.volumeGroup, Is.Not.EqualTo(bottom.volumeGroup));
+            VpCapJob top = JobOf(classification, 0, a, -1f);
+            VpCapJob bottom = JobOf(classification, 0, a, 1f);
+            Assert.That(top.volumeGroup, Is.Not.EqualTo(bottom.volumeGroup), "one face, two sides, two volumes");
         }
 
         /// <summary>
@@ -347,7 +425,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void DifferentRegistrations_AreDifferentVolumes()
         {
-            var (snapshot, _) = Tops(0.25f, Vector3.zero, new Vector3(3f, 0f, 0f));
+            var (snapshot, _) = Tops(Vector3.zero, new Vector3(3f, 0f, 0f));
             var same = new[] { Geometry(0, 0), Geometry(0, 0) };
             VpCapEye eye = Eye(new Vector3(1.5f, 6f, -2f), new Vector3(1.5f, 0f, 0f));
             VpCapJobClassification classification = NewClassification();
@@ -376,14 +454,14 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId second = ledger.AddFragment(new List<float3> { new float3(0.5f, -0.3f, 0f) });
             var (a2, _, minus) = S.Cut(ledger, second, new float4(0f, 1f, 0f, 0f));
             S.Cut(ledger, minus, new float4(1f, 1f, 0f, 0f) / math.sqrt(2f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 1.6f,
+            VpMultiCutSnapshot snapshot = Built(ledger,
                 Registration(first, Matrix4x4.identity), Registration(second, Matrix4x4.Translate(new Vector3(1.3f, 0f, 0f))));
             VpCapEye eye = Eye(new Vector3(0.65f, 5f, -3f), new Vector3(0.65f, 0f, 0f));
             VpCapJobClassification classification = NewClassification();
 
             Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
-            VpCapJob j1 = JobOf(classification, 0, a1, -1f, Vector3.zero);
-            VpCapJob j2 = JobOf(classification, 1, a2, -1f, Vector3.zero);
+            VpCapJob j1 = JobOf(classification, 0, a1, -1f);
+            VpCapJob j2 = JobOf(classification, 1, a2, -1f);
 
             // The layout, read off the snapshot rather than the classification: drawing polygons apart along x, initial
             // sections overlapping along x, both in the plane y = 0.
@@ -397,16 +475,16 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(j1.colour, Is.Not.EqualTo(j2.colour));
 
             Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 2), Is.EqualTo(VpCapJobOutcome.Classified));
-            j1 = JobOf(classification, 0, a1, -1f, Vector3.zero);
-            j2 = JobOf(classification, 1, a2, -1f, Vector3.zero);
+            j1 = JobOf(classification, 0, a1, -1f);
+            j2 = JobOf(classification, 1, a2, -1f);
             Assert.That(classification.OrdinaryColourCount, Is.EqualTo(1));
             Assert.That(classification.LastColourIndex, Is.EqualTo(1));
             Assert.That(j1.colour, Is.Not.EqualTo(j2.colour), "limit 2: one ordinary, the other last");
             Assert.That(Math.Max(j1.colour, j2.colour), Is.EqualTo(classification.LastColourIndex));
 
             Assert.That(classification.TryClassify(snapshot, Geometries(2), eye, eye, FacingEpsilon, Margin, 1), Is.EqualTo(VpCapJobOutcome.Classified));
-            j1 = JobOf(classification, 0, a1, -1f, Vector3.zero);
-            j2 = JobOf(classification, 1, a2, -1f, Vector3.zero);
+            j1 = JobOf(classification, 0, a1, -1f);
+            j2 = JobOf(classification, 1, a2, -1f);
             Assert.That(j1.colour, Is.EqualTo(0).And.EqualTo(j2.colour), "limit 1: both in the last colour");
             Assert.That(classification.LastColourIndex, Is.Zero);
         }
@@ -430,7 +508,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void OverlapInOneEye_Separates()
         {
-            var (snapshot, cuts) = Tops(0.25f, Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
+            var (snapshot, cuts) = Tops(Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
             Camera front = NewCamera(new Vector3(0f, 5f, -6f), Vector3.zero);
             Camera side = NewCamera(new Vector3(9f, 5f, -1.2f), new Vector3(0f, 0.6f, -1.2f));
             Assert.That(RectanglesOverlap(side, new Vector3(0f, 0f, 0f), new Vector3(0f, 1.2f, -2.5f)), Is.False, "apart in the side eye");
@@ -480,7 +558,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TheMarginAndTouching_AreConservative()
         {
-            var (apart, _) = Tops(0.25f, Vector3.zero, new Vector3(2.5f, 0f, 0f));
+            var (apart, _) = Tops(Vector3.zero, new Vector3(2.5f, 0f, 0f));
             VpCapEye above = Eye(new Vector3(1.25f, 7f, 0.01f), new Vector3(1.25f, 0f, 0f));
             VpCapJobClassification classification = NewClassification();
             Assert.That(classification.TryClassify(apart, Geometries(2), above, above, FacingEpsilon, Vector2.zero, 8), Is.EqualTo(VpCapJobOutcome.Classified));
@@ -488,7 +566,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(classification.TryClassify(apart, Geometries(2), above, above, FacingEpsilon, new Vector2(0.5f, 0.5f), 8), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.ColourCount, Is.EqualTo(2));
 
-            var (touching, _) = Tops(0.25f, Vector3.zero, new Vector3(2f, 0f, 0f));
+            var (touching, _) = Tops(Vector3.zero, new Vector3(2f, 0f, 0f));
             VpCapEye overTheSeam = Eye(new Vector3(1f, 7f, 0.01f), new Vector3(1f, 0f, 0f));
             Assert.That(classification.TryClassify(touching, Geometries(2), overTheSeam, overTheSeam, FacingEpsilon, Vector2.zero, 8), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.ColourCount, Is.EqualTo(2), "touching is not apart");
@@ -503,7 +581,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void ProjectionsNotFiniteOrUnbounded_AreNeverApart()
         {
-            var (apart, _) = Tops(0.25f, Vector3.zero, new Vector3(2.5f, 0f, 0f));
+            var (apart, _) = Tops(Vector3.zero, new Vector3(2.5f, 0f, 0f));
             VpCapEye above = Eye(new Vector3(1.25f, 7f, 0.01f), new Vector3(1.25f, 0f, 0f));
             Matrix4x4 broken = Matrix4x4.identity;
             broken[0, 0] = float.NaN;
@@ -520,7 +598,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(classification.ColourCount, Is.EqualTo(1));
             Assert.That(classification.LastColourJobCount, Is.EqualTo(4));
 
-            var (far, _) = Tops(0.25f, Vector3.zero, new Vector3(0f, 0f, 12f));
+            var (far, _) = Tops(Vector3.zero, new Vector3(0f, 0f, 12f));
             VpCapEye standing = Eye(new Vector3(0f, 0.5f, 0f), new Vector3(0f, 0.5f, 5f));
             Assert.That(classification.TryClassify(far, Geometries(2), standing, standing, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.JobCount, Is.EqualTo(2));
@@ -540,7 +618,7 @@ namespace Zantetsu.MeshCut.Tests
             LogicalCutLedger ledger = S.NewLedger();
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
             var (a, _, _) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapJobClassification classification = NewClassification();
             VpCapEye up = Eye(new Vector3(3f, 2f, -3f), Vector3.zero);
             VpCapEye down = Eye(new Vector3(3f, -2f, -3f), Vector3.zero);
@@ -583,7 +661,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TheColourLimit_SendsWhatDoesNotFitToTheLastColour_AndNothingWhenAllFits()
         {
-            var (apart, cuts) = Tops(0.25f, Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
+            var (apart, cuts) = Tops(Vector3.zero, new Vector3(0f, 1.2f, -2.5f));
             VpCapEye above = Eye(new Vector3(9f, 5f, -1.2f), new Vector3(0f, 0.6f, -1.2f));
             VpCapEye low = Eye(new Vector3(0f, 5f, -6f), Vector3.zero);
             VpCapEye aboveAgain = Eye(new Vector3(9f, 5.2f, -1.1f), new Vector3(0f, 0.6f, -1.2f));
@@ -636,7 +714,7 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f), new float3(0.5f, -0.5f, 0f) });
             var (a, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
 
@@ -735,7 +813,7 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(-0.5f, -0.5f, 0f), new float3(0.5f, -0.5f, 0f) });
             var (_, _, minus) = S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
             S.Cut(ledger, minus, new float4(1f, 0f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
             Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
@@ -774,7 +852,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void RoomForExactlyTheCaps_IsEnough_AndOneLessIsRefused()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye eye = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapJobClassification exact = NewClassification(snapshot.CapCount);
             Assert.That(exact.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
@@ -794,7 +872,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void AnExceptionPartway_LeavesNothing_AndACallFromInsideIsRefused()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye eye = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapJobGeometry[] geometries = Geometries(1);
             VpCapJobClassification classification = NewClassification();
@@ -848,7 +926,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void ACallFromTheCallersList_IsRefused_AndLeavesNothingWhenTheOuterCallFails()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye eye = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapJobClassification classification = NewClassification();
             var noRanges = new VpCapJobGeometry(VpArrayRange<VpGeometryRange>.Whole(Array.Empty<VpGeometryRange>()));
@@ -967,7 +1045,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TheResultRoom_LetsGoOfEveryLedger_OutsideAReadableResult()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye many = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapEye fewer = Eye(new Vector3(0.3f, 4f, -2.5f), Vector3.zero);
             VpCapEye none = Eye(new Vector3(0f, 0.5f, -6f), new Vector3(0f, 0.5f, -12f));
@@ -985,7 +1063,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(classification.LedgerReferencesHeld, Is.EqualTo(HeldByResult()), "after a success in the last colour");
 
             // A refusal that still exists -- room short -- on the same instance: a snapshot of more caps than its room.
-            var (larger, _) = Tops(0.25f, Vector3.zero, new Vector3(3f, 0f, 0f), new Vector3(6f, 0f, 0f));
+            var (larger, _) = Tops(Vector3.zero, new Vector3(3f, 0f, 0f), new Vector3(6f, 0f, 0f));
             Assert.That(larger.CapCount, Is.GreaterThan(snapshot.CapCount), "the layout");
             Assert.That(classification.TryClassify(larger, Geometries(3), many, many, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.CapacityExceeded));
             Assert.That(classification.LedgerReferencesHeld, Is.Zero, "after a refusal for room");
@@ -1014,7 +1092,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void RefusedArguments_Throw_AndLeaveNoEarlierResult()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye eye = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapJobClassification classification = NewClassification();
             var noRanges = new[] { new VpCapJobGeometry(VpArrayRange<VpGeometryRange>.Whole(Array.Empty<VpGeometryRange>())) };
@@ -1049,12 +1127,12 @@ namespace Zantetsu.MeshCut.Tests
             LogicalCutLedger ledger = S.NewLedger();
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
             S.Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
-            VpMultiCutSnapshot snapshot = Built(ledger, 0.25f, Registration(root, Matrix4x4.identity));
+            VpMultiCutSnapshot snapshot = Built(ledger, Registration(root, Matrix4x4.identity));
             VpCapEye eye = Eye(new Vector3(3f, 3f, -3f), Vector3.zero);
             VpCapJobClassification classification = NewClassification();
             Assert.That(classification.TryClassify(snapshot, Geometries(1), eye, eye, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
             Assert.That(classification.IsFor(snapshot), Is.True);
-            Assert.That(snapshot.TryBuild(ledger, new[] { Registration(root, Matrix4x4.identity) }, 0.25f), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, new[] { Registration(root, Matrix4x4.identity) }), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Assert.That(classification.IsFor(snapshot), Is.False);
         }
 
@@ -1074,7 +1152,7 @@ namespace Zantetsu.MeshCut.Tests
             CutOperationId a = S.Admit(ledger, root, new float4(0f, 1f, 0f, 0f));
             VpMultiCutRegistration[] registrations = { Registration(root, Matrix4x4.identity) };
             VpMultiCutSnapshot pending = S.NewSnapshot();
-            Assert.That(pending.TryBuild(ledger, registrations, 0.25f), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(pending.TryBuild(ledger, registrations), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             int taken = pending.SectionBuildCount;
             VpCapEye eye = Eye(new Vector3(3f, 3f, -3f), Vector3.zero);
             VpCapEye other = Eye(new Vector3(-3f, 2f, 3f), Vector3.zero);
@@ -1096,19 +1174,19 @@ namespace Zantetsu.MeshCut.Tests
 
             Assert.That(ledger.Publish(a, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
             VpMultiCutSnapshot published = S.NewSnapshot();
-            Assert.That(published.TryBuild(ledger, registrations, 0.25f, pending), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(published.TryBuild(ledger, registrations, pending), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Assert.That(published.SectionBuildCount, Is.Zero, "publication reuses the sections");
             AssertSameSections(pending, published);
 
             VpMultiCutSnapshot moved = S.NewSnapshot();
-            Assert.That(moved.TryBuild(ledger, registrations, 0.5f, published), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(moved.TryBuild(ledger, registrations, published), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Assert.That(moved.SectionBuildCount, Is.Zero, "a new separation reuses the sections");
             AssertSameSections(published, moved);
 
             // The moved upper piece's bottom faces -y: an eye below sees it, at the new separation.
             VpCapEye below = Eye(new Vector3(3f, -3f, -3f), new Vector3(0f, 0.25f, 0f));
             Assert.That(classification.TryClassify(moved, Geometries(1), below, below, FacingEpsilon, Margin, 8), Is.EqualTo(VpCapJobOutcome.Classified));
-            JobOf(classification, 0, a, 1f, new Vector3(0f, 0.5f, 0f));
+            JobOf(classification, 0, a, 1f);
         }
 
         private static void AssertSameSections(VpMultiCutSnapshot x, VpMultiCutSnapshot y)
@@ -1133,7 +1211,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void RepeatedClassification_ShowsNoManagedAllocation()
         {
-            var (snapshot, _, _, _) = Orthogonal(0.25f);
+            var (snapshot, _, _, _) = Orthogonal();
             VpCapEye a = Eye(new Vector3(-3f, -3f, -2f), new Vector3(0.4f, 0.4f, 0f));
             VpCapEye b = Eye(new Vector3(3f, 3f, -3f), new Vector3(0f, 0.4f, 0f));
             VpCapJobGeometry[] geometries = Geometries(1);

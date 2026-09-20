@@ -55,8 +55,8 @@ namespace Zantetsu.MeshCut
     /// <see cref="VpLogicalCutDisplay"/>: whether that cap stays a drawing candidate this frame.
     /// <para>
     /// **What it reads.** The cap's own record and its polygon, as the display prepared them — world-space vertices
-    /// of the box section cut by the render fragment's other selected half-spaces, with the placement snapshot and the
-    /// render fragment's separation already applied, and the outward normal of the side the cap closes. No cap is built again here and no other representation of one is made; the transform is
+    /// of the box section cut by the render fragment's other selected half-spaces, with the render fragment's own
+    /// placement applied, and the outward normal of the side the cap closes. No cap is built again here and no other representation of one is made; the transform is
     /// the one that collection used. Nothing reads a triangle, a topology, the stencil or any occlusion.
     /// </para>
     /// <para>

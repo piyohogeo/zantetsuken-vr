@@ -29,7 +29,6 @@ namespace Zantetsu.MeshCut.Tests
         private const int SideMaterial = 7;
         private const int EndMaterial = 2;
         private const int Size = 128;
-        private const float WideSeparation = 3f;
 
         private static readonly float3[] k_controlPoints =
         {
@@ -117,6 +116,22 @@ namespace Zantetsu.MeshCut.Tests
 
         private Scene CutPyramids(VpStencilSettings settings, bool withShadows, params float[] xs)
         {
+            return CutPyramidsOpened(settings, withShadows, 0f, xs);
+        }
+
+        /// <summary>
+        /// The same pyramids, and when <paramref name="topLift"/> is above zero the cut of each is published and its
+        /// two children are given base placements of their own: the free top lifted by that much along +y, the
+        /// anchored bottom left where it was registered. That is what exposes a section to a camera at all, now that
+        /// nothing of the display moves a side. It is a real placement, not a display separation, and every living
+        /// branch is named.
+        /// <para>
+        /// How far to lift belongs to the case: a camera looking down wants the tops out of its view, so that what it
+        /// sees is the opening and not the piece that used to close it.
+        /// </para>
+        /// </summary>
+        private Scene CutPyramidsOpened(VpStencilSettings settings, bool withShadows, float topLift, params float[] xs)
+        {
             var scene = new Scene
             {
                 storage = new VpCpuGeometryStorage(4096, 16384, 32, 128, 128, Allocator.Persistent),
@@ -133,7 +148,6 @@ namespace Zantetsu.MeshCut.Tests
                     out scene.display),
                 Is.True,
                 "create the display");
-            scene.display.Separation = WideSeparation;
 
             var bodies = new List<LogicalFragmentId>();
             foreach (float x in xs)
@@ -148,6 +162,21 @@ namespace Zantetsu.MeshCut.Tests
             {
                 Assert.That(scene.ledger.Admit(body, k_plane, true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
                 Assert.That(scene.ledger.PrepareAnchorDistribution(cut, 0.01f, out _), Is.EqualTo(AnchorPreparationOutcome.Prepared));
+            }
+
+            if (topLift > 0f)
+            {
+                var placements = new VpTestPlacements();
+                foreach (LogicalFragmentId body in bodies)
+                {
+                    Assert.That(scene.ledger.TryGetActiveOperation(body, out CutOperationId cut), Is.True);
+                    Assert.That(
+                        scene.ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    placements.Put(top, new Vector3(0f, topLift, 0f)).Static(bottom);
+                }
+
+                scene.display.Placement = placements;
             }
 
             _frame++;
@@ -179,7 +208,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void OverlappingIncompatibleBodies_AreDrawnInSeparateOrdinaryColours_WithNoCapOutsideTheOpenings()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, 0f, 1.2f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, 0f, 1.2f))
             {
                 Camera camera = TopDown(0.6f, 3f);
                 Color32[] image = Draw(scene.display, camera);
@@ -209,7 +238,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void BodiesApartOnScreen_ShareAnOrdinaryColour()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, -1.3f, 1.3f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, -1.3f, 1.3f))
             {
                 Camera camera = TopDown(0f, 3f);
                 Color32[] image = Draw(scene.display, camera);
@@ -237,7 +266,7 @@ namespace Zantetsu.MeshCut.Tests
         {
             foreach ((int limit, int ordinaryGroups, int lastRenderFragments) in new[] { (3, 2, 0), (2, 1, 1), (1, 0, 2) })
             {
-                using (Scene scene = CutPyramids(VpStencilTestSettings.Create(limit), false, 0f, 1.2f))
+                using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(limit), false, 6f, 0f, 1.2f))
                 {
                     VpLogicalCutDisplay display = scene.display;
                     Camera camera = TopDown(0.6f, 3f);
@@ -271,7 +300,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void AViewChange_IsClassifiedAgain_WithoutCollectingOrTransferring()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, -1.3f, 1.3f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, -1.3f, 1.3f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera camera = TopDown(0f, 3f);
@@ -313,14 +342,15 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// Seen from the side at the height of the bottoms, no cap is seen: the bottoms' caps face up, away from the
-        /// camera, and the moved tops' are above the view. Every group is left out, so no stencil work is issued at all,
-        /// while the bodies and their shadow casters are drawn as ever.
+        /// Seen from the side, below the cut, no cap is seen: the bottoms' caps face up, away from the camera, and the
+        /// tops are placed above the view, so their downward caps are outside it. Every
+        /// group is left out, so no stencil work is issued at all, while the bodies and their shadow casters are drawn
+        /// as ever. What is checked here is the visibility judgement, not what a pixel ends up showing.
         /// </summary>
         [Test]
         public void GroupsWithNoCapSeen_IssueNoStencilWork_AndTheBodiesAndShadowsStay()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), true, -1.3f, 1.3f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), true, 6f, -1.3f, 1.3f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera camera = FromTheSide();
@@ -365,7 +395,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TwoCameras_EachDrawTheirOwnClassification_AndADrawnCameraIsNotPreparedAgain()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, 0f, 1.2f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, 0f, 1.2f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera wide = TopDown(0.6f, 3f);
@@ -448,7 +478,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TwoCamerasRegisteredTogether_EachDrawTheirOwnArrangement()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, 0f, 1.2f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, 0f, 1.2f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera wide = TopDown(0.6f, 3f);
@@ -484,7 +514,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void Disposing_IsRefusedWhileThisFramesDrawsAreRegistered()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), false, 0f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), false, 6f, 0f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera camera = TopDown(0f, 3f);
@@ -511,9 +541,9 @@ namespace Zantetsu.MeshCut.Tests
             {
                 (VpStencilTestSettings.Create(ceiling + 1), "a limit past the materials"),
                 (VpStencilTestSettings.Create(0), "no colour"),
-                (new VpStencilSettings(4, float.NaN, 1e-4f, 1e-4f, Vector2.zero, 1), "a facing epsilon that is not finite"),
-                (new VpStencilSettings(4, 0.01f, -1f, 1e-4f, Vector2.zero, 1), "a negative plane epsilon"),
-                (new VpStencilSettings(4, 0.01f, 1e-4f, 1e-4f, new Vector2(0f, float.PositiveInfinity), 1), "an infinite margin"),
+                (new VpStencilSettings(4, float.NaN, 1e-4f, Vector2.zero, 1), "a facing epsilon that is not finite"),
+                (new VpStencilSettings(4, 0.01f, -1f, Vector2.zero, 1), "a negative plane epsilon"),
+                (new VpStencilSettings(4, 0.01f, 1e-4f, new Vector2(0f, float.PositiveInfinity), 1), "an infinite margin"),
                 (VpStencilTestSettings.Create(4, 0), "no camera room"),
             };
 

@@ -12,7 +12,7 @@
 // ordinary front-face rule is what decides it is seen, and the cap of the other side faces the other way. Culling is
 // not turned off to paper over a winding that disagrees.
 //
-// The vertices arrive already in world space, with the side's separation applied, so this transforms and does nothing
+// The vertices arrive already in world space, so this transforms and does nothing
 // else to them.
 //
 // **Shading (DESIGN 5.3).** When the caller has bound this material a normal for every cap vertex and turned

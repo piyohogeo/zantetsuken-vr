@@ -42,16 +42,16 @@ namespace Zantetsu.MeshCut
     /// not empty and which the both-eye visibility test kept.
     /// <para>
     /// **What it carries apart.** The render fragment and the boundary with its side; the volume clip -- the cap's own
-    /// face only, with the kept half folded in, at the render fragment's final separation -- which is not the render
-    /// fragment's clip of every selected face, the body's, depth's and shadow's; the final separation; and, by the cap
-    /// index, the drawing polygon (up to fourteen vertices, separation added) and the initial section (up to six,
-    /// separation not added) the snapshot keeps. The polygons are read from the snapshot, not held here.
+    /// face only, with the kept half folded in -- which is not the render fragment's clip of every selected face, the
+    /// body's, depth's and shadow's; and, by the cap index, the drawing polygon (up to fourteen vertices) and the
+    /// initial section (up to six) the snapshot keeps, both in world space at the render fragment's own placement. The
+    /// polygons are read from the snapshot, not held here.
     /// </para>
     /// </summary>
     public readonly struct VpCapJob
     {
         internal VpCapJob(
-            int capIndex, int renderFragment, int registration, VpClipBoundary boundary, Vector4 signedPlane, Vector3 offset,
+            int capIndex, int renderFragment, int registration, VpClipBoundary boundary, Vector4 signedPlane,
             VpInstanceClip volumeClip, int polygonVertexCount, int initialVertexCount, int volumeGroup, int colour)
         {
             this.capIndex = capIndex;
@@ -59,7 +59,6 @@ namespace Zantetsu.MeshCut
             this.registration = registration;
             this.boundary = boundary;
             this.signedPlane = signedPlane;
-            this.offset = offset;
             this.volumeClip = volumeClip;
             this.polygonVertexCount = polygonVertexCount;
             this.initialVertexCount = initialVertexCount;
@@ -78,11 +77,9 @@ namespace Zantetsu.MeshCut
         /// <summary>The boundary this cap closes: the adopted face (ledger and cut) and the side kept.</summary>
         public readonly VpClipBoundary boundary;
 
-        /// <summary>The face in world space before the separation, with the kept half non-negative.</summary>
+        /// <summary>The face in world space, with the kept half non-negative.</summary>
         public readonly Vector4 signedPlane;
 
-        /// <summary>The render fragment's final separation.</summary>
-        public readonly Vector3 offset;
 
         /// <summary>The volume's clip: this cap's own face and side only, at <see cref="offset"/>.</summary>
         public readonly VpInstanceClip volumeClip;
@@ -95,12 +92,12 @@ namespace Zantetsu.MeshCut
 
     /// <summary>
     /// Cap jobs whose volumes are the same volume -- the same registration, the same boundary and side, and exactly the
-    /// same draw ranges, placement, signed plane and final separation -- issued once for all of them.
+    /// same draw ranges, placement and signed plane -- issued once for all of them.
     /// </summary>
     public readonly struct VpCapVolumeGroup
     {
         internal VpCapVolumeGroup(
-            int registration, int renderFragment, VpClipBoundary boundary, Vector4 signedPlane, Vector3 offset,
+            int registration, int renderFragment, VpClipBoundary boundary, Vector4 signedPlane,
             VpInstanceClip volumeClip, int colour, bool inLastColour, int jobStart, int jobCount)
         {
             this.inLastColour = inLastColour;
@@ -108,7 +105,6 @@ namespace Zantetsu.MeshCut
             this.renderFragment = renderFragment;
             this.boundary = boundary;
             this.signedPlane = signedPlane;
-            this.offset = offset;
             this.volumeClip = volumeClip;
             this.colour = colour;
             this.jobStart = jobStart;
@@ -122,7 +118,6 @@ namespace Zantetsu.MeshCut
 
         public readonly VpClipBoundary boundary;
         public readonly Vector4 signedPlane;
-        public readonly Vector3 offset;
         public readonly VpInstanceClip volumeClip;
         public readonly int colour;
 
@@ -179,7 +174,7 @@ namespace Zantetsu.MeshCut
     /// **One volume, exactly.** Two jobs share a volume only when they are of the same registration, close the same
     /// boundary on the same side, and everything the volume would actually be drawn with is identical, compared
     /// component by component and never within an epsilon or by Unity's approximate equality: the registration's draw
-    /// ranges, the placement, the signed plane and the final separation. The other selected faces are no part of it,
+    /// ranges, the placement and the signed plane. The other selected faces are no part of it,
     /// and neither is a sign or a winding of the geometry. The registration's draw ranges are the caller's
     /// (<see cref="VpCapJobGeometry"/>); a registration without them is an argument error, never guessed from a box or
     /// a plane.
@@ -204,8 +199,8 @@ namespace Zantetsu.MeshCut
     /// </para>
     /// <para>
     /// **Sections.** The initial section is the snapshot's own, kept for the drawn cap when it was built
-    /// (<see cref="VpMultiCutSnapshot.InitialSection"/>), read through a look and projected with the job's separation
-    /// added once as each point is read. No section is taken, copied or rebuilt here.
+    /// (<see cref="VpMultiCutSnapshot.InitialSection"/>), read through a look and projected as each point is read,
+    /// where it stands. No section is taken, copied or rebuilt here.
     /// </para>
     /// <para>
     /// **Room and lifetime.** All room is made once from the snapshot capacities: jobs and groups at most one per cap.
@@ -611,8 +606,8 @@ namespace Zantetsu.MeshCut
                 Vector4 signed = side > 0f ? world : -world;
                 VpArrayRange<Vector3> section = snapshot.InitialSection(c);
                 _jobs[jobs] = new VpCapJob(
-                    c, cap.renderFragment, rf.registration, cap.boundary, signed, rf.offset,
-                    VpInstanceClip.Keep(world, side, rf.offset), cap.vertexCount, section.Count, -1, -1);
+                    c, cap.renderFragment, rf.registration, cap.boundary, signed,
+                    VpInstanceClip.Keep(world, side), cap.vertexCount, section.Count, -1, -1);
                 jobs++;
                 _jobCount = jobs;
                 AfterJobWritten?.Invoke(jobs);
@@ -662,7 +657,7 @@ namespace Zantetsu.MeshCut
                 _groupFirstJob[g] = start;
             }
 
-            // 3. Each job's initial section, projected once per eye with its separation added as it is read.
+            // 3. Each job's initial section, projected once per eye, where it stands.
             for (int j = 0; j < jobs; j++)
             {
                 VpArrayRange<Vector3> section = snapshot.InitialSection(_jobs[j].capIndex);
@@ -673,9 +668,8 @@ namespace Zantetsu.MeshCut
                     continue;
                 }
 
-                Vector3 offset = _jobs[j].offset;
-                _leftState[j] = ProjectFor(section, offset, left, margin, j, _leftPoints);
-                _rightState[j] = ProjectFor(section, offset, right, margin, j, _rightPoints);
+                _leftState[j] = ProjectFor(section, left, margin, j, _leftPoints);
+                _rightState[j] = ProjectFor(section, right, margin, j, _rightPoints);
             }
 
             // 4. Ordinary colours, first fit, at most the limit less one; a group that fits none goes whole to the last.
@@ -781,7 +775,7 @@ namespace Zantetsu.MeshCut
             {
                 VpCapJob first = _jobs[_jobOfGroup[_groupFirstJob[g]]];
                 _groups[g] = new VpCapVolumeGroup(
-                    first.registration, first.renderFragment, first.boundary, first.signedPlane, first.offset, first.volumeClip,
+                    first.registration, first.renderFragment, first.boundary, first.signedPlane, first.volumeClip,
                     _colourOfGroup[g], _colourOfGroup[g] == last, _groupFirstJob[g], _groupJobCount[g]);
             }
 
@@ -790,7 +784,7 @@ namespace Zantetsu.MeshCut
                 VpCapJob job = _jobs[j];
                 int g = _groupOfJob[j];
                 _jobs[j] = new VpCapJob(
-                    job.capIndex, job.renderFragment, job.registration, job.boundary, job.signedPlane, job.offset, job.volumeClip,
+                    job.capIndex, job.renderFragment, job.registration, job.boundary, job.signedPlane, job.volumeClip,
                     job.polygonVertexCount, job.initialVertexCount, g, _colourOfGroup[g]);
             }
 
@@ -798,7 +792,7 @@ namespace Zantetsu.MeshCut
         }
 
         private static Projection ProjectFor(
-            VpArrayRange<Vector3> section, Vector3 offset, in VpCapEye eye, Vector2 margin, int job, Vector2[] points)
+            VpArrayRange<Vector3> section, in VpCapEye eye, Vector2 margin, int job, Vector2[] points)
         {
             if (!VpScreenProjection.IsFinite(eye.worldToClip))
             {
@@ -806,7 +800,7 @@ namespace Zantetsu.MeshCut
             }
 
             return VpScreenProjection.Project(
-                section.AsSpan(), offset, eye.worldToClip, margin, new Span<Vector2>(points, job * SectionVertices, section.Count));
+                section.AsSpan(), eye.worldToClip, margin, new Span<Vector2>(points, job * SectionVertices, section.Count));
         }
 
         /// <summary>Whether any job of one group may overlap any job of the other on the screen, in either eye.</summary>
@@ -859,13 +853,12 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// D-183's condition, exactly: the same registration, boundary and side, and everything the volume is drawn with
-        /// identical component by component -- the registration's draw ranges, the placement, the signed plane and the
-        /// final separation. No epsilon, no Unity approximate equality, and nothing about the other selected faces.
+        /// identical component by component -- the registration's draw ranges, the placement and the signed plane.
+        /// No epsilon, no Unity approximate equality, and nothing about the other selected faces.
         /// </summary>
         private bool SameVolume(VpMultiCutSnapshot snapshot, in VpCapJob a, in VpCapJob b)
         {
-            if (a.registration != b.registration || !a.boundary.Equals(b.boundary) || !Exact(a.signedPlane, b.signedPlane)
-                || !Exact(a.offset, b.offset))
+            if (a.registration != b.registration || !a.boundary.Equals(b.boundary) || !Exact(a.signedPlane, b.signedPlane))
             {
                 return false;
             }

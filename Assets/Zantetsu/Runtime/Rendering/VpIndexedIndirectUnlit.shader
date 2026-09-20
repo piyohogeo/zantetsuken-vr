@@ -6,7 +6,7 @@
 // vertex starts differ). The colour matches "Zantetsu/VP Indirect Unlit". There is no ShadowCaster pass; the batch's
 // shadow call casts shadows with "Zantetsu/VP Indexed Indirect Shadow Caster".
 // A logical instance may also keep one half of a cut plane and be drawn moved apart (DESIGN 5.1): the side is tested
-// on the world position before the offset, the offset is added after the object-to-world transform, and the plane is
+// on the world position the object-to-world transform leaves, with no displacement of the renderer's own, and the plane is
 // evaluated with SV_ClipDistance as DESIGN 5.2 requires. An instance whose record has side 0 is drawn exactly as
 // before.
 // An opaque base texture is sampled with the vertex uv0 and multiplied into the colour. It is the one texture this
@@ -66,12 +66,12 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             // Which parts of up to eight cut planes each logical instance keeps, and how far it is moved apart
             // (DESIGN 5.1, 5.2). Matches Zantetsu.Rendering.VpInstanceClip: 144 bytes, the eight signed planes and
-            // then the offset with the count of valid ones. The shadow caster reads the same record, so a fragment
-            // is clipped and offset identically in every pass of the draw.
+            // then the count of valid ones. The shadow caster reads the same record, so a fragment
+            // is clipped identically in every pass of the draw.
             struct VpInstanceClip
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
-                float4 offsetAndCount; // xyz: world offset added after the transform; w: how many planes are valid
+                float planeCount; // how many of the eight planes are valid
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -88,7 +88,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
             {
-                uint count = (uint)clipState.offsetAndCount.w;
+                uint count = (uint)clipState.planeCount;
                 first = float4(
                     VpHalfSpace(clipState.planes[0], positionWS, 0, count),
                     VpHalfSpace(clipState.planes[1], positionWS, 1, count),
@@ -198,16 +198,14 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 
-                // DESIGN 5.1: every plane is tested on the world position before the separation is added, so moving
-                // a fragment apart never changes which part of it survives; the one offset the record carries is
-                // then added after the object-to-world transform, never before it, and only once.
+                // DESIGN 5.1: every plane is tested on the world position as the transform leaves it. The renderer
+                // adds no displacement of its own, so where a side is drawn is where what it follows puts it; what
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
                 float4 clipDistance0;
                 float4 clipDistance1;
                 VpClipDistances(clipState, positionWS, clipDistance0, clipDistance1);
                 output.clipDistance0 = clipDistance0;
                 output.clipDistance1 = clipDistance1;
-                positionWS += clipState.offsetAndCount.xyz;
 
                 output.positionCS = TransformWorldToHClip(positionWS);
                 output.normalWS = mul((float3x3)objectToWorld, vertex.normal);

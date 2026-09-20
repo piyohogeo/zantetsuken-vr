@@ -1020,7 +1020,8 @@ namespace Zantetsu.PhysicsCut.Tests
         private static readonly Matrix4x4 k_lineageToGeometryLocal = Matrix4x4.Translate(new Vector3(0f, -0.4f, 0f));
 
         private static readonly Bounds k_box = new Bounds(Vector3.zero, Vector3.one * 2f);
-        private const float DisplaySeparation = 0.5f;
+        /// <summary>A length to judge "far enough to tell two places apart" by. Not a separation: nothing separates the display.</summary>
+        private const float Apart = 0.5f;
 
         private static VpMultiCutSnapshot NewSnapshot()
         {
@@ -1096,7 +1097,7 @@ namespace Zantetsu.PhysicsCut.Tests
             VpMultiCutSnapshot snapshot, World w, VpMultiCutRegistration registration, IVpFragmentPlacement lookup)
         {
             return snapshot.TryBuild(
-                w.ledger, new[] { registration }, DisplaySeparation, lookup);
+                w.ledger, new[] { registration }, lookup);
         }
 
         /// <summary>A real display over the same ledger, with one cube in its storage to be cut and committed.</summary>
@@ -1132,7 +1133,7 @@ namespace Zantetsu.PhysicsCut.Tests
                     Assert.That(display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
                     if (rf.root == fragment)
                     {
-                        return rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset;
+                        return rf.geometryLocalToWorld.MultiplyPoint3x4(local);
                     }
                 }
 
@@ -1160,7 +1161,6 @@ namespace Zantetsu.PhysicsCut.Tests
                     out scene.display),
                 Is.True,
                 "create the display");
-            scene.display.Separation = DisplaySeparation;
             scene.geometry = AppendCube(scene.storage);
             return scene;
         }
@@ -1240,7 +1240,7 @@ namespace Zantetsu.PhysicsCut.Tests
         /// The cut is admitted and its owners are built, and only then does the source move and turn. While it is
         /// pending it is drawn where it stands; once it is published both children are drawn there too, because the
         /// publication puts them at the placement the source has by then rather than at the one the build read.
-        /// The drawn position — the placement with the separation on it — never goes back to the registration.
+        /// The drawn position — the placement itself, with nothing on it — never goes back to the registration.
         /// </summary>
         [Test]
         public void ASourceThatMovedAfterTheBuild_IsNeverDrawnWhereItWasRegistered()
@@ -1262,19 +1262,19 @@ namespace Zantetsu.PhysicsCut.Tests
                 Matrix4x4 movedPlacement = Expected(moved, turned);
                 Vector3 movedOrigin = movedPlacement.MultiplyPoint3x4(Vector3.zero);
                 Assert.That(
-                    (movedOrigin - registeredOrigin).magnitude, Is.GreaterThan(4f * DisplaySeparation),
+                    (movedOrigin - registeredOrigin).magnitude, Is.GreaterThan(4f * Apart),
                     "the move is far enough that a drawn position could not be mistaken for the registration's");
 
                 VpMultiCutSnapshot before = NewSnapshot();
                 Assert.That(Build(before, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
                 VpMultiCutRenderFragment pending = Of(before, w.source);
                 Same(movedPlacement, pending.geometryLocalToWorld, "the pending source follows its owner");
-                Vector3 pendingDrawn = pending.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero) + pending.offset;
+                Vector3 pendingDrawn = pending.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero);
                 Assert.That(
-                    (pendingDrawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(DisplaySeparation + 2e-3f),
-                    "and is drawn there, separation included");
+                    (pendingDrawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(2e-3f),
+                    "and is drawn exactly there: the display adds nothing");
                 Assert.That(
-                    (pendingDrawn - registeredOrigin).magnitude, Is.GreaterThan(2f * DisplaySeparation),
+                    (pendingDrawn - registeredOrigin).magnitude, Is.GreaterThan(2f * Apart),
                     "not back where it was registered");
 
                 Assert.That(
@@ -1287,12 +1287,12 @@ namespace Zantetsu.PhysicsCut.Tests
                 {
                     VpMultiCutRenderFragment rf = Of(after, child);
                     Same(movedPlacement, rf.geometryLocalToWorld, "the child stands where the source did");
-                    Vector3 drawn = rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero) + rf.offset;
+                    Vector3 drawn = rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero);
                     Assert.That(
-                        (drawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(DisplaySeparation + 2e-3f),
-                        "and is drawn there, separation included");
+                        (drawn - movedOrigin).magnitude, Is.LessThanOrEqualTo(2e-3f),
+                        "and is drawn exactly there: nothing is added for the display");
                     Assert.That(
-                        (drawn - registeredOrigin).magnitude, Is.GreaterThan(2f * DisplaySeparation),
+                        (drawn - registeredOrigin).magnitude, Is.GreaterThan(2f * Apart),
                         "not back where it was registered");
                 }
             }
@@ -1300,8 +1300,8 @@ namespace Zantetsu.PhysicsCut.Tests
 
         /// <summary>
         /// The two children move and turn independently afterwards. Each one's body, its clip half-space, its cap
-        /// plane, its cap's outward normal and every vertex of its cap polygon come from its own owner, and the
-        /// separation each takes runs along its own current normal.
+        /// plane, its cap's outward normal and every vertex of its cap polygon come from its own owner, and from
+        /// nothing else: a cap sits on the plane its own side carried, where that side stands.
         /// </summary>
         [Test]
         public void TheTwoChildren_FollowTheirOwnOwners_InBodyClipAndCap()
@@ -1333,10 +1333,6 @@ namespace Zantetsu.PhysicsCut.Tests
                 Same(expectedPositive, rfPositive.geometryLocalToWorld, "the positive body");
                 Same(expectedNegative, rfNegative.geometryLocalToWorld, "the negative body");
 
-                // The adopted plane is y = 0 of the owner's frame. Turned a quarter about z it points along -x; the
-                // side that did not turn keeps +y. Worked out here, not read back from the lookup.
-                Same(new Vector3(-1f, 0f, 0f), rfPositive.offset.normalized, "the positive separation direction");
-                Same(new Vector3(0f, -1f, 0f), rfNegative.offset.normalized, "the negative separation direction");
 
                 Assert.That(rfPositive.clip.PlaneCount, Is.EqualTo(1), "the positive side is clipped by its one boundary");
                 Vector4 positiveClip = rfPositive.clip.SignedPlane(0);
@@ -1353,7 +1349,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 for (int v = 0; v < capPositive.vertexCount; v++)
                 {
                     Assert.That(snapshot.TryGetCapVertex(rfPositive.capStart, v, out Vector3 world), Is.True);
-                    Assert.That(world.x, Is.EqualTo(3f - DisplaySeparation).Within(2e-3f), "positive cap vertex " + v);
+                    Assert.That(world.x, Is.EqualTo(3f).Within(2e-3f), "positive cap vertex " + v + " is on its own side's plane");
                 }
 
                 Assert.That(snapshot.TryGetCap(rfNegative.capStart, out VpMultiCutCap capNegative), Is.True);
@@ -1361,17 +1357,18 @@ namespace Zantetsu.PhysicsCut.Tests
                 for (int v = 0; v < capNegative.vertexCount; v++)
                 {
                     Assert.That(snapshot.TryGetCapVertex(rfNegative.capStart, v, out Vector3 world), Is.True);
-                    Assert.That(world.y, Is.EqualTo(1f - DisplaySeparation).Within(2e-3f), "negative cap vertex " + v);
+                    Assert.That(world.y, Is.EqualTo(1f).Within(2e-3f), "negative cap vertex " + v + " is on its own side's plane");
                 }
             }
         }
 
         /// <summary>
-        /// An anchor fixes one side: it takes no separation at all, and it still follows its own owner. The free side
-        /// takes the separation once, along its own normal.
+        /// An anchor fixes one side. Being fixed says nothing about where it is drawn: it follows its own owner like
+        /// any other side, and the free one follows its own -- here an owner that has not been moved, so that side is
+        /// still exactly at the placement it was published at.
         /// </summary>
         [Test]
-        public void TheAnchoredSide_TakesNoSeparationAndStillFollowsItsOwner()
+        public void TheAnchoredSide_StillFollowsItsOwnOwner()
         {
             using (World w = NewWorld(new[] { new float3(0f, 0.5f, 0f) }, PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
             {
@@ -1393,20 +1390,20 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(Build(snapshot, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
                 VpMultiCutRenderFragment rf = Of(snapshot, positive);
                 Same(expected, rf.geometryLocalToWorld, "the anchored side follows its owner all the same");
-                Same(Vector3.zero, rf.offset, "and takes no separation");
-                Assert.That(
-                    Of(snapshot, negative).offset.magnitude, Is.EqualTo(DisplaySeparation).Within(2e-3f),
-                    "while the free side takes it once");
+                Same(
+                    Expected(Vector3.zero, Quaternion.identity), Of(snapshot, negative).geometryLocalToWorld,
+                    "while the free side is at its own owner, which nothing has moved");
             }
         }
 
         /// <summary>
-        /// The display frame is not the owner's frame. A point of the geometry is drawn at the owner's transform, with
-        /// that correspondence, plus the separation exactly once: the correspondence is not lost, and the separation
-        /// is neither dropped nor applied twice.
+        /// The display frame is not the owner's frame. A point of the geometry is drawn at the owner's transform with
+        /// that correspondence applied exactly once -- it is neither dropped nor counted twice -- and with nothing else
+        /// applied after it. This correspondence is the geometry's own frame against its owner's, which stays; what
+        /// the drawn point no longer carries is any displacement of the side for the display.
         /// </summary>
         [Test]
-        public void ADisplayFrameOffsetFromTheOwner_KeepsTheSeparationExactlyOnce()
+        public void ADisplayFrameOffsetFromTheOwner_IsCarriedExactlyOnce()
         {
             using (World w = NewWorld(Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner))
             {
@@ -1427,17 +1424,18 @@ namespace Zantetsu.PhysicsCut.Tests
                 Assert.That(Build(snapshot, w, registration, lookup), Is.EqualTo(VpMultiCutBuildOutcome.Built));
                 VpMultiCutRenderFragment rf = Of(snapshot, positive);
 
-                // Worked out here: the owner is at `at`, the geometry sits 0.4 above it in its coordinates, and the
-                // positive side of y = 0 separates along +y by the display's separation, once.
+                // Worked out here: the owner is at `at` and the geometry sits 0.4 above it in its own coordinates.
+                // That 0.4 is the whole of the difference; being the positive side of y = 0 adds nothing to it.
                 foreach (Vector3 local in new[] { Vector3.zero, new Vector3(1f, 1f, 1f), new Vector3(-1f, 0.5f, -1f) })
                 {
-                    Vector3 expected = at + new Vector3(0f, 0.4f, 0f) + local + new Vector3(0f, DisplaySeparation, 0f);
-                    Same(expected, rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset, "a drawn point");
+                    Vector3 expected = at + new Vector3(0f, 0.4f, 0f) + local;
+                    Same(expected, rf.geometryLocalToWorld.MultiplyPoint3x4(local), "a drawn point");
                 }
 
+                // The other side of the same correspondence: dropping it would put the origin at the owner itself.
                 Assert.That(
-                    rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero).y, Is.EqualTo(at.y + 0.4f).Within(2e-3f),
-                    "the base placement carries the correspondence and not the separation");
+                    rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero).y, Is.Not.EqualTo(at.y).Within(2e-3f),
+                    "and the correspondence is carried, not lost");
             }
         }
 

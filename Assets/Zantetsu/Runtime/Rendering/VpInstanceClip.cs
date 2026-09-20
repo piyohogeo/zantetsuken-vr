@@ -27,13 +27,13 @@ namespace Zantetsu.Rendering
     }
 
     /// <summary>
-    /// Which parts of the cut planes an instance keeps, and how far it is moved apart, for the provisional display of
-    /// a cut whose geometry is not settled yet (DESIGN 5.1). One of these per logical instance, uploaded beside the
-    /// instance's object-to-world transform and read by both the forward and the shadow caster pass, so a fragment is
-    /// clipped and offset the same way in every pass of one draw.
+    /// Which parts of the cut planes an instance keeps, for the provisional display of a cut whose geometry is not
+    /// settled yet (DESIGN 5.1). One of these per logical instance, uploaded beside the instance's object-to-world
+    /// transform and read by both the forward and the shadow caster pass, so a fragment is clipped the same way in
+    /// every pass of one draw.
     /// <para>
-    /// **Fixed capacity.** The record holds <see cref="PlaneCapacity"/> = 8 planes, a count of how many of them are
-    /// valid, and **one** world offset common to all of them — the size and the shape never vary with the count
+    /// **Fixed capacity.** The record holds <see cref="PlaneCapacity"/> = 8 planes and a count of how many of them
+    /// are valid — the size and the shape never vary with the count
     /// (DESIGN 5.2 <c>TemporaryClipPlaneCapacity = 8</c>). The surviving region is the **intersection** of the valid
     /// half-spaces: a fragment is kept only where every one of them keeps it. Each plane is stored with its side
     /// already folded in, so what the shader evaluates is <c>dot(n, x) + d &gt;= 0</c> for each valid plane; beyond
@@ -51,18 +51,17 @@ namespace Zantetsu.Rendering
     /// <para>
     /// **The same parent geometry is drawn once per side.** Nothing is duplicated, split or re-meshed for this: every
     /// side's display points at the parent's own vertices and indices, and each simply discards what it does not
-    /// keep. The logical kerf is zero — no plane is nudged to open a gap — so a gap appears only because a free side
-    /// was moved (DESIGN 5.1: 論理上の切断幅（Kerf）は0とし…相対移動した結果としてのみ隙間と断面が見える).
+    /// keep. The logical kerf is zero — no plane is nudged to open a gap — and **nothing here moves a side at all**:
+    /// a side is drawn where whatever it follows puts it, so while the two sides still share one placement they
+    /// share their boundary and no gap is seen (DESIGN 5.1).
     /// </para>
     /// <para>
     /// **Coordinate spaces.** Every plane is <c>(n.xyz, d)</c> with <c>dot(n, x) + d = 0</c> **in world space**, and
-    /// every side test is made on the instance's world position **before** <see cref="Offset"/> is added — moving a
-    /// fragment apart must not change which part of it survives. The offset is also in world space and is added
-    /// **once, after** the object-to-world transform, as DESIGN 5.1 requires; adding it before would let the
-    /// transform rotate or scale the separation direction.
+    /// every side test is made on the instance's world position as the object-to-world transform leaves it. No
+    /// displacement of the renderer's own is added before or after that transform.
     /// </para>
     /// <para>
-    /// **Fixity is the caller's.** Whether a side is fixed, and therefore takes a zero offset, is decided from the
+    /// **Fixity is not this record's.** Whether a side is fixed is decided from the
     /// owner's anchors by whoever prepares these records (DESIGN 7.1); nothing here classifies anchors, and the
     /// renderer has no dependency on the cut or the ledger. A side being fixed is never a reason to skip its clipped
     /// display (DESIGN 5.1: 固定Anchorの有無を仮描画の省略条件にしない), and neither is a side whose emptiness is not
@@ -81,38 +80,32 @@ namespace Zantetsu.Rendering
         /// <summary>DESIGN 5.2 <c>TemporaryClipPlaneCapacity</c>: how many planes one instance can carry.</summary>
         public const int PlaneCapacity = 8;
 
-        /// <summary>The record for an instance that is not clipped and not moved: the ordinary display.</summary>
+        /// <summary>The record for an instance that is not clipped: the ordinary display.</summary>
         public static VpInstanceClip None => default;
 
         /// <summary>
-        /// The single-plane spelling, unchanged: keeps the half of <paramref name="worldPlane"/> that
-        /// <paramref name="side"/> names, moved by <paramref name="worldOffset"/>. A side of zero is no clipping —
-        /// the instance is still moved by the offset, as it always was — and one plane cannot exceed the capacity, so
-        /// this cannot fail.
+        /// The single-plane spelling: keeps the half of <paramref name="worldPlane"/> that <paramref name="side"/>
+        /// names. A side of zero is no clipping, and one plane cannot exceed the capacity, so this cannot fail.
         /// </summary>
         /// <param name="worldPlane">The adopted plane in world space, as <c>(n.xyz, d)</c>.</param>
         /// <param name="side">Positive keeps <c>dot(n, x) + d &gt;= 0</c>, negative keeps the other half. Zero is no clipping.</param>
-        /// <param name="worldOffset">The separation, in world space, added after the object-to-world transform.</param>
-        public static VpInstanceClip Keep(Vector4 worldPlane, float side, Vector3 worldOffset)
+        public static VpInstanceClip Keep(Vector4 worldPlane, float side)
         {
             if (side == 0f)
             {
-                return new VpInstanceClip(
-                    Vector4.zero, Vector4.zero, Vector4.zero, Vector4.zero,
-                    Vector4.zero, Vector4.zero, Vector4.zero, Vector4.zero,
-                    OffsetAndCount(worldOffset, 0));
+                return None;
             }
 
             return new VpInstanceClip(
                 Signed(worldPlane, side), Vector4.zero, Vector4.zero, Vector4.zero,
                 Vector4.zero, Vector4.zero, Vector4.zero, Vector4.zero,
-                OffsetAndCount(worldOffset, 1));
+                1f);
         }
 
         /// <summary>
-        /// Keeps the intersection of <paramref name="halfSpaces"/>, moved by <paramref name="worldOffset"/>: up to
-        /// <see cref="PlaneCapacity"/> planes, each with the side this instance keeps, and one offset for all of
-        /// them. An empty set is accepted and clips nothing, which is <see cref="None"/> with an offset.
+        /// Keeps the intersection of <paramref name="halfSpaces"/>: up to <see cref="PlaneCapacity"/> planes, each
+        /// with the side this instance keeps. An empty set is accepted and clips nothing, which is
+        /// <see cref="None"/>.
         /// <para>
         /// Refuses, building nothing and leaving <paramref name="clip"/> clipping nothing, when the set is null, when
         /// it holds **more than the capacity** — the whole set is refused, never truncated — or when any half-space
@@ -129,7 +122,7 @@ namespace Zantetsu.Rendering
         /// the planes the cut adopted, carried through unchanged.
         /// </para>
         /// </summary>
-        public static bool TryKeep(IReadOnlyList<VpClipHalfSpace> halfSpaces, Vector3 worldOffset, out VpInstanceClip clip)
+        public static bool TryKeep(IReadOnlyList<VpClipHalfSpace> halfSpaces, out VpInstanceClip clip)
         {
             clip = None;
             if (halfSpaces == null)
@@ -154,14 +147,14 @@ namespace Zantetsu.Rendering
             clip = new VpInstanceClip(
                 At(halfSpaces, 0), At(halfSpaces, 1), At(halfSpaces, 2), At(halfSpaces, 3),
                 At(halfSpaces, 4), At(halfSpaces, 5), At(halfSpaces, 6), At(halfSpaces, 7),
-                OffsetAndCount(worldOffset, count));
+                count);
             return true;
         }
 
         private VpInstanceClip(
             Vector4 plane0, Vector4 plane1, Vector4 plane2, Vector4 plane3,
             Vector4 plane4, Vector4 plane5, Vector4 plane6, Vector4 plane7,
-            Vector4 offsetAndCount)
+            float planeCount)
         {
             _plane0 = plane0;
             _plane1 = plane1;
@@ -171,11 +164,11 @@ namespace Zantetsu.Rendering
             _plane5 = plane5;
             _plane6 = plane6;
             _plane7 = plane7;
-            _offsetAndCount = offsetAndCount;
+            _planeCount = planeCount;
         }
 
-        // The GPU layout, in this order: eight signed planes and then the offset with the valid count, 144 bytes.
-        // VpIndexedIndirectDrawBatch.InstanceClipStride and the VpInstanceClip struct of both shaders match it.
+        // The GPU layout, in this order: eight signed planes and then the count of valid ones, 132 bytes.
+        // VpIndexedIndirectDrawBatch.InstanceClipStride and the VpInstanceClip struct of the shaders match it.
         private readonly Vector4 _plane0;
         private readonly Vector4 _plane1;
         private readonly Vector4 _plane2;
@@ -184,13 +177,10 @@ namespace Zantetsu.Rendering
         private readonly Vector4 _plane5;
         private readonly Vector4 _plane6;
         private readonly Vector4 _plane7;
-        private readonly Vector4 _offsetAndCount;
+        private readonly float _planeCount;
 
         /// <summary>How many of the <see cref="PlaneCapacity"/> planes are valid: 0 to 8.</summary>
-        public int PlaneCount => (int)_offsetAndCount.w;
-
-        /// <summary>The world offset this instance is drawn at, common to all of its planes.</summary>
-        public Vector3 Offset => new Vector3(_offsetAndCount.x, _offsetAndCount.y, _offsetAndCount.z);
+        public int PlaneCount => (int)_planeCount;
 
         /// <summary>Whether this instance is clipped at all, that is, whether it carries any plane.</summary>
         public bool IsClipped => PlaneCount > 0;
@@ -237,11 +227,6 @@ namespace Zantetsu.Rendering
 
             VpClipHalfSpace halfSpace = halfSpaces[index];
             return Signed(halfSpace.plane, halfSpace.side);
-        }
-
-        private static Vector4 OffsetAndCount(Vector3 worldOffset, int count)
-        {
-            return new Vector4(worldOffset.x, worldOffset.y, worldOffset.z, count);
         }
     }
 }

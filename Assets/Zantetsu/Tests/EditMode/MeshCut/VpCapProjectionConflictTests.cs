@@ -25,7 +25,6 @@ namespace Zantetsu.MeshCut.Tests
     {
         /// <summary>Test values only: no product margin or epsilon exists (DESIGN O-034).</summary>
         private const float PlaneEpsilon = 0.01f;
-        private const float OffsetEpsilon = 0.01f;
         private static readonly Vector2 k_noMargin = Vector2.zero;
 
         private const int BodyMaterial = 7;
@@ -64,23 +63,23 @@ namespace Zantetsu.MeshCut.Tests
         private static readonly Vector4 k_plane = new Vector4(0f, 0f, 1f, -6f);
 
         /// <summary>Conditions under face <paramref name="operation"/>; different operations are incompatible.</summary>
-        private static VpCapCompatibilityTarget Conditions(int operation, Vector3 offset)
+        private static VpCapCompatibilityTarget Conditions(int operation)
         {
             return new VpCapCompatibilityTarget(
-                new[] { new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(operation)), 1f, k_plane) }, offset);
+                new[] { new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(operation)), 1f, k_plane) });
         }
 
         private static VpCapProjectionTarget Target(
-            int operation, Bounds box, Matrix4x4 placement, Vector3 offset, params Vector3[][] caps)
+            int operation, Bounds box, Matrix4x4 placement, params Vector3[][] caps)
         {
-            return new VpCapProjectionTarget(Conditions(operation, offset), box, placement, caps, true);
+            return new VpCapProjectionTarget(Conditions(operation), box, placement, caps, true);
         }
 
         private static VpCapProjectionTarget Target(int operation, Vector3 min, Vector3 max, params Vector3[][] caps)
         {
             var box = new Bounds();
             box.SetMinMax(min, max);
-            return Target(operation, box, Matrix4x4.identity, Vector3.zero, caps);
+            return Target(operation, box, Matrix4x4.identity, caps);
         }
 
         /// <summary>A square in the plane z = <paramref name="z"/>.</summary>
@@ -103,8 +102,8 @@ namespace Zantetsu.MeshCut.Tests
         private static VpCapProjectionVerdict Judge(
             VpCapProjectionTarget a, VpCapProjectionTarget b, VpCapEye left, VpCapEye right, Vector2 margin)
         {
-            VpCapProjectionVerdict verdict = VpCapProjectionConflict.Judge(a, b, left, right, margin, PlaneEpsilon, OffsetEpsilon);
-            VpCapProjectionVerdict swapped = VpCapProjectionConflict.Judge(b, a, left, right, margin, PlaneEpsilon, OffsetEpsilon);
+            VpCapProjectionVerdict verdict = VpCapProjectionConflict.Judge(a, b, left, right, margin, PlaneEpsilon);
+            VpCapProjectionVerdict swapped = VpCapProjectionConflict.Judge(b, a, left, right, margin, PlaneEpsilon);
             Assert.That(swapped.left, Is.EqualTo(verdict.left), "the pair's order does not matter (left)");
             Assert.That(swapped.right, Is.EqualTo(verdict.right), "the pair's order does not matter (right)");
             return verdict;
@@ -206,7 +205,7 @@ namespace Zantetsu.MeshCut.Tests
                 new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(1)), 1f, k_plane),
             };
             var a = new VpCapProjectionTarget(
-                new VpCapCompatibilityTarget(conditionsOfA, Vector3.zero), boxA, Matrix4x4.identity, capsOfA, true);
+                new VpCapCompatibilityTarget(conditionsOfA), boxA, Matrix4x4.identity, capsOfA, true);
             VpCapProjectionTarget b = Target(2, minB, maxB, Board(1f, 1.5f, -1f, 1f, 6f));
 
             Assert.That(Judge(a, b, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.ApartByCaps), "the layout");
@@ -248,20 +247,20 @@ namespace Zantetsu.MeshCut.Tests
             VpCapProjectionTarget a = Target(1, minA, maxA, Board(-1.5f, -1f, -1f, 1f, 6f));
 
             var omitted = new VpCapProjectionTarget(
-                Conditions(2, Vector3.zero), boxB, Matrix4x4.identity, Array.Empty<Vector3[]>(), false);
+                Conditions(2), boxB, Matrix4x4.identity, Array.Empty<Vector3[]>(), false);
             VpCapProjectionVerdict meeting = Judge(a, omitted, LeftNear, RightNear, k_noMargin);
             Assert.That(meeting.left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap), "boxes meet, a cap was left out");
             Assert.That(meeting.right, Is.EqualTo(VpCapProjectionOverlap.MayOverlap));
             Assert.That(meeting.MustSeparate, Is.True);
 
             var omittedButListed = new VpCapProjectionTarget(
-                Conditions(2, Vector3.zero), boxB, Matrix4x4.identity, new[] { Board(1f, 1.5f, -1f, 1f, 6f) }, false);
+                Conditions(2), boxB, Matrix4x4.identity, new[] { Board(1f, 1.5f, -1f, 1f, 6f) }, false);
             Assert.That(
                 Judge(a, omittedButListed, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap),
                 "the caps given would be apart, but another was left out");
 
             var emptyButComplete = new VpCapProjectionTarget(
-                Conditions(2, Vector3.zero), boxB, Matrix4x4.identity, Array.Empty<Vector3[]>(), true);
+                Conditions(2), boxB, Matrix4x4.identity, Array.Empty<Vector3[]>(), true);
             Assert.That(
                 Judge(a, emptyButComplete, LeftNear, RightNear, k_noMargin).left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap),
                 "no cap at all is not a reason to be apart");
@@ -269,7 +268,7 @@ namespace Zantetsu.MeshCut.Tests
             var farBox = new Bounds();
             farBox.SetMinMax(new Vector3(2.5f, -1f, 5f), new Vector3(3.5f, 1f, 7f));
             var omittedFar = new VpCapProjectionTarget(
-                Conditions(2, Vector3.zero), farBox, Matrix4x4.identity, Array.Empty<Vector3[]>(), false);
+                Conditions(2), farBox, Matrix4x4.identity, Array.Empty<Vector3[]>(), false);
             VpCapProjectionVerdict boxesApart = Judge(a, omittedFar, LeftNear, RightNear, k_noMargin);
             Assert.That(boxesApart.left, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds), "the boxes still decide when apart");
             Assert.That(boxesApart.right, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds));
@@ -310,15 +309,16 @@ namespace Zantetsu.MeshCut.Tests
             var box = new Bounds(Vector3.zero, new Vector3(1f, 1f, 1f));
             Matrix4x4 atSix = Matrix4x4.Translate(new Vector3(0f, 0f, 6f));
             Vector3[] cap = Board(-0.5f, 0.5f, -0.5f, 0.5f, 6f);
-            VpCapProjectionTarget still = Target(1, box, atSix, Vector3.zero, cap);
+            VpCapProjectionTarget still = Target(1, box, atSix, cap);
 
-            VpCapProjectionVerdict together = Judge(still, Target(2, box, atSix, Vector3.zero, cap), LeftNear, RightNear, k_noMargin);
+            VpCapProjectionVerdict together = Judge(still, Target(2, box, atSix, cap), LeftNear, RightNear, k_noMargin);
             Assert.That(together.MustSeparate, Is.True, "the same place");
 
-            var offset = new Vector3(4f, 0f, 0f);
+            var apartBy = new Vector3(4f, 0f, 0f);
+            Matrix4x4 asideAtSix = Matrix4x4.Translate(new Vector3(apartBy.x, 0f, 6f));
             VpCapProjectionVerdict separated = Judge(
-                still, Target(2, box, atSix, offset, Moved(cap, offset)), LeftNear, RightNear, k_noMargin);
-            Assert.That(separated.left, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds), "moved by its separation");
+                still, Target(2, box, asideAtSix, Moved(cap, apartBy)), LeftNear, RightNear, k_noMargin);
+            Assert.That(separated.left, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds), "put apart by its placement");
             Assert.That(separated.right, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds));
 
             // A plank 4 long and 0.2 thick at depth 6, and a small box 1.5 above its middle.
@@ -327,13 +327,13 @@ namespace Zantetsu.MeshCut.Tests
                 Board(-0.1f, 0.1f, 1.4f, 1.6f, 6f));
 
             VpCapProjectionVerdict flat = Judge(
-                Target(1, plank, atSix, Vector3.zero, Board(-2f, 2f, -0.1f, 0.1f, 6f)), small, LeftNear, RightNear, k_noMargin);
+                Target(1, plank, atSix, Board(-2f, 2f, -0.1f, 0.1f, 6f)), small, LeftNear, RightNear, k_noMargin);
             Assert.That(flat.left, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds), "lying flat, below the box");
             Assert.That(flat.right, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds));
 
             Matrix4x4 upright = Matrix4x4.TRS(new Vector3(0f, 0f, 6f), Quaternion.Euler(0f, 0f, 90f), Vector3.one);
             VpCapProjectionVerdict turned = Judge(
-                Target(1, plank, upright, Vector3.zero, Board(-0.1f, 0.1f, -2f, 2f, 6f)), small, LeftNear, RightNear, k_noMargin);
+                Target(1, plank, upright, Board(-0.1f, 0.1f, -2f, 2f, 6f)), small, LeftNear, RightNear, k_noMargin);
             Assert.That(turned.left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap), "turned upright, through the box");
             Assert.That(turned.MustSeparate, Is.True);
         }
@@ -421,8 +421,8 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The layout of the apart-by-caps case, broken one value at a time: a cap vertex, the placement, the
-        /// separation, one eye's matrix, and a finite matrix whose results overflow. None of them can be shown apart,
+        /// The layout of the apart-by-caps case, broken one value at a time: a cap vertex, the placement, one eye's
+        /// matrix, and a finite matrix whose results overflow. None of them can be shown apart,
         /// so each must be separated — in the eye it broke. A margin that is not a finite non-negative value is refused.
         /// </summary>
         [Test]
@@ -438,7 +438,7 @@ namespace Zantetsu.MeshCut.Tests
             Vector3[] capB = Board(1f, 1.5f, -1f, 1f, 6f);
 
             Assert.That(
-                Judge(a, Target(2, boxB, Matrix4x4.identity, Vector3.zero, capB), LeftNear, RightNear, k_noMargin).MustSeparate,
+                Judge(a, Target(2, boxB, Matrix4x4.identity, capB), LeftNear, RightNear, k_noMargin).MustSeparate,
                 Is.False, "the finite layout is apart");
 
             Vector3[] nanCap = Board(1f, 1.5f, -1f, 1f, 6f);
@@ -448,9 +448,8 @@ namespace Zantetsu.MeshCut.Tests
 
             var broken = new (VpCapProjectionTarget b, string what)[]
             {
-                (Target(2, boxB, Matrix4x4.identity, Vector3.zero, nanCap), "a cap vertex NaN"),
-                (Target(2, boxB, nanPlacement, Vector3.zero, capB), "the placement NaN"),
-                (Target(2, boxB, Matrix4x4.identity, new Vector3(float.PositiveInfinity, 0f, 0f), capB), "the separation infinite"),
+                (Target(2, boxB, Matrix4x4.identity, nanCap), "a cap vertex NaN"),
+                (Target(2, boxB, nanPlacement, capB), "the placement NaN"),
             };
             foreach ((VpCapProjectionTarget b, string what) in broken)
             {
@@ -460,7 +459,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(verdict.MustSeparate, Is.True, what);
             }
 
-            VpCapProjectionTarget good = Target(2, boxB, Matrix4x4.identity, Vector3.zero, capB);
+            VpCapProjectionTarget good = Target(2, boxB, Matrix4x4.identity, capB);
             Matrix4x4 nanMatrix = LeftNear.worldToClip;
             nanMatrix[3, 2] = float.NaN;
             VpCapProjectionVerdict leftBroken = Judge(a, good, new VpCapEye(LeftNear.position, nanMatrix), RightNear, k_noMargin);
@@ -509,7 +508,7 @@ namespace Zantetsu.MeshCut.Tests
             foreach (Vector2 bad in new[] { new Vector2(-0.01f, 0f), new Vector2(0f, float.NaN), new Vector2(float.PositiveInfinity, 0f) })
             {
                 Assert.Throws<ArgumentOutOfRangeException>(
-                    () => VpCapProjectionConflict.Judge(a, good, LeftNear, RightNear, bad, PlaneEpsilon, OffsetEpsilon),
+                    () => VpCapProjectionConflict.Judge(a, good, LeftNear, RightNear, bad, PlaneEpsilon),
                     "margin " + bad);
             }
         }
@@ -570,7 +569,6 @@ namespace Zantetsu.MeshCut.Tests
                     VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(), () => 1,
                     out VpLogicalCutDisplay display),
                 Is.True);
-            display.Separation = Separation;
             _ledgers[display] = ledger;
             Assert.That(display.TryShow(body, AppendCube(storage), placement), Is.True);
             Assert.That(ledger.Admit(body, new float4(0f, 1f, 0f, -1f), true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
@@ -613,7 +611,8 @@ namespace Zantetsu.MeshCut.Tests
         /// Two cubes of two ledgers — incompatible — seen by eyes in front of them. In the same place their positive
         /// caps meet and they must be separated; with the second cube 3.5 to the side, their rectangles are apart. The
         /// target is made from what the real display published: its render fragment's box and placement, its cap records
-        /// and the separated cap vertices. Seen from above, where the visibility test drops both downward positive caps,
+        /// and its cap vertices where they are drawn. The positive cap closes the cut at y = 1 and faces down, so the
+        /// eyes are just under it. Seen from above, where the visibility test drops both downward positive caps,
         /// neither target's caps are complete, and with their boxes meeting the two may overlap: an omitted cap does not
         /// show the volumes apart.
         /// </summary>
@@ -627,20 +626,19 @@ namespace Zantetsu.MeshCut.Tests
             using (VpLogicalCutDisplay alsoHere = CutCube(second, Matrix4x4.identity))
             using (VpLogicalCutDisplay aside = CutCube(third, Matrix4x4.Translate(new Vector3(3.5f, 0f, 0f))))
             {
-                VpCapEye left = CameraEye(new Vector3(-0.03f, 1.1f, -5f));
-                VpCapEye right = CameraEye(new Vector3(0.03f, 1.1f, -5f));
+                VpCapEye left = CameraEye(new Vector3(-0.03f, 0.9f, -5f));
+                VpCapEye right = CameraEye(new Vector3(0.03f, 0.9f, -5f));
                 VpCapProjectionTarget a = Adapted(here, left, right);
                 Assert.That(a.visibleCaps.Count, Is.EqualTo(1), "seen from just under it, the positive cap is kept");
                 Assert.That(a.localBounds.min, Is.EqualTo(new Vector3(-1f, 0f, -1f)), "the cube's own box");
-                Assert.That(a.conditions.offset.y, Is.EqualTo(Separation).Within(1e-5f), "with the free side's separation");
 
                 VpCapProjectionVerdict together = VpCapProjectionConflict.Judge(
-                    a, Adapted(alsoHere, left, right), left, right, k_noMargin, PlaneEpsilon, OffsetEpsilon);
+                    a, Adapted(alsoHere, left, right), left, right, k_noMargin, PlaneEpsilon);
                 Assert.That(together.compatible, Is.False, "two ledgers");
                 Assert.That(together.MustSeparate, Is.True, "the same place");
 
                 VpCapProjectionVerdict apart = VpCapProjectionConflict.Judge(
-                    a, Adapted(aside, left, right), left, right, k_noMargin, PlaneEpsilon, OffsetEpsilon);
+                    a, Adapted(aside, left, right), left, right, k_noMargin, PlaneEpsilon);
                 Assert.That(apart.left, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds), "3.5 to the side");
                 Assert.That(apart.right, Is.EqualTo(VpCapProjectionOverlap.ApartByBounds));
 
@@ -651,7 +649,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(seenFromAbove.capsComplete, Is.False, "and so this target's caps are not complete");
                 Assert.That(a.capsComplete, Is.True, "seen from under it, nothing was left out");
                 VpCapProjectionVerdict noCaps = VpCapProjectionConflict.Judge(
-                    seenFromAbove, Adapted(alsoHere, aboveLeft, aboveRight), aboveLeft, aboveRight, k_noMargin, PlaneEpsilon, OffsetEpsilon);
+                    seenFromAbove, Adapted(alsoHere, aboveLeft, aboveRight), aboveLeft, aboveRight, k_noMargin, PlaneEpsilon);
                 Assert.That(noCaps.left, Is.EqualTo(VpCapProjectionOverlap.MayOverlap), "boxes meeting, caps left out");
                 Assert.That(noCaps.right, Is.EqualTo(VpCapProjectionOverlap.MayOverlap));
                 Assert.That(noCaps.MustSeparate, Is.True);

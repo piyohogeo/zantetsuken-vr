@@ -39,9 +39,8 @@ namespace Zantetsu.MeshCut
     /// for itself.
     /// </para>
     /// <para>
-    /// **What is asked for.** The base placement of the geometry's own local frame: where the shape would be drawn
-    /// with no temporary separation, and without what earlier commits folded into that geometry — the display adds
-    /// both itself (DESIGN 5.1).
+    /// **What is asked for.** The base placement of the geometry's own local frame: where the shape is drawn. The
+    /// display adds nothing to it — no cut displaces a side for the display (DESIGN 5.1).
     /// </para>
     /// <para>
     /// It is read while a snapshot is built and not again while that snapshot draws, so what one collection decided

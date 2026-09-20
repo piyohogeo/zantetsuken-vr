@@ -48,8 +48,8 @@ namespace Zantetsu.PhysicsCut
         /// start at the very placement the source had. It is **not** the cut DAG's lineage-to-geometry mapping, which
         /// is about the plane a kernel cuts at and has nothing to do with where anything stands.
         /// <para>
-        /// The separation the display draws with is no part of this: what a snapshot sums and what a geometry commit
-        /// folds in are the display's own, and a physical position or a separation impulse is never one of them.
+        /// It says where the geometry sits on its owner and nothing more. The display draws it there: no side is
+        /// displaced for the display, so a separation impulse moves the owner and never this correspondence.
         /// </para>
         /// </summary>
         public Matrix4x4? GeometryLocalToOwner { get; }

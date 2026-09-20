@@ -25,8 +25,10 @@ namespace Zantetsu.MeshCut.Tests
         private const int SideMaterial = 3;
         private const int EndMaterial = 4;
         private const int Size = 128;
-        private const float WideSeparation = 3f;
         private const float Tolerance = 1e-4f;
+
+        /// <summary>How far a free side is placed from where it was cut. Nothing in the display moves a side.</summary>
+        private const float CarriedAway = 3f;
 
         private static readonly float3[] k_cube =
         {
@@ -85,10 +87,9 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Two cuts on one lineage, each pending and then published, on a body of two submeshes placed with a rotation:
-        /// publishing changes nothing drawn -- every instance's clip record and offset, every cap's plane, normal and
-        /// vertices stay exactly as they were, and no section is taken again -- only who the sides and caps belong to.
-        /// Each body command is drawn once per render fragment. A change of separation moves the offsets and takes no
-        /// section again either.
+        /// publishing changes nothing drawn -- every instance's clip record, every cap's plane, normal and vertices
+        /// stay exactly as they were, and no section is taken again -- only who the sides and caps belong to.
+        /// Each body command is drawn once per render fragment.
         /// </summary>
         [Test]
         public void TwoCutsEachPendingThenPublished_ChangeNothingDrawn()
@@ -130,25 +131,12 @@ namespace Zantetsu.MeshCut.Tests
                 Drawn pendingB = Capture(display);
                 builds = display.CapPolygonBuilds;
 
-                // The offsets are the lineage's: A+ is free (the anchor is below), and A+ has no anchor for B's sides.
-                Vector3 nA = rotation * Vector3.up;
-                Vector3 nB = rotation * Vector3.right;
-                // Render fragments in walk order: A+ B+, A+ B-, A-.
-                AssertOffset(display, 0, (nA + nB) * WideSeparation, "A+ B+");
-                AssertOffset(display, 1, (nA - nB) * WideSeparation, "A+ B-");
-                AssertOffset(display, 2, Vector3.zero, "A- is fixed");
-
                 Assert.That(ledger.Publish(b, out LogicalFragmentId plusPlus, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
                 Collect(scene);
                 AssertSameShape(pendingB, Capture(display), "B published");
                 Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds), "no section taken again when B is published");
                 Assert.That(display.StateOf(plusPlus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit));
                 Assert.That(display.StateOf(plus), Is.EqualTo(LogicalCutDisplayState.ProvisionalSplit), "an intermediate fragment");
-
-                display.Separation = 1f;
-                Collect(scene);
-                Assert.That(display.CapPolygonBuilds, Is.EqualTo(builds), "a new separation takes no section again");
-                AssertOffset(display, 0, nA + nB, "A+ B+ at the new separation");
 
                 Camera camera = Oblique();
                 Draw(display, camera);
@@ -159,7 +147,7 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Three planes that meet inside the body: every cap of every render fragment lies on its own plane and inside
-        /// every other selected half-space of that render fragment, once its offset is taken back off, and no cap has
+        /// every other selected half-space of that render fragment, and no cap has
         /// more than fourteen vertices. A render fragment has one cap per condition.
         /// </summary>
         [Test]
@@ -195,7 +183,7 @@ namespace Zantetsu.MeshCut.Tests
                     for (int v = 0; v < cap.vertexCount; v++)
                     {
                         Assert.That(display.TryGetCapVertex(i, v, out Vector3 world), Is.True);
-                        Vector3 point = world - cap.offset;
+                        Vector3 point = world;
                         Assert.That(Evaluate(cap.worldPlane, point), Is.EqualTo(0f).Within(Tolerance), "on its own plane");
                         for (int j = 0; j < display.CapRecordCount; j++)
                         {
@@ -286,7 +274,7 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Nine cuts down one lineage: L9+ and L9- are drawn once, as L8+ whole under its eight selected boundaries; the
-        /// ninth boundary makes no clip, offset, volume or cap, and the siblings L1- .. L8- are each drawn once. The
+        /// ninth boundary makes no clip, volume or cap, and the siblings L1- .. L8- are each drawn once. The
         /// aggregate keeps a cap for every one of its eight boundaries -- its ancestors' opening caps -- and every
         /// branch's candidates and their states are readable.
         /// </summary>
@@ -374,7 +362,9 @@ namespace Zantetsu.MeshCut.Tests
         /// <summary>
         /// Two registrations of one ledger whose openings overlap on screen: they are classified together, their caps
         /// are different volume groups (different registrations and faces), and so they take different ordinary colours;
-        /// both openings and their overlap are capped, and nothing is capped outside them.
+        /// both openings and their overlap are capped, and nothing is capped outside them. Both cuts are published and
+        /// each free top is placed clear of the camera -- with the tops where the bottoms are there is
+        /// no opening to see.
         /// </summary>
         [Test]
         public void OverlappingRegistrations_TakeDifferentColours()
@@ -388,8 +378,20 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalFragmentId second = ledger.AddFragment(below);
                 Assert.That(display.TryShow(first, AppendCube(scene.storage, false), Matrix4x4.identity), Is.True);
                 Assert.That(display.TryShow(second, AppendCube(scene.storage, false), Matrix4x4.Translate(new Vector3(1f, 0f, 0.5f))), Is.True);
-                Admit(ledger, first, new float4(0f, 1f, 0f, 0f));
-                Admit(ledger, second, new float4(0f, 1f, 0f, 0f));
+                Matrix4x4 secondAt = Matrix4x4.Translate(new Vector3(1f, 0f, 0.5f));
+                CutOperationId firstCut = Admit(ledger, first, new float4(0f, 1f, 0f, 0f));
+                CutOperationId secondCut = Admit(ledger, second, new float4(0f, 1f, 0f, 0f));
+                Assert.That(
+                    ledger.Publish(firstCut, out LogicalFragmentId firstTop, out LogicalFragmentId firstBottomFragment),
+                    Is.EqualTo(LogicalCutResultOutcome.Applied));
+                Assert.That(
+                    ledger.Publish(secondCut, out LogicalFragmentId secondTop, out LogicalFragmentId secondBottomFragment),
+                    Is.EqualTo(LogicalCutResultOutcome.Applied));
+                display.Placement = new VpTestPlacements()
+                    .Put(firstTop, Matrix4x4.Translate(new Vector3(0f, CarriedAway, 0f)))
+                    .Static(firstBottomFragment)
+                    .Put(secondTop, Matrix4x4.Translate(new Vector3(0f, CarriedAway, 0f)) * secondAt)
+                    .Static(secondBottomFragment);
                 Collect(scene);
 
                 Camera camera = Looking(new Vector3(0.5f, 1.5f, 0.25f), Vector3.down, 2f);
@@ -397,8 +399,8 @@ namespace Zantetsu.MeshCut.Tests
                 Color32[] image = Draw(display, camera);
                 display.CapJobsClassifiedForTest = null;
                 Assert.That(display.AdoptedGeometries.Count, Is.EqualTo(2), "every registration's draw ranges, together");
-                int firstBottom = RenderFragmentOf(display, first, -1f);
-                int secondBottom = RenderFragmentOf(display, second, -1f);
+                int firstBottom = RenderFragmentOfRoot(display, firstBottomFragment);
+                int secondBottom = RenderFragmentOfRoot(display, secondBottomFragment);
                 Assert.That(captured.JobOfRenderFragment(firstBottom, out VpCapJob a), Is.True, "the first bottom is seen");
                 Assert.That(captured.JobOfRenderFragment(secondBottom, out VpCapJob b), Is.True, "and the second");
                 Assert.That(a.volumeGroup, Is.Not.EqualTo(b.volumeGroup), "different registrations: different volumes");
@@ -743,56 +745,6 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
-        // ----- the conservative numeric check ---------------------------------------------------------------------------
-
-        /// <summary>
-        /// Nine cuts up one lineage, every side free. At a separation of 3e37 everything is finite: the display with room
-        /// adopts, and the one short of branches is only refused and keeps drawing. At 4e37 the ninth separation is past a
-        /// float although L9+ is drawn only inside the aggregate L8+, whose offset is finite: both displays -- with room and
-        /// without -- stop before the frame draws, as invalid input found by the conservative check, not as a drawn value.
-        /// </summary>
-        [Test]
-        public void TheConservativeNumericCheck_StopsTheDisplay_WhateverTheRoom()
-        {
-            using (Scene roomy = NewScene())
-            using (Scene small = NewScene(branches: 2, ledger: roomy.ledger))
-            {
-                LogicalCutLedger ledger = roomy.ledger;
-                LogicalFragmentId root = ledger.AddFragment();
-                Assert.That(roomy.display.TryShow(root, AppendCube(roomy.storage, false), Matrix4x4.identity), Is.True);
-                Assert.That(small.display.TryShow(root, AppendCube(small.storage, false), Matrix4x4.identity), Is.True);
-                Collect(roomy);
-                Assert.That(small.display.TryBeginFrame(), Is.True, "the layout: one branch fits");
-                Camera camera = Oblique();
-                Draw(small.display, camera);
-
-                LogicalFragmentId at = root;
-                for (int k = 0; k < 9; k++)
-                {
-                    at = Cut(ledger, at, new float4(0f, 1f, 0f, 0.8f - (0.15f * k))).positive;
-                }
-
-                roomy.display.Separation = 3e37f;
-                small.display.Separation = 3e37f;
-                Collect(roomy);
-                Assert.That(small.display.TryBeginFrame(), Is.False, "finite, but short of branches");
-                Assert.That(small.display.IsHalted, Is.False, "a shortfall alone");
-                Draw(small.display, camera);
-
-                roomy.display.Separation = 4e37f;
-                small.display.Separation = 4e37f;
-                _frame++;
-                foreach ((VpLogicalCutDisplay display, string what) in new[] { (roomy.display, "with room"), (small.display, "short of room") })
-                {
-                    Assert.That(display.TryBeginFrame(), Is.False, what);
-                    Assert.That(display.IsHalted, Is.True, what + ": stopped");
-                    Assert.That(display.HaltReason, Is.EqualTo(LogicalCutDisplayHaltReason.InvalidInput), what);
-                    Assert.That(display.HaltInvalidInput, Is.EqualTo(VpMultiCutInvalidInput.ConservativeOffset), what + ": the check, not a drawn value");
-                    Assert.Throws<InvalidOperationException>(() => display.TryPrepareCamera(camera), what + ": no preparation");
-                }
-            }
-        }
-
         /// <summary>
         /// A body whose box, placement and the epsilon it would be built with fail the section bounds is refused where it
         /// is taken in -- a box 1e26 wide, whose derived epsilon squares past a float, and a cube placed 1e38 away -- and
@@ -1001,14 +953,19 @@ namespace Zantetsu.MeshCut.Tests
                     VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth,
                     VpStencilTestSettings.Create(colours), () => _frame, out scene.display),
                 Is.True, "create the display");
-            scene.display.Separation = WideSeparation;
             return scene;
         }
 
         /// <summary>
         /// The cube cut through its centre by the diagonal plane n = (1, 1, 1) / sqrt 3, with both anchors on its
-        /// negative side, so A- is fixed and A+ moved far along n; then A- cut by x - y = 1.5, one anchor on each side,
-        /// so both of its parts stay. A-'s cap of the first cut, on B's negative side, is the hexagon less one corner.
+        /// negative side, so A- is fixed and A+ is the free one, placed <see cref="CarriedAway"/> along n;
+        /// then A- cut by x - y = 1.5, one anchor on each side, so both of its
+        /// parts stay. A-'s cap of the first cut, on B's negative side, is the hexagon less one corner.
+        /// <para>
+        /// A+ is placed out of the way because that is the only thing that opens A-'s section to a camera: nothing in
+        /// the display moves it. B is admitted and not published, so B's own two parts are at the one placement and
+        /// its section is closed -- which is what leaves A-'s cap its corner to be drawn by B+'s triangle.
+        /// </para>
         /// </summary>
         private Scene HexagonScene(out Vector3 n)
         {
@@ -1017,11 +974,14 @@ namespace Zantetsu.MeshCut.Tests
             LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0.9f, -0.9f, -0.5f), new float3(0f, 0f, -0.5f) });
             Assert.That(scene.display.TryShow(root, AppendCube(scene.storage, false), Matrix4x4.identity), Is.True);
             float4 diagonal = Normalized(new float4(1f, 1f, 1f, 0f));
-            var (_, _, minus) = Cut(ledger, root, diagonal);
+            var (_, plus, minus) = Cut(ledger, root, diagonal);
             Admit(ledger, minus, Normalized(new float4(1f, -1f, 0f, -1.5f)));
+            n = new Vector3(diagonal.x, diagonal.y, diagonal.z);
+            scene.display.Placement = new VpTestPlacements()
+                .Put(plus, Matrix4x4.Translate(n * CarriedAway))
+                .Static(minus);
             Collect(scene);
             Assert.That(ledger.IsFixedOwner(minus), Is.True, "the layout: A- is fixed");
-            n = new Vector3(diagonal.x, diagonal.y, diagonal.z);
             return scene;
         }
 
@@ -1064,6 +1024,25 @@ namespace Zantetsu.MeshCut.Tests
             return (plane.x * point.x) + (plane.y * point.y) + (plane.z * point.z) + plane.w;
         }
 
+        /// <summary>
+        /// The render fragment drawn for <paramref name="fragment"/> itself, named rather than found by a property
+        /// several fragments share.
+        /// </summary>
+        private static int RenderFragmentOfRoot(VpLogicalCutDisplay display, LogicalFragmentId fragment)
+        {
+            for (int r = 0; r < display.RenderFragmentCount; r++)
+            {
+                Assert.That(display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                if (rf.root == fragment)
+                {
+                    return r;
+                }
+            }
+
+            Assert.Fail("nothing is drawn for that fragment");
+            return -1;
+        }
+
         private static int RenderFragmentOf(VpLogicalCutDisplay display, LogicalFragmentId source, float side)
         {
             for (int i = 0; i < display.SideCount; i++)
@@ -1086,12 +1065,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(display.TryGetDrawCommand(c, out VpIndirectCommand command), Is.True);
                 Assert.That(command.instanceCount, Is.EqualTo(renderFragments), "command " + c);
             }
-        }
-
-        private static void AssertOffset(VpLogicalCutDisplay display, int renderFragment, Vector3 expected, string what)
-        {
-            display.TryGetRenderFragment(renderFragment, out VpMultiCutRenderFragment rf);
-            Assert.That((rf.offset - expected).magnitude, Is.LessThan(Tolerance), what + ": " + rf.offset + " against " + expected);
         }
 
         private static void AssertSidesName(VpLogicalCutDisplay display, LogicalFragmentId plus, LogicalFragmentId minus)
@@ -1163,7 +1136,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(y.operation, Is.EqualTo(x.operation), what + ": side " + i + " operation");
                 Assert.That(y.side, Is.EqualTo(x.side));
                 Assert.That(y.fixedByAnchors, Is.EqualTo(x.fixedByAnchors));
-                Assert.That(Same(y.offset, x.offset), Is.True, what + ": side " + i + " offset " + x.offset + " then " + y.offset);
                 Assert.That(y.clip.PlaneCount, Is.EqualTo(x.clip.PlaneCount), what + ": side " + i + " planes");
                 for (int p = 0; p < x.clip.PlaneCount; p++)
                 {
@@ -1179,7 +1151,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(y.renderFragment, Is.EqualTo(x.renderFragment), what + ": cap " + i);
                 Assert.That(y.operation, Is.EqualTo(x.operation));
                 Assert.That(y.side, Is.EqualTo(x.side));
-                Assert.That(Same(y.offset, x.offset), Is.True, what + ": cap " + i + " offset");
                 Assert.That(Same(y.worldPlane, x.worldPlane), Is.True, what + ": cap " + i + " plane");
                 Assert.That(Same(y.outwardNormal, x.outwardNormal), Is.True, what + ": cap " + i + " normal");
                 Assert.That(b.vertices[i].Length, Is.EqualTo(a.vertices[i].Length), what + ": cap " + i + " vertices");

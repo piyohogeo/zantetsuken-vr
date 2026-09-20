@@ -28,7 +28,6 @@ namespace Zantetsu.MeshCut.Tests
         private const int SideMaterial = 7;
         private const int EndMaterial = 2;
         private const float Epsilon = 0.01f;
-        private const float Separation = 0.25f;
 
         private readonly List<UnityEngine.Object> _objects = new List<UnityEngine.Object>();
         private int _frame;
@@ -354,30 +353,30 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
-        // ----- offsets and fixity ----------------------------------------------------------------------------------
+        // ----- fixity and clipping ---------------------------------------------------------------------------------
 
         /// <summary>
-        /// The anchors decide which side is fixed, and only a free side is moved. Both sides are clipped in every
-        /// case, and the plane is never moved: the kerf stays zero.
+        /// The anchors decide which side is reported fixed. Both sides are clipped in every case, and the plane is
+        /// never moved: the kerf stays zero.
         /// </summary>
         [Test]
-        public void TheOffsets_FollowTheAnchors_OnOneSideBothSidesAndNeither()
+        public void TheFixity_FollowsTheAnchors_OnOneSideBothSidesAndNeither()
         {
             // The anchor sits below the plane, so the negative side is fixed and only the positive one moves.
-            AssertOffsets(
+            AssertFixityAndClipping(
                 new List<float3> { k_lowAnchor },
                 positiveFixed: false, negativeFixed: true);
 
             // An anchor on each side: both fixed, both still clipped, neither moved.
-            AssertOffsets(
+            AssertFixityAndClipping(
                 new List<float3> { k_lowAnchor, k_highAnchor },
                 positiveFixed: true, negativeFixed: true);
 
             // No anchors at all: both sides are free and both move, in opposite directions.
-            AssertOffsets(null, positiveFixed: false, negativeFixed: false);
+            AssertFixityAndClipping(null, positiveFixed: false, negativeFixed: false);
         }
 
-        private void AssertOffsets(List<float3> anchors, bool positiveFixed, bool negativeFixed)
+        private void AssertFixityAndClipping(List<float3> anchors, bool positiveFixed, bool negativeFixed)
         {
             using (VpCpuGeometryStorage storage = NewStorage())
             {
@@ -389,7 +388,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
@@ -407,22 +405,16 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(
                         positive.clip.SignedPlane(0), Is.EqualTo(-negative.clip.SignedPlane(0)),
                         "one plane, two sides of it");
-
-                    Vector3 up = Vector3.up;
-                    AssertVector(positive.offset, positiveFixed ? Vector3.zero : up * Separation, "the positive side's separation");
-                    AssertVector(negative.offset, negativeFixed ? Vector3.zero : -up * Separation, "the negative side's separation");
-                    AssertVector(positive.clip.Offset, positive.offset, "the positive clip carries that separation");
-                    AssertVector(negative.clip.Offset, negative.offset, "the negative clip carries that separation");
                 }
             }
         }
 
         /// <summary>
         /// A body that is moved and turned: the plane the sides are clipped by is the adopted plane in world space,
-        /// and the separation follows that world plane's own normal, not the geometry's axes.
+        /// carried by the body's own placement rather than by the geometry's axes.
         /// </summary>
         [Test]
-        public void AMovedAndTurnedBody_KeepsTheFaceTheSideAndTheOffsetConsistent()
+        public void AMovedAndTurnedBody_KeepsTheFaceAndTheSideConsistent()
         {
             using (VpCpuGeometryStorage storage = NewStorage())
             {
@@ -436,7 +428,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, placement), Is.True);
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
@@ -456,8 +447,6 @@ namespace Zantetsu.MeshCut.Tests
                         Vector3.Dot(worldNormal, positivePoint) + plane.w, Is.GreaterThan(0f),
                         "the positive side keeps what is above the plane in the body's own frame");
 
-                    AssertVector(positive.offset, worldNormal * Separation, "the separation follows the world plane's normal");
-                    AssertVector(negative.offset, -worldNormal * Separation, "and the other side's is the opposite");
                     Assert.That(negative.clip.SignedPlane(0), Is.EqualTo(-plane), "the other side of the same face");
                 }
             }
@@ -1039,7 +1028,7 @@ namespace Zantetsu.MeshCut.Tests
             for (int i = 0; i < vertices.Length; i++)
             {
                 // The separation was added after the placement, so it comes off again to test the face itself.
-                float3 onFace = (float3)(vertices[i] - record.offset);
+                float3 onFace = (float3)vertices[i];
                 Assert.That(
                     math.abs(math.dot(normal, onFace) + record.worldPlane.w), Is.LessThan(1e-3f),
                     what + ": vertex " + i + " lies in the adopted face");
@@ -1122,7 +1111,7 @@ namespace Zantetsu.MeshCut.Tests
                     foreach (Vector3 vertex in before)
                     {
                         Assert.That(
-                            vertex.y - positive.offset.y, Is.EqualTo(1f).Within(1e-4f), "the face is y = 1");
+                            vertex.y, Is.EqualTo(1f).Within(1e-4f), "the face is y = 1");
                         Assert.That(Mathf.Abs(vertex.x), Is.EqualTo(1f).Within(1e-4f), "and it reaches the body's side");
                         Assert.That(Mathf.Abs(vertex.z), Is.EqualTo(1f).Within(1e-4f));
                     }
@@ -1269,7 +1258,6 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
                     using (new AfterTheFrame(NextFrame, display))
                     {
-                        display.Separation = Separation;
                         Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                         CutOperationId cut = Admit(ledger, source);
                         Prepare(ledger, cut);
@@ -1283,25 +1271,19 @@ namespace Zantetsu.MeshCut.Tests
                         AssertCap(display, 0, what + ", positive");
                         AssertCap(display, 1, what + ", negative");
 
-                        // The plane is y = 1, so the free side moves along y and the fixed one does not move at all.
-                        AssertVector(
-                            positive.offset, positiveFixed ? Vector3.zero : new Vector3(0f, Separation, 0f),
-                            what + ": the positive separation");
-                        AssertVector(
-                            negative.offset, negativeFixed ? Vector3.zero : new Vector3(0f, -Separation, 0f),
-                            what + ": the negative separation");
+                        // The plane is y = 1, and neither side is moved by the display.
 
                         foreach (Vector3 vertex in CapVertices(display, 0))
                         {
                             Assert.That(
-                                vertex.y, Is.EqualTo(1f + positive.offset.y).Within(1e-4f),
+                                vertex.y, Is.EqualTo(1f).Within(1e-4f),
                                 what + ": the positive cap is drawn where its side is");
                         }
 
                         foreach (Vector3 vertex in CapVertices(display, 1))
                         {
                             Assert.That(
-                                vertex.y, Is.EqualTo(1f + negative.offset.y).Within(1e-4f),
+                                vertex.y, Is.EqualTo(1f).Within(1e-4f),
                                 what + ": and the negative cap where its own side is");
                         }
                     }
@@ -1348,13 +1330,12 @@ namespace Zantetsu.MeshCut.Tests
                         LogicalCutCapRecord positive = CapOf(display, 0);
                         LogicalCutDisplaySide positiveSide = SideOf(display, 0);
                         Assert.That(positiveSide.side, Is.EqualTo(1f), what + ": the first side is the positive one");
-                        AssertVector(positive.offset, positiveSide.offset, what + ": the same separation as the side");
 
                         // Back in the body's own frame the cap is the square at y = 1, whatever the placement did.
                         Matrix4x4 toLocal = placement.inverse;
                         foreach (Vector3 vertex in CapVertices(display, 0))
                         {
-                            Vector3 local = toLocal.MultiplyPoint3x4(vertex - positive.offset);
+                            Vector3 local = toLocal.MultiplyPoint3x4(vertex);
                             Assert.That(local.y, Is.EqualTo(1f).Within(1e-3f), what + ": on the body's own face");
                             Assert.That(Mathf.Abs(local.x), Is.EqualTo(1f).Within(1e-3f), what + ": and at its side");
                             Assert.That(Mathf.Abs(local.z), Is.EqualTo(1f).Within(1e-3f));
@@ -1584,7 +1565,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True, "create");
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = Separation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
                     Assert.That(display.CapPolygonBuilds, Is.Zero, "a whole body has no face to take one of");
@@ -1629,26 +1609,7 @@ namespace Zantetsu.MeshCut.Tests
                         AssertVector(published[i], first[i], "vertex " + i + " did not move at publication");
                     }
 
-                    // A different separation places the caps again, and intersects nothing again.
-                    display.Separation = Separation * 3f;
-                    NextFrame();
-                    Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(
-                        display.CapPolygonBuilds, Is.EqualTo(1),
-                        "the separation moves a cap, it does not re-cut the box");
-
-                    LogicalCutCapRecord moved = CapOf(display, 0);
-                    AssertVector(
-                        moved.offset, new Vector3(0f, Separation * 3f, 0f), "the cap took the new separation");
-                    Vector3[] placed = CapVertices(display, 0);
-                    for (int i = 0; i < placed.Length; i++)
-                    {
-                        AssertVector(
-                            placed[i], first[i] + new Vector3(0f, Separation * 2f, 0f),
-                            "vertex " + i + " is the same face, placed further apart");
-                    }
-
-                    AssertCap(display, 0, "after the separation changed");
+                    AssertCap(display, 0, "after the publication");
                 }
             }
         }

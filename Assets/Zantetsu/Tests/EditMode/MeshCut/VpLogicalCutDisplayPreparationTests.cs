@@ -35,7 +35,6 @@ namespace Zantetsu.MeshCut.Tests
         private const int SideMaterial = 7;
         private const int EndMaterial = 2;
         private const int Size = 128;
-        private const float WideSeparation = 3f;
         private const int Warmup = 10;
         private const int Iterations = 100;
 
@@ -262,10 +261,12 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The same measure over a multi-cut snapshot: two bodies, each cut and published, then each published top cut
-        /// again, pending, and the bottoms cut again too -- render fragments under one and under two boundaries, caps
-        /// clipped by another boundary, and two registrations classified together. After warming up, a hundred
-        /// preparations over two views show no GC.Alloc sample on this thread; the recorder is shown one allocation first.
+        /// The same measure over a multi-cut snapshot: two bodies, each cut and published with each side at its own
+        /// owner, then each published top cut again, pending, and the bottoms cut again too -- render fragments under
+        /// one and under two boundaries, caps clipped by another boundary, and two registrations classified together.
+        /// After warming up, a hundred preparations over two views show no GC.Alloc sample on this thread; the recorder
+        /// is shown one allocation first. The published sides stand apart, so the arrangement this measures and checks
+        /// is one with caps really facing the views.
         /// </summary>
         [Test]
         public void AMultiCutPreparation_ShowsNoManagedAllocation()
@@ -277,13 +278,16 @@ namespace Zantetsu.MeshCut.Tests
                 LogicalCutLedger ledger = scene.ledger;
                 var tops = new List<LogicalFragmentId>();
                 var bottoms = new List<LogicalFragmentId>();
+                var placements = new VpTestPlacements();
                 for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
                 {
                     Assert.That(ledger.Publish(operation.id, out LogicalFragmentId top, out LogicalFragmentId bottom), Is.EqualTo(LogicalCutResultOutcome.Applied));
                     tops.Add(top);
                     bottoms.Add(bottom);
+                    placements.Put(top, new Vector3(0f, 2.5f, 0f)).Static(bottom);
                 }
 
+                display.Placement = placements;
                 foreach (LogicalFragmentId fragment in tops)
                 {
                     Assert.That(ledger.Admit(fragment, new float4(1f, 0f, 0f, 0f), true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
@@ -494,7 +498,7 @@ namespace Zantetsu.MeshCut.Tests
         [Test]
         public void TwoCamerasPreparedInTurn_EachDrawTheirOwn()
         {
-            using (Scene scene = CutPyramids(VpStencilTestSettings.Create(4), 16, false, 0f, 1.2f))
+            using (Scene scene = CutPyramidsOpened(VpStencilTestSettings.Create(4), 16, false, 2.5f, 0f, 1.2f))
             {
                 VpLogicalCutDisplay display = scene.display;
                 Camera wide = TopDown(0.6f, 3f);
@@ -747,17 +751,38 @@ namespace Zantetsu.MeshCut.Tests
                 own.TryGetColour(colour, out VpCapJobColour range);
                 int volumeStart = volume;
                 int capStart = index;
-                for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
+                if (colour == own.LastColourIndex)
                 {
-                    own.TryGetGroupOfColour(p, out int g);
-                    own.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
-                    int commands = SidesOf(display, group.renderFragment);
-                    for (int c = 0; c < commands; c++)
+                    // The last colour is drawn the old way: one volume per submesh of each of its render fragments,
+                    // once, with that render fragment's own clip of every selected face (D-186).
+                    for (int p = 0; p < own.LastColourRenderFragmentCount; p++)
                     {
-                        volumes.Add((group.renderFragment, group.volumeClip));
-                    }
+                        Assert.That(own.TryGetLastColourRenderFragment(p, out int rf), Is.True, what);
+                        Assert.That(display.TryGetRenderFragment(rf, out VpMultiCutRenderFragment fragment), Is.True, what);
+                        int lastCommands = SidesOf(display, rf);
+                        for (int c = 0; c < lastCommands; c++)
+                        {
+                            volumes.Add((rf, fragment.clip));
+                        }
 
-                    volume += commands;
+                        volume += lastCommands;
+                    }
+                }
+                else
+                {
+                    for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
+                    {
+                        own.TryGetGroupOfColour(p, out int g);
+                        own.TryGetVolumeGroup(g, out VpCapVolumeGroup group);
+                        Assert.That(group.inLastColour, Is.False, what + ": an ordinary colour's group");
+                        int commands = SidesOf(display, group.renderFragment);
+                        for (int c = 0; c < commands; c++)
+                        {
+                            volumes.Add((group.renderFragment, group.volumeClip));
+                        }
+
+                        volume += commands;
+                    }
                 }
 
                 for (int p = range.groupStart; p < range.groupStart + range.groupCount; p++)
@@ -799,22 +824,40 @@ namespace Zantetsu.MeshCut.Tests
 
             Assert.That(display.TryGetPreparedColor(camera, expected.Count, out _), Is.False, what + ": no colour past those");
 
-            // Every volume command: its render fragment's transform and the group's own-face clip, never the render
-            // fragment's clip of every selected face.
+            // Every volume command: its render fragment's transform, and the clip that colour draws with -- one face
+            // for an ordinary colour's group, every selected face for a render fragment of the last colour.
             Assert.That(display.ArrangedVolumeCount, Is.EqualTo(volumes.Count), what + ": volume commands arranged");
+            int lastColourStart = own.LastColourIndex >= 0
+                ? LastColourVolumeStart(display, camera, own.LastColourIndex)
+                : volume;
+
             for (int v = 0; v < volumes.Count; v++)
             {
                 Assert.That(display.TryGetArrangedVolume(v, out VpIndirectCommand command, out Matrix4x4 transform, out VpInstanceClip clip), Is.True);
                 display.TryGetRenderFragment(volumes[v].renderFragment, out VpMultiCutRenderFragment rf);
                 Assert.That(command.instanceCount, Is.EqualTo(1), what + ": volume " + v + " is one instance");
                 Assert.That(transform, Is.EqualTo(rf.geometryLocalToWorld), what + ": volume " + v + " placement");
-                Assert.That(clip.Equals(volumes[v].clip), Is.True, what + ": volume " + v + " own-face clip");
-                Assert.That(clip.PlaneCount, Is.EqualTo(1), what + ": volume " + v + " one face");
+                Assert.That(clip.Equals(volumes[v].clip), Is.True, what + ": volume " + v + " clip");
+                if (v < lastColourStart)
+                {
+                    Assert.That(clip.PlaneCount, Is.EqualTo(1), what + ": volume " + v + " one face");
+                }
+                else
+                {
+                    Assert.That(clip.PlaneCount, Is.GreaterThanOrEqualTo(1), what + ": volume " + v + " the render fragment's faces");
+                }
             }
 
             TestContext.WriteLine(
                 what + ": " + own.JobCount + " jobs, " + own.VolumeGroupCount + " groups, " + own.HiddenCapCount + " hidden, "
                 + expected.Count + " colours, " + volume + " volume commands, " + capsDrawn + " caps");
+        }
+
+        /// <summary>Where the last colour's volumes begin, read from the colours the camera was prepared with.</summary>
+        private static int LastColourVolumeStart(VpLogicalCutDisplay display, Camera camera, int lastColour)
+        {
+            Assert.That(display.TryGetPreparedColor(camera, lastColour, out VpStencilCapColor colour), Is.True);
+            return colour.volumeStart;
         }
 
         /// <summary>How many instances draw render fragment <paramref name="renderFragment"/>: one per command of its body.</summary>
@@ -849,8 +892,12 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// A display with room for exactly <paramref name="commandCapacity"/> commands showing one pyramid per x, each
-        /// cut at its y = 1 with the top moved far up. One-command bodies (<paramref name="oneCommand"/>) put every
-        /// face in one material, so each body fills one command and its two caps fill two record slots.
+        /// cut at its y = 1 and left pending, so the two sides of every cut are at the one placement. One-command
+        /// bodies (<paramref name="oneCommand"/>) put every face in one material, so each body fills one command and
+        /// its two caps fill two record slots.
+        /// <para>
+        /// Nothing here is drawn apart: for a case that has to see a section, use <see cref="CutPyramidsOpened"/>.
+        /// </para>
         /// </summary>
         private Scene CutPyramids(VpStencilSettings settings, int commandCapacity, bool oneCommand, params float[] xs)
         {
@@ -867,7 +914,6 @@ namespace Zantetsu.MeshCut.Tests
                     VpDisplayTestCapacities.Branches, VpDisplayTestCapacities.Candidates, VpDisplayTestCapacities.ChainDepth, settings, Frame, out scene.display),
                 Is.True,
                 "create the display");
-            scene.display.Separation = WideSeparation;
 
             var bodies = new List<LogicalFragmentId>();
             foreach (float x in xs)
@@ -889,6 +935,32 @@ namespace Zantetsu.MeshCut.Tests
             _frame++;
             Assert.That(scene.display.TryBeginFrame(), Is.True, "the splits settle");
             Assert.That(scene.display.CapRecordCount, Is.EqualTo(2 * xs.Length), "two caps per body");
+            return scene;
+        }
+
+        /// <summary>
+        /// The same bodies, with every cut published and every top standing <paramref name="topLift"/> higher, which
+        /// is a base placement of its own. That is what leaves each bottom's section facing a camera
+        /// above it; a separate name rather than an overload, so that a lift can never be read as one of the
+        /// <paramref name="xs"/>.
+        /// </summary>
+        private Scene CutPyramidsOpened(
+            VpStencilSettings settings, int commandCapacity, bool oneCommand, float topLift, params float[] xs)
+        {
+            Scene scene = CutPyramids(settings, commandCapacity, oneCommand, xs);
+            var placements = new VpTestPlacements();
+            for (int position = 0; scene.ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
+            {
+                Assert.That(
+                    scene.ledger.Publish(operation.id, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                    Is.EqualTo(LogicalCutResultOutcome.Applied));
+                placements.Put(top, new Vector3(0f, topLift, 0f)).Static(bottom);
+            }
+
+            scene.display.Placement = placements;
+            _frame++;
+            Assert.That(scene.display.TryBeginFrame(), Is.True, "the published sides settle where their owners are");
+            Assert.That(scene.display.CapRecordCount, Is.EqualTo(2 * xs.Length), "still two caps per body");
             return scene;
         }
 

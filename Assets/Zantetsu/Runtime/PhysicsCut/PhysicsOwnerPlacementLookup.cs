@@ -11,11 +11,10 @@ namespace Zantetsu.PhysicsCut
     /// identity, and drives nothing. A display asks; this reads the owner that fragment has at that moment.
     /// <para>
     /// **What it gives back is a base placement**: the owner's world transform with that lineage's
-    /// geometry-to-owner correspondence, and nothing else. The display's separation offsets and what a geometry
-    /// commit folded into a geometry's own frame stay the display's, summed and carried where they already are, so a
-    /// physical position and a display separation are never added to one another and never applied twice. The cut
-    /// DAG's lineage-to-geometry mapping is a different thing again — that one decides the plane a kernel cuts at —
-    /// and is not mixed in here.
+    /// geometry-to-owner correspondence, and nothing else. That is the whole of where the shape is drawn — the
+    /// display adds nothing to it, and a geometry commit takes nothing into it (DESIGN 5.1). The cut DAG's
+    /// lineage-to-geometry mapping is a different thing again — that one decides the plane a kernel cuts at — and is
+    /// not mixed in here.
     /// </para>
     /// <para>
     /// **A gap is never dressed up as an arrangement.** An owner **in the scene** that says where its display

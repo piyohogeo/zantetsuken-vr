@@ -13,8 +13,11 @@ namespace Zantetsu.MeshCut.Tests
     /// The shadow side of DESIGN 5.4: a body drawn as a provisional split casts two-sided, every other body casts
     /// one-sided, and the two are separate draws of the same commands.
     /// <para>
-    /// The fixture is a closed box cut by a vertical plane, with the light shining INTO the opening of the side that
-    /// stays put. That arrangement is what makes the difference visible rather than asserted: with a one-sided caster
+    /// The fixture is one closed box cut by a vertical plane and then published, each child standing where its own
+    /// owner puts it: the free (positive) side <see cref="Apart"/> along +x, the anchored (negative) one where it was
+    /// cut. Nothing moves them for the display, and they have to be apart for any of this to be visible at all --
+    /// coincident, each side's opening is closed by the other and no light reaches either. The light shines INTO the
+    /// opening of the side that stays put. That arrangement is what makes the difference visible rather than asserted: with a one-sided caster
     /// the faces nearest the light have been clipped away and the shell's far faces are culled, so light passes
     /// through the body and its shadow has a hole; with a two-sided caster those far faces are written and the shadow
     /// is whole. The other side's opening faces away from the light, so it casts the same either way and stands as a
@@ -38,7 +41,8 @@ namespace Zantetsu.MeshCut.Tests
         /// <summary>An anchor on the negative side, which fixes that side and leaves the positive one to move.</summary>
         private static readonly float3 k_negativeAnchor = new float3(-0.3f, 0f, 0f);
 
-        private const float Separation = 1.1f;
+        /// <summary>How far along +x the free side is placed. Nothing adds this for the display.</summary>
+        private const float Apart = 1.1f;
 
         private readonly List<Object> _made = new List<Object>();
         private int _frame = 1;
@@ -123,27 +127,28 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The shadow is of what is drawn: the side that moves takes its shadow with it, and the side that does not
-        /// keeps its own where it was. Widening the separation may only change the ground under the moving side.
+        /// The shadow is of what is drawn, and what is drawn is where the owner stands: the same fixture with the
+        /// free side's owner further out casts that side's shadow further out, while the anchored side's shadow does
+        /// not move. Nothing in the display carries the difference -- only the placement the free side is given.
         /// </summary>
         [Test]
-        public void TheSideAndItsOffset_MoveTheShadowWithTheBody()
+        public void EachSidesShadow_IsWhereItsOwnOwnerStands()
         {
-            Color32[] near = Draw(Scene.SplitCastTwoSided, separation: 0.6f);
-            Color32[] far = Draw(Scene.SplitCastTwoSided, separation: 1.6f);
+            Color32[] near = Draw(Scene.SplitCastTwoSided, apart: 0.6f);
+            Color32[] far = Draw(Scene.SplitCastTwoSided, apart: 1.6f);
 
             float movingNear = Mean(near, UnderMovingSideFar);
             float movingFar = Mean(far, UnderMovingSideFar);
             Assert.That(
                 movingFar, Is.LessThan(movingNear - 4f),
-                "the moved side's shadow follows it outward: near " + movingNear.ToString("F1") + ", far "
+                "the free side's shadow is out where it is placed: near " + movingNear.ToString("F1") + ", far "
                 + movingFar.ToString("F1"));
 
             float fixedNear = Mean(near, UnderFixedSide);
             float fixedFar = Mean(far, UnderFixedSide);
             Assert.That(
                 Mathf.Abs(fixedFar - fixedNear), Is.LessThan(3f),
-                "the fixed side's shadow stays where it was: " + fixedNear.ToString("F1") + " -> "
+                "the anchored side's shadow stays where it was: " + fixedNear.ToString("F1") + " -> "
                 + fixedFar.ToString("F1"));
         }
 
@@ -186,7 +191,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, one, two, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = Separation;
                     Assert.That(display.TryShow(split, first, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryShow(whole, second, Matrix4x4.Translate(new Vector3(4f, 0f, 0f))), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
@@ -320,9 +324,9 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Draws one scene on a lit ground and reads it back. The caster the split is given is the only difference
-        /// between the two split scenes: same geometry, same transform, same clips, same offsets.
+        /// between the two split scenes: same geometry, same transform, same clips, same placements.
         /// </summary>
-        private Color32[] Draw(Scene scene, float separation = Separation)
+        private Color32[] Draw(Scene scene, float apart = Apart)
         {
             Camera camera = TopDown();
             GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
@@ -340,7 +344,7 @@ namespace Zantetsu.MeshCut.Tests
             light.transform.rotation = Quaternion.Euler(55f, -90f, 0f);
             try
             {
-                return DrawInto(scene, separation, camera);
+                return DrawInto(scene, apart, camera);
             }
             finally
             {
@@ -351,7 +355,7 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
-        private Color32[] DrawInto(Scene scene, float separation, Camera camera)
+        private Color32[] DrawInto(Scene scene, float apart, Camera camera)
         {
             if (scene == Scene.Empty)
             {
@@ -373,7 +377,6 @@ namespace Zantetsu.MeshCut.Tests
                     TryCreate(storage, table, ledger, one, provisional, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = separation;
                     Assert.That(display.TryShow(source, geometry, BodyPlacement), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     if (splitting)
@@ -385,6 +388,18 @@ namespace Zantetsu.MeshCut.Tests
                         Assert.That(
                             display.SideCount, Is.EqualTo(display.CommandCount * 2),
                             "a split draws each command twice, once per side: two sides per command");
+
+                        // Published, and then each child at a base placement of its own, given as test input.
+                        // Before this both sides are at the source's placement and the box is closed again, which is
+                        // nothing to photograph.
+                        Assert.That(
+                            ledger.Publish(cut, out LogicalFragmentId positive, out LogicalFragmentId negative),
+                            Is.EqualTo(LogicalCutResultOutcome.Applied));
+                        display.Placement = new VpTestPlacements()
+                            .Put(positive, Matrix4x4.Translate(new Vector3(apart, 0f, 0f)) * BodyPlacement)
+                            .Put(negative, BodyPlacement);
+                        NextFrame();
+                        Assert.That(display.TryBeginFrame(), Is.True);
                     }
 
                     Assert.That(display.TryRegisterCamera(camera), Is.True);
@@ -397,7 +412,7 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Where the box stands and how big it is. Big enough and high enough that what the opening lets through is a
-        /// region of real area on the ground rather than a few pixels, and still inside the view at every separation
+        /// region of real area on the ground rather than a few pixels, and still inside the view at every placement
         /// these tests use.
         /// </summary>
         private static Matrix4x4 BodyPlacement =>
@@ -482,7 +497,7 @@ namespace Zantetsu.MeshCut.Tests
             return InWorld(x, y, -2.2f, -0.9f, -0.5f, 0.5f);
         }
 
-        /// <summary>The ground beyond where the moving side sits at the wider separation.</summary>
+        /// <summary>The ground beyond where the free side sits when it is placed further out.</summary>
         private static bool UnderMovingSideFar(int x, int y)
         {
             return InWorld(x, y, 0.9f, 2.4f, -0.5f, 0.5f);

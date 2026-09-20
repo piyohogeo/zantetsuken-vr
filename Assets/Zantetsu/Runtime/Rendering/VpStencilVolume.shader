@@ -4,7 +4,7 @@
 // **It is the display geometry itself, not a copy.** The vertices, the indices, the instance transforms and the clip
 // records are the ones the indexed indirect batch already holds; nothing is duplicated, re-wound or re-meshed for the
 // stencil, and the clip is evaluated exactly as the colour pass evaluates it — on the world position before the
-// separation, with the separation added afterwards.
+// placement, with no displacement of the renderer's own.
 //
 // **How the count marks the opening.** Clipped by its plane, a closed body becomes an open shell whose only hole is
 // the cut. Along a view ray the front and back crossings of a closed surface cancel; a ray that passes through the
@@ -72,7 +72,7 @@ Shader "Zantetsu/VP Stencil Volume"
             struct VpInstanceClip
             {
                 float4 planes[8];
-                float4 offsetAndCount;
+                float planeCount;
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -87,7 +87,7 @@ Shader "Zantetsu/VP Stencil Volume"
 
             void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
             {
-                uint count = (uint)clipState.offsetAndCount.w;
+                uint count = (uint)clipState.planeCount;
                 first = float4(
                     VpHalfSpace(clipState.planes[0], positionWS, 0u, count),
                     VpHalfSpace(clipState.planes[1], positionWS, 1u, count),
@@ -166,7 +166,6 @@ Shader "Zantetsu/VP Stencil Volume"
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
                 VpClipDistances(clipState, positionWS, output.clipDistance0, output.clipDistance1);
 
-                positionWS += clipState.offsetAndCount.xyz;
                 output.positionCS = TransformWorldToHClip(positionWS);
                 return output;
             }

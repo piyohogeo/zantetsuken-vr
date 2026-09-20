@@ -17,9 +17,9 @@ namespace Zantetsu.MeshCut
     /// nothing only when its rectangle grown by the margin is still wholly off the screen square <c>[-1, 1]²</c>.
     /// </para>
     /// <para>
-    /// **Offset.** A shape can be given with an offset that is added to each point, once, as the point is read -- the
-    /// same single float addition a cap vertex gets when the separation is added to it -- so that a shape stored before
-    /// its separation is projected where it is drawn without being copied.
+    /// **Offset.** A shape can be given with an offset that is added to each point, once, as the point is read, so
+    /// that a caller holding a shape in one place and drawing it in another projects it where it is drawn without
+    /// copying it. The cut display gives none: its cap vertices are already where they are drawn.
     /// </para>
     /// <para>
     /// **Margin.** In normalized device coordinates per axis; every shape is grown by <c>[-x, x] × [-y, y]</c> on each
@@ -54,7 +54,7 @@ namespace Zantetsu.MeshCut
         /// long as the points), and says what the projection is.
         /// </summary>
         internal static Projection Project(
-            ReadOnlySpan<Vector3> points, Vector3 offset, in Matrix4x4 worldToClip, Vector2 margin, Span<Vector2> ndc)
+            ReadOnlySpan<Vector3> points, in Matrix4x4 worldToClip, Vector2 margin, Span<Vector2> ndc)
         {
             // Every clip coordinate is finite before anything is decided from any of them.
             bool allBeforeNear = true;
@@ -63,9 +63,6 @@ namespace Zantetsu.MeshCut
             for (int i = 0; i < points.Length; i++)
             {
                 Vector3 p = points[i];
-                p.x += offset.x;
-                p.y += offset.y;
-                p.z += offset.z;
                 if (!IsFinite(p.x) || !IsFinite(p.y) || !IsFinite(p.z))
                 {
                     return Projection.NotFinite;

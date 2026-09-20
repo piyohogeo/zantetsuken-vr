@@ -77,9 +77,9 @@ namespace Zantetsu.MeshCut
     /// (<see cref="VpCapCompatibility"/>, <see cref="VpCapProjectionConflict"/>, <see cref="VpStencilColors"/>), and
     /// which volumes and caps would be issued (DESIGN 5.6, D-181). Nothing is issued, uploaded or drawn here.
     /// <para>
-    /// **Units.** A cap is judged by its own outward normal and its world vertices with the separation already in them.
-    /// A render fragment with at least one condition is one target: every condition the snapshot holds for it and its
-    /// offset go to compatibility unchanged -- a cap not seen drops nothing -- and its seen caps go to the projection
+    /// **Units.** A cap is judged by its own outward normal and its world vertices, which are at the render
+    /// fragment's own placement. A render fragment with at least one condition is one target: every condition the
+    /// snapshot holds for it goes to compatibility unchanged -- a cap not seen drops nothing -- and its seen caps go to the projection
     /// test, with <see cref="VpMultiCutStencilRenderFragment.capsComplete"/> saying whether any non-empty one was left out.
     /// A group with any cap seen keeps every render fragment's volume, once each; only the caps seen are drawn. A render
     /// fragment with no condition is no target: it opens nothing. Caps of Ignored boundaries do not exist in the
@@ -305,7 +305,7 @@ namespace Zantetsu.MeshCut
                 if (isTarget)
                 {
                     _targetsUsed = targets + 1;
-                    var conditions = new VpCapCompatibilityTarget(snapshot.Conditions(rf), rf.offset);
+                    var conditions = new VpCapCompatibilityTarget(snapshot.Conditions(rf));
                     _conditions[targets] = conditions;
                     // Each render fragment is judged against its own registration's box and placement.
                     _targets[targets] = new VpCapProjectionTarget(
@@ -325,7 +325,7 @@ namespace Zantetsu.MeshCut
             _conditionList.SetCount(targets);
             int groups = targets == 0
                 ? 0
-                : VpCapCompatibility.Classify(_conditionList, settings.planeEpsilon, settings.offsetEpsilon, _groupOfTarget);
+                : VpCapCompatibility.Classify(_conditionList, settings.planeEpsilon, _groupOfTarget);
 
             // 4. A group with any cap seen is kept: every member's volume, only the seen caps.
             Array.Clear(_groupKept, 0, groups);
@@ -360,7 +360,7 @@ namespace Zantetsu.MeshCut
                 _keptGroupOfList.SetCount(keptTargets);
                 VpStencilColors.Assign(
                     _keptTargetList, _keptGroupOfList, kept, left, right, settings.ndcMargin, settings.planeEpsilon,
-                    settings.offsetEpsilon, max, _colourOfGroup);
+                    max, _colourOfGroup);
             }
 
             // 6. The results, as numbers and flags only.

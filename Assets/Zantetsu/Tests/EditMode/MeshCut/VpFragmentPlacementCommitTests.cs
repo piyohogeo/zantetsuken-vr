@@ -10,18 +10,17 @@ namespace Zantetsu.MeshCut.Tests
 {
     /// <summary>
     /// The commit itself, through <see cref="VpLogicalCutDisplay.TryCommitCut"/>, for a display whose fragments
-    /// follow placements of their own: which separation a commit takes into a registration, in which frame, and what
+    /// follow placements of their own: that a commit moves nothing it is drawn from, and what
     /// the living descendants of the committed fragment are drawn at afterwards.
     /// <para>
     /// The expected values are worked out here from the placements the test chose. A commit of a side that has since
-    /// been cut again is the case that matters: the separation it takes in belongs to the geometry, not to a fragment
+    /// been cut again is the case that matters: what it commits belongs to the geometry, not to a fragment
     /// that is no longer there, so it has to reach the fragments that are.
     /// </para>
     /// </summary>
     public class VpFragmentPlacementCommitTests
     {
         private const float Tolerance = 2e-3f;
-        private const float Separation = 0.5f;
         private const int BodyMaterial = 0;
 
         /// <summary>
@@ -112,7 +111,6 @@ namespace Zantetsu.MeshCut.Tests
                     VpDisplayTestCapacities.ChainDepth, VpStencilTestSettings.Create(4), () => _frame, out scene.display),
                 Is.True,
                 "create the display");
-            scene.display.Separation = Separation;
             scene.display.Placement = scene.placements;
             scene.geometry = AppendCube(scene.storage);
             return scene;
@@ -246,7 +244,7 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(scene.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
                 if (rf.root == fragment)
                 {
-                    return rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset;
+                    return rf.geometryLocalToWorld.MultiplyPoint3x4(local);
                 }
             }
 
@@ -254,19 +252,19 @@ namespace Zantetsu.MeshCut.Tests
             return default;
         }
 
-        private static Vector3 Offset(Scene scene, LogicalFragmentId fragment)
+        /// <summary>That this fragment is drawn at all, which the cases below assert before and after a commit.</summary>
+        private static void AssertDrawn(Scene scene, LogicalFragmentId fragment, string what)
         {
             for (int r = 0; r < scene.display.RenderFragmentCount; r++)
             {
                 Assert.That(scene.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
                 if (rf.root == fragment)
                 {
-                    return rf.offset;
+                    return;
                 }
             }
 
-            Assert.Fail("nothing is drawn for that fragment");
-            return default;
+            Assert.Fail(what + ": nothing is drawn for that fragment");
         }
 
         private static void Same(Vector3 expected, Vector3 actual, string what)
@@ -284,12 +282,11 @@ namespace Zantetsu.MeshCut.Tests
         // ----- a commit of a child that has turned ----------------------------------------------------------------------
 
         /// <summary>
-        /// The child has turned since it was published, so the separation it is drawn with runs along its own current
-        /// normal. The commit takes that separation in, and the shape does not move: it would if the commit took the
-        /// direction the registration was made with.
+        /// The child has turned since it was published. The commit changes which registration it is drawn from and
+        /// nothing else: the shape does not move, and afterwards it still follows its own placement.
         /// </summary>
         [Test]
-        public void ACommitOfATurnedChild_TakesTheSeparationItIsDrawnWith()
+        public void ACommitOfATurnedChild_DoesNotMoveIt_AndItKeepsFollowing()
         {
             Scene scene = NewScene();
             try
@@ -308,7 +305,6 @@ namespace Zantetsu.MeshCut.Tests
                 scene.placements.of[negative] = turned * k_geometryLocalToOwner;
                 Collect(scene);
 
-                Same(new Vector3(-0.5f, 0f, 0f), Offset(scene, positive), "the separation runs along its own normal");
                 var before = new Vector3[k_points.Length];
                 for (int i = 0; i < k_points.Length; i++)
                 {
@@ -318,22 +314,20 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(CommitBorrowingPositive(scene, root, cut, plane, positive, negative), Is.True, "committed");
                 Collect(scene);
 
-                Assert.That(Offset(scene, positive), Is.EqualTo(Vector3.zero), "the boundary is reflected now");
+                AssertDrawn(scene, positive, "after the commit");
                 for (int i = 0; i < k_points.Length; i++)
                 {
                     Same(before[i], Drawn(scene, positive, k_points[i]), "point " + i + " does not move across the commit");
                 }
 
-                // And it is still following: turning it again moves what the commit took in, with it.
+                // And it is still following: turning it again moves it.
                 Matrix4x4 again = Owner(new Vector3(3f, 0f, 0f), 180f);
                 scene.placements.of[positive] = again * k_geometryLocalToOwner;
                 Collect(scene);
                 for (int i = 0; i < k_points.Length; i++)
                 {
-                    Vector3 expected = (again * k_geometryLocalToOwner).MultiplyPoint3x4(k_points[i])
-                                       + Matrix4x4.Rotate(Quaternion.AngleAxis(180f, Vector3.forward))
-                                           .MultiplyVector(new Vector3(0f, 0.5f, 0f));
-                    Same(expected, Drawn(scene, positive, k_points[i]), "point " + i + " carries the folded separation");
+                    Vector3 expected = (again * k_geometryLocalToOwner).MultiplyPoint3x4(k_points[i]);
+                    Same(expected, Drawn(scene, positive, k_points[i]), "point " + i + " follows the placement it turned to");
                 }
             }
             finally
@@ -383,9 +377,9 @@ namespace Zantetsu.MeshCut.Tests
                     before[i] = Drawn(scene, bPlus, k_points[i]);
                 }
 
-                Vector3 offsetBefore = Offset(scene, bPlus);
+                AssertDrawn(scene, bPlus, "before A is committed");
 
-                // A is committed. Its separation belongs to the geometry, so it must reach B+ and B-.
+                // A is committed. What it commits belongs to the geometry, so it must reach B+ and B-.
                 Assert.That(CommitBorrowingPositive(scene, root, cutA, planeA, aPlus, aMinus), Is.True, "A committed");
                 Collect(scene);
 
@@ -394,9 +388,9 @@ namespace Zantetsu.MeshCut.Tests
                     Same(before[i], Drawn(scene, bPlus, k_points[i]), "B+ point " + i + " does not move when A is committed");
                 }
 
-                Same(offsetBefore - new Vector3(-0.5f, 0f, 0f), Offset(scene, bPlus), "only A's separation left the sum");
+                AssertDrawn(scene, bPlus, "after A is committed");
 
-                // The living descendant turns further, and what A's commit took in turns with it.
+                // The living descendant turns further, and it follows that placement.
                 Matrix4x4 again = Owner(new Vector3(-1f, 2f, 0f), 180f);
                 scene.placements.of[bPlus] = again * k_geometryLocalToOwner;
                 Collect(scene);
@@ -404,17 +398,14 @@ namespace Zantetsu.MeshCut.Tests
                 for (int i = 0; i < k_points.Length; i++)
                 {
                     beforeB[i] = Drawn(scene, bPlus, k_points[i]);
-                    Vector3 expected = (again * k_geometryLocalToOwner).MultiplyPoint3x4(k_points[i])
-                                       + Matrix4x4.Rotate(Quaternion.AngleAxis(180f, Vector3.forward))
-                                           .MultiplyVector(new Vector3(0f, 0.5f, 0f))
-                                       + Offset(scene, bPlus);
-                    Same(expected, beforeB[i], "B+ point " + i + " carries A's folded separation after turning");
+                    Vector3 expected = (again * k_geometryLocalToOwner).MultiplyPoint3x4(k_points[i]);
+                    Same(expected, beforeB[i], "B+ point " + i + " follows the placement it turned to");
                 }
 
                 // B committed: the same again, one boundary at a time.
                 Assert.That(CommitBorrowingPositive(scene, aPlus, cutB, planeB, bPlus, bMinus), Is.True, "B committed");
                 Collect(scene);
-                Assert.That(Offset(scene, bPlus), Is.EqualTo(Vector3.zero), "nothing temporary is left");
+                AssertDrawn(scene, bPlus, "after B is committed");
                 for (int i = 0; i < k_points.Length; i++)
                 {
                     Same(beforeB[i], Drawn(scene, bPlus, k_points[i]), "B+ point " + i + " does not move when B is committed");
@@ -434,7 +425,7 @@ namespace Zantetsu.MeshCut.Tests
         /// separation taken in as a fixed amount of the geometry's own frame would be the wrong size in the world.
         /// </summary>
         [Test]
-        public void AProducedSplit_KeepsTheSeparationItIsDrawnWithEvenWithScale()
+        public void AProducedSplit_IsNotMovedByItsCommit_EvenWithScale()
         {
             Scene scene = NewScene();
             try
@@ -458,10 +449,7 @@ namespace Zantetsu.MeshCut.Tests
                 scene.placements.of[negative] = scaled * k_geometryLocalToOwner;
                 Collect(scene);
 
-                Vector3 offsetBefore = Offset(scene, positive);
-                Assert.That(
-                    offsetBefore.magnitude, Is.EqualTo(Separation).Within(Tolerance),
-                    "the separation is the same size in the world whatever a placement scales");
+                AssertDrawn(scene, positive, "before the commit");
                 var before = new Vector3[k_points.Length];
                 for (int i = 0; i < k_points.Length; i++)
                 {
@@ -471,11 +459,10 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(CommitProduced(scene, root, cut, plane, positive, negative), Is.True, "committed");
                 Collect(scene);
 
-                Assert.That(Offset(scene, positive), Is.EqualTo(Vector3.zero), "the boundary is reflected now");
+                AssertDrawn(scene, positive, "after the commit");
                 for (int i = 0; i < k_points.Length; i++)
                 {
-                    // The produced side is a new shape; what is compared is where the geometry's frame stands, which
-                    // is what the separation was taken into.
+                    // The produced side is a new shape; what is compared is where the geometry's frame stands.
                     Same(before[i], Drawn(scene, positive, k_points[i]), "point " + i + " does not move across the commit");
                 }
 
@@ -613,12 +600,11 @@ namespace Zantetsu.MeshCut.Tests
         // ----- a side an anchor fixes ------------------------------------------------------------------------------------
 
         /// <summary>
-        /// A side an anchor fixes is not the same as a side that happens not to have moved: it takes no separation
-        /// while the cut is temporary, and a commit takes none into its placement either. The free side of the same
-        /// cut takes both.
+        /// A side an anchor fixes is reported fixed while the cut is temporary and after the commit, and its cap is
+        /// made like any other's. Neither side is moved by the display, so what tells the two apart is the anchor.
         /// </summary>
         [Test]
-        public void AnAnchoredSide_TakesNoSeparationWhileTemporaryAndNoneAtTheCommit()
+        public void AnAnchoredSide_IsReportedFixed_WhileTemporaryAndAtTheCommit()
         {
             Scene scene = NewScene();
             try
@@ -640,8 +626,8 @@ namespace Zantetsu.MeshCut.Tests
                 scene.placements.of[negative] = k_geometryLocalToOwner;
                 Collect(scene);
 
-                Assert.That(Offset(scene, positive), Is.EqualTo(Vector3.zero), "the fixed side takes no separation");
-                Same(new Vector3(0f, -0.5f, 0f), Offset(scene, negative), "the free side takes it");
+                AssertDrawn(scene, positive, "the fixed side is drawn");
+                AssertDrawn(scene, negative, "and so is the free one");
 
                 var before = new Vector3[k_points.Length];
                 for (int i = 0; i < k_points.Length; i++)
@@ -686,7 +672,6 @@ namespace Zantetsu.MeshCut.Tests
         /// its positive side, and the placement the registration is committed at has no rotation in it, so the share
         /// it takes in is the separation along +y of the geometry's own frame.
         /// </summary>
-        private static Matrix4x4 FirstBoundaryFold => Matrix4x4.Translate(new Vector3(0f, Separation, 0f));
 
         private static LogicalFragmentId RootOf(Scene scene, LogicalFragmentId fragment)
         {
@@ -818,10 +803,10 @@ namespace Zantetsu.MeshCut.Tests
                 VpMultiCutRenderFragment aboveGroup = after.Find(rf => rf.root.Equals(above));
                 VpMultiCutRenderFragment belowGroup = after.Find(rf => rf.root.Equals(below));
                 SamePlacement(
-                    mAbove * FirstBoundaryFold, aboveGroup.geometryLocalToWorld,
+                    mAbove, aboveGroup.geometryLocalToWorld,
                     "each stands where its own first branch does, with the committed boundary's share folded in");
                 SamePlacement(
-                    mBelow * FirstBoundaryFold, belowGroup.geometryLocalToWorld,
+                    mBelow, belowGroup.geometryLocalToWorld,
                     "including the side that was not first before");
 
                 // Each follows its own first branch from here.
@@ -831,10 +816,10 @@ namespace Zantetsu.MeshCut.Tests
                 Collect(scene);
                 after = Aggregates(scene);
                 SamePlacement(
-                    movedBelow * FirstBoundaryFold, after.Find(rf => rf.root.Equals(below)).geometryLocalToWorld,
+                    movedBelow, after.Find(rf => rf.root.Equals(below)).geometryLocalToWorld,
                     "the second aggregate follows its own branch");
                 SamePlacement(
-                    mAbove * FirstBoundaryFold, after.Find(rf => rf.root.Equals(above)).geometryLocalToWorld,
+                    mAbove, after.Find(rf => rf.root.Equals(above)).geometryLocalToWorld,
                     "and the first one did not move with it");
             }
             finally
@@ -891,10 +876,10 @@ namespace Zantetsu.MeshCut.Tests
                 foreach (Vector3 local in k_aggregatePoints)
                 {
                     Same(
-                        (mAbove * FirstBoundaryFold).MultiplyPoint3x4(local) + Offset(scene, above),
+                        mAbove.MultiplyPoint3x4(local),
                         Drawn(scene, above, local), "the one side is drawn at its own placement");
                     Same(
-                        (mBelow * FirstBoundaryFold).MultiplyPoint3x4(local) + Offset(scene, below),
+                        mBelow.MultiplyPoint3x4(local),
                         Drawn(scene, below, local), "and the other at its own");
                 }
 

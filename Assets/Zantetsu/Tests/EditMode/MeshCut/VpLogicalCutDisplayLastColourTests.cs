@@ -277,9 +277,50 @@ namespace Zantetsu.MeshCut.Tests
 
         // ----- helpers ---------------------------------------------------------------------------------------------------
 
+        /// <summary>How far each piece of an opened T3 stands from where it was cut: the corner ends up at 3.5.</summary>
+        private const float T3Apart = 3f;
+
+        /// <summary>
+        /// The four pieces of T3 where four owners pushed apart by the cuts would stand: each one <see cref="T3Apart"/>
+        /// along the normal of every side it is on, given as base placements (<see cref="VpTestPlacements"/>).
+        /// Nothing in the display puts them there.
+        /// </summary>
+        private VpTestPlacements T3Placements(
+            Matrix4x4 at, LogicalFragmentId aMinus, LogicalFragmentId bMinus, LogicalFragmentId cMinus, LogicalFragmentId cPlus)
+        {
+            Matrix4x4 Away(float x, float y, float z)
+            {
+                return Matrix4x4.Translate(new Vector3(x, y, z) * T3Apart) * at;
+            }
+
+            return Placing(
+                (aMinus, Away(0f, -1f, 0f)),
+                (bMinus, Away(-1f, 1f, 0f)),
+                (cMinus, Away(1f, 1f, -1f)),
+                (cPlus, Away(1f, 1f, 1f)));
+        }
+
+        /// <summary>
+        /// The placements to give the display, kept as this test's own expectation at the same time, so that a volume
+        /// can be checked against where the test said its fragment stands.
+        /// </summary>
+        private VpTestPlacements Placing(params (LogicalFragmentId fragment, Matrix4x4 at)[] placements)
+        {
+            var given = new VpTestPlacements();
+            foreach ((LogicalFragmentId fragment, Matrix4x4 at) in placements)
+            {
+                given.Put(fragment, at);
+                _expectedPlacements[fragment] = at;
+            }
+
+            return given;
+        }
+
         /// <summary>
         /// T3 on a body of two submeshes, instance capacity 8 (exactly the four render fragments), at the placement given
-        /// (the identity by default). The cuts are in the body's own frame.
+        /// (the identity by default). The cuts are in the body's own frame. The four pieces are all at that one
+        /// placement, so they close each other's sections; for a case that has to see a cap, use
+        /// <see cref="T3SceneOpened"/>.
         /// </summary>
         private Scene T3Scene(int colours, out int corner, Matrix4x4? placement = null)
         {
@@ -305,6 +346,35 @@ namespace Zantetsu.MeshCut.Tests
             return scene;
         }
 
+        /// <summary>
+        /// The same T3, with each piece at a base placement of its own (<see cref="T3Placements"/>), so the corner's
+        /// three caps face a camera looking along (1, 1, 1) from below.
+        /// </summary>
+        private Scene T3SceneOpened(int colours, out int corner, Matrix4x4? placement = null)
+        {
+            Matrix4x4 at = placement ?? Matrix4x4.identity;
+            Scene scene = NewScene(instances: 8, colours: colours);
+            LogicalCutLedger ledger = scene.ledger;
+            LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
+            VpStoredGeometry cube = AppendCube(scene.storage, true);
+            Assert.That(scene.display.TryShow(root, cube, at), Is.True);
+            ExpectBodies(scene, (cube, at));
+            var (_, aPlus, aMinus) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            var (_, bPlus, bMinus) = Cut(ledger, aPlus, new float4(1f, 0f, 0f, 0f));
+            var (_, cPlus, cMinus) = Cut(ledger, bPlus, new float4(0f, 0f, 1f, 0f));
+            scene.display.Placement = T3Placements(at, aMinus, bMinus, cMinus, cPlus);
+            Collect(scene);
+            corner = -1;
+            for (int r = 0; r < scene.display.RenderFragmentCount; r++)
+            {
+                scene.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
+                corner = rf.root == cPlus ? r : corner;
+            }
+
+            Assert.That(corner, Is.Not.EqualTo(-1), "the layout: A+B+C+ found by C's positive child");
+            return scene;
+        }
+
         /// <summary>What the test itself registered, in registration order: each body's draw ranges and placement.</summary>
         private sealed class ExpectedBody
         {
@@ -315,6 +385,28 @@ namespace Zantetsu.MeshCut.Tests
         private readonly List<ExpectedBody> _expectedBodies = new List<ExpectedBody>();
 
         /// <summary>
+        /// Where the test itself said each fragment stands, for a scene that gives the display placements of its own.
+        /// Empty when it gave none, and then a body is expected at the placement it was registered with.
+        /// </summary>
+        private readonly Dictionary<LogicalFragmentId, Matrix4x4> _expectedPlacements = new Dictionary<LogicalFragmentId, Matrix4x4>();
+
+        /// <summary>
+        /// Where one render fragment's volume is expected: the placement this test gave for the fragment it is drawn
+        /// for, or the body's registration placement when this test gave none. The fragment's name is read from the
+        /// snapshot; where it stands is the test's own and is never read back from what is drawn.
+        /// </summary>
+        private Matrix4x4 ExpectedPlacementOf(VpLogicalCutDisplay display, int renderFragment, ExpectedBody body)
+        {
+            if (_expectedPlacements.Count == 0)
+            {
+                return body.placement;
+            }
+
+            Assert.That(display.TryGetRenderFragment(renderFragment, out VpMultiCutRenderFragment rf), Is.True);
+            return _expectedPlacements.TryGetValue(rf.root, out Matrix4x4 followed) ? followed : body.placement;
+        }
+
+        /// <summary>
         /// Records the bodies a scene registered, in order: each submesh's draw range worked out from the storage -- the
         /// geometry's vertices, and its index range's start plus the submesh's offset and count -- and the placement the
         /// test gave. Never read from the display's commands.
@@ -322,6 +414,7 @@ namespace Zantetsu.MeshCut.Tests
         private void ExpectBodies(Scene scene, params (VpStoredGeometry geometry, Matrix4x4 placement)[] bodies)
         {
             _expectedBodies.Clear();
+            _expectedPlacements.Clear();
             foreach ((VpStoredGeometry geometry, Matrix4x4 placement) in bodies)
             {
                 Assert.That(scene.storage.TryGetIndexState(geometry.indexRange, out _, out int indexStart, out _), Is.True);
@@ -390,9 +483,10 @@ namespace Zantetsu.MeshCut.Tests
                         VpInstanceClip clip = fragment.clip;
                         AssertEveryFaceClip(display, rf, clip, what + ": last-colour render fragment " + rf);
                         ExpectedBody body = _expectedBodies[fragment.registration];
+                        Matrix4x4 at = ExpectedPlacementOf(display, rf, body);
                         foreach (VpGeometryRange range in body.ranges)
                         {
-                            expected.Add((range, body.placement, clip, "render fragment " + rf));
+                            expected.Add((range, at, clip, "render fragment " + rf));
                         }
                     }
                 }
@@ -405,9 +499,10 @@ namespace Zantetsu.MeshCut.Tests
                             Assert.That(group.inLastColour, Is.False, what);
                             Assert.That(group.volumeClip.PlaneCount, Is.EqualTo(1), what + ": an ordinary volume is one face");
                             ExpectedBody body = _expectedBodies[group.registration];
+                            Matrix4x4 at = ExpectedPlacementOf(display, group.renderFragment, body);
                             foreach (VpGeometryRange range in body.ranges)
                             {
-                                expected.Add((range, body.placement, group.volumeClip, "group of render fragment " + group.renderFragment));
+                                expected.Add((range, at, group.volumeClip, "group of render fragment " + group.renderFragment));
                             }
 
                             ordinaryGroups++;
@@ -488,7 +583,6 @@ namespace Zantetsu.MeshCut.Tests
                 if (record.renderFragment == renderFragment)
                 {
                     planes.Add(record.side > 0f ? record.worldPlane : -record.worldPlane);
-                    offset = record.offset;
                 }
             }
 
@@ -505,7 +599,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(matched, Is.True, what + ": plane " + k + " is one of its boundaries with its kept side");
             }
 
-            Assert.That(ExactVector(clip.Offset, offset), Is.True, what + ": at its separation");
         }
 
         private static bool ExactMatrix(Matrix4x4 a, Matrix4x4 b)

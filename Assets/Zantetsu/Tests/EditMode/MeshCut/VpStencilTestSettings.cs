@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Zantetsu.MeshCut.Tests
@@ -12,14 +13,13 @@ namespace Zantetsu.MeshCut.Tests
         public const int Colours = 4;
         public const float FacingEpsilon = 0.01f;
         public const float PlaneEpsilon = 1e-4f;
-        public const float OffsetEpsilon = 1e-4f;
         public const int Cameras = 4;
 
         public static readonly Vector2 Margin = new Vector2(0.01f, 0.01f);
 
         public static VpStencilSettings Create(int colours = Colours, int cameras = Cameras)
         {
-            return new VpStencilSettings(colours, FacingEpsilon, PlaneEpsilon, OffsetEpsilon, Margin, cameras);
+            return new VpStencilSettings(colours, FacingEpsilon, PlaneEpsilon, Margin, cameras);
         }
     }
 
@@ -37,6 +37,65 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>The longest chain of boundaries one fragment may have.</summary>
         public const int ChainDepth = 32;
+    }
+
+    /// <summary>
+    /// Where each fragment's geometry stands, for a test that needs the two sides of a cut really apart -- so that a
+    /// section is exposed to a camera at all. A published branch is given a base placement of its own, exactly as a
+    /// physics owner would give it through the same lookup (DESIGN 5.6, 7.1.2).
+    /// <para>
+    /// **This is not a display separation.** Nothing of the renderer moves anything; the branch is simply somewhere
+    /// else, and its cap is drawn where its own placement puts it.
+    /// </para>
+    /// <para>
+    /// **Nothing is assumed of a fragment this was not told about**: it answers
+    /// <see cref="VpFragmentPlacementKind.Missing"/>, so a case that forgets to say where one of its living branches
+    /// stands fails instead of quietly drawing it at the identity. A fragment meant to stand where it was registered
+    /// is said so with <see cref="Static"/>. This is a rule for reading test input, not a product rule.
+    /// </para>
+    /// </summary>
+    internal sealed class VpTestPlacements : IVpFragmentPlacement
+    {
+        private readonly Dictionary<LogicalFragmentId, Matrix4x4> _following =
+            new Dictionary<LogicalFragmentId, Matrix4x4>();
+
+        private readonly HashSet<LogicalFragmentId> _static = new HashSet<LogicalFragmentId>();
+
+        /// <summary>This fragment follows a placement of its own, at <paramref name="position"/>.</summary>
+        internal VpTestPlacements Put(LogicalFragmentId fragment, Vector3 position)
+        {
+            return Put(fragment, Matrix4x4.Translate(position));
+        }
+
+        /// <summary>This fragment follows <paramref name="placement"/>.</summary>
+        internal VpTestPlacements Put(LogicalFragmentId fragment, Matrix4x4 placement)
+        {
+            _following[fragment] = placement;
+            _static.Remove(fragment);
+            return this;
+        }
+
+        /// <summary>This fragment is drawn where it was registered, said so on purpose.</summary>
+        internal VpTestPlacements Static(LogicalFragmentId fragment)
+        {
+            _static.Add(fragment);
+            _following.Remove(fragment);
+            return this;
+        }
+
+        public VpFragmentPlacementKind TryGetGeometryLocalToWorld(
+            LogicalFragmentId fragment, out Matrix4x4 geometryLocalToWorld)
+        {
+            if (_following.TryGetValue(fragment, out geometryLocalToWorld))
+            {
+                return VpFragmentPlacementKind.Following;
+            }
+
+            geometryLocalToWorld = Matrix4x4.identity;
+            return _static.Contains(fragment)
+                ? VpFragmentPlacementKind.Static
+                : VpFragmentPlacementKind.Missing;
+        }
     }
 
     /// <summary>
@@ -61,7 +120,7 @@ namespace Zantetsu.MeshCut.Tests
                 }
             }
 
-            return new VpCapCompatibilityTarget(VpArrayRange<VpCapConstraint>.Whole(conditions.ToArray()), cap.offset);
+            return new VpCapCompatibilityTarget(VpArrayRange<VpCapConstraint>.Whole(conditions.ToArray()));
         }
 
         /// <summary>

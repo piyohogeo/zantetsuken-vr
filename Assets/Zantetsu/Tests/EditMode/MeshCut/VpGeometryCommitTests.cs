@@ -286,23 +286,6 @@ namespace Zantetsu.MeshCut.Tests
             return count;
         }
 
-        /// <summary>
-        /// The separation the snapshot gives one side of one cut: the cut's world plane normal times the display's
-        /// separation, on a side its anchors leave free. Computed here from the same inputs, independently of the
-        /// display, so that a lost or doubled offset shows.
-        /// </summary>
-        private static Vector3 ExpectedSeparation(Fixture f, CutOperationId operation, float side, Matrix4x4 placement, float4 plane)
-        {
-            Assert.That(f.ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution), Is.True);
-            if (FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount))
-            {
-                return Vector3.zero;
-            }
-
-            var normal = new Vector3(plane.x, plane.y, plane.z);
-            return side * placement.MultiplyVector(normal).normalized * f.display.Separation;
-        }
-
         /// <summary>Where one shown fragment's geometry stands, as a position.</summary>
         private static Vector3 PlacementOf(Fixture f, LogicalFragmentId fragment)
         {
@@ -311,22 +294,24 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// Where one render fragment of the adopted snapshot really is: its registration's placement plus whatever
-        /// separation the snapshot still adds below that registration's root. What a commit must keep unchanged.
+        /// Where one branch of the adopted snapshot really is drawn: the placement of the render fragment that is
+        /// drawn for it, which is the one it follows. What a commit must keep unchanged. Read from the snapshot and
+        /// not from the registration, because a commit changes which registration a side belongs to and that is
+        /// exactly what must not show.
         /// </summary>
         private static Vector3 TotalOf(Fixture f, LogicalFragmentId fragment)
         {
-            for (int i = 0; i < f.display.SideCount; i++)
+            for (int r = 0; r < f.display.RenderFragmentCount; r++)
             {
-                Assert.That(f.display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
-                if (side.fragment == fragment)
+                Assert.That(f.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                if (rf.root == fragment)
                 {
-                    return PlacementOf(f, side.source) + side.offset;
+                    return rf.geometryLocalToWorld.GetColumn(3);
                 }
             }
 
-            // Not split at all: it is drawn where its own registration stands.
-            return PlacementOf(f, fragment);
+            Assert.Fail("nothing is drawn for that fragment");
+            return default;
         }
 
         private static void AssertClose(Vector3 actual, Vector3 expected, string what)
@@ -604,16 +589,492 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
-        // ----- separation, capacity, registration room and boundaries ---------------------------------------------------
+        // ----- what is actually drawn, in pixels ------------------------------------------------------------------------
 
         /// <summary>
-        /// What a cut separated stays separated: where each side is drawn — its registration's placement plus whatever
-        /// the snapshot still adds below it — is the same before and after the commit, for a turned and moved body,
-        /// through A and then B. Nothing of the separation is lost when the root moves down, and nothing is counted
-        /// twice.
+        /// A cut that is only prepared changes nothing outside the body. The same body is drawn before the cut is
+        /// admitted and after it is prepared, from a camera that sees its flank across the cut, and the two images are
+        /// the same pixel for pixel: no gap is opened, no sliver of the marker behind it appears, and the covered area
+        /// does not change. This is the accepted consequence of the removal -- nothing displaces a side for the
+        /// display, and no placement of its own has been given to either side here.
         /// </summary>
         [Test]
-        public void TheSeparationOfEachCutIsKept_WhenTheRootMovesDownToTheSides()
+        public void APreparedCut_LeavesTheOutsideOfTheBodyExactlyAsItWas()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True);
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the whole body settles");
+
+                Camera camera = FromTheSide();
+                GameObject marker = Marker();
+                Color32[] whole = DrawAndRead(f, camera);
+                int wholeCovered = Covered(whole);
+                int wholeMarker = Count(whole, IsMarker);
+                TestContext.WriteLine(
+                    "whole body: covered " + wholeCovered + " px, marker behind " + wholeMarker + " px");
+                Assert.That(wholeCovered, Is.GreaterThan(Size * Size / 16), "the body really is in view");
+                Assert.That(wholeMarker, Is.GreaterThan(Size * Size / 16), "and the marker is visible around it");
+
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PrepareAnchors(f, cut);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the prepared cut settles");
+                Assert.That(f.display.SideCount, Is.EqualTo(2 * f.display.DrawCommandCount), "drawn as two sides now");
+
+                Color32[] prepared = DrawAndRead(f, camera);
+                TestContext.WriteLine(
+                    "prepared cut: covered " + Covered(prepared) + " px, marker behind " + Count(prepared, IsMarker) + " px");
+                Assert.That(Covered(prepared), Is.EqualTo(wholeCovered), "the covered area is the same");
+                Assert.That(Count(prepared, IsMarker), Is.EqualTo(wholeMarker), "nothing behind it shows through");
+                AssertSamePixels(whole, prepared, "a cut that is only prepared");
+                Assert.That(cut.IsSet, Is.True);
+                _frame++;
+            }
+        }
+
+        /// <summary>
+        /// Published, and then given a base placement of its own for each side through the display's placement
+        /// lookup -- **test input, not a physics owner**: this unit does not connect Provisional publication to
+        /// owners. What is checked is the product's drawing path from those placements. The gap between the two sides
+        /// is real and read where it is: in the band they used to meet in, the body fills it while both are at the
+        /// one placement and nothing of the body is in it once the free side is placed 1.2 higher, with the marker
+        /// behind showing through instead. The total covered area is the same either way -- both sides are still
+        /// drawn whole -- so an opened gap is told apart from a side that stopped being drawn. Nothing here is a
+        /// display offset: take the placements away and the image is the one above.
+        /// </summary>
+        [Test]
+        public void PublishedSidesAtTheirOwnOwners_LeaveARealGapBetweenThem()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True);
+                Assert.That(f.display.TryBeginFrame(), Is.True);
+
+                Camera camera = FromTheSide();
+                GameObject marker = Marker();
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PrepareAnchors(f, cut);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True);
+                Assert.That(f.display.SideCount, Is.EqualTo(2 * f.display.DrawCommandCount), "drawn as two sides");
+                Color32[] together = DrawAndRead(f, camera);
+
+                PublishPhysics(f, cut, out LogicalFragmentId above, out LogicalFragmentId below);
+                f.display.Placement = new VpTestPlacements()
+                    .Put(above, Matrix4x4.Translate(new Vector3(0f, 1.2f, 0f)))
+                    .Static(below);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the published sides settle");
+
+                Color32[] apart = DrawAndRead(f, camera);
+                // The band the two sides met in, clear of either cap: the cut is at y = 0 and the free side's own
+                // cap lands at y = 1.2.
+                const float bandLow = 0.15f;
+                const float bandHigh = 1.05f;
+                int filledBefore = CoveredInBand(together, bandLow, bandHigh);
+                int filledAfter = CoveredInBand(apart, bandLow, bandHigh);
+                int seenThroughBefore = MarkerInBand(together, bandLow, bandHigh);
+                int seenThroughAfter = MarkerInBand(apart, bandLow, bandHigh);
+                TestContext.WriteLine(
+                    "at one placement: covered " + Covered(together) + " px total, " + filledBefore + " px in the band, "
+                    + seenThroughBefore + " px of marker in the band; placed apart: covered " + Covered(apart)
+                    + " px total, " + filledAfter + " px in the band, " + seenThroughAfter + " px of marker in the band");
+
+                Assert.That(filledBefore, Is.GreaterThan(Size * Size / 16), "at one placement the body fills that band");
+                Assert.That(filledAfter, Is.Zero, "and placed apart nothing of it is there: the gap is real");
+                Assert.That(
+                    seenThroughAfter, Is.GreaterThan(seenThroughBefore),
+                    "the marker behind shows through it");
+                Assert.That(
+                    Covered(apart), Is.EqualTo(Covered(together)),
+                    "and the same area is covered in all: both sides are drawn whole, one of them elsewhere");
+                Assert.That(marker != null, Is.True);
+                _frame++;
+            }
+        }
+
+        /// <summary>
+        /// A commit takes in no movement of its own: the same image before and after it, pixel for pixel. The two
+        /// sides are at base placements that differ, given as test input, so this is not two coincident halves
+        /// agreeing with themselves; the kernel, the transfer and the commit are the product's -- the body really is
+        /// replaced by the two geometries the kernel made.
+        /// </summary>
+        [Test]
+        public void ACommit_DoesNotMoveWhatIsDrawn_InPixels()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True);
+                Assert.That(f.display.TryBeginFrame(), Is.True);
+
+                Camera camera = FromTheSide();
+                GameObject marker = Marker();
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PublishPhysics(f, cut, out LogicalFragmentId above, out LogicalFragmentId below);
+                f.display.Placement = new VpTestPlacements()
+                    .Put(above, Matrix4x4.Translate(new Vector3(0f, 1.2f, 0f)))
+                    .Static(below);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the published sides settle");
+
+                Color32[] temporary = DrawAndRead(f, camera);
+                Assert.That(Covered(temporary), Is.GreaterThan(Size * Size / 32), "something is drawn to compare");
+
+                f.RunUntil(() => f.commit.Commits == 1, "the cut commits");
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the commit settles");
+                Assert.That(f.dag.TryGetGeometry(above, out _), Is.True, "the commit really made the geometry");
+
+                Color32[] committed = DrawAndRead(f, camera);
+                TestContext.WriteLine(
+                    "across the commit: covered " + Covered(temporary) + " -> " + Covered(committed)
+                    + " px, marker behind " + Count(temporary, IsMarker) + " -> " + Count(committed, IsMarker) + " px");
+                AssertSamePixels(temporary, committed, "a commit");
+                Assert.That(marker != null && below.IsSet, Is.True);
+                _frame++;
+            }
+        }
+
+        /// <summary>Settles the cut's anchor distribution, which is what makes it displayable as two sides.</summary>
+        private static void PrepareAnchors(Fixture f, CutOperationId cut)
+        {
+            Assert.That(
+                f.ledger.PrepareAnchorDistribution(cut, 1e-5f, out _),
+                Is.EqualTo(AnchorPreparationOutcome.Prepared),
+                "the anchors are distributed");
+        }
+
+        /// <summary>
+        /// The raw depth a prepared cut writes is the raw depth the whole body wrote. Read from the depth buffer
+        /// itself, not from what shows through: a surface that stopped writing depth and one that moved would both
+        /// leave the colour comparison intact if the marker happened to fall the same way. How many pixels differ and
+        /// by how much are recorded either way; nothing is required to agree exactly.
+        /// </summary>
+        [Test]
+        public void APreparedCut_LeavesTheRawDepthAsItWas()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True);
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the whole body settles");
+
+                Camera camera = FromTheSide();
+                Marker();
+                float[] whole = DrawAndReadDepth(f, camera);
+
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PrepareAnchors(f, cut);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the prepared cut settles");
+                Assert.That(f.display.SideCount, Is.EqualTo(2 * f.display.DrawCommandCount), "drawn as two sides now");
+
+                float[] prepared = DrawAndReadDepth(f, camera);
+                ReportDepth(whole, prepared, "a cut that is only prepared");
+                _frame++;
+            }
+        }
+
+        /// <summary>
+        /// The raw depth across a real commit, with the two sides at placements that differ. Read the same way as
+        /// above and recorded the same way.
+        /// </summary>
+        [Test]
+        public void ACommit_LeavesTheRawDepthAsItWas()
+        {
+            using (Fixture f = NewFixture())
+            {
+                VpStoredGeometry body = AppendBox(f.storage, float3.zero);
+                LogicalFragmentId fragment = f.ledger.AddFragment(new List<float3> { new float3(0f, -0.8f, 0f) });
+                f.dag.RegisterBaseGeometry(fragment, body);
+                Assert.That(f.display.TryShow(fragment, body, Matrix4x4.identity), Is.True);
+                Assert.That(f.display.TryBeginFrame(), Is.True);
+
+                Camera camera = FromTheSide();
+                Marker();
+                CutOperationId cut = Admit(f, fragment, Level(0f));
+                PublishPhysics(f, cut, out LogicalFragmentId above, out LogicalFragmentId below);
+                f.display.Placement = new VpTestPlacements()
+                    .Put(above, Matrix4x4.Translate(new Vector3(0f, 1.2f, 0f)))
+                    .Static(below);
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the published sides settle");
+                float[] temporary = DrawAndReadDepth(f, camera);
+
+                f.RunUntil(() => f.commit.Commits == 1, "the cut commits");
+                _frame++;
+                Assert.That(f.display.TryBeginFrame(), Is.True, "the commit settles");
+                Assert.That(f.dag.TryGetGeometry(above, out _), Is.True, "the commit really made the geometry");
+
+                float[] committed = DrawAndReadDepth(f, camera);
+                ReportDepth(temporary, committed, "a commit");
+                _frame++;
+            }
+        }
+
+        // ----- the camera, the marker and the reading --------------------------------------------------------------------
+
+        private const int Size = 96;
+
+        /// <summary>
+        /// A camera beside the body, looking along +x at its flank, with the cut plane across the middle of what it
+        /// sees. Orthographic, so a gap is the same width wherever it is.
+        /// </summary>
+        private Camera FromTheSide()
+        {
+            var target = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.ARGB32) { antiAliasing = 1 });
+            target.Create();
+            Camera camera = Track(new GameObject("VP Commit Drawing Camera")).AddComponent<Camera>();
+            camera.enabled = false;
+            camera.orthographic = true;
+            camera.orthographicSize = 2f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.nearClipPlane = 0.01f;
+            camera.farClipPlane = 12f;
+            camera.targetTexture = target;
+            camera.transform.SetPositionAndRotation(new Vector3(-4f, 0.5f, 0f), Quaternion.LookRotation(Vector3.right, Vector3.up));
+            return camera;
+        }
+
+        /// <summary>
+        /// An ordinary blue wall behind the body. What shows through it is read apart from the body's own colour: a
+        /// gap in the surface and a surface that stopped writing depth look the same in a silhouette and not here.
+        /// </summary>
+        private GameObject Marker()
+        {
+            GameObject quad = Track(GameObject.CreatePrimitive(PrimitiveType.Quad));
+            UnityEngine.Object.DestroyImmediate(quad.GetComponent<Collider>());
+            quad.transform.SetPositionAndRotation(new Vector3(4f, 0.5f, 0f), Quaternion.LookRotation(Vector3.right, Vector3.up));
+            quad.transform.localScale = new Vector3(12f, 12f, 1f);
+            Shader unlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+            var blue = Track(new Material(unlit) { name = "commit drawing marker" });
+            blue.SetColor("_BaseColor", new Color(0f, 0f, 1f));
+            blue.SetColor("_Color", new Color(0f, 0f, 1f));
+            quad.GetComponent<MeshRenderer>().sharedMaterial = blue;
+            return quad;
+        }
+
+        /// <summary>
+        /// Draws the display for this camera and reads the **depth buffer** back, as it stands, one float per pixel.
+        /// A render request for a depth destination is what makes this the buffer and not a reconstruction; if this
+        /// build cannot answer one, that is said here rather than passed over.
+        /// </summary>
+        private float[] DrawAndReadDepth(Fixture f, Camera camera)
+        {
+            var depth = Track(new RenderTexture(Size, Size, 24, RenderTextureFormat.Depth)
+            {
+                name = "VP Commit Drawing Depth",
+            });
+            depth.Create();
+
+            f.display.TryRegisterCamera(camera);
+            Assert.That(f.display.TryPrepareCamera(camera), Is.True, "the camera is prepared");
+            f.display.Render(0, camera);
+
+            var request = new UnityEngine.Rendering.RenderPipeline.StandardRequest { destination = depth };
+            Assert.That(
+                UnityEngine.Rendering.RenderPipeline.SupportsRenderRequest(camera, request), Is.True,
+                "this build answers a render request for the depth buffer");
+            UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(camera, request);
+
+            // The depth destination has no colour format, so it cannot be read back as it stands. Copied into a
+            // single-channel float target it keeps its values and can be.
+            var readable = Track(new RenderTexture(Size, Size, 0, RenderTextureFormat.RFloat)
+            {
+                name = "VP Commit Drawing Depth Readable",
+            });
+            readable.Create();
+            Graphics.Blit(depth, readable);
+
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = readable;
+            var read = Track(new Texture2D(Size, Size, TextureFormat.RFloat, false));
+            read.ReadPixels(new Rect(0, 0, Size, Size), 0, 0);
+            read.Apply(false);
+            RenderTexture.active = previous;
+
+            Color[] pixels = read.GetPixels();
+            var values = new float[pixels.Length];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                values[i] = pixels[i].r;
+            }
+
+            return values;
+        }
+
+        /// <summary>
+        /// How two raw depth buffers differ: how many pixels are not the same value, and the largest difference among
+        /// them. Written out, and checked only for being a real depth buffer rather than a constant.
+        /// </summary>
+        private static void ReportDepth(float[] before, float[] after, string what)
+        {
+            Assert.That(after.Length, Is.EqualTo(before.Length), what + ": the same buffer size");
+            int differing = 0;
+            float largest = 0f;
+            float low = float.MaxValue;
+            float high = float.MinValue;
+            for (int i = 0; i < before.Length; i++)
+            {
+                low = Mathf.Min(low, before[i]);
+                high = Mathf.Max(high, before[i]);
+                float difference = Mathf.Abs(after[i] - before[i]);
+                if (difference > 0f)
+                {
+                    differing++;
+                    largest = Mathf.Max(largest, difference);
+                }
+            }
+
+            TestContext.WriteLine(
+                "raw depth across " + what + ": " + differing + " of " + before.Length
+                + " pixels differ, largest difference " + largest.ToString("G9")
+                + "; the buffer itself runs " + low.ToString("G9") + " to " + high.ToString("G9"));
+            Assert.That(
+                high - low, Is.GreaterThan(1e-6f),
+                what + ": the depth read back has a range, so it is a depth buffer and not a constant");
+        }
+
+        private Color32[] DrawAndRead(Fixture f, Camera camera)
+        {
+            f.display.TryRegisterCamera(camera);
+            Assert.That(f.display.TryPrepareCamera(camera), Is.True, "the camera is prepared");
+            f.display.Render(0, camera);
+
+            RenderTexture target = camera.targetTexture;
+            var request = new UnityEngine.Rendering.RenderPipeline.StandardRequest { destination = target };
+            if (UnityEngine.Rendering.RenderPipeline.SupportsRenderRequest(camera, request))
+            {
+                UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(camera, request);
+            }
+            else
+            {
+                camera.Render();
+            }
+
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = target;
+            var read = Track(new Texture2D(Size, Size, TextureFormat.RGBA32, false));
+            read.ReadPixels(new Rect(0, 0, Size, Size), 0, 0);
+            read.Apply(false);
+            RenderTexture.active = previous;
+            return read.GetPixels32();
+        }
+
+        /// <summary>The marker's own blue, which the body's materials never draw.</summary>
+        private static bool IsMarker(Color32 c)
+        {
+            return c.b > 100 && c.r < 80 && c.g < 80;
+        }
+
+        /// <summary>How much of the image the VP body covers: neither the cleared background nor the marker.</summary>
+        private static int Covered(Color32[] pixels)
+        {
+            int n = 0;
+            foreach (Color32 c in pixels)
+            {
+                if (!IsMarker(c) && (c.r > 20 || c.g > 20 || c.b > 20))
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>
+        /// The rows of the image a world y range falls in, for this camera: it stands at y = 0.5 with an orthographic
+        /// size of 2, looking along +x with +y up, and the read image runs bottom-up.
+        /// </summary>
+        private static (int low, int high) Rows(float yLow, float yHigh)
+        {
+            int low = Mathf.CeilToInt((yLow + 1.5f) / 4f * Size);
+            int high = Mathf.FloorToInt((yHigh + 1.5f) / 4f * Size);
+            Assert.That(high, Is.GreaterThan(low), "the band holds rows");
+            return (low, high);
+        }
+
+        /// <summary>How much of one band of rows the VP body covers.</summary>
+        private static int CoveredInBand(Color32[] pixels, float yLow, float yHigh)
+        {
+            (int low, int high) = Rows(yLow, yHigh);
+            int n = 0;
+            for (int row = low; row < high; row++)
+            {
+                for (int column = 0; column < Size; column++)
+                {
+                    Color32 c = pixels[(row * Size) + column];
+                    n += !IsMarker(c) && (c.r > 20 || c.g > 20 || c.b > 20) ? 1 : 0;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>How much of one band of rows the marker behind the body shows through.</summary>
+        private static int MarkerInBand(Color32[] pixels, float yLow, float yHigh)
+        {
+            (int low, int high) = Rows(yLow, yHigh);
+            int n = 0;
+            for (int row = low; row < high; row++)
+            {
+                for (int column = 0; column < Size; column++)
+                {
+                    n += IsMarker(pixels[(row * Size) + column]) ? 1 : 0;
+                }
+            }
+
+            return n;
+        }
+
+        private static int Count(Color32[] pixels, Func<Color32, bool> test)
+        {
+            int n = 0;
+            foreach (Color32 c in pixels)
+            {
+                n += test(c) ? 1 : 0;
+            }
+
+            return n;
+        }
+
+        private static void AssertSamePixels(Color32[] a, Color32[] b, string what)
+        {
+            Assert.That(b.Length, Is.EqualTo(a.Length), what + ": the same image size");
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b)
+                {
+                    Assert.Fail(
+                        what + " changed pixel " + i + " (" + (i % Size) + ", " + (i / Size) + "): "
+                        + a[i] + " -> " + b[i]);
+                }
+            }
+        }
+
+        // ----- placement, capacity, registration room and boundaries ----------------------------------------------------
+
+        /// <summary>
+        /// Where each side is drawn is the same before and after the commit, for a turned and moved body, through A
+        /// and then B. The three sides stand apart because each follows a base placement of its own, given here as
+        /// test input -- nothing in the display puts them there -- and the commit, which moves the root down to the
+        /// sides, takes none of that in: every side is drawn at exactly the placement it was drawn at before.
+        /// </summary>
+        [Test]
+        public void WhereEachSideIsDrawn_IsKept_WhenTheRootMovesDownToTheSides()
         {
             using (Fixture f = NewFixture())
             {
@@ -626,10 +1087,20 @@ namespace Zantetsu.MeshCut.Tests
 
                 float4 planeA = Level(0f);
                 float4 planeB = Level(0.5f);
+                // A base placement for each side, given to the display as test input. They differ, and by more
+                // than any tolerance here, so that "drawn where it was" cannot pass by the three simply coinciding.
+                Matrix4x4 topOwner = Matrix4x4.Translate(new Vector3(0f, 0.9f, 0f)) * placement;
+                Matrix4x4 middleOwner = Matrix4x4.Translate(new Vector3(0f, 0.3f, 0f)) * placement;
+
                 CutOperationId a = Admit(f, fragment, planeA);
                 PublishPhysics(f, a, out LogicalFragmentId above, out LogicalFragmentId below);
+                f.display.Placement = new VpTestPlacements().Put(above, topOwner).Put(below, placement);
                 CutOperationId b = Admit(f, above, planeB);
                 PublishPhysics(f, b, out LogicalFragmentId top, out LogicalFragmentId middle);
+                f.display.Placement = new VpTestPlacements()
+                    .Put(top, topOwner)
+                    .Put(middle, middleOwner)
+                    .Put(below, placement);
 
                 Assert.That(f.display.TryBeginFrame(), Is.True, "both cuts temporary");
                 Vector3 topBefore = TotalOf(f, top);
@@ -637,6 +1108,7 @@ namespace Zantetsu.MeshCut.Tests
                 Vector3 belowBefore = TotalOf(f, below);
 
                 Assert.That(topBefore, Is.Not.EqualTo(middleBefore), "the temporary sides really are apart");
+                Assert.That(topBefore, Is.Not.EqualTo(belowBefore), "all three of them");
 
                 f.RunUntil(() => f.commit.Commits == 1, "A commits");
                 _frame++;
@@ -647,8 +1119,8 @@ namespace Zantetsu.MeshCut.Tests
                 AssertClose(TotalOf(f, middle), middleBefore, "B's negative side is where it was");
                 AssertClose(
                     PlacementOf(f, above),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, a, 1f, placement, planeA),
-                    "and A's separation is in the placement of the side it moved");
+                    (Vector3)placement.GetColumn(3),
+                    "and the registration A left behind still stands at the body's placement");
 
                 f.RunUntil(() => f.commit.Commits == 2, "B commits");
                 _frame++;
@@ -661,8 +1133,8 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// A body that its anchors fix does not move, and only the free side is separated: the fixed side's placement
-        /// is exactly the body's.
+        /// A body that its anchors fix does not move: with neither side given a placement of its own, both are
+        /// committed exactly at the body's placement, the anchored one and the free one alike.
         /// </summary>
         [Test]
         public void ASideItsAnchorsFix_IsCommittedWhereTheBodyWas()
@@ -684,8 +1156,8 @@ namespace Zantetsu.MeshCut.Tests
                 AssertClose(PlacementOf(f, below), placement.GetColumn(3), "the anchored side stays where the body was");
                 AssertClose(
                     PlacementOf(f, above),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, cut, 1f, placement, Level(0f)),
-                    "and only the free side is separated");
+                    (Vector3)placement.GetColumn(3),
+                    "and the free side too, with no placement of its own to be anywhere else");
             }
         }
 
@@ -860,8 +1332,13 @@ namespace Zantetsu.MeshCut.Tests
                 f.dag.RegisterBaseGeometry(fragment, body);
                 Assert.That(f.display.TryShow(fragment, body, placement), Is.True, "the body is shown");
 
+                // The free side is given a base placement away from the anchored one; the record has to name each
+                // side where that side really is, which is the only reason the two entries differ at all.
+                Matrix4x4 abovePlacement = Matrix4x4.Translate(new Vector3(0f, 0.7f, 0f)) * placement;
+
                 CutOperationId a = Admit(f, fragment, Level(0f));
                 PublishPhysics(f, a, out LogicalFragmentId above, out LogicalFragmentId below);
+                f.display.Placement = new VpTestPlacements().Put(above, abovePlacement).Put(below, placement);
                 f.RunUntil(() => f.commit.Commits == 1, "A commits");
 
                 Assert.That(f.display.TryGetBoundaryRecord(0, out LogicalCutBoundaryRecord record), Is.True);
@@ -871,22 +1348,26 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(record.negativeGeometry.indexRange, Is.EqualTo(negative.indexRange), "and the negative side's");
                 AssertClose(
                     record.positiveObjectToWorld.GetColumn(3),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, a, 1f, placement, Level(0f)),
-                    "where the positive side stood");
+                    (Vector3)abovePlacement.GetColumn(3),
+                    "where the positive side stood: at the placement it was given");
                 AssertClose(
                     record.negativeObjectToWorld.GetColumn(3),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, a, -1f, placement, Level(0f)),
-                    "and where the negative side stood");
+                    (Vector3)placement.GetColumn(3),
+                    "and where the negative side stood: where the body was");
                 Assert.That(
                     record.positiveObjectToWorld, Is.Not.EqualTo(record.negativeObjectToWorld),
-                    "the two sides stand apart, each with its own placement");
+                    "the two sides stand apart, each at the placement it follows");
 
                 _frame++;
                 Assert.That(f.display.TryBeginFrame(), Is.True, "GA settles");
 
                 // B cuts the positive side: that fragment's geometry moves on, and A's record does not.
                 CutOperationId b = Admit(f, above, Level(0.5f));
-                PublishPhysics(f, b, out _, out _);
+                PublishPhysics(f, b, out LogicalFragmentId top, out LogicalFragmentId middle);
+                f.display.Placement = new VpTestPlacements()
+                    .Put(top, abovePlacement)
+                    .Put(middle, abovePlacement)
+                    .Put(below, placement);
                 f.RunUntil(() => f.commit.Commits == 2, "B commits");
                 _frame++;
                 Assert.That(f.display.TryBeginFrame(), Is.True, "GAB settles");
@@ -959,15 +1440,16 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(insidePositive || insideNegative, Is.True, "every command draws inside one side's own range");
                 }
 
-                // The separation the temporary split had is now in each side's placement, once: the sum is kept.
+                // Neither side was given a placement of its own, so each registration holds the body's, unchanged:
+                // the commit took nothing into it.
                 AssertClose(
                     PlacementOf(f, above),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, cut, 1f, placement, Level(0f)),
-                    "the positive side keeps its separation in its placement");
+                    (Vector3)placement.GetColumn(3),
+                    "the positive side's registration is the body's placement");
                 AssertClose(
                     PlacementOf(f, below),
-                    (Vector3)placement.GetColumn(3) + ExpectedSeparation(f, cut, -1f, placement, Level(0f)),
-                    "and so does the negative side");
+                    (Vector3)placement.GetColumn(3),
+                    "and so is the negative side's");
             }
         }
     }

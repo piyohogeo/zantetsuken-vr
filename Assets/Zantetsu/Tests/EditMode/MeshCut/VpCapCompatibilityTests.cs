@@ -27,10 +27,8 @@ namespace Zantetsu.MeshCut.Tests
     {
         /// <summary>Test values only: no product epsilon exists for either (DESIGN O-034).</summary>
         private const float PlaneEpsilon = 0.125f;
-        private const float OffsetEpsilon = 0.125f;
 
         private const int BodyMaterial = 7;
-        private const float Separation = 0.25f;
 
         private static readonly Vector4 k_p = new Vector4(0f, 1f, 0f, -1f);
         private static readonly Vector4 k_q = new Vector4(1f, 0f, 0f, -2f);
@@ -69,9 +67,9 @@ namespace Zantetsu.MeshCut.Tests
             return new VpCapConstraint(face, side, plane);
         }
 
-        private static VpCapCompatibilityTarget T(Vector3 offset, params VpCapConstraint[] constraints)
+        private static VpCapCompatibilityTarget T(params VpCapConstraint[] constraints)
         {
-            return new VpCapCompatibilityTarget(constraints, offset);
+            return new VpCapCompatibilityTarget(constraints);
         }
 
         /// <summary>
@@ -90,7 +88,7 @@ namespace Zantetsu.MeshCut.Tests
                     }
 
                     Assert.That(
-                        VpCapCompatibility.AreCompatible(targets[i], targets[j], PlaneEpsilon, OffsetEpsilon),
+                        VpCapCompatibility.AreCompatible(targets[i], targets[j], PlaneEpsilon),
                         Is.EqualTo(compatible[i, j]),
                         what + ": targets " + i + " and " + j);
                 }
@@ -102,7 +100,7 @@ namespace Zantetsu.MeshCut.Tests
                 groups[i] = -7;
             }
 
-            int count = VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups);
+            int count = VpCapCompatibility.Classify(targets, PlaneEpsilon, groups);
             Assert.That(count, Is.InRange(1, targets.Length), what + ": between one group and one per target");
 
             var members = new int[count];
@@ -140,7 +138,7 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The same faces, sides, planes and offset, given in different orders, are one group. A third target under
+        /// The same faces, sides and planes, given in different orders, are one group. A third target under
         /// the same conditions joins them.
         /// </summary>
         [Test]
@@ -149,13 +147,12 @@ namespace Zantetsu.MeshCut.Tests
             LogicalCutLedger ledger = NewLedger();
             VpCapFace a = Face(ledger, 1);
             VpCapFace b = Face(ledger, 2);
-            var offset = new Vector3(0f, 0.25f, 0f);
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(offset, C(a, 1f, k_p), C(b, -1f, k_q)),
-                T(offset, C(b, -1f, k_q), C(a, 1f, k_p)),
-                T(offset, C(a, 1f, k_p), C(b, -1f, k_q)),
+                T(C(a, 1f, k_p), C(b, -1f, k_q)),
+                T(C(b, -1f, k_q), C(a, 1f, k_p)),
+                T(C(a, 1f, k_p), C(b, -1f, k_q)),
             };
 
             int[] groups = GroupAndCheck(targets, Relation(3, (0, 1), (0, 2), (1, 2)), "same conditions");
@@ -165,26 +162,24 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Against one target, each of these differs in one thing and is apart from it: the other side of the face,
-        /// an offset past the epsilon, one more boundary, and a different face in place of one.
+        /// one more boundary, and a different face in place of one.
         /// </summary>
         [Test]
-        public void ADifferentSide_Offset_ExtraBoundary_OrFace_IsApart()
+        public void ADifferentSide_ExtraBoundary_OrFace_IsApart()
         {
             LogicalCutLedger ledger = NewLedger();
             VpCapFace a = Face(ledger, 1);
             VpCapFace b = Face(ledger, 2);
-            Vector3 offset = Vector3.zero;
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(offset, C(a, 1f, k_p)),
-                T(offset, C(a, -1f, k_p)),
-                T(new Vector3(0f, 0.25f, 0f), C(a, 1f, k_p)),
-                T(offset, C(a, 1f, k_p), C(b, 1f, k_q)),
-                T(offset, C(b, 1f, k_p)),
+                T(C(a, 1f, k_p)),
+                T(C(a, -1f, k_p)),
+                T(C(a, 1f, k_p), C(b, 1f, k_q)),
+                T(C(b, 1f, k_p)),
             };
 
-            int[] groups = GroupAndCheck(targets, Relation(5), "one difference each");
+            int[] groups = GroupAndCheck(targets, Relation(4), "one difference each");
             for (int i = 1; i < targets.Length; i++)
             {
                 Assert.That(groups[i], Is.Not.EqualTo(groups[0]), "target " + i + " differs from target 0 in one thing");
@@ -192,12 +187,12 @@ namespace Zantetsu.MeshCut.Tests
 
             // The extra boundary the other way round: the target with two faces is not a target with one.
             Assert.That(
-                VpCapCompatibility.AreCompatible(targets[3], targets[0], PlaneEpsilon, OffsetEpsilon), Is.False,
+                VpCapCompatibility.AreCompatible(targets[2], targets[0], PlaneEpsilon), Is.False,
                 "only one of them has the second boundary");
         }
 
         /// <summary>
-        /// One face, the same side and offset, but the face moved along its normal or turned: its current world plane
+        /// One face and the same side, but the face moved along its normal or turned: its current world plane
         /// is not the one the other target is under, so they are apart.
         /// </summary>
         [Test]
@@ -208,9 +203,9 @@ namespace Zantetsu.MeshCut.Tests
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(Vector3.zero, C(a, 1f, k_p)),
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -1.5f))),
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 0f, 1f, -1f))),
+                T(C(a, 1f, k_p)),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, -1.5f))),
+                T(C(a, 1f, new Vector4(0f, 0f, 1f, -1f))),
             };
 
             int[] groups = GroupAndCheck(targets, Relation(3), "moved and turned");
@@ -219,7 +214,7 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// Exactly at the epsilon is within it, for the plane and for the offset; twice the epsilon is not.
+        /// Exactly at the epsilon is within it for the plane; twice the epsilon is not.
         /// </summary>
         [Test]
         public void TheEpsilon_IncludesItsEdge_AndNotBeyond()
@@ -229,33 +224,18 @@ namespace Zantetsu.MeshCut.Tests
 
             VpCapCompatibilityTarget[] planes =
             {
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -1f))),
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -1.125f))),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, -1f))),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, -1.125f))),
             };
             int[] together = GroupAndCheck(planes, Relation(2, (0, 1)), "d apart by exactly the epsilon");
             Assert.That(together[1], Is.EqualTo(together[0]));
 
             VpCapCompatibilityTarget[] farPlanes =
             {
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -1f))),
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -1.25f))),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, -1f))),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, -1.25f))),
             };
             GroupAndCheck(farPlanes, Relation(2), "d apart by twice the epsilon");
-
-            VpCapCompatibilityTarget[] offsets =
-            {
-                T(Vector3.zero, C(a, 1f, k_p)),
-                T(new Vector3(0f, 0.125f, 0f), C(a, 1f, k_p)),
-            };
-            int[] offsetTogether = GroupAndCheck(offsets, Relation(2, (0, 1)), "offsets apart by exactly the epsilon");
-            Assert.That(offsetTogether[1], Is.EqualTo(offsetTogether[0]));
-
-            VpCapCompatibilityTarget[] farOffsets =
-            {
-                T(Vector3.zero, C(a, 1f, k_p)),
-                T(new Vector3(0f, 0.25f, 0f), C(a, 1f, k_p)),
-            };
-            GroupAndCheck(farOffsets, Relation(2), "offsets apart by twice the epsilon");
         }
 
         /// <summary>
@@ -268,9 +248,9 @@ namespace Zantetsu.MeshCut.Tests
         {
             LogicalCutLedger ledger = NewLedger();
             VpCapFace a = Face(ledger, 1);
-            VpCapCompatibilityTarget near = T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, 0f)));
-            VpCapCompatibilityTarget middle = T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -0.125f)));
-            VpCapCompatibilityTarget far = T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -0.25f)));
+            VpCapCompatibilityTarget near = T(C(a, 1f, new Vector4(0f, 1f, 0f, 0f)));
+            VpCapCompatibilityTarget middle = T(C(a, 1f, new Vector4(0f, 1f, 0f, -0.125f)));
+            VpCapCompatibilityTarget far = T(C(a, 1f, new Vector4(0f, 1f, 0f, -0.25f)));
 
             int[][] orders =
             {
@@ -296,7 +276,7 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The same operation number, issued by two ledgers, is two faces: identical planes, sides and offsets do not
+        /// The same operation number, issued by two ledgers, is two faces: identical planes and sides do not
         /// bring them together. Issued by one ledger, it is one face.
         /// </summary>
         [Test]
@@ -307,9 +287,9 @@ namespace Zantetsu.MeshCut.Tests
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(Vector3.zero, C(Face(first, 1), 1f, k_p)),
-                T(Vector3.zero, C(Face(second, 1), 1f, k_p)),
-                T(Vector3.zero, C(Face(first, 1), 1f, k_p)),
+                T(C(Face(first, 1), 1f, k_p)),
+                T(C(Face(second, 1), 1f, k_p)),
+                T(C(Face(first, 1), 1f, k_p)),
             };
 
             int[] groups = GroupAndCheck(targets, Relation(3, (0, 2)), "operation 1 of two ledgers");
@@ -331,8 +311,8 @@ namespace Zantetsu.MeshCut.Tests
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(Vector3.zero, C(a, 1f, k_p), C(b, 1f, k_q)),
-                T(Vector3.zero, C(a, 1f, k_p), C(b, -1f, k_q)),
+                T(C(a, 1f, k_p), C(b, 1f, k_q)),
+                T(C(a, 1f, k_p), C(b, -1f, k_q)),
             };
 
             int[] groups = GroupAndCheck(targets, Relation(2), "the second face's side differs");
@@ -350,19 +330,19 @@ namespace Zantetsu.MeshCut.Tests
             VpCapFace a = Face(ledger, 1);
             var groups = new int[2];
 
-            VpCapCompatibilityTarget[] same = { T(Vector3.zero, C(a, 1f, k_p)), T(Vector3.zero, C(a, 1f, k_p)) };
+            VpCapCompatibilityTarget[] same = { T(C(a, 1f, k_p)), T(C(a, 1f, k_p)) };
             VpCapCompatibilityTarget[] moved =
             {
-                T(Vector3.zero, C(a, 1f, k_p)), T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, -2f))),
+                T(C(a, 1f, k_p)), T(C(a, 1f, new Vector4(0f, 1f, 0f, -2f))),
             };
 
-            VpCapCompatibility.Classify(same, PlaneEpsilon, OffsetEpsilon, groups);
+            VpCapCompatibility.Classify(same, PlaneEpsilon, groups);
             Assert.That(groups[1], Is.EqualTo(groups[0]), "first: together");
 
-            VpCapCompatibility.Classify(moved, PlaneEpsilon, OffsetEpsilon, groups);
+            VpCapCompatibility.Classify(moved, PlaneEpsilon, groups);
             Assert.That(groups[1], Is.Not.EqualTo(groups[0]), "next: one moved, apart");
 
-            VpCapCompatibility.Classify(same, PlaneEpsilon, OffsetEpsilon, groups);
+            VpCapCompatibility.Classify(same, PlaneEpsilon, groups);
             Assert.That(groups[1], Is.EqualTo(groups[0]), "then back: together again");
         }
 
@@ -379,30 +359,30 @@ namespace Zantetsu.MeshCut.Tests
             VpCapFace b = Face(ledger, 2);
             var mine = new List<VpCapConstraint> { C(a, 1f, k_p) };
             VpCapConstraint[] theirs = { C(a, 1f, k_p) };
-            var first = new VpCapCompatibilityTarget(mine, Vector3.zero);
-            var second = new VpCapCompatibilityTarget(theirs, Vector3.zero);
+            var first = new VpCapCompatibilityTarget(mine);
+            var second = new VpCapCompatibilityTarget(theirs);
             var targets = new[] { first, second };
             var groups = new int[2];
 
-            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.True, "the layout: the same condition");
-            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(1));
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon), Is.True, "the layout: the same condition");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, groups), Is.EqualTo(1));
 
             theirs[0] = C(a, 1f, new Vector4(0f, 1f, 0f, -2f));
-            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.False, "the array's plane was moved afterwards");
-            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(2), "and the grouping sees it");
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon), Is.False, "the array's plane was moved afterwards");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, groups), Is.EqualTo(2), "and the grouping sees it");
 
             theirs[0] = C(a, 1f, k_p);
             mine.Add(C(b, -1f, k_q));
             Assert.That(first.constraints.Count, Is.EqualTo(2), "the list grew afterwards, and the target sees two conditions");
-            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.False, "an extra boundary, added afterwards");
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon), Is.False, "an extra boundary, added afterwards");
 
             mine.RemoveAt(1);
-            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon), Is.True, "taken away again");
-            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, groups), Is.EqualTo(1));
+            Assert.That(VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon), Is.True, "taken away again");
+            Assert.That(VpCapCompatibility.Classify(targets, PlaneEpsilon, groups), Is.EqualTo(1));
 
             mine.Clear();
             Assert.Throws<System.ArgumentException>(
-                () => VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon, OffsetEpsilon),
+                () => VpCapCompatibility.AreCompatible(first, second, PlaneEpsilon),
                 "emptied afterwards: a target under no condition is refused, as it would be if made empty");
         }
 
@@ -418,37 +398,35 @@ namespace Zantetsu.MeshCut.Tests
 
             VpCapCompatibilityTarget[] targets =
             {
-                T(Vector3.zero, C(a, 1f, k_p)),
-                T(Vector3.zero, C(a, 1f, new Vector4(0f, 1f, 0f, float.NaN))),
-                T(new Vector3(float.PositiveInfinity, 0f, 0f), C(a, 1f, k_p)),
-                T(Vector3.zero, C(a, 1f, k_p)),
+                T(C(a, 1f, k_p)),
+                T(C(a, 1f, new Vector4(0f, 1f, 0f, float.NaN))),
+                T(C(a, 1f, k_p)),
             };
-            int[] groups = GroupAndCheck(targets, Relation(4, (0, 3)), "not finite");
-            Assert.That(groups[1], Is.Not.EqualTo(groups[0]));
-            Assert.That(groups[2], Is.Not.EqualTo(groups[0]));
+            int[] groups = GroupAndCheck(targets, Relation(3, (0, 2)), "not finite");
+            Assert.That(groups[1], Is.Not.EqualTo(groups[0]), "the one whose plane is not finite stands alone");
 
             var slots = new int[4];
             Assert.Throws<ArgumentException>(
-                () => VpCapCompatibility.Classify(new[] { T(Vector3.zero, C(a, 0f, k_p)) }, PlaneEpsilon, OffsetEpsilon, slots),
+                () => VpCapCompatibility.Classify(new[] { T(C(a, 0f, k_p)) }, PlaneEpsilon, slots),
                 "a side of zero");
             Assert.Throws<ArgumentException>(
-                () => VpCapCompatibility.Classify(new[] { T(Vector3.zero, C(a, 1f, k_p), C(a, 1f, k_p)) }, PlaneEpsilon, OffsetEpsilon, slots),
+                () => VpCapCompatibility.Classify(new[] { T(C(a, 1f, k_p), C(a, 1f, k_p)) }, PlaneEpsilon, slots),
                 "one face named twice");
             Assert.Throws<ArgumentException>(
-                () => VpCapCompatibility.Classify(new[] { T(Vector3.zero) }, PlaneEpsilon, OffsetEpsilon, slots),
+                () => VpCapCompatibility.Classify(new[] { T() }, PlaneEpsilon, slots),
                 "no condition");
             Assert.Throws<ArgumentException>(
-                () => VpCapCompatibility.Classify(new[] { T(Vector3.zero, C(Face(null, 1), 1f, k_p)) }, PlaneEpsilon, OffsetEpsilon, slots),
+                () => VpCapCompatibility.Classify(new[] { T(C(Face(null, 1), 1f, k_p)) }, PlaneEpsilon, slots),
                 "a face with no ledger");
             Assert.Throws<ArgumentException>(
-                () => VpCapCompatibility.Classify(targets, PlaneEpsilon, OffsetEpsilon, new int[3]),
+                () => VpCapCompatibility.Classify(targets, PlaneEpsilon, new int[targets.Length - 1]),
                 "too few group slots");
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => VpCapCompatibility.Classify(targets, -1f, OffsetEpsilon, slots), "negative epsilon");
+                () => VpCapCompatibility.Classify(targets, -1f, slots), "negative epsilon");
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => VpCapCompatibility.Classify(targets, PlaneEpsilon, float.NaN, slots), "NaN epsilon");
+                () => VpCapCompatibility.Classify(targets, float.NaN, slots), "NaN epsilon");
             Assert.Throws<ArgumentNullException>(
-                () => VpCapCompatibility.Classify(null, PlaneEpsilon, OffsetEpsilon, slots));
+                () => VpCapCompatibility.Classify(null, PlaneEpsilon, slots));
         }
 
         // ----- the current single-cut display ---------------------------------------------------------------------
@@ -525,7 +503,6 @@ namespace Zantetsu.MeshCut.Tests
                     () => _frame, out VpLogicalCutDisplay display),
                 Is.True,
                 "create a display");
-            display.Separation = Separation;
             Assert.That(display.TryShow(fragment, geometry, placement), Is.True, "show the cube");
             return display;
         }
@@ -559,7 +536,7 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// A real display's cap records give the one condition of a single-cut body: the cap's operation under the
-        /// display's ledger, its side, its settled world plane and its offset. The face stays the same face from pending
+        /// display's ledger, its side and its settled world plane. The face stays the same face from pending
         /// to published. A cap the visibility test excludes keeps its record, so its condition is still given. A whole
         /// body has no record.
         /// </summary>
@@ -585,11 +562,10 @@ namespace Zantetsu.MeshCut.Tests
                     Assert.That(only.face, Is.EqualTo(new VpCapFace(ledger, cut)), "the operation, under this ledger");
                     Assert.That(only.side, Is.EqualTo(1f));
                     Assert.That((only.worldPlane - new Vector4(0f, 1f, 0f, -1f)).magnitude, Is.LessThan(1e-5f), "y = 1 at the identity");
-                    Assert.That((pending.offset - new Vector3(0f, Separation, 0f)).magnitude, Is.LessThan(1e-5f), "the free side's separation");
 
                     VpCapCompatibilityTarget negative = TargetOf(display, ledger, -1f);
                     Assert.That(
-                        VpCapCompatibility.AreCompatible(pending, negative, PlaneEpsilon, OffsetEpsilon), Is.False,
+                        VpCapCompatibility.AreCompatible(pending, negative, PlaneEpsilon), Is.False,
                         "the two sides of one cut are apart");
 
                     // Excluded by the visibility test: an eye above the downward positive cap.
@@ -609,7 +585,7 @@ namespace Zantetsu.MeshCut.Tests
                     VpCapCompatibilityTarget published = TargetOf(display, ledger, 1f);
                     Assert.That(published.constraints[0].face, Is.EqualTo(only.face), "publication does not change the face");
                     Assert.That(
-                        VpCapCompatibility.AreCompatible(pending, published, PlaneEpsilon, OffsetEpsilon), Is.True,
+                        VpCapCompatibility.AreCompatible(pending, published, PlaneEpsilon), Is.True,
                         "pending and published are under the same condition");
                 }
             }
@@ -617,7 +593,7 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// Two ledgers, each with one body and its first cut: both operations are numbered alike, the planes, sides
-        /// and offsets are the same, and still no target of one is compatible with a target of the other. This is
+        /// are the same, and still no target of one is compatible with a target of the other. This is
         /// also the real path's limit: bodies under different operations never share a face.
         /// </summary>
         [Test]

@@ -40,9 +40,6 @@ namespace Zantetsu.MeshCut
         /// <summary>A snapshot could not be built from the input (<see cref="VpMultiCutBuildOutcome.InvalidInput"/>).</summary>
         InvalidInput = 1,
 
-        /// <summary>A cut on a drawn lineage has no settled distribution (<see cref="VpMultiCutBuildOutcome.UnsettledDistribution"/>).</summary>
-        UnsettledDistribution = 2,
-
         /// <summary>
         /// A retired fragment lies inside what the new snapshot would draw once
         /// (<see cref="VpMultiCutBuildOutcome.RetiredInsideAggregate"/>): the new snapshot cannot be built.
@@ -70,7 +67,6 @@ namespace Zantetsu.MeshCut
             bool published,
             LogicalFragmentId fragment,
             bool fixedByAnchors,
-            Vector3 offset,
             VpInstanceClip clip)
         {
             this.source = source;
@@ -80,7 +76,6 @@ namespace Zantetsu.MeshCut
             this.published = published;
             this.fragment = fragment;
             this.fixedByAnchors = fixedByAnchors;
-            this.offset = offset;
             this.clip = clip;
         }
 
@@ -114,12 +109,6 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public readonly bool fixedByAnchors;
 
-        /// <summary>
-        /// The separation this render fragment is drawn at, in world space: every free side on its lineage from the
-        /// registered fragment down, summed. Zero for a body drawn as it was registered.
-        /// </summary>
-        public readonly Vector3 offset;
-
         /// <summary>The clip record this side was drawn with: its selected boundaries, at most eight.</summary>
         public readonly VpInstanceClip clip;
     }
@@ -137,8 +126,8 @@ namespace Zantetsu.MeshCut
     /// boundary. A polygon cut down to nothing keeps its record with no vertices: a normal empty result, never drawn.
     /// </para>
     /// <para>
-    /// **The vertices are in world space**, the placement snapshot applied and then the render fragment's separation
-    /// added once, and they are wound so that <c>Cross(p1 - p0, p2 - p0)</c> points along <see cref="outwardNormal"/>.
+    /// **The vertices are in world space**, the placement snapshot applied and nothing added after it, and they are
+    /// wound so that <c>Cross(p1 - p0, p2 - p0)</c> points along <see cref="outwardNormal"/>.
     /// </para>
     /// </summary>
     public readonly struct LogicalCutCapRecord
@@ -151,7 +140,6 @@ namespace Zantetsu.MeshCut
             bool published,
             LogicalFragmentId fragment,
             bool fixedByAnchors,
-            Vector3 offset,
             Vector4 worldPlane,
             Vector3 outwardNormal,
             int vertexStart,
@@ -164,7 +152,6 @@ namespace Zantetsu.MeshCut
             this.published = published;
             this.fragment = fragment;
             this.fixedByAnchors = fixedByAnchors;
-            this.offset = offset;
             this.worldPlane = worldPlane;
             this.outwardNormal = outwardNormal;
             this.vertexStart = vertexStart;
@@ -195,10 +182,7 @@ namespace Zantetsu.MeshCut
         /// <summary>Whether the anchors make this side of that face fixed. A fixed side has a cap like any other.</summary>
         public readonly bool fixedByAnchors;
 
-        /// <summary>The render fragment's separation, already added to every vertex of this cap.</summary>
-        public readonly Vector3 offset;
-
-        /// <summary>The adopted face in world space, before the separation, as <c>(n.xyz, d)</c> with n normalized.</summary>
+        /// <summary>The adopted face in world space, as <c>(n.xyz, d)</c> with n normalized.</summary>
         public readonly Vector4 worldPlane;
 
         /// <summary>The outward normal of the side this cap closes, in world space, which the winding agrees with.</summary>
@@ -213,8 +197,8 @@ namespace Zantetsu.MeshCut
     /// <summary>
     /// Shows logical cuts from the ledger's own state (DESIGN 5.1, 5.2, 5.6; D-180, D-181): each registered geometry, and
     /// once cuts are admitted and their inputs are ready, that **same** geometry drawn once per render fragment of the
-    /// multi-cut snapshot (<see cref="VpMultiCutSnapshot"/>), each clipped to its selected boundaries and moved by its
-    /// lineage's separation. One cut and several go through this one path.
+    /// multi-cut snapshot (<see cref="VpMultiCutSnapshot"/>), each clipped to its selected boundaries and drawn at the
+    /// placement it follows. Nothing here moves anything for the display. One cut and several go through this one path.
     /// <para>
     /// **The ledger is the state; this only reads it.** Admission, anchor distribution, publication, Abort and Stale
     /// all belong to <see cref="LogicalCutLedger"/>, and nothing here keeps a second copy of them or a publication
@@ -248,9 +232,9 @@ namespace Zantetsu.MeshCut
     /// </para>
     /// <para>
     /// **Body, depth and shadow read one record; an ordinary colour's stencil volume reads its own face.** Each render
-    /// fragment's clip record (every selected half-space, before the separation) and its separation are what the
-    /// surfaces, the depth and both casters are drawn with. In an ordinary colour a stencil volume is drawn with the same
-    /// geometry, placement and separation but clipped by one face only -- the cap's own face and kept side
+    /// fragment's clip record (every selected half-space) and its placement are what the surfaces, the depth and both
+    /// casters are drawn with. In an ordinary colour a stencil volume is drawn with the same
+    /// geometry and placement but clipped by one face only -- the cap's own face and kept side
     /// (<see cref="VpCapJob.volumeClip"/>) -- never by the render fragment's other selected faces. The last colour's
     /// volumes are the old kind: the render fragment's own clip record, every selected face (D-186). The kerf is zero:
     /// no plane is moved to open a gap.
@@ -261,7 +245,7 @@ namespace Zantetsu.MeshCut
     /// render fragments together, and from nothing else. A cap whose drawing polygon is not empty and which the both-eye
     /// visibility test keeps is a cap job. Jobs whose volumes are exactly the same volume form one volume group, whose
     /// volume is issued once: the representative render fragment's draw ranges (one command per submesh) and placement,
-    /// clipped by the cap's own face only (<see cref="VpCapJob.volumeClip"/>) at its separation, applied once -- never the
+    /// clipped by the cap's own face only (<see cref="VpCapJob.volumeClip"/>), applied once -- never the
     /// render fragment's clip of every selected face, which stays the body's, the depth's and the shadow's. Each job's
     /// cap is its clipped drawing polygon, fanned. Groups are given ordinary colours from the initial sections'
     /// projection in both eyes, at most the limit less one of them (DESIGN D-185, D-186). The groups that fit no ordinary
@@ -381,7 +365,7 @@ namespace Zantetsu.MeshCut
         /// </summary>
         public readonly VpStoredGeometry positiveGeometry, negativeGeometry;
 
-        /// <summary>Where each side's geometry stood at the commit: its own placement, separation included.</summary>
+        /// <summary>Where each side's geometry stood at the commit: the placement it was drawn at.</summary>
         public readonly Matrix4x4 positiveObjectToWorld, negativeObjectToWorld;
 
         /// <summary>The adopted plane, in the lineage's frame -- the frame it was admitted in.</summary>
@@ -411,12 +395,6 @@ namespace Zantetsu.MeshCut
             public int takenThisPass;
 
             public Matrix4x4 objectToWorld;
-
-            // What commits took into this geometry's own frame, in that frame. It is used only while the fragment
-            // follows a placement of its own: then the separation that was folded in moves with what is followed
-            // instead of staying where it was folded. A registration drawn at its own placement folds into
-            // objectToWorld as it always did, and leaves this identity.
-            public Matrix4x4 foldedGeometryLocal;
 
             public Matrix4x4 lineageToGeometryLocal;
             public VpClipBoundary[] reflected;
@@ -672,7 +650,6 @@ namespace Zantetsu.MeshCut
         private LogicalCutDisplayHaltReason _haltReason = LogicalCutDisplayHaltReason.None;
         private VpMultiCutInvalidInput _haltInvalidInput = VpMultiCutInvalidInput.None;
         private bool _disposed;
-        private float _separation = 0.05f;
 
         private VpLogicalCutDisplay(
             VpCpuGeometryStorage storage,
@@ -843,26 +820,6 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// How far a free side is drawn apart, along its cut plane's own normal; the render fragment's separation is
-        /// this, summed down its lineage. A fixed side is not moved whatever this says, and the plane itself is never
-        /// moved: the kerf stays zero.
-        /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">Negative or not finite.</exception>
-        public float Separation
-        {
-            get => _separation;
-            set
-            {
-                if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
-                {
-                    throw new ArgumentOutOfRangeException(nameof(value), value, "a finite length, not negative");
-                }
-
-                _separation = value;
-            }
-        }
-
-        /// <summary>
         /// Whether the draws this display registers are for Single Pass Instanced stereo: one issue carrying two
         /// instances, one per eye. It is read where a collection uploads, and both batches are told the same thing in
         /// that one place. Default false. Whether XR is up is the caller's to find out; setting it takes effect from the
@@ -956,8 +913,8 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// How many times a cap's box-and-plane section was actually taken, over every collection attempt. It stays
-        /// where it is while the box, the face, the plane and the placement are the same -- publication and a change of
-        /// separation included: only a changed input makes another one.
+        /// where it is while the box, the face, the plane and the placement are the same -- publication included:
+        /// only a changed input makes another one.
         /// </summary>
         public int CapPolygonBuilds { get; private set; }
 
@@ -1630,8 +1587,8 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// One volume: every command of the render fragment's body, once, with one instance, the body's transform and
-        /// the clip given -- the same geometry and range the body is drawn with. The clip is the volume's own (one face),
-        /// its separation applied once, by the shader, as it is for the body.
+        /// the clip given -- the same geometry, range and placement the body is drawn with. The clip is the volume's
+        /// own (one face), applied by the shader as it is for the body.
         /// </summary>
         private void AppendVolume(
             int renderFragment,
@@ -1797,7 +1754,6 @@ namespace Zantetsu.MeshCut
                 geometry = geometry,
                 reference = reference,
                 objectToWorld = objectToWorld,
-                foldedGeometryLocal = Matrix4x4.identity,
                 lineageToGeometryLocal = lineageToGeometryLocal,
                 reflected = reflectedCopy,
                 commands = commands,
@@ -1817,11 +1773,10 @@ namespace Zantetsu.MeshCut
         /// reflecting this cut's boundary on its own side; every later cut of the branch stays temporary and is
         /// rebuilt on the new bodies at the next collection.
         /// <para>
-        /// **Where each side stands.** A snapshot sums the separation of every cut from the registration's root
-        /// downwards, and requires the placement to already hold whatever separated that root. A commit moves the root
-        /// down to the two sides, so this takes that cut's own separation -- the same rule, from the cut's settled
-        /// anchor distribution and its world plane -- into each side's placement. What the snapshot still sums is only
-        /// what is below the new root, so nothing is lost and nothing is counted twice.
+        /// **Where each side stands.** Where it stood before: the placement the side follows, or the body's when it
+        /// follows nothing. A commit moves the root down to the two sides and takes in no movement of its own, so a
+        /// side is drawn at the same place across it. That is the whole of the rule -- there is no quantity here to
+        /// lose or to count twice.
         /// </para>
         /// <para>
         /// **What it does not wait for.** Nothing here adopts a snapshot, prepares a camera or draws: it changes what
@@ -1852,8 +1807,8 @@ namespace Zantetsu.MeshCut
         /// <para>
         /// Refused, changing nothing at all, when the body is not shown here, when a produced side cannot be prepared,
         /// resolved to materials or placed within the snapshot's input contract, when what it needs does not fit the
-        /// drawing capacity or the reference table's room, when a separation cannot be settled, or when the display has
-        /// stopped. Nothing is taken and nothing is transferred on any of those, so the cut keeps its two sides and may
+        /// drawing capacity or the reference table's room, when a live side follows a placement it was not given, or
+        /// when the display has stopped. Nothing is taken and nothing is transferred on any of those, so the cut keeps its two sides and may
         /// be offered again.
         /// </para>
         /// </summary>
@@ -1896,19 +1851,18 @@ namespace Zantetsu.MeshCut
             if (positive.IsBorrowed || negative.IsBorrowed)
             {
                 // The plane did not cut: one child is the input itself. The registration stays exactly as it is, with
-                // the child's name, the separation of its own side taken into its placement, and the boundary it now
-                // reflects -- there is no surface here, so no boundary record is published.
+                // the child's name and the boundary it now reflects -- there is no surface here, so no boundary record
+                // is published.
                 bool positiveBorrows = positive.IsBorrowed;
                 float side = positiveBorrows ? 1f : -1f;
                 LogicalFragmentId kept = positiveBorrows ? positiveFragment : negativeFragment;
-                if (!kept.IsSet || !TrySideFold(operation, side, kept, body, out SideFold keptFold))
+                if (!kept.IsSet || !TrySidePlacements(kept, body, out SidePlacements keptPlacements))
                 {
                     return false;
                 }
 
                 body.fragment = kept;
-                body.objectToWorld = keptFold.objectToWorld;
-                body.foldedGeometryLocal = keptFold.folded;
+                body.objectToWorld = keptPlacements.registered;
                 body.reflected = Reflecting(body.reflected, face, side);
                 return true;
             }
@@ -1925,19 +1879,19 @@ namespace Zantetsu.MeshCut
             VpIndirectCommand[] positiveCommands = null;
             Material[] positiveMaterials = null;
             Bounds positiveBounds = default;
-            SideFold positiveFold = default;
+            SidePlacements positivePlacements = default;
             VpIndirectCommand[] negativeCommands = null;
             Material[] negativeMaterials = null;
             Bounds negativeBounds = default;
-            SideFold negativeFold = default;
+            SidePlacements negativePlacements = default;
             int commands = 0;
             int registrations = 0;
             if (positive.IsProduced)
             {
                 if (!positiveFragment.IsSet
-                    || !TrySideFold(operation, 1f, positiveFragment, body, out positiveFold)
+                    || !TrySidePlacements(positiveFragment, body, out positivePlacements)
                     || !TryPrepareSide(
-                        positive.geometry, body, in positiveFold, out positiveCommands, out positiveMaterials,
+                        positive.geometry, body, in positivePlacements, out positiveCommands, out positiveMaterials,
                         out positiveBounds))
                 {
                     return false;
@@ -1950,9 +1904,9 @@ namespace Zantetsu.MeshCut
             if (negative.IsProduced)
             {
                 if (!negativeFragment.IsSet
-                    || !TrySideFold(operation, -1f, negativeFragment, body, out negativeFold)
+                    || !TrySidePlacements(negativeFragment, body, out negativePlacements)
                     || !TryPrepareSide(
-                        negative.geometry, body, in negativeFold, out negativeCommands, out negativeMaterials,
+                        negative.geometry, body, in negativePlacements, out negativeCommands, out negativeMaterials,
                         out negativeBounds))
                 {
                     return false;
@@ -2020,14 +1974,14 @@ namespace Zantetsu.MeshCut
             if (positive.IsProduced)
             {
                 TakeBody(
-                    positiveFragment, positive.geometry, body, in positiveFold, positiveCommands, positiveMaterials,
+                    positiveFragment, positive.geometry, body, in positivePlacements, positiveCommands, positiveMaterials,
                     positiveBounds, Reflecting(body.reflected, face, 1f));
             }
 
             if (negative.IsProduced)
             {
                 TakeBody(
-                    negativeFragment, negative.geometry, body, in negativeFold, negativeCommands, negativeMaterials,
+                    negativeFragment, negative.geometry, body, in negativePlacements, negativeCommands, negativeMaterials,
                     negativeBounds, Reflecting(body.reflected, face, -1f));
             }
 
@@ -2039,8 +1993,8 @@ namespace Zantetsu.MeshCut
                     negativeFragment,
                     positive.geometry,
                     negative.geometry,
-                    positiveFold.drawn,
-                    negativeFold.drawn,
+                    positivePlacements.drawn,
+                    negativePlacements.drawn,
                     plane,
                     body.lineageToGeometryLocal,
                     capTriangles,
@@ -2052,8 +2006,7 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Where one shown registration stands: the placement it is drawn at, which holds every separation above its
-        /// own root. What a snapshot adds below that root is the snapshot's, not this.
+        /// Where one shown registration stands: the placement it is drawn at.
         /// </summary>
         internal bool TryGetShownPlacement(LogicalFragmentId fragment, out Matrix4x4 objectToWorld)
         {
@@ -2087,93 +2040,23 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// The separation of one side of one cut, by the same rule a snapshot sums (DESIGN 5.5): the cut's own world
-        /// plane normal times the separation, on the side that its settled anchor distribution left free, and nothing
-        /// at all on a side its anchors fix. False when the cut's distribution or plane cannot be read, which is a
-        /// refusal and not a zero.
+        /// The two placements a committed side keeps apart. They differ whenever the side follows a fragment
+        /// placement of its own: the registration holds the body's, while the side is drawn where it follows.
+        /// Nothing is added to either -- a boundary becoming permanent changes which registration a side is drawn
+        /// from, never where that side stands.
         /// </summary>
-        /// <summary>
-        /// One side's separation at a commit (DESIGN 5.1), in two frames: in the world, where a registration drawn at
-        /// its own placement takes it, and in the geometry's own frame, where a registration that follows fragments
-        /// takes it.
-        /// <para>
-        /// The one in the geometry's frame is the one that keeps its meaning. The separation runs along the adopted
-        /// plane's normal, and that normal turns with whatever the shape follows, so the world direction at the moment
-        /// of a commit is only right for a shape that stands still. Taken into the geometry's own frame it is right
-        /// for every branch of the registration afterwards, each at its own placement, including the living
-        /// descendants of a fragment that has itself been cut since.
-        /// </para>
-        /// <para>A side an anchor fixes takes none of it, and both come back zero (DESIGN 7.1).</para>
-        /// </summary>
-        private bool TryTakeSeparation(
-            CutOperationId operation, float side, Shown body, Matrix4x4 drawn, out Vector3 offset)
+        private struct SidePlacements
         {
-            offset = Vector3.zero;
-            if (!_ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution)
-                || !_ledger.TryGetOperation(operation, out LogicalCutOperation cut))
-            {
-                return false;
-            }
+            /// <summary>What the side's registration holds afterwards: the body's own placement.</summary>
+            internal Matrix4x4 registered;
 
-            if (FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount))
-            {
-                return true;
-            }
-
-            // The plane carried by the matrix this side is really drawn with, which is what the snapshot's own
-            // separation is made from: the same value, so that taking it in moves nothing.
-            if (!VpCutPlane.TryGeometryLocalToWorld(cut.plane, body.lineageToGeometryLocal, out float4 local)
-                || !VpCutPlane.TryGeometryLocalToWorld(local, drawn, out float4 world))
-            {
-                return false;
-            }
-
-            offset = side * new Vector3(world.x, world.y, world.z) * Separation;
-            return IsFiniteOffset(offset);
-        }
-
-        private static bool IsFiniteOffset(Vector3 offset)
-        {
-            return float.IsFinite(offset.x) && float.IsFinite(offset.y) && float.IsFinite(offset.z);
-        }
-
-        /// <summary>The body's placement with one side's separation taken into it.</summary>
-        private static Matrix4x4 Separated(Matrix4x4 objectToWorld, Vector3 offset)
-        {
-            return offset == Vector3.zero ? objectToWorld : Matrix4x4.Translate(offset) * objectToWorld;
-        }
-
-        /// <summary>
-        /// Takes one boundary's separation into a registration, at the moment its geometry starts reflecting that
-        /// boundary. Only that boundary's: the separations of the boundaries that are still temporary stay where they
-        /// are, summed by each collection, and would be counted twice if they were taken in here.
-        /// <para>
-        /// Where it is taken depends on where the registration will be drawn. One drawn at its own placement takes it
-        /// into that placement, as it always did. One that follows a fragment's placement takes it into the geometry's
-        /// own frame instead: <c>followed · fold</c> is <c>Translate(offset) · followed · fold</c> at this moment, and
-        /// afterwards the separation that was folded in moves with what is followed instead of staying in the world
-        /// where it was folded.
-        /// </para>
-        /// </summary>
-        /// <summary>What one side of a commit stands at, and what that commit takes into its registration.</summary>
-        private struct SideFold
-        {
-            /// <summary>The registration's own placement afterwards.</summary>
-            internal Matrix4x4 objectToWorld;
-
-            /// <summary>What this geometry has folded into its own frame afterwards.</summary>
-            internal Matrix4x4 folded;
-
-            /// <summary>Where the side really stands afterwards: what its bounds are judged at and a record keeps.</summary>
+            /// <summary>Where the side really stands: what its bounds are judged at and a boundary record keeps.</summary>
             internal Matrix4x4 drawn;
-
-            /// <summary>That side's separation at this moment, in the world.</summary>
-            internal Vector3 offset;
         }
 
         /// <summary>
-        /// What one side of a commit is drawn from, before this geometry's own folds: the placement its fragment
-        /// follows, or the registration's.
+        /// Where one side of a commit is drawn: the placement its fragment follows, or the registration's when it
+        /// follows nothing. Nothing is applied after it.
         /// <para>
         /// A fragment that is not a current target has no placement of its own — it has been replaced or retired, and
         /// its shape stands where its geometry stands. That is not the same as a live fragment that follows something
@@ -2202,60 +2085,33 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// One boundary's separation taken into one side of a commit (DESIGN 5.1). Only that boundary's: what is still
-        /// temporary stays where it is, summed by each collection, and would be counted twice if it were taken in.
-        /// <para>
-        /// A registration drawn at its own placement takes it into that placement, as it always did. One whose
-        /// fragments follow placements of their own takes it into the geometry's own frame, as
-        /// <c>baseline⁻¹ · Translate(offset) · baseline</c>: that is exactly <c>Translate(offset)</c> in the world at
-        /// this moment, whatever the placement is made of, and it stays so for any branch whose placement differs from
-        /// this one by a rigid motion — which is what an owner moving does. The separation itself is the one the
-        /// snapshot uses for this side, carried by the matrix the side is drawn with, so no scale in a placement can
-        /// make the two disagree.
-        /// </para>
+        /// The two placements of one side of a commit (DESIGN 5.1). A commit takes in no movement of its own: the
+        /// side is drawn at the placement it follows, which is what it was drawn at before the commit, and its
+        /// registration keeps the body's own placement. Which side of which cut it is does not come into it.
         /// </summary>
-        private bool TrySideFold(
-            CutOperationId operation, float side, LogicalFragmentId fragment, Shown body, out SideFold fold)
+        private bool TrySidePlacements(LogicalFragmentId fragment, Shown body, out SidePlacements placements)
         {
-            fold = default;
+            placements = default;
             if (!TryBaseline(fragment, body, out Matrix4x4 baseline))
             {
                 return false;
             }
 
-            Matrix4x4 drawn = Placement == null ? baseline : baseline * body.foldedGeometryLocal;
-            if (!TryTakeSeparation(operation, side, body, drawn, out Vector3 offset))
-            {
-                return false;
-            }
-
-            fold.offset = offset;
-            if (Placement == null)
-            {
-                fold.objectToWorld = Separated(body.objectToWorld, offset);
-                fold.folded = body.foldedGeometryLocal;
-                fold.drawn = fold.objectToWorld;
-                return true;
-            }
-
-            fold.objectToWorld = body.objectToWorld;
-            fold.folded = offset == Vector3.zero
-                ? body.foldedGeometryLocal
-                : baseline.inverse * Matrix4x4.Translate(offset) * baseline * body.foldedGeometryLocal;
-            fold.drawn = baseline * fold.folded;
+            placements.registered = body.objectToWorld;
+            placements.drawn = baseline;
             return true;
         }
 
-        /// <summary>One side of a commit, judged where it will really stand: the body's placement plus its own separation.</summary>
+        /// <summary>One side of a commit, judged where it will really stand: the placement it is drawn at.</summary>
         private bool TryPrepareSide(
             VpStoredGeometry geometry,
             Shown body,
-            in SideFold fold,
+            in SidePlacements placements,
             out VpIndirectCommand[] commands,
             out Material[] commandMaterials,
             out Bounds localBounds)
         {
-            Matrix4x4 placement = fold.drawn;
+            Matrix4x4 placement = placements.drawn;
             return TryPrepare(geometry, out commands, out commandMaterials, out localBounds)
                 && VpMultiCutSnapshot.IsWithinInputContract(localBounds, placement, body.lineageToGeometryLocal)
                 && VpMultiCutSnapshot.IsWithinSectionBounds(
@@ -2270,7 +2126,7 @@ namespace Zantetsu.MeshCut
             LogicalFragmentId fragment,
             VpStoredGeometry geometry,
             Shown body,
-            in SideFold fold,
+            in SidePlacements placements,
             VpIndirectCommand[] commands,
             Material[] commandMaterials,
             Bounds localBounds,
@@ -2295,8 +2151,7 @@ namespace Zantetsu.MeshCut
                 fragment = fragment,
                 geometry = geometry,
                 reference = reference,
-                objectToWorld = fold.objectToWorld,
-                foldedGeometryLocal = fold.folded,
+                objectToWorld = placements.registered,
                 lineageToGeometryLocal = body.lineageToGeometryLocal,
                 reflected = reflected,
                 commands = commands,
@@ -2713,12 +2568,12 @@ namespace Zantetsu.MeshCut
                 entry.takenThisPass = 0;
                 _registrations.Add(new VpMultiCutRegistration(
                     entry.fragment, entry.localBounds, entry.objectToWorld, entry.lineageToGeometryLocal, entry.reflected,
-                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds), entry.foldedGeometryLocal));
+                    VpCapBoundsPolygon.EpsilonFor(entry.localBounds)));
             }
 
             // 2. One snapshot of every registration together, beside the adopted one. Room short is an ordinary
             //    refusal; anything else stops the display, decided here before this frame draws.
-            VpMultiCutBuildOutcome outcome = _building.TryBuild(_ledger, _registrations, Separation, _snapshot, Placement);
+            VpMultiCutBuildOutcome outcome = _building.TryBuild(_ledger, _registrations, _snapshot, Placement);
             CapPolygonBuilds += _building.SectionBuildCount;
             if (outcome == VpMultiCutBuildOutcome.CapacityExceeded)
             {
@@ -3027,17 +2882,17 @@ namespace Zantetsu.MeshCut
             {
                 return new LogicalCutDisplaySide(
                     entry.fragment, renderFragment, pending, rf.rootPendingSide, false, default,
-                    FixedOf(pending, rf.rootPendingSide), rf.offset, rf.clip);
+                    FixedOf(pending, rf.rootPendingSide), rf.clip);
             }
 
             if (rf.root != entry.fragment && _ledger.TryGetOrigin(rf.root, out CutOperationId origin, out float side))
             {
                 return new LogicalCutDisplaySide(
-                    entry.fragment, renderFragment, origin, side, true, rf.root, FixedOf(origin, side), rf.offset, rf.clip);
+                    entry.fragment, renderFragment, origin, side, true, rf.root, FixedOf(origin, side), rf.clip);
             }
 
             return new LogicalCutDisplaySide(
-                entry.fragment, renderFragment, default, 0f, false, default, false, rf.offset, rf.clip);
+                entry.fragment, renderFragment, default, 0f, false, default, false, rf.clip);
         }
 
         /// <summary>One snapshot cap as a record: its boundary's cut and side, published or not, and its polygon's place.</summary>
@@ -3059,7 +2914,7 @@ namespace Zantetsu.MeshCut
 
             return new LogicalCutCapRecord(
                 _shown[rf.registration].fragment, cap.renderFragment, operation, side, published, child,
-                FixedOf(operation, side), rf.offset, ToVector4(cap.worldPlane), cap.outwardNormal, cap.vertexStart,
+                FixedOf(operation, side), ToVector4(cap.worldPlane), cap.outwardNormal, cap.vertexStart,
                 cap.vertexCount);
         }
 
@@ -3095,7 +2950,7 @@ namespace Zantetsu.MeshCut
                 _building.TryGetRenderFragment(cap.renderFragment, out VpMultiCutRenderFragment rf);
                 var world = new Vector4(cap.worldPlane.x, cap.worldPlane.y, cap.worldPlane.z, cap.worldPlane.w);
                 AppendVolume(
-                    cap.renderFragment, VpInstanceClip.Keep(world, cap.boundary.side, rf.offset), _candidateCommands,
+                    cap.renderFragment, VpInstanceClip.Keep(world, cap.boundary.side), _candidateCommands,
                     _candidateRfCommandStart, _candidateRfCommandCount, _candidateRfTransform, ref stencilCommands);
                 AppendFan(_candidateCapRecords[i], ref capIndexCount);
             }
@@ -3215,8 +3070,6 @@ namespace Zantetsu.MeshCut
         {
             switch (outcome)
             {
-                case VpMultiCutBuildOutcome.UnsettledDistribution:
-                    return LogicalCutDisplayHaltReason.UnsettledDistribution;
                 case VpMultiCutBuildOutcome.RetiredInsideAggregate:
                     return LogicalCutDisplayHaltReason.RetiredInsideAggregate;
                 default:

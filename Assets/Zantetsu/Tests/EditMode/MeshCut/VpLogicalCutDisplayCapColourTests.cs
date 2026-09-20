@@ -270,7 +270,8 @@ namespace Zantetsu.MeshCut.Tests
         /// </summary>
         private Scene TwoFacingCapsScene(out Camera camera)
         {
-            Scene scene = T3Scene(4, out _);
+            // Opened: the corner's caps are only in this view because that piece stands away from the others.
+            Scene scene = T3SceneOpened(4, out _);
             camera = T3Camera();
             Assert.That(scene.display.TryRegisterCamera(camera), Is.True);
             return scene;

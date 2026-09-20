@@ -20,7 +20,6 @@ namespace Zantetsu.MeshCut.Tests
     public class VpFragmentPlacementTests
     {
         private const float Tolerance = 1e-4f;
-        private const float Separation = 0.5f;
 
         /// <summary>The geometry's local frame inside the frame a fragment follows: its origin is at (0, 1, 0) there.</summary>
         private static readonly Matrix4x4 k_geometryLocalToOwner = Matrix4x4.Translate(new Vector3(0f, 1f, 0f));
@@ -77,12 +76,10 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         private static VpMultiCutRegistration Registration(
-            LogicalFragmentId root, Matrix4x4 geometryLocalToWorld, VpClipBoundary[] reflected = null,
-            Matrix4x4? folded = null)
+            LogicalFragmentId root, Matrix4x4 geometryLocalToWorld, VpClipBoundary[] reflected = null)
         {
             return new VpMultiCutRegistration(
-                root, k_box, geometryLocalToWorld, k_lineageToGeometryLocal, reflected ?? k_none, 1e-4f,
-                folded ?? Matrix4x4.identity);
+                root, k_box, geometryLocalToWorld, k_lineageToGeometryLocal, reflected ?? k_none, 1e-4f);
         }
 
         private static VpMultiCutRenderFragment Of(VpMultiCutSnapshot snapshot, LogicalFragmentId fragment)
@@ -129,10 +126,16 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(actual.z, Is.EqualTo(expected.z).Within(Tolerance), what + ".z");
         }
 
-        /// <summary>Where a point of the geometry is really drawn: its placement, and the separation on top.</summary>
+        /// <summary>A few points of the geometry, so a case is not judged on the origin alone.</summary>
+        private static readonly Vector3[] k_points =
+        {
+            Vector3.zero, new Vector3(1f, 0f, 0f), new Vector3(0f, 0f, 1f), new Vector3(-1f, 0.5f, 0.25f),
+        };
+
+        /// <summary>Where a point of the geometry is really drawn: its placement, and nothing on top.</summary>
         private static Vector3 Drawn(in VpMultiCutRenderFragment rf, Vector3 local)
         {
-            return rf.geometryLocalToWorld.MultiplyPoint3x4(local) + rf.offset;
+            return rf.geometryLocalToWorld.MultiplyPoint3x4(local);
         }
 
         // ----- the two sides of one cut, standing in different places ---------------------------------------------------
@@ -159,7 +162,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 snapshot.TryBuild(
                     ledger, root, k_box, Matrix4x4.identity * k_geometryLocalToOwner, k_lineageToGeometryLocal, k_none,
-                    Separation, 1e-4f, placements),
+                    1e-4f, placements),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             VpMultiCutRenderFragment rfPositive = Of(snapshot, positive);
@@ -169,21 +172,14 @@ namespace Zantetsu.MeshCut.Tests
             Same(pPositive * k_geometryLocalToOwner, rfPositive.geometryLocalToWorld, "the positive placement");
             Same(pNegative * k_geometryLocalToOwner, rfNegative.geometryLocalToWorld, "the negative placement");
 
-            // The plane is y = 0 of the lineage frame. Turned 90 degrees about z, its normal is -x for the positive
-            // side; the negative side did not turn, so its normal is still +y.
-            Same(new Vector3(-1f, 0f, 0f), rfPositive.offset / Separation, "the positive separation direction");
-            Same(new Vector3(0f, 1f, 0f), rfNegative.offset / Separation * -1f, "the negative separation direction");
-            Same(new Vector3(-0.5f, 0f, 0f), rfPositive.offset, "the positive separation");
-            Same(new Vector3(0f, -0.5f, 0f), rfNegative.offset, "the negative separation");
-
             // Several points of the geometry, each where its own side puts it.
             foreach (Vector3 local in new[] { Vector3.zero, new Vector3(1f, 1f, 1f), new Vector3(-1f, 0.5f, -1f) })
             {
                 Same(
-                    (pPositive * k_geometryLocalToOwner).MultiplyPoint3x4(local) + new Vector3(-0.5f, 0f, 0f),
+                    (pPositive * k_geometryLocalToOwner).MultiplyPoint3x4(local),
                     Drawn(in rfPositive, local), "a positive point");
                 Same(
-                    (pNegative * k_geometryLocalToOwner).MultiplyPoint3x4(local) + new Vector3(0f, -0.5f, 0f),
+                    (pNegative * k_geometryLocalToOwner).MultiplyPoint3x4(local),
                     Drawn(in rfNegative, local), "a negative point");
             }
         }
@@ -209,7 +205,7 @@ namespace Zantetsu.MeshCut.Tests
             VpMultiCutSnapshot snapshot = NewSnapshot();
             Assert.That(
                 snapshot.TryBuild(
-                    ledger, root, k_box, k_geometryLocalToOwner, k_lineageToGeometryLocal, k_none, Separation, 1e-4f,
+                    ledger, root, k_box, k_geometryLocalToOwner, k_lineageToGeometryLocal, k_none, 1e-4f,
                     placements),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
@@ -225,18 +221,17 @@ namespace Zantetsu.MeshCut.Tests
             // the positive side. It is the side's own placement that turned both.
             Same(new Vector3(1f, 0f, 0f), capPositive.outwardNormal, "the cap outward normal");
 
-            // Every vertex of the polygon stands where that side stands, with that side's separation: the vertices
-            // carry the separation, the plane does not, so they sit on the plane once the separation is taken off.
+            // Every vertex of the polygon stands where that side stands, and sits on that side's own plane.
             Assert.That(capPositive.vertexCount, Is.GreaterThanOrEqualTo(3), "a polygon");
             var normal = new Vector3(capPositive.worldPlane.x, capPositive.worldPlane.y, capPositive.worldPlane.z);
             for (int v = 0; v < capPositive.vertexCount; v++)
             {
                 Assert.That(snapshot.TryGetCapVertex(rfPositive.capStart, v, out Vector3 world), Is.True);
                 Assert.That(
-                    Vector3.Dot(normal, world - rfPositive.offset) + capPositive.worldPlane.w,
+                    Vector3.Dot(normal, world) + capPositive.worldPlane.w,
                     Is.EqualTo(0f).Within(1e-3f),
                     "cap vertex " + v + " is on the plane its own side carried");
-                Assert.That(world.x, Is.EqualTo(2.5f).Within(1e-3f), "cap vertex " + v + " stands where that side stands");
+                Assert.That(world.x, Is.EqualTo(3f).Within(1e-3f), "cap vertex " + v + " stands where that side stands");
             }
 
             // The negative side's cap is on the same logical plane, carried by its own placement: y = 1 in the world.
@@ -246,7 +241,7 @@ namespace Zantetsu.MeshCut.Tests
             for (int v = 0; v < capNegative.vertexCount; v++)
             {
                 Assert.That(snapshot.TryGetCapVertex(rfNegative.capStart, v, out Vector3 world), Is.True);
-                Assert.That(world.y, Is.EqualTo(0.5f).Within(1e-3f), "negative cap vertex " + v);
+                Assert.That(world.y, Is.EqualTo(1f).Within(1e-3f), "negative cap vertex " + v + " is where that side stands");
             }
         }
 
@@ -254,8 +249,9 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// The sequence of the design note, in numbers: A published, A+ moved and turned, B admitted on A+ and
-        /// published, A committed, the child turned again, B committed. At every step the drawn position is the one
-        /// worked out here, and nothing is lost or counted twice as a commit takes its own boundary's separation in.
+        /// published, A committed, the child turned again, B committed. At every step the drawn position is the
+        /// placement the branch follows and nothing else, and a commit -- which changes which registration a branch
+        /// is drawn from -- moves nothing at all.
         /// </summary>
         [Test]
         public void TheWorkedExample_KeepsEveryStepWhereItBelongs()
@@ -274,77 +270,77 @@ namespace Zantetsu.MeshCut.Tests
             placements.of[aMinus] = p0 * k_geometryLocalToOwner;
             registrations.Clear();
             registrations.Add(Registration(root, m0));
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             VpMultiCutRenderFragment rf = Of(snapshot, aPlus);
             Same(m0, rf.geometryLocalToWorld, "t0 placement");
-            Same(new Vector3(0f, 0.5f, 0f), rf.offset, "t0 separation");
-            Same(new Vector3(0f, 1.5f, 0f), Drawn(in rf, Vector3.zero), "t0 drawn origin");
+            Same(new Vector3(0f, 1f, 0f), Drawn(in rf, Vector3.zero), "t0 drawn origin");
 
             // --- t1: A+ moves to (3,0,0) and turns 90 degrees about z.
             Matrix4x4 p1 = Owner(new Vector3(3f, 0f, 0f), 90f);
             placements.of[aPlus] = p1 * k_geometryLocalToOwner;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             rf = Of(snapshot, aPlus);
             Same(new Vector3(2f, 0f, 0f), rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "t1 placement origin");
-            Same(new Vector3(-0.5f, 0f, 0f), rf.offset, "t1 separation turns with the body");
-            Same(new Vector3(1.5f, 0f, 0f), Drawn(in rf, Vector3.zero), "t1 drawn origin");
+            Same(new Vector3(2f, 0f, 0f), Drawn(in rf, Vector3.zero), "t1 drawn origin: the placement, nothing added");
 
             // --- t2: B admitted on A+ and published. Its children inherit A+'s placement, not the registration's.
             var (_, bPlus, bMinus) = Cut(ledger, aPlus, new float4(1f, 0f, 0f, 0f));
             placements.of[bPlus] = p1 * k_geometryLocalToOwner;
             placements.of[bMinus] = p1 * k_geometryLocalToOwner;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             rf = Of(snapshot, bPlus);
             Same(new Vector3(2f, 0f, 0f), rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "t2 placement origin");
-            Same(new Vector3(-0.5f, 0.5f, 0f), rf.offset, "t2 separation is A's and B's");
-            Same(new Vector3(1.5f, 0.5f, 0f), Drawn(in rf, Vector3.zero), "t2 drawn origin");
+            Same(new Vector3(2f, 0f, 0f), Drawn(in rf, Vector3.zero), "t2 drawn origin: the placement it inherited");
 
             // Taking the mapping from the ancestor's registration instead would put it back where A was published.
             Matrix4x4 reDerived = p1.inverse * m0;
             Same(new Vector3(0f, 1f, 0f), (p1 * reDerived).MultiplyPoint3x4(Vector3.zero), "the mistake this avoids");
 
-            // --- t3: A committed for this branch. Only A's separation is taken in, in the frame that is followed:
-            //     Translate(R^-1 * (-0.5,0,0)) = Translate(0, 0.5, 0) on top of the geometry's own frame.
-            Matrix4x4 foldedA = Matrix4x4.Translate(new Vector3(0f, 0.5f, 0f));
+            // --- t3: A committed for this branch, so it is drawn from A+'s registration now. Where it is drawn
+            //     comes from the placement it follows, which has not changed, so nothing moves.
+            Vector3[] beforeCommit = new Vector3[k_points.Length];
+            for (int i = 0; i < k_points.Length; i++)
+            {
+                beforeCommit[i] = Drawn(in rf, k_points[i]);
+            }
+
             Assert.That(ledger.TryGetOrigin(aPlus, out CutOperationId aCut, out float aSide), Is.True);
             var reflectedA = new[] { new VpClipBoundary(new VpCapFace(ledger, aCut), aSide) };
             registrations.Clear();
-            registrations.Add(Registration(aPlus, m0, reflectedA, foldedA));
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            registrations.Add(Registration(aPlus, m0, reflectedA));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             rf = Of(snapshot, bPlus);
-            Same(new Vector3(1.5f, 0f, 0f), rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "t3 placement origin");
-            Same(new Vector3(0f, 0.5f, 0f), rf.offset, "t3 keeps only B's separation");
-            Same(new Vector3(1.5f, 0.5f, 0f), Drawn(in rf, Vector3.zero), "t3 does not move: nothing lost, nothing twice");
-
-            // Several points, not only the origin.
-            foreach (Vector3 local in new[] { new Vector3(1f, 0f, 0f), new Vector3(0f, 0f, 1f), new Vector3(-1f, 0.5f, 0.25f) })
+            Same(p1 * k_geometryLocalToOwner, rf.geometryLocalToWorld, "t3 is drawn at the placement B+ follows");
+            for (int i = 0; i < k_points.Length; i++)
             {
-                Vector3 expected = (p1 * k_geometryLocalToOwner).MultiplyPoint3x4(local)
-                                   + new Vector3(-0.5f, 0f, 0f) + new Vector3(0f, 0.5f, 0f);
-                Same(expected, Drawn(in rf, local), "t3 point " + local);
+                Same(beforeCommit[i], Drawn(in rf, k_points[i]), "t3 point " + i + " did not move at the commit");
             }
 
-            // --- t4: the child turns again, to 180 degrees. What was folded in turns with it.
+            // --- t4: the child turns again, to 180 degrees. It is drawn at its new placement.
             Matrix4x4 p2 = Owner(new Vector3(3f, 0f, 0f), 180f);
             placements.of[bPlus] = p2 * k_geometryLocalToOwner;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             rf = Of(snapshot, bPlus);
-            Same(new Vector3(3f, -1.5f, 0f), rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "t4 placement origin");
-            Same(new Vector3(-0.5f, 0f, 0f), rf.offset, "t4 B's separation turns too");
-            Same(new Vector3(2.5f, -1.5f, 0f), Drawn(in rf, Vector3.zero), "t4 drawn origin");
+            Same(p2 * k_geometryLocalToOwner, rf.geometryLocalToWorld, "t4 follows the turned placement");
+            Vector3[] beforeSecondCommit = new Vector3[k_points.Length];
+            for (int i = 0; i < k_points.Length; i++)
+            {
+                beforeSecondCommit[i] = Drawn(in rf, k_points[i]);
+            }
 
-            // --- t5: B committed. Its separation goes in the same way, and the drawn position does not move.
-            Matrix4x4 foldedB = Matrix4x4.Translate(new Vector3(0.5f, 0f, 0f)) * foldedA;
+            // --- t5: B committed too. The registration changes again and the drawn position does not move.
             Assert.That(ledger.TryGetOrigin(bPlus, out CutOperationId bCut, out float bSide), Is.True);
             var reflectedAB = new[] { reflectedA[0], new VpClipBoundary(new VpCapFace(ledger, bCut), bSide) };
             registrations.Clear();
-            registrations.Add(Registration(bPlus, m0, reflectedAB, foldedB));
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            registrations.Add(Registration(bPlus, m0, reflectedAB));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             rf = Of(snapshot, bPlus);
-            Same(new Vector3(2.5f, -1.5f, 0f), rf.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero), "t5 placement origin");
-            Same(Vector3.zero, rf.offset, "t5 has nothing temporary left");
-            Same(new Vector3(2.5f, -1.5f, 0f), Drawn(in rf, Vector3.zero), "t5 does not move either");
+            Same(p2 * k_geometryLocalToOwner, rf.geometryLocalToWorld, "t5 still follows that placement");
+            for (int i = 0; i < k_points.Length; i++)
+            {
+                Same(beforeSecondCommit[i], Drawn(in rf, k_points[i]), "t5 point " + i + " did not move either");
+            }
             Assert.That(bMinus.IsSet && aMinus.IsSet, Is.True);
         }
 
@@ -407,7 +403,7 @@ namespace Zantetsu.MeshCut.Tests
 
             var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
             VpMultiCutSnapshot snapshot = NewSnapshot();
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             VpMultiCutRenderFragment rf = Aggregate(snapshot);
             Assert.That(rf.root, Is.EqualTo(last), "the aggregate is still rooted at the source of the ignored cut");
@@ -421,13 +417,13 @@ namespace Zantetsu.MeshCut.Tests
 
             // The branch that is not the first moves: nothing of the aggregate moves with it.
             placements.of[second] = Owner(new Vector3(7f, -4f, 2f), 45f) * k_geometryLocalToOwner;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Same(mFirst, Aggregate(snapshot).geometryLocalToWorld, "the aggregate did not move with it");
 
             // The first branch moves and turns: the aggregate goes with it.
             Matrix4x4 moved = Owner(new Vector3(-5f, 2f, 1f), 120f) * k_geometryLocalToOwner;
             placements.of[first] = moved;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Same(moved, Aggregate(snapshot).geometryLocalToWorld, "and follows the one it does stand at");
             Assert.That(ignored.IsSet, Is.True);
         }
@@ -451,7 +447,7 @@ namespace Zantetsu.MeshCut.Tests
             var controlRegistrations = new List<VpMultiCutRegistration> { Registration(controlRoot, k_geometryLocalToOwner) };
             VpMultiCutSnapshot controlSnapshot = NewSnapshot();
             Assert.That(
-                controlSnapshot.TryBuild(control, controlRegistrations, Separation, controlPlacements),
+                controlSnapshot.TryBuild(control, controlRegistrations, controlPlacements),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
             VpMultiCutRenderFragment expected = Of(controlSnapshot, controlLeaf);
             Assert.That(expected.aggregated, Is.False, "nothing is ignored in the control");
@@ -466,7 +462,7 @@ namespace Zantetsu.MeshCut.Tests
             placements.of[second] = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
             var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
             VpMultiCutSnapshot snapshot = NewSnapshot();
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             VpMultiCutRenderFragment rf = Aggregate(snapshot);
             Same(expected.geometryLocalToWorld, rf.geometryLocalToWorld, "the same placement");
@@ -474,7 +470,6 @@ namespace Zantetsu.MeshCut.Tests
                 rf.clip.PlaneCount, Is.EqualTo(expected.clip.PlaneCount),
                 "clipped by the selected boundaries only, and the ignored one adds no plane");
             Assert.That(rf.clip.PlaneCount, Is.EqualTo(VpClipCandidates.Capacity), "which is the full capacity here");
-            Same(expected.offset, rf.offset, "the same separation: the ignored boundary adds none");
             Assert.That(rf.capCount, Is.EqualTo(expected.capCount), "and the same caps: the ignored boundary makes none");
         }
 
@@ -498,7 +493,7 @@ namespace Zantetsu.MeshCut.Tests
 
             var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
             VpMultiCutSnapshot snapshot = NewSnapshot();
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Matrix4x4 before = Aggregate(snapshot).geometryLocalToWorld;
 
             // Cut again and published, with both children where their source was.
@@ -508,7 +503,7 @@ namespace Zantetsu.MeshCut.Tests
             placements.of[deeperOther] = stands;
             placements.asked.Clear();
 
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             VpMultiCutRenderFragment rf = Aggregate(snapshot);
             Assert.That(rf.root, Is.EqualTo(last), "the aggregate is rooted where it was");
             Assert.That(placements.asked.Contains(deeper), Is.True, "the child is the branch that is asked about now");
@@ -517,7 +512,7 @@ namespace Zantetsu.MeshCut.Tests
             // It is really following the child now: moving it moves the aggregate.
             Matrix4x4 moved = Owner(new Vector3(1f, -3f, 0f), 15f) * k_geometryLocalToOwner;
             placements.of[deeper] = moved;
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Same(moved, Aggregate(snapshot).geometryLocalToWorld, "the aggregate follows the child");
         }
 
@@ -543,7 +538,7 @@ namespace Zantetsu.MeshCut.Tests
 
             var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
             VpMultiCutSnapshot snapshot = NewSnapshot();
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             // An ordinary branch: nothing of it is ignored, and it stands where its own fragment does.
             VpMultiCutRenderFragment ordinary = Of(snapshot, negatives[0]);
@@ -557,7 +552,7 @@ namespace Zantetsu.MeshCut.Tests
 
             // No lookup at all: everything, aggregate included, at the registration's placement.
             VpMultiCutSnapshot without = NewSnapshot();
-            Assert.That(without.TryBuild(ledger, registrations, Separation), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(without.TryBuild(ledger, registrations), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Same(k_geometryLocalToOwner, Aggregate(without).geometryLocalToWorld, "the static path is untouched");
 
             // A living branch that follows something with nowhere given is still refused, not drawn where it was.
@@ -565,14 +560,14 @@ namespace Zantetsu.MeshCut.Tests
             missing.of[second] = placements.of[second];
             VpMultiCutSnapshot refused = NewSnapshot();
             Assert.That(
-                refused.TryBuild(ledger, registrations, Separation, missing), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput),
+                refused.TryBuild(ledger, registrations, missing), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput),
                 "a missing placement for the branch that is asked about still refuses");
 
             // And a retirement inside what would be drawn once is still its own stop.
             Assert.That(ledger.Retire(second), Is.True, "one branch of the aggregate retires");
             VpMultiCutSnapshot retired = NewSnapshot();
             Assert.That(
-                retired.TryBuild(ledger, registrations, Separation, placements),
+                retired.TryBuild(ledger, registrations, placements),
                 Is.EqualTo(VpMultiCutBuildOutcome.RetiredInsideAggregate),
                 "which is the stop it was, and is not changed here");
         }
@@ -595,10 +590,10 @@ namespace Zantetsu.MeshCut.Tests
             VpMultiCutSnapshot without = NewSnapshot();
             var empty = new Placements();
             Assert.That(
-                with.TryBuild(ledger, root, k_box, m0, k_lineageToGeometryLocal, k_none, Separation, 1e-4f, empty),
+                with.TryBuild(ledger, root, k_box, m0, k_lineageToGeometryLocal, k_none, 1e-4f, empty),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Assert.That(
-                without.TryBuild(ledger, root, k_box, m0, k_lineageToGeometryLocal, k_none, Separation, 1e-4f),
+                without.TryBuild(ledger, root, k_box, m0, k_lineageToGeometryLocal, k_none, 1e-4f),
                 Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             Assert.That(with.RenderFragmentCount, Is.EqualTo(without.RenderFragmentCount));
@@ -608,7 +603,6 @@ namespace Zantetsu.MeshCut.Tests
                 VpMultiCutRenderFragment b = Of(without, side);
                 Same(m0, a.geometryLocalToWorld, "a lookup that knows nothing changes nothing");
                 Same(b.geometryLocalToWorld, a.geometryLocalToWorld, "the same placement either way");
-                Same(b.offset, a.offset, "the same separation either way");
             }
 
             Assert.That(empty.asked.Count, Is.GreaterThan(0), "it was asked, and said these follow nothing");
@@ -632,7 +626,7 @@ namespace Zantetsu.MeshCut.Tests
             VpMultiCutSnapshot snapshot = NewSnapshot();
             var registrations = new List<VpMultiCutRegistration> { Registration(root, m0) };
             Assert.That(
-                snapshot.TryBuild(ledger, registrations, Separation, missing), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput),
+                snapshot.TryBuild(ledger, registrations, missing), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput),
                 "the side with no placement is not drawn at the registration's");
             Assert.That(snapshot.IsBuilt, Is.False, "and nothing of the snapshot is readable");
 
@@ -641,7 +635,7 @@ namespace Zantetsu.MeshCut.Tests
             stated.of[positive] = missing.of[positive];
             stated.notFollowing.Add(negative);
             Assert.That(
-                snapshot.TryBuild(ledger, registrations, Separation, stated), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+                snapshot.TryBuild(ledger, registrations, stated), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Same(m0, Of(snapshot, negative).geometryLocalToWorld, "what follows nothing keeps the registration's placement");
         }
 
@@ -667,7 +661,7 @@ namespace Zantetsu.MeshCut.Tests
 
             VpMultiCutSnapshot snapshot = NewSnapshot();
             var registrations = new List<VpMultiCutRegistration> { Registration(root, m0) };
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
 
             Assert.That(Has(snapshot, bMinus), Is.False, "the retired branch is not drawn");
             Assert.That(placements.asked.Contains(bMinus), Is.False, "and nothing asked where it stands");
@@ -697,7 +691,7 @@ namespace Zantetsu.MeshCut.Tests
 
             VpMultiCutSnapshot snapshot = NewSnapshot();
             var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
-            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Assert.That(snapshot.TryBuild(ledger, registrations, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
             Vector3 adopted = Of(snapshot, positive).geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero);
             int askedWhileBuilding = placements.asked.Count;
 

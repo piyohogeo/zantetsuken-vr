@@ -522,7 +522,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 Vector3[] capVertices = CapPolygon();
                 int[] capIndices = FanIndices(0, capVertices.Length);
                 var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
@@ -578,7 +578,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 Vector3[] capVertices = CapPolygon();
                 int[] capIndices = FanIndices(0, capVertices.Length);
                 var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
@@ -640,7 +640,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
 
                 // Twice as wide as the box: without the stencil this would cover four times the area.
                 Vector3[] capVertices = CapPolygon(0f, 2f);
@@ -710,7 +710,7 @@ namespace Zantetsu.Rendering.Tests
                         VpGeometryRange range = AppendBox(fixture.pool, Vector3.zero, 1f, b >= upright);
                         commands.Add(new VpIndirectCommand(range, BoxBounds(Vector3.zero, 1f), 1));
                         transforms.Add(Matrix4x4.identity);
-                        clips.Add(VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero));
+                        clips.Add(VpInstanceClip.Keep(PlaneZ0, 1f));
                     }
 
                     Assert.That(fixture.buffers.TryUpload(fixture.pool), Is.True);
@@ -781,7 +781,7 @@ namespace Zantetsu.Rendering.Tests
 
                     var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                     var transforms = new[] { placement };
-                    var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                    var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                     Vector3[] capVertices = CapPolygon();
                     int[] capIndices = FanIndices(0, capVertices.Length);
                     var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
@@ -830,7 +830,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(frame, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 Vector3[] capVertices = CapPolygon();
                 int[] capIndices = FanIndices(0, capVertices.Length);
                 var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
@@ -888,8 +888,8 @@ namespace Zantetsu.Rendering.Tests
                 var transforms = new[] { Matrix4x4.identity, Matrix4x4.identity };
                 var clips = new[]
                 {
-                    VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero),
-                    VpInstanceClip.Keep(new Vector4(0f, 0f, 1f, -1f), 1f, Vector3.zero),
+                    VpInstanceClip.Keep(PlaneZ0, 1f),
+                    VpInstanceClip.Keep(new Vector4(0f, 0f, 1f, -1f), 1f),
                 };
 
                 // The first colour's polygon is wide enough to cover where the second colour's cap will be.
@@ -932,16 +932,17 @@ namespace Zantetsu.Rendering.Tests
         }
 
         /// <summary>
-        /// The separation is the same for the volume and for the cap: moving the side moves the opening and the cap
-        /// together, so the cap still lands on it. A cap left where it was would fall outside the marked region and
-        /// disappear, which is what makes this a check and not a repetition.
+        /// The volume and the cap agree on where the side is. The side stands 0.6 to the right, which is its own
+        /// placement and nothing added for the display, and the cap polygon is given in world space at that same
+        /// place: the cap lands on the opening the volume marked. A cap left at the origin instead falls outside that
+        /// region and mostly disappears, which is what makes this a check and not a repetition.
         /// </summary>
         [Test]
-        public void TheSideAndTheOffset_AgreeBetweenTheVolumeAndTheCap()
+        public void TheSideAndItsPlacement_AgreeBetweenTheVolumeAndTheCap()
         {
             RenderTexture target = StencilTarget();
             Camera camera = TestCamera(target);
-            var offset = new Vector3(0.6f, 0f, 0f);
+            var where = new Vector3(0.6f, 0f, 0f);
 
             Color32[] together;
             Color32[] apart;
@@ -951,16 +952,19 @@ namespace Zantetsu.Rendering.Tests
                 Assert.That(fixture.buffers.TryUpload(fixture.pool), Is.True);
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
-                var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, offset) };
+
+                // Where the side stands: its own placement, which is what the volume is drawn with. The cut plane is
+                // z = 0, which this move along x leaves where it is, so the same half is kept.
+                var transforms = new[] { Matrix4x4.Translate(where) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 int[] capIndices = FanIndices(0, 4);
                 var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
 
-                // The cap carries the same separation the clip record does.
+                // The cap polygon is in world space, so it is given at the same place.
                 Vector3[] moved = CapPolygon();
                 for (int i = 0; i < moved.Length; i++)
                 {
-                    moved[i] += offset;
+                    moved[i] += where;
                 }
 
                 Assert.That(
@@ -970,7 +974,7 @@ namespace Zantetsu.Rendering.Tests
                 fixture.batch.Render(fixture.materials, fixture.buffers, 0, camera);
                 together = RenderAndRead(camera, target);
 
-                // The same volume, with the cap left behind where the body used to be.
+                // The same volume, with the cap left behind at the origin.
                 Vector3[] left = CapPolygon();
                 Assert.That(
                     fixture.batch.TryUpload(
@@ -980,16 +984,16 @@ namespace Zantetsu.Rendering.Tests
                 apart = RenderAndRead(camera, target);
             }
 
-            Assert.That(Count(together, IsRedish), Is.GreaterThan(400), "moved together, the cap still fills it");
+            Assert.That(Count(together, IsRedish), Is.GreaterThan(400), "at the one place, the cap still fills it");
 
-            // The view is 2 units across, so a 0.6 unit move is a fifth of the image to the right of the middle.
+            // The view is 2 units across, so standing 0.6 to the right is a fifth of the image past the middle.
             int movedX = (Size / 2) + (int)(0.6f / 2f * Size);
-            Assert.That(IsRedish(At(together, movedX, Size / 2)), Is.True, "and it is where the side went");
-            Assert.That(IsBackground(At(together, Size / 2 - 12, Size / 2)), Is.True, "not where it was");
+            Assert.That(IsRedish(At(together, movedX, Size / 2)), Is.True, "and it is where the side stands");
+            Assert.That(IsBackground(At(together, Size / 2 - 12, Size / 2)), Is.True, "not at the origin");
 
             Assert.That(
                 Count(apart, IsRedish), Is.LessThan(Count(together, IsRedish) / 2),
-                "a cap that did not follow the side is mostly outside what the volume marked");
+                "a cap left at the origin is mostly outside what the volume marked");
         }
 
         /// <summary>
@@ -1026,8 +1030,8 @@ namespace Zantetsu.Rendering.Tests
                 var transforms = new[] { Matrix4x4.identity, Matrix4x4.identity };
                 var clips = new[]
                 {
-                    VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero),
-                    VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero),
+                    VpInstanceClip.Keep(PlaneZ0, 1f),
+                    VpInstanceClip.Keep(PlaneZ0, 1f),
                 };
 
                 var capVertices = new List<Vector3>();
@@ -1112,7 +1116,7 @@ namespace Zantetsu.Rendering.Tests
                     VpGeometryRange range = AppendBox(fixture.pool, centre, 0.4f);
                     commands.Add(new VpIndirectCommand(range, BoxBounds(centre, 0.4f), 1));
                     transforms.Add(Matrix4x4.identity);
-                    clips.Add(VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero));
+                    clips.Add(VpInstanceClip.Keep(PlaneZ0, 1f));
 
                     int start = capVertices.Count;
                     foreach (Vector3 corner in CapPolygon(0f, 0.4f))
@@ -1180,7 +1184,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 Vector3[] capVertices = CapPolygon();
                 int[] capIndices = FanIndices(0, 4);
                 var colors = new[] { new VpStencilCapColor(0, 1, 0, capIndices.Length, Color.red) };
@@ -1267,7 +1271,7 @@ namespace Zantetsu.Rendering.Tests
 
                 var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                 var transforms = new[] { Matrix4x4.identity };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                 Vector3[] capVertices = CapPolygon();
                 int[] capIndices = FanIndices(0, 4);
 
@@ -1376,7 +1380,7 @@ namespace Zantetsu.Rendering.Tests
                     new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), -1),
                 };
                 var transforms = new[] { Matrix4x4.identity, nan, nan };
-                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero), VpInstanceClip.None, VpInstanceClip.None };
+                var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f), VpInstanceClip.None, VpInstanceClip.None };
                 Vector3[] polygon = CapPolygon();
                 var capVertices = new Vector3[polygon.Length + 3];
                 Array.Copy(polygon, capVertices, polygon.Length);
@@ -1514,7 +1518,7 @@ namespace Zantetsu.Rendering.Tests
 
                     var commands = new[] { new VpIndirectCommand(box, BoxBounds(Vector3.zero, 1f), 1) };
                     var transforms = new[] { Matrix4x4.identity };
-                    var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f, Vector3.zero) };
+                    var clips = new[] { VpInstanceClip.Keep(PlaneZ0, 1f) };
                     Vector3[] capVertices = CapPolygon();
                     int[] capIndices = FanIndices(0, capVertices.Length);
 

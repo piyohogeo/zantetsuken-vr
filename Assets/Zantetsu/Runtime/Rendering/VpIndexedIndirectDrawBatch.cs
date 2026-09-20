@@ -33,10 +33,11 @@ namespace Zantetsu.Rendering
         public const int InstanceStride = 64;
 
         /// <summary>
-        /// One clip record: <see cref="VpInstanceClip"/>, its eight planes and then the offset with the valid
-        /// count, nine float4s. Fixed whatever the count is: no instance takes a smaller or a larger record.
+        /// One clip record: <see cref="VpInstanceClip"/>, its eight planes and then the valid
+        /// count -- eight float4s and one float, 132 bytes. Fixed whatever the count is: no instance takes a smaller
+        /// or a larger record.
         /// </summary>
-        public const int InstanceClipStride = 144;
+        public const int InstanceClipStride = 132;
 
         private static readonly int VerticesId = Shader.PropertyToID("_VpVertices");
         private static readonly int InstanceObjectToWorldId = Shader.PropertyToID("_VpInstanceObjectToWorld");
@@ -237,7 +238,7 @@ namespace Zantetsu.Rendering
 
         /// <summary>
         /// The same upload, with one <see cref="VpInstanceClip"/> per instance: which parts of up to
-        /// <see cref="VpInstanceClip.PlaneCapacity"/> cut planes that instance keeps and how far it is drawn apart,
+        /// <see cref="VpInstanceClip.PlaneCapacity"/> cut planes that instance keeps,
         /// for the provisional display of DESIGN 5.1. **Null** is how the clips are omitted, and gives the ordinary
         /// display; an array must hold exactly one record per instance, so an empty array is accepted only when
         /// there are no instances. Any other count is rejected, changing nothing, as are the conditions of the other
@@ -250,8 +251,8 @@ namespace Zantetsu.Rendering
         /// </para>
         /// <para>
         /// The clips go into the fixed-capacity buffer this batch owns, and the culling bounds of the draw are the
-        /// instance bounds **moved by the offset**, so a separated fragment is not culled away from where it is
-        /// drawn. The bounds stay the parent's, conservatively: what the planes remove is not subtracted from them.
+        /// instance bounds at each instance's own transform, so nothing is culled away from where it is drawn. The
+        /// bounds stay the parent's, conservatively: what the planes remove is not subtracted from them.
         /// </para>
         /// <para>
         /// The forward and the shadow call bind that one buffer, so within a registration neither can read a
@@ -338,14 +339,6 @@ namespace Zantetsu.Rendering
                 for (int i = startInstance; i < startInstance + command.instanceCount; i++)
                 {
                     Bounds instanceBounds = VpDirectDraw.WorldBounds(command.localBounds, objectToWorlds[i]);
-
-                    // The shader adds the separation offset after the transform, so the culling bounds must move
-                    // with it or a separated fragment can be culled away from where it is actually drawn. The
-                    // moved parent bounds are conservative on purpose: what the clip removes is not subtracted.
-                    if (clips != null)
-                    {
-                        instanceBounds.center += clips[i].Offset;
-                    }
 
                     if (anyInstance)
                     {

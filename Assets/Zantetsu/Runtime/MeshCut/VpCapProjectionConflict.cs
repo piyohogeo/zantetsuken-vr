@@ -22,9 +22,9 @@ namespace Zantetsu.MeshCut
     }
 
     /// <summary>
-    /// One target as the projection conflict test reads it: its cut conditions (which also carry the separation it is
-    /// drawn at), its body box in its own frame and the placement of that box, the caps of it that the visibility test
-    /// kept, as world-space polygons with the separation already in them, and whether those caps are all of its caps.
+    /// One target as the projection conflict test reads it: its cut conditions, its body box in its own frame and the
+    /// placement of that box, the caps of it that the visibility test kept, as world-space polygons where they are
+    /// drawn, and whether those caps are all of its caps.
     /// <para>
     /// The caps are read, never copied (<see cref="VpCapPolygons"/>): made from a list of arrays, the target reads that
     /// list and those arrays themselves, so a change the caller makes to either afterwards is what the next judgement
@@ -69,11 +69,11 @@ namespace Zantetsu.MeshCut
         /// <summary>The body's box in its own frame. The drawn side lies inside it, so it bounds the side from outside.</summary>
         public readonly Bounds localBounds;
 
-        /// <summary>The placement of the box. The separation is <c>conditions.offset</c>, added after it.</summary>
+        /// <summary>The placement of the box, which is where it is drawn.</summary>
         public readonly Matrix4x4 objectToWorld;
 
         /// <summary>
-        /// The caps the visibility test kept, each a convex polygon of world-space vertices with the separation in it.
+        /// The caps the visibility test kept, each a convex polygon of world-space vertices where it is drawn.
         /// Empty when none was kept.
         /// </summary>
         public readonly VpCapPolygons visibleCaps;
@@ -177,7 +177,7 @@ namespace Zantetsu.MeshCut
     /// <para>
     /// **Order.** Compatible targets are not asked at all: they may share a stencil however they overlap. For two
     /// incompatible targets, each eye is asked in turn: first the projected rectangle of each body box — its eight
-    /// corners placed, moved by the separation, and projected — grown by the margin; only if those meet, every visible
+    /// corners placed and projected — grown by the margin; only if those meet, every visible
     /// cap of one against every visible cap of the other, each projected and grown by the margin, by separating axes.
     /// The caps step is taken only when both targets say their caps are complete and each has at least one: a cap
     /// left out by the visibility test, or no cap at all, is no evidence that the target's volume stays clear of the
@@ -226,8 +226,7 @@ namespace Zantetsu.MeshCut
             in VpCapEye left,
             in VpCapEye right,
             Vector2 ndcMargin,
-            float planeEpsilon,
-            float offsetEpsilon)
+            float planeEpsilon)
         {
             if (!IsFinite(ndcMargin.x) || !IsFinite(ndcMargin.y) || ndcMargin.x < 0f || ndcMargin.y < 0f)
             {
@@ -235,7 +234,7 @@ namespace Zantetsu.MeshCut
                     nameof(ndcMargin), ndcMargin, "The margin is finite and zero or more on each axis.");
             }
 
-            if (VpCapCompatibility.AreCompatible(a.conditions, b.conditions, planeEpsilon, offsetEpsilon))
+            if (VpCapCompatibility.AreCompatible(a.conditions, b.conditions, planeEpsilon))
             {
                 return new VpCapProjectionVerdict(true, VpCapProjectionOverlap.NotEvaluated, VpCapProjectionOverlap.NotEvaluated);
             }
@@ -262,8 +261,8 @@ namespace Zantetsu.MeshCut
 
             Span<Vector2> projectedA = stackalloc Vector2[BoxCorners];
             Span<Vector2> projectedB = stackalloc Vector2[BoxCorners];
-            Projection boxAProjection = VpScreenProjection.Project(boxA, Vector3.zero, worldToClip, margin, projectedA);
-            Projection boxBProjection = VpScreenProjection.Project(boxB, Vector3.zero, worldToClip, margin, projectedB);
+            Projection boxAProjection = VpScreenProjection.Project(boxA, worldToClip, margin, projectedA);
+            Projection boxBProjection = VpScreenProjection.Project(boxB, worldToClip, margin, projectedB);
 
             // A value that is not finite settles this eye before anything can call the pair apart.
             if (boxAProjection == Projection.NotFinite || boxBProjection == Projection.NotFinite)
@@ -311,7 +310,7 @@ namespace Zantetsu.MeshCut
                     return VpCapProjectionOverlap.MayOverlap;
                 }
 
-                Projection projectionA = VpScreenProjection.Project(polygonA.AsSpan(), Vector3.zero, worldToClip, margin, capA);
+                Projection projectionA = VpScreenProjection.Project(polygonA.AsSpan(), worldToClip, margin, capA);
                 if (projectionA == Projection.Nothing)
                 {
                     continue;
@@ -325,7 +324,7 @@ namespace Zantetsu.MeshCut
                         return VpCapProjectionOverlap.MayOverlap;
                     }
 
-                    Projection projectionB = VpScreenProjection.Project(polygonB.AsSpan(), Vector3.zero, worldToClip, margin, capB);
+                    Projection projectionB = VpScreenProjection.Project(polygonB.AsSpan(), worldToClip, margin, capB);
                     if (projectionB == Projection.Nothing)
                     {
                         continue;
@@ -352,7 +351,7 @@ namespace Zantetsu.MeshCut
             for (int i = 0; i < caps.Count; i++)
             {
                 VpArrayRange<Vector3> polygon = caps[i];
-                if (!IsWellFormed(polygon) || VpScreenProjection.Project(polygon.AsSpan(), Vector3.zero, worldToClip, margin, scratch) == Projection.NotFinite)
+                if (!IsWellFormed(polygon) || VpScreenProjection.Project(polygon.AsSpan(), worldToClip, margin, scratch) == Projection.NotFinite)
                 {
                     return true;
                 }
@@ -370,17 +369,16 @@ namespace Zantetsu.MeshCut
             return !polygon.IsNull && polygon.Count >= 1 && polygon.Count <= VpCapPolygonClip.MaxVertices;
         }
 
-        /// <summary>The eight corners of the box, placed and moved by the separation. False when a corner is not finite.</summary>
+        /// <summary>The eight corners of the box, placed. False when a corner is not finite.</summary>
         private static bool TryCorners(in VpCapProjectionTarget target, Span<Vector3> corners)
         {
             Vector3 min = target.localBounds.min;
             Vector3 max = target.localBounds.max;
-            Vector3 offset = target.conditions.offset;
             for (int c = 0; c < BoxCorners; c++)
             {
                 var local = new Vector3(
                     (c & 1) == 0 ? min.x : max.x, (c & 2) == 0 ? min.y : max.y, (c & 4) == 0 ? min.z : max.z);
-                Vector3 world = target.objectToWorld.MultiplyPoint3x4(local) + offset;
+                Vector3 world = target.objectToWorld.MultiplyPoint3x4(local);
                 if (!IsFinite(world.x) || !IsFinite(world.y) || !IsFinite(world.z))
                 {
                     return false;

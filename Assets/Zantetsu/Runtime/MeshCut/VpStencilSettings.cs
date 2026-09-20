@@ -19,14 +19,12 @@ namespace Zantetsu.MeshCut
             int maxStencilColors,
             float facingEpsilon,
             float planeEpsilon,
-            float offsetEpsilon,
             Vector2 ndcMargin,
             int cameraCapacity)
         {
             this.maxStencilColors = maxStencilColors;
             this.facingEpsilon = facingEpsilon;
             this.planeEpsilon = planeEpsilon;
-            this.offsetEpsilon = offsetEpsilon;
             this.ndcMargin = ndcMargin;
             this.cameraCapacity = cameraCapacity;
         }
@@ -50,12 +48,6 @@ namespace Zantetsu.MeshCut
         public readonly float planeEpsilon;
 
         /// <summary>
-        /// The offset epsilon of the older render-fragment compatibility test, a world-space length. Kept only for those
-        /// older classifiers; the display's cap-job preparation does not read it.
-        /// </summary>
-        public readonly float offsetEpsilon;
-
-        /// <summary>
         /// The projection margin, in normalized device coordinates per axis, that the display's cap-job preparation grows
         /// every initial section by before deciding two volume groups may share a colour.
         /// </summary>
@@ -76,7 +68,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            if (!IsLength(facingEpsilon) || !IsLength(planeEpsilon) || !IsLength(offsetEpsilon)
+            if (!IsLength(facingEpsilon) || !IsLength(planeEpsilon)
                 || !IsLength(ndcMargin.x) || !IsLength(ndcMargin.y))
             {
                 reason = "an epsilon or the margin is negative or not finite";

@@ -47,7 +47,6 @@ namespace Zantetsu.MeshCut.Tests
         private static readonly float3 k_highAnchor = new float3(0f, 1.8f, 0f);
 
         // Far enough that the moved side is out of the camera's way entirely.
-        private const float WideSeparation = 3f;
 
         private readonly List<Object> _objects = new List<Object>();
         private int _frame;
@@ -108,13 +107,12 @@ namespace Zantetsu.MeshCut.Tests
                 var table = new VpGeometryReferenceTable(storage, 8, 8);
                 LogicalCutLedger ledger = NewLedger();
 
-                // The low anchor fixes the negative (bottom) side; the top moves up and out of the way.
+                // The low anchor fixes the negative (bottom) side; once published, the top stands clear of it.
                 LogicalFragmentId source = ledger.AddFragment(new List<float3> { k_lowAnchor });
                 VpStoredGeometry geometry = Append(storage);
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
 
                     // The whole parent: nothing is capped and the stencil batch holds no group.
@@ -127,6 +125,16 @@ namespace Zantetsu.MeshCut.Tests
                     int indexTransfers = display.IndexTransfers;
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
+
+                    // Published, and each child given a base placement of its own: the free top lifted clear, the
+                    // anchored bottom where it was registered. That is what opens the section to this camera.
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements()
+                        .Put(top, new Vector3(0f, 4f, 0f))
+                        .Static(bottom);
+
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Assert.That(display.CapRecordCount, Is.EqualTo(2), "one cap per side, not per submesh");
@@ -139,7 +147,7 @@ namespace Zantetsu.MeshCut.Tests
                     int capsBefore = display.StencilCapIssues;
                     Color32[] split = Draw(display, LookingDownFromBetween());
 
-                    // The moved top side's cap is at y = 4, above this camera at 2.5 and so behind it: it is no job.
+                    // The top side's cap is at y = 4, above this camera at 2.5 and so behind it: it is no job.
                     // The fixed side's cap faces the camera: one job, one volume group, one colour, drawn once -- its
                     // volume one command per submesh.
                     VpStencilPreparation preparation = PreparationOf(display, LookingDownFromBetween());
@@ -164,6 +172,13 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// Publication gives the two caps to the children without making a second set: the boundary is among the
+        /// records before and after, two caps either way, and afterwards they are the children's. Drawing them is
+        /// one cap issue for the one colour -- never two for having been published. The pixels are read after
+        /// publication, with the free top placed clear: before it, the two sides are at the one placement and the
+        /// top closes the section, so there would be nothing to count.
+        /// </summary>
         [Test]
         public void Publishing_CarriesTheCapToTheChildren_WithoutDrawingItTwice()
         {
@@ -176,7 +191,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
 
@@ -184,13 +198,18 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, cut);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Color32[] before = Draw(display, LookingDownFromBetween());
-                    int redBefore = Count(before, IsRed);
-                    Assert.That(redBefore, Is.GreaterThan(0));
+                    AssertBoundaryPresent(display, cut, "while the cut is only prepared");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "two caps, the prepared sides'");
+                    Assert.That(display.TryGetCapRecord(0, out LogicalCutCapRecord prepared), Is.True);
+                    Assert.That(prepared.published, Is.False, "no child of its own yet");
 
                     Assert.That(ledger.Publish(cut, out LogicalFragmentId child0, out LogicalFragmentId child1), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements()
+                        .Put(child0, new Vector3(0f, 4f, 0f))
+                        .Static(child1);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
+                    AssertBoundaryPresent(display, cut, "and after publication");
                     Assert.That(display.CapRecordCount, Is.EqualTo(2), "still two caps, now the children's");
                     Assert.That(display.TryGetCapRecord(0, out LogicalCutCapRecord record), Is.True);
                     Assert.That(record.published, Is.True);
@@ -198,10 +217,10 @@ namespace Zantetsu.MeshCut.Tests
 
                     int capsBefore = display.StencilCapIssues;
                     Color32[] after = Draw(display, LookingDownFromBetween());
-                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.EqualTo(1), "the same one colour");
+                    Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.EqualTo(1), "one colour");
                     Assert.That(display.StencilCapIssues - capsBefore, Is.EqualTo(1), "one cap issue per colour, not doubled by publication");
-                    Assert.That(Count(after, IsRed), Is.EqualTo(redBefore), "the same cap, in the same place");
-                    AssertSamePixels(before, after, "publication changes what is drawn");
+                    Assert.That(Count(after, IsRed), Is.GreaterThan(0), "and the children's cap is what is drawn");
+                    Assert.That(display.CapRecordCount, Is.EqualTo(2), "and still the two records, not a second set");
                 }
             }
         }
@@ -218,14 +237,16 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
 
                     // Admitted, prepared and published with no collection between.
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
-                    Assert.That(ledger.Publish(cut, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements().Put(top, new Vector3(0f, 4f, 0f)).Static(bottom);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Color32[] image = Draw(display, LookingDownFromBetween());
@@ -235,6 +256,73 @@ namespace Zantetsu.MeshCut.Tests
             }
         }
 
+        /// <summary>
+        /// That <paramref name="operation"/>'s own boundary is among the records the display is carrying: a cap record
+        /// for each side of that operation, and a clip plane for it on the sides under it. **This reads the records,
+        /// not the image** -- whether any of it ends up on screen is a separate question, asked where a case is about
+        /// drawing. Named, not counted, so that a boundary going is told apart from a total that happened to match.
+        /// </summary>
+        private static void AssertBoundaryPresent(VpLogicalCutDisplay display, CutOperationId operation, string what)
+        {
+            int caps = 0;
+            for (int c = 0; c < display.CapRecordCount; c++)
+            {
+                Assert.That(display.TryGetCapRecord(c, out LogicalCutCapRecord record), Is.True);
+                if (record.operation.Equals(operation))
+                {
+                    caps++;
+                }
+            }
+
+            Assert.That(caps, Is.EqualTo(2), what + ": a cap of that operation on each side");
+
+            // Counted as render fragments, not as sides: a body of several commands is drawn once per command, so
+            // the number of sides carrying the operation is that count times two and says nothing more.
+            var clipped = new HashSet<int>();
+            for (int i = 0; i < display.SideCount; i++)
+            {
+                Assert.That(display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
+                if (side.operation.Equals(operation) && side.clip.IsClipped)
+                {
+                    clipped.Add(side.renderFragment);
+                }
+            }
+
+            Assert.That(clipped.Count, Is.EqualTo(2), what + ": and each side is clipped by it");
+        }
+
+        /// <summary>
+        /// That nothing of <paramref name="operation"/> is among the records any more: no cap of it, no side under it.
+        /// Read from the records, for the same reason as above.
+        /// </summary>
+        private static void AssertBoundaryGone(VpLogicalCutDisplay display, CutOperationId operation, string what)
+        {
+            for (int c = 0; c < display.CapRecordCount; c++)
+            {
+                Assert.That(display.TryGetCapRecord(c, out LogicalCutCapRecord record), Is.True);
+                Assert.That(record.operation.Equals(operation), Is.False, what + ": a cap of it is still there");
+            }
+
+            for (int i = 0; i < display.SideCount; i++)
+            {
+                Assert.That(display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
+                Assert.That(side.operation.Equals(operation), Is.False, what + ": a side under it is still drawn");
+            }
+        }
+
+        /// <summary>
+        /// A stale result and an abort each take the boundary away with the split. What is asked is the display's own
+        /// records for **that operation**: its caps and the sides clipped by it, present while the cut is prepared and
+        /// gone from the next collection. A count, or a red pixel that was already absent, would not tell that
+        /// boundary's going apart from anything else.
+        /// <para>
+        /// The records rather than the image, because **in this arrangement** -- one body, no independent owners, the
+        /// two sides of the cut at the same placement, seen from outside a closed shape -- the section between them is
+        /// closed by the other side. That is a property of this arrangement, not of a cut being prepared: once
+        /// Provisional publication puts the two sides on owners of their own, a logically pending cut has its sides
+        /// apart and its section can be seen.
+        /// </para>
+        /// </summary>
         [Test]
         public void AbortAndStale_RemoveTheCapWithTheSplit()
         {
@@ -247,7 +335,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
 
@@ -256,13 +343,14 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, first);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.GreaterThan(0), "capped while prepared");
+                    Draw(display, LookingDownFromBetween());
+                    AssertBoundaryPresent(display, first, "while the first cut is prepared");
                     ledger.NoteOwnershipChanged(source);
                     Assert.That(ledger.Publish(first, out _, out _), Is.EqualTo(LogicalCutResultOutcome.Stale));
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(display.CapRecordCount, Is.Zero);
-                    Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.Zero, "no old cap survives the stale result");
+                    AssertBoundaryGone(display, first, "after the stale result");
+                    Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.Zero, "and nothing of it is drawn");
                     Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero, "no split, no colour");
 
                     // A second cut on the same body, then aborted: the retired source and its cap are both gone.
@@ -270,11 +358,13 @@ namespace Zantetsu.MeshCut.Tests
                     Prepare(ledger, second);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
-                    Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.GreaterThan(0), "capped again");
+                    Draw(display, LookingDownFromBetween());
+                    AssertBoundaryPresent(display, second, "while the second cut is prepared");
                     Assert.That(ledger.Abort(second), Is.EqualTo(LogicalCutResultOutcome.Applied));
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Assert.That(display.ShownCount, Is.Zero, "the retired source is dropped");
+                    AssertBoundaryGone(display, second, "after the abort");
                     Assert.That(Count(Draw(display, LookingDownFromBetween()), IsRed), Is.Zero, "and nothing of its cap is left");
                     Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.Zero);
                 }
@@ -304,7 +394,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True, "the whole body settles");
                     Color32[] whole = Draw(display, LookingDownFromBetween());
@@ -353,6 +442,15 @@ namespace Zantetsu.MeshCut.Tests
                         CountsOf(display, LookingDownFromBetween()).preparedNow, Is.False,
                         "the camera's preparation was for the snapshot just replaced");
 
+                    // Published, with the free top placed clear: only then does this camera have an opening to see.
+                    // This is a further collection, and the counts above were about the recovery itself.
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements().Put(top, new Vector3(0f, 4f, 0f)).Static(bottom);
+                    NextFrame();
+                    Assert.That(display.TryBeginFrame(), Is.True, "the published sides settle");
+
                     Color32[] split = Draw(display, LookingDownFromBetween());
                     Assert.That(display.StencilUploads, Is.EqualTo(stencilUploadsKept + 1), "one preparation, one upload");
                     Assert.That(PreparationOf(display, LookingDownFromBetween()).colours, Is.EqualTo(1));
@@ -380,7 +478,7 @@ namespace Zantetsu.MeshCut.Tests
                     var bounds = new Bounds(Vector3.zero, Vector3.one * 2f);
                     var good = new[] { new VpIndirectCommand(range, bounds, 1) };
                     var transforms = new[] { Matrix4x4.identity };
-                    var clips = new[] { VpInstanceClip.Keep(new Vector4(0f, 1f, 0f, -1f), 1f, Vector3.zero) };
+                    var clips = new[] { VpInstanceClip.Keep(new Vector4(0f, 1f, 0f, -1f), 1f) };
                     Vector3[] capVertices =
                     {
                         new Vector3(-1f, 1f, -1f), new Vector3(-1f, 1f, 1f), new Vector3(1f, 1f, 1f), new Vector3(1f, 1f, -1f),
@@ -470,7 +568,7 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         [Test]
-        public void TheCapsFollowTheOffsets_OnOneSideBothSidesAndNeither()
+        public void TheCapsBelongToTheirSides_OnOneSideBothSidesAndNeither()
         {
             AssertCapsFollow(new List<float3> { k_lowAnchor }, positiveFixed: false, negativeFixed: true);
             AssertCapsFollow(new List<float3> { k_highAnchor }, positiveFixed: true, negativeFixed: false);
@@ -489,7 +587,6 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = 0.4f;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     CutOperationId cut = Admit(ledger, source);
@@ -505,18 +602,16 @@ namespace Zantetsu.MeshCut.Tests
                         Assert.That(display.TryGetCapRecord(r, out LogicalCutCapRecord record), Is.True);
                         bool fixedSide = record.side > 0f ? positiveFixed : negativeFixed;
                         Assert.That(record.fixedByAnchors, Is.EqualTo(fixedSide));
-                        Vector3 expected = fixedSide ? Vector3.zero : new Vector3(0f, record.side * 0.4f, 0f);
-                        Assert.That((record.offset - expected).magnitude, Is.LessThan(1e-5f), "the record's offset");
                         for (int v = 0; v < record.vertexCount; v++)
                         {
                             Assert.That(display.TryGetCapVertex(r, v, out Vector3 world), Is.True);
-                            Assert.That(Mathf.Abs(world.y - (1f + expected.y)), Is.LessThan(1e-4f),
-                                "cap vertex " + v + " of side " + record.side + " lies in the moved cut plane");
+                            Assert.That(Mathf.Abs(world.y - 1f), Is.LessThan(1e-4f),
+                                "cap vertex " + v + " of side " + record.side + " lies in the cut plane");
                         }
                     }
 
-                    // The body and its cap are placed by the same offset: each side's record carries the offset the
-                    // side itself was drawn with, so what is counted and what is capped moved together.
+                    // Every cap belongs to a side that is drawn: what is counted and what is capped are the
+                    // same two sides.
                     for (int r = 0; r < 2; r++)
                     {
                         Assert.That(display.TryGetCapRecord(r, out LogicalCutCapRecord record), Is.True);
@@ -526,8 +621,6 @@ namespace Zantetsu.MeshCut.Tests
                             Assert.That(display.TryGetSide(i, out LogicalCutDisplaySide side), Is.True);
                             if (side.side == record.side)
                             {
-                                Assert.That((side.offset - record.offset).magnitude, Is.LessThan(1e-6f),
-                                    "the side and its cap share one offset");
                                 found = true;
                             }
                         }
@@ -554,11 +647,17 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
+
+                    // Published, the free top lifted clear, so that the cap is facing this camera and there is
+                    // something for the quad to stand in front of.
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements().Put(top, new Vector3(0f, 4f, 0f)).Static(bottom);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
 
@@ -601,7 +700,6 @@ namespace Zantetsu.MeshCut.Tests
                 {
                     // Monoscopic is what a display is made as, and what every existing caller keeps.
                     Assert.That(display.SinglePassInstanced, Is.False, "made monoscopic");
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Camera camera = LookingDownFromBetween();
@@ -658,11 +756,14 @@ namespace Zantetsu.MeshCut.Tests
                 Assert.That(TryCreate(storage, table, ledger, out VpLogicalCutDisplay display), Is.True);
                 using (new AfterTheFrame(NextFrame, display))
                 {
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     CutOperationId cut = Admit(ledger, source);
                     Prepare(ledger, cut);
+                    Assert.That(
+                        ledger.Publish(cut, out LogicalFragmentId top, out LogicalFragmentId bottom),
+                        Is.EqualTo(LogicalCutResultOutcome.Applied));
+                    display.Placement = new VpTestPlacements().Put(top, new Vector3(0f, 4f, 0f)).Static(bottom);
                     NextFrame();
                     Assert.That(display.TryBeginFrame(), Is.True);
                     Color32[] monoscopic = Draw(display, LookingDownFromBetween());
@@ -704,7 +805,6 @@ namespace Zantetsu.MeshCut.Tests
                 using (new AfterTheFrame(NextFrame, display))
                 {
                     display.SinglePassInstanced = true;
-                    display.Separation = WideSeparation;
                     Assert.That(display.TryShow(source, geometry, Matrix4x4.identity), Is.True);
                     Assert.That(display.TryBeginFrame(), Is.True);
                     CutOperationId cut = Admit(ledger, source);
@@ -903,7 +1003,13 @@ namespace Zantetsu.MeshCut.Tests
         private static void Prepare(VpLogicalCutDisplay display, Camera camera)
         {
             display.TryRegisterCamera(camera);
-            Assert.That(display.TryPrepareCamera(camera), Is.True, "the camera is prepared");
+            if (!display.TryPrepareCamera(camera))
+            {
+                string why = display.TryGetCameraStencil(camera, out VpStencilPreparation refused, out _)
+                    ? refused.outcome.ToString()
+                    : "the camera is not registered";
+                Assert.Fail("the camera is not prepared: " + why);
+            }
         }
 
         private Color32[] Draw(VpLogicalCutDisplay display, Camera camera)

@@ -60,9 +60,6 @@ namespace Zantetsu.MeshCut
         /// </summary>
         InvalidInput = 2,
 
-        /// <summary>A cut on a render fragment's lineage has no settled anchor distribution to take its offset from.</summary>
-        UnsettledDistribution = 3,
-
         /// <summary>
         /// A retired fragment lies past an Ignored boundary, inside what would be drawn once as the shape before it. The
         /// aggregation alone cannot say whether that shape may still be shown, so nothing is guessed and nothing is built.
@@ -99,22 +96,6 @@ namespace Zantetsu.MeshCut
 
         /// <summary>A clip record or a clipped cap could not be made from finite input.</summary>
         ClipNotTaken = 5,
-
-        /// <summary>
-        /// The conservative check before the walk could not establish that an offset stays finite: some fragment of a
-        /// registered lineage that could be drawn -- drawn in fact or not -- sums to a separation that is not finite.
-        /// </summary>
-        ConservativeOffset = 6,
-
-        /// <summary>
-        /// The conservative check before the walk could not establish that a cap vertex stays finite: for some fragment
-        /// that could be drawn, its offset and the bound on its registration's placed box together could pass a float on
-        /// an axis -- whether or not any cap of that fragment is drawn in fact.
-        /// </summary>
-        ConservativeCapVertex = 7,
-
-        /// <summary>A render fragment's offset, as built, came out not finite. Kept as a defence after the check above.</summary>
-        DrawnOffset = 8,
 
         /// <summary>
         /// The conservative check before the walk could not establish that a box-and-plane section can be computed in
@@ -161,8 +142,7 @@ namespace Zantetsu.MeshCut
     /// their differences with unit axes and a cross of them, all within 12 W. (7) The epsilon is squared once. (8) A
     /// clipped vertex is <c>a + (b - a) t</c> in double with t in [0, 1] from float vertices, rounded to float: its
     /// magnitude on an axis cannot pass the larger of a and b by more than a double's error, far below half a float's
-    /// spacing there, so it stays within W_i. (9) A cap vertex is a clipped vertex plus the offset in float: with
-    /// <c>|o_i| + W_i</c> within a float the sum is finite, rounding being monotone.
+    /// spacing there, so it stays within W_i -- and a cap vertex is that clipped vertex, nothing being added to it.
     /// </para>
     /// </summary>
     internal static class VpSectionBounds
@@ -274,15 +254,6 @@ namespace Zantetsu.MeshCut
             return 2.0 * distance * FloatGrowth <= FloatMax;
         }
 
-        /// <summary>(9) Whether every cap vertex moved by <paramref name="offset"/> stays within a float.</summary>
-        public static bool IsOffsetWithin(Vector3 offset, double3 extent)
-        {
-            return IsFinite(offset)
-                && ((Math.Abs((double)offset.x) + extent.x) * DoubleGrowth) <= FloatMax
-                && ((Math.Abs((double)offset.y) + extent.y) * DoubleGrowth) <= FloatMax
-                && ((Math.Abs((double)offset.z) + extent.z) * DoubleGrowth) <= FloatMax;
-        }
-
         private static double Row(float a, float b, float c, float t, double3 local)
         {
             double row = (Math.Abs((double)a) * local.x) + (Math.Abs((double)b) * local.y) + (Math.Abs((double)c) * local.z)
@@ -305,16 +276,13 @@ namespace Zantetsu.MeshCut
     {
         /// <param name="root">The fragment the geometry was registered for.</param>
         /// <param name="localBounds">The source geometry's box, in its own coordinates.</param>
-        /// <param name="geometryLocalToWorld">
-        /// The placement: whatever separated the root itself is in it, and none of the separation this snapshot sums.
-        /// </param>
+        /// <param name="geometryLocalToWorld">The placement this geometry is drawn at.</param>
         /// <param name="lineageToGeometryLocal">
         /// The one mapping from the lineage's common logical frame to the geometry's coordinates. Identity is a statement
         /// too, and is never assumed.
         /// </param>
         /// <param name="reflected">The boundaries the geometry already reflects. Required: null is not "none".</param>
         /// <param name="vertexEpsilon">The cap polygons' vertex-merge epsilon for this geometry.</param>
-        /// <summary>The same, for a geometry that has folded nothing into its own frame.</summary>
         public VpMultiCutRegistration(
             LogicalFragmentId root,
             Bounds localBounds,
@@ -322,23 +290,10 @@ namespace Zantetsu.MeshCut
             Matrix4x4 lineageToGeometryLocal,
             IReadOnlyCollection<VpClipBoundary> reflected,
             float vertexEpsilon)
-            : this(root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon, Matrix4x4.identity)
-        {
-        }
-
-        public VpMultiCutRegistration(
-            LogicalFragmentId root,
-            Bounds localBounds,
-            Matrix4x4 geometryLocalToWorld,
-            Matrix4x4 lineageToGeometryLocal,
-            IReadOnlyCollection<VpClipBoundary> reflected,
-            float vertexEpsilon,
-            Matrix4x4 foldedGeometryLocal)
         {
             this.root = root;
             this.localBounds = localBounds;
             this.geometryLocalToWorld = geometryLocalToWorld;
-            this.foldedGeometryLocal = foldedGeometryLocal;
             this.lineageToGeometryLocal = lineageToGeometryLocal;
             this.reflected = reflected;
             this.vertexEpsilon = vertexEpsilon;
@@ -347,14 +302,6 @@ namespace Zantetsu.MeshCut
         public readonly LogicalFragmentId root;
         public readonly Bounds localBounds;
         public readonly Matrix4x4 geometryLocalToWorld;
-
-        /// <summary>
-        /// What earlier commits took into this geometry's own frame, in that frame: the separations of the boundaries
-        /// this geometry now reflects. It is applied on top of a placement a fragment follows, so that what was folded
-        /// in moves with whatever that fragment follows instead of staying where it was folded. Identity when nothing
-        /// was folded, and unused when the registration's own placement is the one drawn at.
-        /// </summary>
-        public readonly Matrix4x4 foldedGeometryLocal;
 
         public readonly Matrix4x4 lineageToGeometryLocal;
         public readonly IReadOnlyCollection<VpClipBoundary> reflected;
@@ -405,7 +352,7 @@ namespace Zantetsu.MeshCut
         internal VpMultiCutRenderFragment(
             int registration, Bounds localBounds, Matrix4x4 geometryLocalToWorld, LogicalFragmentId root,
             float rootPendingSide, bool aggregated, int branchStart, int branchCount, int conditionStart,
-            int conditionCount, Vector3 offset, VpInstanceClip clip, int capStart, int capCount)
+            int conditionCount, VpInstanceClip clip, int capStart, int capCount)
         {
             this.registration = registration;
             this.localBounds = localBounds;
@@ -417,7 +364,6 @@ namespace Zantetsu.MeshCut
             this.branchCount = branchCount;
             this.conditionStart = conditionStart;
             this.conditionCount = conditionCount;
-            this.offset = offset;
             this.clip = clip;
             this.capStart = capStart;
             this.capCount = capCount;
@@ -429,7 +375,7 @@ namespace Zantetsu.MeshCut
         /// <summary>That registration's box, in the geometry's own coordinates.</summary>
         public readonly Bounds localBounds;
 
-        /// <summary>That registration's placement: the separation summed here is not in it.</summary>
+        /// <summary>That registration's placement, which is where its shapes are drawn.</summary>
         public readonly Matrix4x4 geometryLocalToWorld;
 
         /// <summary>
@@ -449,15 +395,12 @@ namespace Zantetsu.MeshCut
 
         /// <summary>
         /// Its compatibility conditions: every unreflected temporary boundary of <see cref="root"/>, which the prefix
-        /// rule makes the selected ones, with each boundary's current world plane before any separation.
+        /// rule makes the selected ones, with each boundary's current world plane.
         /// </summary>
         public readonly int conditionStart;
         public readonly int conditionCount;
 
-        /// <summary>The separation, in world space, added once after the placement: never to a plane.</summary>
-        public readonly Vector3 offset;
-
-        /// <summary>The selected half-spaces in world space, before the separation, and the separation itself.</summary>
+        /// <summary>The selected half-spaces in world space.</summary>
         public readonly VpInstanceClip clip;
 
         public readonly int capStart;
@@ -488,13 +431,13 @@ namespace Zantetsu.MeshCut
         public readonly int renderFragment;
         public readonly VpClipBoundary boundary;
 
-        /// <summary>The boundary's plane in world space, before the separation.</summary>
+        /// <summary>The boundary's plane in world space.</summary>
         public readonly float4 worldPlane;
 
         /// <summary>The outward normal of the side the cap closes: <c>-side * n</c>.</summary>
         public readonly Vector3 outwardNormal;
 
-        /// <summary>Where its vertices are: world space, the render fragment's separation added once.</summary>
+        /// <summary>Where its vertices are: world space, at the render fragment's own placement.</summary>
         public readonly int vertexStart;
 
         /// <summary>The vertices of the box-and-plane section before the other planes cut it: 0 to 6.</summary>
@@ -508,7 +451,7 @@ namespace Zantetsu.MeshCut
     /// The display snapshot of every registration's lineage under several cuts, on the CPU (DESIGN 5.1, 5.2, 5.6; D-180,
     /// D-181). It builds what a display adopts -- <see cref="VpLogicalCutDisplay"/> draws from it -- and nothing more.
     /// <para>
-    /// **Input.** The ledger, the separation, and the registrations (<see cref="VpMultiCutRegistration"/>), each with its
+    /// **Input.** The ledger and the registrations (<see cref="VpMultiCutRegistration"/>), each with its
     /// root fragment; the source geometry's box (its own coordinates) and placement; the one mapping from the lineage's
     /// common logical frame -- the frame every adopted plane of this lineage is given in -- to the geometry's
     /// coordinates, which the caller states and nothing here assumes; the boundaries the geometry already reflects
@@ -534,14 +477,11 @@ namespace Zantetsu.MeshCut
     /// **The numeric check, conservative by contract.** Also before the walk and whatever the room, from bounds and never by
     /// taking a section (<see cref="VpSectionBounds"/>): for each registration, that a section of its box can be computed in
     /// float at all -- the box's width, the vertex epsilon squared, the placed box's coordinates and the sums the ordering
-    /// takes -- giving a bound W on every cap vertex's placed coordinates on each axis; for every plane of the lineage
-    /// checked above, that a corner's distance to it and the difference of two such distances stay finite; and for
-    /// every fragment of the lineage that could be drawn -- the root and every child of a published cut, not retired,
-    /// whole and as each side of a prepared pending cut -- that its offset, summed by the function the build uses, is
-    /// finite and stays finite with W added or taken away. Anything else is refused as
-    /// <see cref="VpMultiCutInvalidInput.ConservativeSection"/>, <see cref="VpMultiCutInvalidInput.ConservativeOffset"/> or
-    /// <see cref="VpMultiCutInvalidInput.ConservativeCapVertex"/>. This is stricter than the build -- the whole box stands for
-    /// every section of it, and a fragment or a plane that is not drawn in fact can refuse the input too -- and it is kept
+    /// takes -- giving a bound W on every cap vertex's placed coordinates on each axis; and, for every plane of the lineage
+    /// checked above, that a corner's distance to it and the difference of two such distances stay finite. Anything else is
+    /// refused as <see cref="VpMultiCutInvalidInput.ConservativeSection"/>. A cap vertex is decided by W alone: nothing is
+    /// added to one after it is clipped. This is stricter than the build -- the whole box stands for
+    /// every section of it, and a plane that is not drawn in fact can refuse the input too -- and it is kept
     /// apart from a value that really came out not finite in the build, which the build still checks. Nothing it computes
     /// is drawn, and no section is taken for it. Lineages not registered are not read.
     /// </para>
@@ -559,29 +499,19 @@ namespace Zantetsu.MeshCut
     /// Ignored boundary makes that shape undecidable, and the build says so rather than drawing it back.
     /// </para>
     /// <para>
-    /// **Offset.** A render fragment's separation is summed down its lineage from the registration's root: each cut adds
-    /// <c>side * world normal * separation</c> when that side was free by the cut's own settled anchor distribution,
-    /// never by a current owner. Ignored boundaries add nothing (they are below the render fragment's root). A pending
-    /// side and its published child give the same value.
+    /// **Where a shape stands.** At the placement it is given, and nowhere else. A render fragment is drawn with the
+    /// placement its fragment follows, or the registration's when it follows nothing, and this adds nothing to it:
+    /// there is no displacement of a side for the display, so two sides of a cut whose owners are at one place are at
+    /// one place. What separates them in the product is the physics, through the owners the placements come from.
     /// </para>
     /// <para>
-    /// **Who adds which separation.** Everything before the registration's root is the placement's: the placement given
-    /// must already hold whatever separated the root itself, and must **not** hold any of the separation summed here.
-    /// From the root down, the separation is this snapshot's, summed for every cut on the way -- a cut whose boundary the
-    /// geometry already reflects included, because a boundary reflected in the geometry and a separation taken into the
-    /// placement are different things. When real geometry commits are connected, whatever separation is then taken into
-    /// a placement must not be summed here again; that connection is not made by this, and a result here is not evidence
-    /// that it holds.
-    /// </para>
-    /// <para>
-    /// **Spaces.** Candidate planes are the ledger's, in the lineage's frame. Conditions, clip planes and cap planes are
-    /// world space before the separation; cap vertices are world space with the separation added once; the box is the
-    /// geometry's own, placed by the placement.
+    /// **Spaces.** Candidate planes are the ledger's, in the lineage's frame. Conditions, clip planes, cap planes and
+    /// cap vertices are world space; the box is the geometry's own, placed by the placement.
     /// </para>
     /// <para>
     /// **Sections are taken once (DESIGN 5.7), for the caps drawn only.** The box-and-plane section a cap starts from depends
     /// only on the face, the plane in the geometry's coordinates, the box, the placement and the epsilon -- not on the
-    /// side, the separation or the other planes. It is taken once per build for each such key, shared by both sides and
+    /// side or the other planes. It is taken once per build for each such key, shared by both sides and
     /// every render fragment, and taken from the snapshot given as the one to reuse from when that one holds the same key
     /// exactly (compared value by value, not within a tolerance). Only a selected boundary's cap asks for one. Each cap
     /// adds at most one key and the caps are refused for room before any section is asked for, so the room -- one section
@@ -644,11 +574,7 @@ namespace Zantetsu.MeshCut
         private int _capVertexCount;
         private int _sectionCount;
         private VpMultiCutInvalidInput _invalid;
-        private bool _prechecking;
-
         // Each registration's bound on placed cap coordinates, found by the check before the walk.
-        private readonly List<double3> _extents = new List<double3>(2);
-
         /// <summary>What one section was taken of, and what it came to, in the geometry's coordinates placed in world.</summary>
         private struct Section
         {
@@ -721,7 +647,7 @@ namespace Zantetsu.MeshCut
         internal Vector3[] CapVertexArray => _capVertices;
 
         /// <summary>
-        /// A look at one cap's vertices (world space, separation added) in this snapshot's own array: nothing is copied,
+        /// A look at one cap's vertices (world space) in this snapshot's own array: nothing is copied,
         /// and it is good only until this snapshot is built again. For a caller that finishes with it before then.
         /// </summary>
         internal VpArrayRange<Vector3> CapPolygon(int capIndex)
@@ -737,8 +663,8 @@ namespace Zantetsu.MeshCut
         /// <summary>
         /// A look at the section one cap started from, as this snapshot keeps it: the box-and-plane section of the cap's
         /// face through its registration's box (at most <see cref="VpCapBoundsPolygon.MaxVertices"/>, six), before the
-        /// other selected half-spaces cut it -- in world space after the placement and **before** the render fragment's
-        /// separation, which a reader adds once. It is the section taken or reused for the cap in the build, not a copy
+        /// other selected half-spaces cut it -- in world space, at the render fragment's own placement, which a reader
+        /// needs to add nothing to. It is the section taken or reused for the cap in the build, not a copy
         /// and not the build's working room; nothing is taken here. Good only until this snapshot is built again
         /// (<see cref="BuildGeneration"/>). A section of no vertices is a plane that missed the box.
         /// </summary>
@@ -824,7 +750,7 @@ namespace Zantetsu.MeshCut
             return ok;
         }
 
-        /// <summary>One vertex of one cap, in world space with the separation added.</summary>
+        /// <summary>One vertex of one cap, in world space.</summary>
         public bool TryGetCapVertex(int capIndex, int vertex, out Vector3 world)
         {
             world = default;
@@ -849,7 +775,7 @@ namespace Zantetsu.MeshCut
         /// </param>
         /// <param name="reflected">The boundaries the geometry already reflects. Required: null is not "none".</param>
         /// <exception cref="ArgumentNullException">The ledger or the reflected set is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException">The separation or the epsilon is negative or not finite.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The epsilon is negative or not finite.</exception>
         public VpMultiCutBuildOutcome TryBuild(
             LogicalCutLedger ledger,
             LogicalFragmentId root,
@@ -857,7 +783,6 @@ namespace Zantetsu.MeshCut
             Matrix4x4 geometryLocalToWorld,
             Matrix4x4 lineageToGeometryLocal,
             IReadOnlyCollection<VpClipBoundary> reflected,
-            float separation,
             float vertexEpsilon,
             IVpFragmentPlacement placement = null)
         {
@@ -867,10 +792,10 @@ namespace Zantetsu.MeshCut
             }
 
             _single[0] = new VpMultiCutRegistration(
-                root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon, Matrix4x4.identity);
+                root, localBounds, geometryLocalToWorld, lineageToGeometryLocal, reflected, vertexEpsilon);
             try
             {
-                return TryBuild(ledger, _single, separation, null, placement);
+                return TryBuild(ledger, _single, null, placement);
             }
             finally
             {
@@ -885,14 +810,13 @@ namespace Zantetsu.MeshCut
         /// the adoption rule.
         /// </summary>
         /// <exception cref="ArgumentNullException">The ledger, the list or a registration's reflected set is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException">The separation or an epsilon is negative or not finite.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">An epsilon is negative or not finite.</exception>
         public VpMultiCutBuildOutcome TryBuild(
             LogicalCutLedger ledger,
             IReadOnlyList<VpMultiCutRegistration> registrations,
-            float separation,
             IVpFragmentPlacement placement = null)
         {
-            return TryBuild(ledger, registrations, separation, null, placement);
+            return TryBuild(ledger, registrations, null, placement);
         }
 
         /// <summary>
@@ -902,7 +826,6 @@ namespace Zantetsu.MeshCut
         internal VpMultiCutBuildOutcome TryBuild(
             LogicalCutLedger ledger,
             IReadOnlyList<VpMultiCutRegistration> registrations,
-            float separation,
             VpMultiCutSnapshot reuseFrom,
             IVpFragmentPlacement placement = null)
         {
@@ -914,11 +837,6 @@ namespace Zantetsu.MeshCut
             if (registrations == null)
             {
                 throw new ArgumentNullException(nameof(registrations));
-            }
-
-            if (!IsFiniteNonNegative(separation))
-            {
-                throw new ArgumentOutOfRangeException(nameof(separation));
             }
 
             for (int g = 0; g < registrations.Count; g++)
@@ -957,7 +875,7 @@ namespace Zantetsu.MeshCut
             }
 
             // Decided with no room of this snapshot's, so that no shortage below can be what hides it.
-            VpMultiCutBuildOutcome outcome = Validate(ledger, registrations, separation);
+            VpMultiCutBuildOutcome outcome = Validate(ledger, registrations);
             if (outcome != VpMultiCutBuildOutcome.Built)
             {
                 return Fail(outcome);
@@ -982,7 +900,7 @@ namespace Zantetsu.MeshCut
 
                 for (int r = renderFragmentStart; r < _renderFragmentCount; r++)
                 {
-                    outcome = TryBuildRenderFragment(ledger, registration, r, separation, reuseFrom);
+                    outcome = TryBuildRenderFragment(ledger, registration, r, reuseFrom);
                     if (outcome != VpMultiCutBuildOutcome.Built)
                     {
                         return Fail(outcome);
@@ -1037,11 +955,9 @@ namespace Zantetsu.MeshCut
         /// </summary>
         private VpMultiCutBuildOutcome Validate(
             LogicalCutLedger ledger,
-            IReadOnlyList<VpMultiCutRegistration> registrations,
-            float separation)
+            IReadOnlyList<VpMultiCutRegistration> registrations)
         {
             int steps = ledger.OperationCount + 1;
-            _extents.Clear();
             for (int g = 0; g < registrations.Count; g++)
             {
                 VpMultiCutRegistration registration = registrations[g];
@@ -1053,12 +969,10 @@ namespace Zantetsu.MeshCut
                 // A section of this box, placed, can be computed in float at all, and every cap vertex it gives is bounded.
                 if (!VpSectionBounds.TryPlacedExtent(
                         registration.localBounds, registration.geometryLocalToWorld, registration.vertexEpsilon,
-                        out double3 extent))
+                        out _))
                 {
                     return Invalid(VpMultiCutInvalidInput.ConservativeSection);
                 }
-
-                _extents.Add(extent);
 
                 // No root on another's lineage: not the same root, and no other root above this one.
                 for (int h = 0; h < registrations.Count; h++)
@@ -1147,11 +1061,6 @@ namespace Zantetsu.MeshCut
                     case LogicalCutOperationState.Completed:
                     case LogicalCutOperationState.Terminated:
                     {
-                        if (!ledger.TryGetSettledAnchorDistribution(operation.id, out _))
-                        {
-                            return VpMultiCutBuildOutcome.UnsettledDistribution;
-                        }
-
                         VpMultiCutBuildOutcome planed = CheckPlane(operation.plane, registration);
                         if (planed != VpMultiCutBuildOutcome.Built)
                         {
@@ -1177,124 +1086,7 @@ namespace Zantetsu.MeshCut
                 }
             }
 
-            return CheckNumbers(ledger, registrations, separation);
-        }
-
-        /// <summary>
-        /// The offsets of the conservative numeric check, over every registered lineage, whatever the room: each root, and
-        /// each child of a published cut on a lineage, as a fragment that could be drawn, against its registration's bound.
-        /// </summary>
-        private VpMultiCutBuildOutcome CheckNumbers(
-            LogicalCutLedger ledger, IReadOnlyList<VpMultiCutRegistration> registrations, float separation)
-        {
-            int steps = ledger.OperationCount + 1;
-            _prechecking = true;
-            try
-            {
-                for (int g = 0; g < registrations.Count; g++)
-                {
-                    VpMultiCutBuildOutcome root = CheckFragment(ledger, registrations[g], _extents[g], registrations[g].root, separation);
-                    if (root != VpMultiCutBuildOutcome.Built)
-                    {
-                        return root;
-                    }
-                }
-
-                for (int position = 0; ledger.TryGetOperationAtAdmission(position, out LogicalCutOperation operation); position++)
-                {
-                    if (!operation.positive.IsSet || !operation.negative.IsSet)
-                    {
-                        continue;
-                    }
-
-                    VpMultiCutBuildOutcome found = RegistrationOf(ledger, registrations, operation.source, steps, out int g);
-                    if (found != VpMultiCutBuildOutcome.Built)
-                    {
-                        return Invalid(VpMultiCutInvalidInput.Lineage);
-                    }
-
-                    if (g < 0)
-                    {
-                        continue;
-                    }
-
-                    VpMultiCutBuildOutcome positive = CheckFragment(ledger, registrations[g], _extents[g], operation.positive, separation);
-                    if (positive != VpMultiCutBuildOutcome.Built)
-                    {
-                        return positive;
-                    }
-
-                    VpMultiCutBuildOutcome negative = CheckFragment(ledger, registrations[g], _extents[g], operation.negative, separation);
-                    if (negative != VpMultiCutBuildOutcome.Built)
-                    {
-                        return negative;
-                    }
-                }
-
-                return VpMultiCutBuildOutcome.Built;
-            }
-            finally
-            {
-                _prechecking = false;
-            }
-        }
-
-        /// <summary>
-        /// One fragment that could be drawn: whole, and as each side of its pending cut when that is prepared. A retired
-        /// fragment is drawn as nothing and is not asked about.
-        /// </summary>
-        private VpMultiCutBuildOutcome CheckFragment(
-            LogicalCutLedger ledger, in VpMultiCutRegistration registration, double3 extent, LogicalFragmentId fragment,
-            float separation)
-        {
-            if (!ledger.TryGetFragmentState(fragment, out LogicalFragmentState state))
-            {
-                return Invalid(VpMultiCutInvalidInput.Lineage);
-            }
-
-            if (state == LogicalFragmentState.Retired)
-            {
-                return VpMultiCutBuildOutcome.Built;
-            }
-
-            VpMultiCutBuildOutcome whole = CheckSide(ledger, registration, extent, fragment, 0f, separation);
-            if (whole != VpMultiCutBuildOutcome.Built)
-            {
-                return whole;
-            }
-
-            if (state != LogicalFragmentState.Live
-                || !ledger.TryGetActiveOperation(fragment, out CutOperationId pending)
-                || !ledger.TryGetPreparedAnchorDistribution(pending, out _))
-            {
-                return VpMultiCutBuildOutcome.Built;
-            }
-
-            VpMultiCutBuildOutcome plus = CheckSide(ledger, registration, extent, fragment, 1f, separation);
-            return plus != VpMultiCutBuildOutcome.Built
-                ? plus
-                : CheckSide(ledger, registration, extent, fragment, -1f, separation);
-        }
-
-        /// <summary>
-        /// One fragment, drawn whole or as one side of its pending cut: its offset, by the build's own sum, finite, and
-        /// finite still with the registration's bound on placed cap coordinates added or taken away.
-        /// </summary>
-        private VpMultiCutBuildOutcome CheckSide(
-            LogicalCutLedger ledger, in VpMultiCutRegistration registration, double3 extent, LogicalFragmentId fragment,
-            float pendingSide, float separation)
-        {
-            VpMultiCutBuildOutcome summed = TrySumOffset(
-                ledger, registration.root, fragment, pendingSide, registration.geometryLocalToWorld,
-                registration.lineageToGeometryLocal, separation, out Vector3 offset);
-            if (summed != VpMultiCutBuildOutcome.Built)
-            {
-                return summed;
-            }
-
-            return VpSectionBounds.IsOffsetWithin(offset, extent)
-                ? VpMultiCutBuildOutcome.Built
-                : Invalid(VpMultiCutInvalidInput.ConservativeCapVertex);
+            return VpMultiCutBuildOutcome.Built;
         }
 
         /// <summary>
@@ -1601,9 +1393,9 @@ namespace Zantetsu.MeshCut
                     return VpMultiCutBuildOutcome.CapacityExceeded;
                 }
 
-                // Where this one stands. A fragment that follows a placement of its own is drawn there, with what
-                // earlier commits folded into this geometry's frame carried along; one that does not is drawn at the
-                // registration's placement, which is the ordinary answer and not a fallback for a failure.
+                // Where this one stands. A fragment that follows a placement of its own is drawn there, and
+                // nothing is added to it; one that does not is drawn at the registration's placement, which is the
+                // ordinary answer and not a fallback for a failure.
                 // <para>
                 // An aggregate is asked about its **first living branch in this walk**, not about its root
                 // (DESIGN 5.2, D-187). The root of an aggregate is the source of the first Ignored boundary, and
@@ -1621,7 +1413,7 @@ namespace Zantetsu.MeshCut
 
                 _renderFragments[_renderFragmentCount] = new VpMultiCutRenderFragment(
                     registrationIndex, registration.localBounds, geometryLocalToWorld, root, rootPendingSide,
-                    aggregated, b, 1, 0, 0, Vector3.zero, VpInstanceClip.None, 0, 0);
+                    aggregated, b, 1, 0, 0, VpInstanceClip.None, 0, 0);
                 _branches[b] = WithRenderFragment(branch, _renderFragmentCount);
                 _renderFragmentCount++;
             }
@@ -1630,9 +1422,9 @@ namespace Zantetsu.MeshCut
         }
 
         /// <summary>
-        /// Where one render fragment's shape stands: the placement its fragment follows, with this geometry's folded
-        /// separations on top of it, or the registration's own when it follows nothing. A placement that is not one is
-        /// refused exactly as the registration's would be.
+        /// Where one render fragment's shape stands: the placement its fragment follows, or the registration's own
+        /// when it follows nothing. Nothing is put on top of it. A placement that is not one is refused exactly as the
+        /// registration's would be.
         /// </summary>
         private static bool TryPlacementOf(
             IVpFragmentPlacement placement, in VpMultiCutRegistration registration, LogicalFragmentId fragment,
@@ -1661,8 +1453,7 @@ namespace Zantetsu.MeshCut
                 return false;
             }
 
-            // What earlier commits took into this geometry's frame comes with it, wherever it is drawn.
-            geometryLocalToWorld = baseline * registration.foldedGeometryLocal;
+            geometryLocalToWorld = baseline;
             return IsPlacement(geometryLocalToWorld);
         }
 
@@ -1744,7 +1535,6 @@ namespace Zantetsu.MeshCut
             LogicalCutLedger ledger,
             in VpMultiCutRegistration registration,
             int index,
-            float separation,
             VpMultiCutSnapshot reuseFrom)
         {
             LogicalFragmentId registrationRoot = registration.root;
@@ -1752,26 +1542,12 @@ namespace Zantetsu.MeshCut
             float vertexEpsilon = registration.vertexEpsilon;
             VpMultiCutRenderFragment renderFragment = _renderFragments[index];
 
-            // This render fragment's own placement, decided when it was made: the separation it sums, the world planes
-            // of its boundaries and its cap polygons are all made with that one matrix.
+            // This render fragment's own placement, decided when it was made: the world planes of its boundaries and
+            // its cap polygons are all made with that one matrix.
             Matrix4x4 geometryLocalToWorld = renderFragment.geometryLocalToWorld;
             VpMultiCutBranch representative = _branches[renderFragment.branchStart];
 
-            // 1. The separation, down the lineage from the registration's root.
-            VpMultiCutBuildOutcome summed = TrySumOffset(
-                ledger, registrationRoot, renderFragment.root, renderFragment.rootPendingSide, geometryLocalToWorld,
-                lineageToGeometryLocal, separation, out Vector3 offset);
-            if (summed != VpMultiCutBuildOutcome.Built)
-            {
-                return summed;
-            }
-
-            if (!IsFinite(offset))
-            {
-                return Invalid(VpMultiCutInvalidInput.DrawnOffset);
-            }
-
-            // 2. The selected boundaries: the geometry's own plane, the world plane, the condition and the half-space.
+            // 1. The selected boundaries: the geometry's own plane, the world plane, the condition and the half-space.
             int selected = representative.selectedCount;
             if (_conditionCount + selected > _conditions.Length || _capCount + selected > _caps.Length)
             {
@@ -1796,7 +1572,7 @@ namespace Zantetsu.MeshCut
             }
 
             _selectedHalfSpaces.Set(0, selected);
-            if (!VpInstanceClip.TryKeep(_selectedHalfSpaces, offset, out VpInstanceClip clip))
+            if (!VpInstanceClip.TryKeep(_selectedHalfSpaces, out VpInstanceClip clip))
             {
                 return Invalid(VpMultiCutInvalidInput.ClipNotTaken);
             }
@@ -1836,7 +1612,7 @@ namespace Zantetsu.MeshCut
                 for (int v = 0; v < clipped; v++)
                 {
                     // Finite inputs can still overflow when added; such a vertex is refused, never dropped or emptied.
-                    Vector3 placed = _clipped[v] + offset;
+                    Vector3 placed = _clipped[v];
                     if (!IsFinite(placed))
                     {
                         return Invalid(VpMultiCutInvalidInput.DrawnCapVertex);
@@ -1856,7 +1632,7 @@ namespace Zantetsu.MeshCut
             _renderFragments[index] = new VpMultiCutRenderFragment(
                 renderFragment.registration, renderFragment.localBounds, renderFragment.geometryLocalToWorld,
                 renderFragment.root, renderFragment.rootPendingSide, renderFragment.aggregated,
-                renderFragment.branchStart, renderFragment.branchCount, conditionStart, selected, offset, clip,
+                renderFragment.branchStart, renderFragment.branchCount, conditionStart, selected, clip,
                 capStart, selected);
             return VpMultiCutBuildOutcome.Built;
         }
@@ -1971,104 +1747,11 @@ namespace Zantetsu.MeshCut
                 && aMax.x == bMax.x && aMax.y == bMax.y && aMax.z == bMax.z;
         }
 
-        /// <summary>
-        /// Each cut from the registration's root down to <paramref name="root"/> (and its pending side, if drawn as one)
-        /// adds its free side's separation, freedom read from the cut's own settled distribution.
-        /// </summary>
-        private VpMultiCutBuildOutcome TrySumOffset(
-            LogicalCutLedger ledger,
-            LogicalFragmentId registrationRoot,
-            LogicalFragmentId root,
-            float rootPendingSide,
-            Matrix4x4 geometryLocalToWorld,
-            Matrix4x4 lineageToGeometryLocal,
-            float separation,
-            out Vector3 offset)
-        {
-            offset = Vector3.zero;
-            if (rootPendingSide != 0f)
-            {
-                if (!ledger.TryGetActiveOperation(root, out CutOperationId pending))
-                {
-                    return Invalid(VpMultiCutInvalidInput.Lineage);
-                }
-
-                VpMultiCutBuildOutcome added = TryAdd(
-                    ledger, pending, rootPendingSide, geometryLocalToWorld, lineageToGeometryLocal, separation, ref offset);
-                if (added != VpMultiCutBuildOutcome.Built)
-                {
-                    return added;
-                }
-            }
-
-            LogicalFragmentId at = root;
-            while (at != registrationRoot)
-            {
-                if (!ledger.TryGetOrigin(at, out CutOperationId origin, out float side)
-                    || !ledger.TryGetOperation(origin, out LogicalCutOperation cut))
-                {
-                    return Invalid(VpMultiCutInvalidInput.Lineage);
-                }
-
-                VpMultiCutBuildOutcome added = TryAdd(
-                    ledger, origin, side, geometryLocalToWorld, lineageToGeometryLocal, separation, ref offset);
-                if (added != VpMultiCutBuildOutcome.Built)
-                {
-                    return added;
-                }
-
-                at = cut.source;
-            }
-
-            return VpMultiCutBuildOutcome.Built;
-        }
-
-        private VpMultiCutBuildOutcome TryAdd(
-            LogicalCutLedger ledger,
-            CutOperationId operation,
-            float side,
-            Matrix4x4 geometryLocalToWorld,
-            Matrix4x4 lineageToGeometryLocal,
-            float separation,
-            ref Vector3 offset)
-        {
-            if (!ledger.TryGetSettledAnchorDistribution(operation, out AnchorDistributionResult distribution))
-            {
-                return VpMultiCutBuildOutcome.UnsettledDistribution;
-            }
-
-            bool free = !FixedSupportAnchors.IsFixed(side > 0f ? distribution.positiveCount : distribution.negativeCount);
-            if (!free)
-            {
-                return VpMultiCutBuildOutcome.Built;
-            }
-
-            if (!ledger.TryGetOperation(operation, out LogicalCutOperation cut))
-            {
-                return Invalid(VpMultiCutInvalidInput.Lineage);
-            }
-
-            if (!VpCutPlane.TryGeometryLocalToWorld(cut.plane, lineageToGeometryLocal, out float4 local)
-                || !VpCutPlane.TryGeometryLocalToWorld(local, geometryLocalToWorld, out float4 world))
-            {
-                return Invalid(VpMultiCutInvalidInput.PlaneNotCarried);
-            }
-
-            offset += side * new Vector3(world.x, world.y, world.z) * separation;
-            if (IsFinite(offset))
-            {
-                return VpMultiCutBuildOutcome.Built;
-            }
-
-            // The same sum answers for the check before the walk and for the build; the reason says which asked.
-            return Invalid(_prechecking ? VpMultiCutInvalidInput.ConservativeOffset : VpMultiCutInvalidInput.DrawnOffset);
-        }
-
         private static VpMultiCutRenderFragment WithBranches(in VpMultiCutRenderFragment r, int branchCount)
         {
             return new VpMultiCutRenderFragment(
                 r.registration, r.localBounds, r.geometryLocalToWorld, r.root, r.rootPendingSide, r.aggregated, r.branchStart, branchCount, r.conditionStart, r.conditionCount,
-                r.offset, r.clip, r.capStart, r.capCount);
+                r.clip, r.capStart, r.capCount);
         }
 
         private static VpMultiCutBranch WithRenderFragment(in VpMultiCutBranch b, int renderFragment)

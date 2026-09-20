@@ -57,8 +57,7 @@ namespace Zantetsu.MeshCut.Tests
                 new Vector3(min.x, min.y, 6f), new Vector3(max.x, min.y, 6f), new Vector3(max.x, max.y, 6f), new Vector3(min.x, max.y, 6f),
             };
             var conditions = new VpCapCompatibilityTarget(
-                new[] { new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(operation)), 1f, k_plane) },
-                Vector3.zero);
+                new[] { new VpCapConstraint(new VpCapFace(k_ledger, new CutOperationId(operation)), 1f, k_plane) });
             return new VpCapProjectionTarget(
                 conditions, box, Matrix4x4.identity, capsComplete ? new[] { board } : Array.Empty<Vector3[]>(), capsComplete);
         }
@@ -93,14 +92,14 @@ namespace Zantetsu.MeshCut.Tests
             }
 
             var result = new Assignment { groupOfTarget = new int[targets.Length], colorOfGroup = new int[targets.Length] };
-            result.groupCount = VpCapCompatibility.Classify(conditions, PlaneEpsilon, OffsetEpsilon, result.groupOfTarget);
+            result.groupCount = VpCapCompatibility.Classify(conditions, PlaneEpsilon, result.groupOfTarget);
             for (int g = 0; g < result.colorOfGroup.Length; g++)
             {
                 result.colorOfGroup[g] = 99;
             }
 
             result.used = VpStencilColors.Assign(
-                targets, result.groupOfTarget, result.groupCount, left, right, margin, PlaneEpsilon, OffsetEpsilon,
+                targets, result.groupOfTarget, result.groupCount, left, right, margin, PlaneEpsilon,
                 maxColors, result.colorOfGroup);
 
             Assert.That(result.used, Is.InRange(0, maxColors), "colours in use within the limit");
@@ -187,7 +186,7 @@ namespace Zantetsu.MeshCut.Tests
             VpCapEye left = Eye(new Vector3(-1f, 0f, 0f));
             VpCapEye right = Eye(new Vector3(1f, 0f, 0f));
 
-            VpCapProjectionVerdict layout = VpCapProjectionConflict.Judge(near, far, left, right, k_noMargin, PlaneEpsilon, OffsetEpsilon);
+            VpCapProjectionVerdict layout = VpCapProjectionConflict.Judge(near, far, left, right, k_noMargin, PlaneEpsilon);
             Assert.That(layout.left == VpCapProjectionOverlap.MayOverlap && layout.right != VpCapProjectionOverlap.MayOverlap, Is.True,
                 "the layout: one eye only");
 
@@ -225,7 +224,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(result.ColorOf(1), Is.EqualTo(result.ColorOf(0)), "one group, one colour");
 
             VpCapProjectionVerdict firsts = VpCapProjectionConflict.Judge(
-                targets[0], targets[2], LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon);
+                targets[0], targets[2], LeftNear, RightNear, k_noMargin, PlaneEpsilon);
             Assert.That(firsts.MustSeparate, Is.False, "the layout: the first targets of the two groups are apart");
 
             AssertApartInOrdinary(result, 1, 2, 3, "the second target of the group is on the other");
@@ -284,7 +283,7 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(
                 VpStencilColors.Assign(
                     Array.Empty<VpCapProjectionTarget>(), Array.Empty<int>(), 0, LeftNear, RightNear, k_noMargin,
-                    PlaneEpsilon, OffsetEpsilon, 3, Array.Empty<int>()),
+                    PlaneEpsilon, 3, Array.Empty<int>()),
                 Is.Zero,
                 "no groups, no colours");
 
@@ -319,16 +318,16 @@ namespace Zantetsu.MeshCut.Tests
             VpCapProjectionTarget[] apart = { At(1, -3f), At(2, 3f) };
             VpCapProjectionTarget[] together = { At(1, 0f), At(2, 0f) };
 
-            VpStencilColors.Assign(apart, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors);
+            VpStencilColors.Assign(apart, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors);
             Assert.That(colors[1], Is.EqualTo(colors[0]), "first: apart, shared");
 
-            VpStencilColors.Assign(together, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors);
+            VpStencilColors.Assign(together, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors);
             Assert.That(colors[1], Is.Not.EqualTo(colors[0]), "next: moved together, kept apart");
 
-            VpStencilColors.Assign(together, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 1, colors);
+            VpStencilColors.Assign(together, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 1, colors);
             Assert.That(colors[0] == 0 && colors[1] == 0, Is.True, "limit 1: both in the only colour");
 
-            VpStencilColors.Assign(apart, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors);
+            VpStencilColors.Assign(apart, groups, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors);
             Assert.That(colors[1], Is.EqualTo(colors[0]), "back: shared again");
             Assert.That(colors[0], Is.LessThan(2), "in an ordinary colour");
         }
@@ -341,28 +340,28 @@ namespace Zantetsu.MeshCut.Tests
             var colors = new int[2];
 
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 0, colors),
+                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 0, colors),
                 "a limit of zero");
             Assert.Throws<ArgumentException>(
-                () => VpStencilColors.Assign(targets, new[] { 0, 2 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors),
+                () => VpStencilColors.Assign(targets, new[] { 0, 2 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors),
                 "a group out of range");
             Assert.Throws<ArgumentException>(
-                () => VpStencilColors.Assign(targets, new[] { 0, 0 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors),
+                () => VpStencilColors.Assign(targets, new[] { 0, 0 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors),
                 "a group with no target");
             Assert.Throws<ArgumentException>(
-                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, new int[1]),
+                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, new int[1]),
                 "too few colour slots");
             Assert.Throws<ArgumentException>(
-                () => VpStencilColors.Assign(targets, new[] { 0 }, 1, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors),
+                () => VpStencilColors.Assign(targets, new[] { 0 }, 1, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors),
                 "a target with no group");
             Assert.Throws<ArgumentOutOfRangeException>(
-                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, new Vector2(float.NaN, 0f), PlaneEpsilon, OffsetEpsilon, 3, colors),
+                () => VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, new Vector2(float.NaN, 0f), PlaneEpsilon, 3, colors),
                 "a margin that is not finite");
             Assert.Throws<ArgumentNullException>(
-                () => VpStencilColors.Assign(null, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 3, colors));
+                () => VpStencilColors.Assign(null, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 3, colors));
 
             Assert.That(
-                VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, OffsetEpsilon, 2, colors),
+                VpStencilColors.Assign(targets, new[] { 0, 1 }, 2, LeftNear, RightNear, k_noMargin, PlaneEpsilon, 2, colors),
                 Is.EqualTo(2),
                 "no ordinary colour left is the last colour, not a refusal");
         }

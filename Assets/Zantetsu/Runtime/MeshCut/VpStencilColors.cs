@@ -58,7 +58,6 @@ namespace Zantetsu.MeshCut
             in VpCapEye right,
             Vector2 ndcMargin,
             float planeEpsilon,
-            float offsetEpsilon,
             int maxStencilColors,
             int[] colorOfGroup)
         {
@@ -90,7 +89,6 @@ namespace Zantetsu.MeshCut
             CheckFinite(ndcMargin.x, nameof(ndcMargin));
             CheckFinite(ndcMargin.y, nameof(ndcMargin));
             CheckFinite(planeEpsilon, nameof(planeEpsilon));
-            CheckFinite(offsetEpsilon, nameof(offsetEpsilon));
 
             if (groupOfTarget.Count < targets.Count)
             {
@@ -139,7 +137,7 @@ namespace Zantetsu.MeshCut
                 for (int c = 0; c < opened && chosen < 0; c++)
                 {
                     if (!ConflictsWithColor(
-                            g, c, targets, groupOfTarget, colorOfGroup, left, right, ndcMargin, planeEpsilon, offsetEpsilon))
+                            g, c, targets, groupOfTarget, colorOfGroup, left, right, ndcMargin, planeEpsilon))
                     {
                         chosen = c;
                     }
@@ -176,8 +174,7 @@ namespace Zantetsu.MeshCut
             in VpCapEye left,
             in VpCapEye right,
             Vector2 ndcMargin,
-            float planeEpsilon,
-            float offsetEpsilon)
+            float planeEpsilon)
         {
             for (int i = 0; i < targets.Count; i++)
             {
@@ -195,7 +192,7 @@ namespace Zantetsu.MeshCut
                     }
 
                     VpCapProjectionVerdict verdict = VpCapProjectionConflict.Judge(
-                        targets[i], targets[j], left, right, ndcMargin, planeEpsilon, offsetEpsilon);
+                        targets[i], targets[j], left, right, ndcMargin, planeEpsilon);
                     if (verdict.MustSeparate)
                     {
                         return true;

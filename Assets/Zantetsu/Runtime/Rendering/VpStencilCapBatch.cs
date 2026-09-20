@@ -192,7 +192,7 @@ namespace Zantetsu.Rendering
         /// Puts every colour's volumes and caps on the GPU and settles the ranges each colour will be drawn from.
         /// Nothing is drawn here and nothing is written anywhere else.
         /// <para>
-        /// <paramref name="capVertices"/> are world positions with the side's separation already applied, and
+        /// <paramref name="capVertices"/> are world positions, at the placement the side is drawn at, and
         /// <paramref name="capIndices"/> index them globally, so that one index range is one colour's caps whichever
         /// polygons and bodies they came from. Every check is made before the first write, so input that does not fit
         /// the fixed capacity or does not lie inside what was given leaves the previous colours and the previous

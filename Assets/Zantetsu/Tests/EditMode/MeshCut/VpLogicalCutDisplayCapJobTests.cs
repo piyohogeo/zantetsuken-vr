@@ -22,7 +22,9 @@ namespace Zantetsu.MeshCut.Tests
 
         /// <summary>
         /// The corner piece of three cuts (T3): A at y = 0 with the anchor below, B at x = 0 and C at z = 0 above it, both
-        /// sides free, on a body of two submeshes. Seen along (1, 1, 1) from below, A+B+C+ shows its three caps: the
+        /// sides free, on a body of two submeshes, each piece at a base placement of its own. Seen along
+        /// (1, 1, 1) from below, A+B+C+ shows its three caps -- which it does because it stands clear of the other
+        /// three, nothing in the display having moved it. The
         /// body is clipped by all three faces, while each job's volume -- and every volume command arranged -- is clipped
         /// by one face only, the job's own, one command per submesh. The instance capacity is exactly what the four
         /// render fragments take (eight); nine caps of two submeshes would need eighteen volume commands, more than the
@@ -37,25 +39,20 @@ namespace Zantetsu.MeshCut.Tests
                 VpLogicalCutDisplay display = scene.display;
                 LogicalFragmentId root = ledger.AddFragment(new List<float3> { new float3(0f, -0.5f, 0f) });
                 Assert.That(display.TryShow(root, AppendCube(scene.storage, true), Matrix4x4.identity), Is.True);
-                var (_, aPlus, _) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
-                var (_, bPlus, _) = Cut(ledger, aPlus, new float4(1f, 0f, 0f, 0f));
-                Cut(ledger, bPlus, new float4(0f, 0f, 1f, 0f));
+                var (_, aPlus, aMinus) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+                var (_, bPlus, bMinus) = Cut(ledger, aPlus, new float4(1f, 0f, 0f, 0f));
+                var (_, cPlus, cMinus) = Cut(ledger, bPlus, new float4(0f, 0f, 1f, 0f));
+                display.Placement = T3Placements(Matrix4x4.identity, aMinus, bMinus, cMinus, cPlus);
                 Collect(scene);
                 Assert.That(display.RenderFragmentCount, Is.EqualTo(4), "the layout: A-, A+B-, A+B+C-, A+B+C+");
                 Assert.That(display.CapRecordCount, Is.EqualTo(9), "one, two, three and three caps");
                 Assert.That(display.SideCount, Is.EqualTo(8), "the instance capacity, exactly");
 
-                int corner = -1;
-                for (int r = 0; r < display.RenderFragmentCount; r++)
-                {
-                    display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf);
-                    if (rf.conditionCount == 3 && rf.offset.x > 0f && rf.offset.z > 0f)
-                    {
-                        corner = r;
-                    }
-                }
-
-                Assert.That(corner, Is.Not.EqualTo(-1), "the layout: A+B+C+");
+                // By name, not by "three conditions": A+B+C- is under three of them too, and with the pieces at
+                // the pieces placed apart it is the one facing away.
+                int corner = RenderFragmentOfRoot(display, cPlus);
+                display.TryGetRenderFragment(corner, out VpMultiCutRenderFragment cornerCheck);
+                Assert.That(cornerCheck.conditionCount, Is.EqualTo(3), "the layout: A+B+C+ is under all three");
                 display.TryGetRenderFragment(corner, out VpMultiCutRenderFragment cornerFragment);
                 Assert.That(cornerFragment.clip.PlaneCount, Is.EqualTo(3), "the body is clipped by all three faces");
                 for (int i = 0; i < display.SideCount; i++)
@@ -147,7 +144,6 @@ namespace Zantetsu.MeshCut.Tests
                 VpCapVolumeGroup published = SharedTopGroup(display, camera, a, "B published");
                 Assert.That(published.volumeClip.Equals(pending.volumeClip), Is.True, "publication changes no volume");
 
-                display.Separation = WideSeparation * 2f;
                 Collect(scene);
                 VpCapVolumeGroup moved = SharedTopGroup(display, camera, a, "separation changed");
                 Assert.That(moved.volumeClip.Equals(pending.volumeClip), Is.True, "the fixed parts do not move");
@@ -193,14 +189,14 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// X5: the same cuts, but B's minus side has no anchor and moves along -x. A-B-'s and A-B+'s top caps close the
-        /// same face on the same side, at different separations: two volume groups. Their drawing polygons are apart
-        /// on the screen, but the initial sections -- the whole square of each, moved -- overlap, so the groups take two
-        /// colours. Under a limit of one there is no ordinary colour: both groups go to the last colour, which issues each
-    /// of the two render fragments once -- prepared, not refused.
+        /// X5: the same cuts, but B's minus side has no anchor and is placed along -x. A-B-'s and A-B+'s
+        /// top caps close the same face on the same side and differ in nothing but where their pieces stand: two volume
+        /// groups. Their drawing polygons are apart on the screen, but the initial sections -- the whole square of each,
+        /// where it stands -- overlap, so the groups take two colours. Under a limit of one there is no ordinary colour:
+        /// both groups go to the last colour, which issues each of the two render fragments once -- prepared, not refused.
         /// </summary>
         [Test]
-        public void X5_DifferentSeparations_AreSeparateGroups_ColouredByTheirInitialSections()
+        public void X5_DifferentPlacements_AreSeparateGroups_ColouredByTheirInitialSections()
         {
             foreach (int colours in new[] { 4, 1 })
             {
@@ -236,20 +232,21 @@ namespace Zantetsu.MeshCut.Tests
                     }
 
                     Assert.That(tops.Count, Is.EqualTo(2), "the layout: both top caps are seen");
-                    Assert.That(tops[0].volumeGroup, Is.Not.EqualTo(tops[1].volumeGroup), "different separations: two groups");
+                    Assert.That(tops[0].volumeGroup, Is.Not.EqualTo(tops[1].volumeGroup), "different placements: two groups");
                     Assert.That(tops[0].colour, Is.Not.EqualTo(tops[1].colour), "overlapping initial sections: two colours");
                     display.Render(0, camera);
                     Color32[] image = Read(camera);
                     Assert.That(IsRed(At(image, camera, new Vector3(0.5f, 0f, 0.5f))), Is.True, "A-B+ is capped");
-                    Assert.That(IsRed(At(image, camera, new Vector3(-1f, 0f, 0.5f))), Is.True, "and A-B-, moved");
+                    Assert.That(IsRed(At(image, camera, new Vector3(-1f, 0f, 0.5f))), Is.True, "and A-B-, out where it is placed");
                     Assert.That(IsRed(At(image, camera, new Vector3(-0.25f, 0f, 0.5f))), Is.False, "the gap between them is not");
                 }
             }
         }
 
         /// <summary>
-        /// X5's layout at separation 0.5: A-B+ fixed at x in [0, 1], A-B- moved to x in [-1.5, -0.5]; A+ moved up to
-        /// y 0.5 and above.
+        /// X5's layout, each piece at a base placement of its own: A-B+ is the anchored one and stays at
+        /// x in [0, 1], A-B- stands at x in [-1.5, -0.5], and A+ stands at y 0.5 and above. Half a unit each, which is
+        /// enough to tell the two top caps apart on the screen while their whole squares still overlap.
         /// </summary>
         private Scene X5Scene(int colours)
         {
@@ -259,9 +256,12 @@ namespace Zantetsu.MeshCut.Tests
             VpStoredGeometry cube = AppendCube(scene.storage, false);
             Assert.That(scene.display.TryShow(root, cube, Matrix4x4.identity), Is.True);
             ExpectBodies(scene, (cube, Matrix4x4.identity));
-            scene.display.Separation = 0.5f;
-            var (_, _, aMinus) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
-            Cut(ledger, aMinus, new float4(1f, 0f, 0f, 0f));
+            var (_, aPlus, aMinus) = Cut(ledger, root, new float4(0f, 1f, 0f, 0f));
+            var (_, bPlus, bMinus) = Cut(ledger, aMinus, new float4(1f, 0f, 0f, 0f));
+            scene.display.Placement = Placing(
+                (aPlus, Matrix4x4.Translate(new Vector3(0f, 0.5f, 0f))),
+                (bPlus, Matrix4x4.identity),
+                (bMinus, Matrix4x4.Translate(new Vector3(-0.5f, 0f, 0f))));
             Collect(scene);
             return scene;
         }

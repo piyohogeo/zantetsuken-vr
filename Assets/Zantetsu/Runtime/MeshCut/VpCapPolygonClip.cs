@@ -13,8 +13,8 @@ namespace Zantetsu.MeshCut
     /// <para>
     /// **One frame for everything.** The polygon, and the plane given for each candidate, must be in one and the same
     /// frame, chosen by the caller. The plane a candidate carries is its source fragment's own and is NOT that frame;
-    /// the caller converts it (and accounts for any separation) and passes the converted plane alongside, index for
-    /// index. The product's conversion of frames and offsets is not connected here.
+    /// the caller converts it and passes the converted plane alongside, index for index. The product's conversion
+    /// of frames is not connected here.
     /// </para>
     /// <para>
     /// **Which planes cut.** Exactly those whose selection state is <see cref="VpClipSelectionState.Selected"/>, except

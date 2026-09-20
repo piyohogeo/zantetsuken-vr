@@ -30,7 +30,6 @@ namespace Zantetsu.MeshCut.Tests
         private const float HalfIpd = 0.03f;
 
         private const int BodyMaterial = 7;
-        private const float Separation = 0.25f;
 
         private readonly List<UnityEngine.Object> _objects = new List<UnityEngine.Object>();
 
@@ -456,7 +455,6 @@ namespace Zantetsu.MeshCut.Tests
                     () => 1, out VpLogicalCutDisplay display),
                 Is.True,
                 "create the display");
-            display.Separation = Separation;
 
             Assert.That(display.TryShow(source, geometry, objectToWorld), Is.True, "show the cube");
             Assert.That(ledger.Admit(source, k_plane, true, out CutOperationId cut), Is.EqualTo(LogicalCutAdmission.Admitted));
@@ -498,13 +496,12 @@ namespace Zantetsu.MeshCut.Tests
         }
 
         /// <summary>
-        /// The real caps at the identity, with the free side's separation in them. From between the two caps — above
-        /// the face at y = 1 but below the separated cap at 1.25 — both caps face the eyes and both stay, the fixed one
-        /// included; had the separation been left out, the positive cap would have been behind them. From above, the
-        /// downward cap goes and the upward one stays; from below, the other way round.
+        /// The real caps at the identity. Both close the same face at y = 1 and point opposite ways, so **no eye sees
+        /// both**: from anywhere above the face the upward cap stays and the downward one is turned away, and from
+        /// below it is the other way round. Each verdict is read from that cap's own outward normal and the eye.
         /// </summary>
         [Test]
-        public void RealCaps_AreJudgedFromTheirRecord_WithTheSeparationInIt()
+        public void RealCaps_AreJudgedFromTheirRecord()
         {
             using (VpCpuGeometryStorage storage = NewStorage())
             using (VpLogicalCutDisplay display = CutCubeAt(storage, Matrix4x4.identity))
@@ -515,15 +512,19 @@ namespace Zantetsu.MeshCut.Tests
                 // The layout the expectations below are read from.
                 Assert.That(display.TryGetCapRecord(positive, out LogicalCutCapRecord up), Is.True);
                 Assert.That(display.TryGetCapRecord(negative, out LogicalCutCapRecord down), Is.True);
-                AssertVector(up.offset, new Vector3(0f, Separation, 0f), "the free positive side is drawn apart along +y");
+                Assert.That(up.fixedByAnchors, Is.False, "the positive side inherited no anchor");
                 AssertVector(up.outwardNormal, Vector3.down, "and closes downwards");
                 Assert.That(down.fixedByAnchors, Is.True, "the negative side holds the anchor");
-                AssertVector(down.offset, Vector3.zero, "and stays at y = 1");
+                Assert.That(down.fixedByAnchors, Is.True, "and the negative side is the fixed one");
                 AssertVector(down.outwardNormal, Vector3.up, "closing upwards");
 
-                (VpCapEye, VpCapEye) between = CameraEyes(new Vector3(0f, 1.1f, -5f), Vector3.forward, Vector3.right);
-                Assert.That(Judge(display, positive, between).Keep, Is.True, "0.15 under the separated cap, which faces down");
-                Assert.That(Judge(display, negative, between).Keep, Is.True, "0.1 over the fixed cap, which faces up");
+                // Just over the face: the upward cap faces the eyes, the downward one is behind them. The two are in
+                // the same place, so there is no vantage that keeps both.
+                (VpCapEye, VpCapEye) justOver = CameraEyes(new Vector3(0f, 1.1f, -5f), Vector3.forward, Vector3.right);
+                Assert.That(Judge(display, negative, justOver).Keep, Is.True, "0.1 over the cap that faces up");
+                Assert.That(
+                    Judge(display, positive, justOver).backFacingInBothEyes, Is.True,
+                    "and the one that faces down is turned away from the same eyes");
 
                 (VpCapEye, VpCapEye) above = CameraEyes(new Vector3(0f, 3f, -5f), Vector3.forward, Vector3.right);
                 VpCapVisibilityVerdict positiveFromAbove = Judge(display, positive, above);
@@ -582,24 +583,25 @@ namespace Zantetsu.MeshCut.Tests
             using (VpCpuGeometryStorage storage = NewStorage())
             using (VpLogicalCutDisplay display = CutCubeAt(storage, Matrix4x4.identity))
             {
-                int positive = CapIndexOf(display, 1f);
+                // The eyes are over the face, so the cap that faces up is the one they can see.
+                int upward = CapIndexOf(display, -1f);
 
-                Assert.That(Judge(display, positive, ahead).Keep, Is.True, "looking at the cube");
+                Assert.That(Judge(display, upward, ahead).Keep, Is.True, "looking at the cube");
 
-                VpCapVisibilityVerdict away = Judge(display, positive, turned);
+                VpCapVisibilityVerdict away = Judge(display, upward, turned);
                 Assert.That(away.outsideBothFrustums, Is.True, "looking away from it, in both eyes");
                 Assert.That(away.backFacingInBothEyes, Is.False, "from the same place, so it still faces them");
                 Assert.That(away.Keep, Is.False);
 
-                Assert.That(Judge(display, positive, (turned.left, ahead.right)).Keep, Is.True, "one eye turned back keeps it");
-                Assert.That(Judge(display, positive, ahead).Keep, Is.True, "and both turned back give the first answer again");
+                Assert.That(Judge(display, upward, (turned.left, ahead.right)).Keep, Is.True, "one eye turned back keeps it");
+                Assert.That(Judge(display, upward, ahead).Keep, Is.True, "and both turned back give the first answer again");
             }
 
             // The same eyes, the cube placed 20 behind the first one: its caps are behind both eyes.
             using (VpCpuGeometryStorage storage = NewStorage())
             using (VpLogicalCutDisplay display = CutCubeAt(storage, Matrix4x4.Translate(new Vector3(0f, 0f, -20f))))
             {
-                VpCapVisibilityVerdict behind = Judge(display, CapIndexOf(display, 1f), ahead);
+                VpCapVisibilityVerdict behind = Judge(display, CapIndexOf(display, -1f), ahead);
                 Assert.That(behind.outsideBothFrustums, Is.True, "the cube moved behind the eyes is out of both views");
                 Assert.That(behind.Keep, Is.False);
             }
@@ -615,19 +617,19 @@ namespace Zantetsu.MeshCut.Tests
             using (VpCpuGeometryStorage storage = NewStorage())
             using (VpLogicalCutDisplay display = CutCubeAt(storage, Matrix4x4.identity))
             {
-                int positive = CapIndexOf(display, 1f);
+                int downward = CapIndexOf(display, 1f);
+                int upward = CapIndexOf(display, -1f);
 
                 VpCapEye above = CameraEye(new Vector3(0f, 3f, -5f), Vector3.forward);
-                Assert.That(VpCapVisibility.TryClassifyMono(display, positive, above, FacingEpsilon, out VpCapVisibilityVerdict gone), Is.True);
+                Assert.That(VpCapVisibility.TryClassifyMono(display, downward, above, FacingEpsilon, out VpCapVisibilityVerdict gone), Is.True);
                 Assert.That(gone.backFacingInBothEyes, Is.True, "one camera above the downward cap: turned away");
                 Assert.That(gone.Keep, Is.False);
 
-                VpCapEye between = CameraEye(new Vector3(0f, 1.1f, -5f), Vector3.forward);
-                Assert.That(VpCapVisibility.TryClassifyMono(display, positive, between, FacingEpsilon, out VpCapVisibilityVerdict kept), Is.True);
-                Assert.That(kept.Keep, Is.True, "one camera under it: facing it");
+                Assert.That(VpCapVisibility.TryClassifyMono(display, upward, above, FacingEpsilon, out VpCapVisibilityVerdict kept), Is.True);
+                Assert.That(kept.Keep, Is.True, "the same camera, the cap that faces it");
 
                 Assert.That(
-                    VpCapVisibility.TryClassifyMono(display, display.CapRecordCount, between, FacingEpsilon, out VpCapVisibilityVerdict none),
+                    VpCapVisibility.TryClassifyMono(display, display.CapRecordCount, above, FacingEpsilon, out VpCapVisibilityVerdict none),
                     Is.False,
                     "no such cap");
                 Assert.That(none.Keep, Is.True, "and the default verdict excludes nothing");
@@ -635,7 +637,7 @@ namespace Zantetsu.MeshCut.Tests
                 foreach (float bad in new[] { -0.01f, float.NaN, float.PositiveInfinity })
                 {
                     Assert.Throws<ArgumentOutOfRangeException>(
-                        () => VpCapVisibility.TryClassifyMono(display, positive, between, bad, out _), "epsilon " + bad);
+                        () => VpCapVisibility.TryClassifyMono(display, downward, above, bad, out _), "epsilon " + bad);
                 }
             }
 

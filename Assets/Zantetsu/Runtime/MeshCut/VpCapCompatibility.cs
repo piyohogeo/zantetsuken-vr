@@ -60,16 +60,16 @@ namespace Zantetsu.MeshCut
         public readonly float side;
 
         /// <summary>
-        /// The face's current world plane <c>(n.xyz, d)</c>, before any separation, n normalized. It is compared
+        /// The face's current world plane <c>(n.xyz, d)</c>, n normalized. It is compared
         /// component by component as given; the sign convention is the face's own and is never flipped here.
         /// </summary>
         public readonly Vector4 worldPlane;
     }
 
     /// <summary>
-    /// One drawn target to group: **every** cut condition it is under, in any order, and the one separation it is drawn
-    /// at. Every condition counts, including a face whose cap the visibility test left out — whether a cap is seen
-    /// is not part of what the stencil of this target has to share.
+    /// One drawn target to group: **every** cut condition it is under, in any order. Every condition counts,
+    /// including a face whose cap the visibility test left out — whether a cap is seen is not part of what the
+    /// stencil of this target has to share.
     /// <para>
     /// The conditions are read, never copied: made from a list, the target reads that list itself, so a change the
     /// caller makes to it afterwards is what the next judgement sees, as it always was; made from a
@@ -80,23 +80,18 @@ namespace Zantetsu.MeshCut
     public readonly struct VpCapCompatibilityTarget
     {
         /// <summary>A target that reads <paramref name="constraints"/> itself, not a copy; a null list stays null.</summary>
-        public VpCapCompatibilityTarget(IReadOnlyList<VpCapConstraint> constraints, Vector3 offset)
+        public VpCapCompatibilityTarget(IReadOnlyList<VpCapConstraint> constraints)
         {
             this.constraints = new VpReadOnlyItems<VpCapConstraint>(constraints);
-            this.offset = offset;
         }
 
         /// <summary>A target that reads its conditions from <paramref name="constraints"/>, copying nothing.</summary>
-        public VpCapCompatibilityTarget(VpArrayRange<VpCapConstraint> constraints, Vector3 offset)
+        public VpCapCompatibilityTarget(VpArrayRange<VpCapConstraint> constraints)
         {
             this.constraints = new VpReadOnlyItems<VpCapConstraint>(constraints);
-            this.offset = offset;
         }
 
         public readonly VpReadOnlyItems<VpCapConstraint> constraints;
-
-        /// <summary>The separation, in world space, the target is drawn at.</summary>
-        public readonly Vector3 offset;
     }
 
     /// <summary>
@@ -141,7 +136,6 @@ namespace Zantetsu.MeshCut
         public static int Classify(
             IReadOnlyList<VpCapCompatibilityTarget> targets,
             float planeEpsilon,
-            float offsetEpsilon,
             int[] groupOfTarget)
         {
             if (targets == null)
@@ -160,7 +154,6 @@ namespace Zantetsu.MeshCut
             }
 
             CheckEpsilon(planeEpsilon, nameof(planeEpsilon));
-            CheckEpsilon(offsetEpsilon, nameof(offsetEpsilon));
             for (int i = 0; i < targets.Count; i++)
             {
                 CheckShape(targets[i], i);
@@ -177,7 +170,7 @@ namespace Zantetsu.MeshCut
                     {
                         if (groupOfTarget[j] == g)
                         {
-                            withAll = AreCompatible(targets[i], targets[j], planeEpsilon, offsetEpsilon);
+                            withAll = AreCompatible(targets[i], targets[j], planeEpsilon);
                         }
                     }
 
@@ -206,15 +199,13 @@ namespace Zantetsu.MeshCut
         public static bool AreCompatible(
             in VpCapCompatibilityTarget a,
             in VpCapCompatibilityTarget b,
-            float planeEpsilon,
-            float offsetEpsilon)
+            float planeEpsilon)
         {
             CheckEpsilon(planeEpsilon, nameof(planeEpsilon));
-            CheckEpsilon(offsetEpsilon, nameof(offsetEpsilon));
             CheckShape(a, 0);
             CheckShape(b, 1);
 
-            if (a.constraints.Count != b.constraints.Count || !Near(a.offset, b.offset, offsetEpsilon))
+            if (a.constraints.Count != b.constraints.Count)
             {
                 return false;
             }

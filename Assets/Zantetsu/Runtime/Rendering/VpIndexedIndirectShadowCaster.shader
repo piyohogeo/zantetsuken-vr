@@ -3,7 +3,7 @@
 // SV_VertexID is the global vertex number from the hardware index buffer. A shadow map renders a single view and the
 // shadow arguments always hold logical instances. The normal bias and light directions match
 // "Zantetsu/VP Indirect Shadow Caster". It reads the same per-instance clip record as the forward shader, so a
-// provisionally clipped and separated fragment casts the shadow of what is actually drawn (DESIGN 5.1).
+// provisionally clipped fragment casts the shadow of what is actually drawn (DESIGN 5.1).
 //
 // _Cull is what DESIGN 5.4 calls a drawing state rather than a per-instance attribute. A material of this shader is
 // either the one-sided caster of ordinary bodies -- Cull Back, the default, and what every existing caller keeps -- or
@@ -60,12 +60,12 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
             StructuredBuffer<float4x4> _VpInstanceObjectToWorld;
 
             // The same per-instance clip record the forward pass reads (DESIGN 5.1, 5.2), so the shadow of a
-            // provisionally separated fragment is the shadow of what the colour pass actually draws: the same eight
-            // planes, the same count, the same offset.
+            // provisionally clipped fragment is the shadow of what the colour pass actually draws: the same eight
+            // planes and the same count.
             struct VpInstanceClip
             {
                 float4 planes[8];      // signed: the half kept is dot(n, x) + d >= 0, for each valid plane
-                float4 offsetAndCount; // xyz: world offset added after the transform; w: how many planes are valid
+                float planeCount; // how many of the eight planes are valid
             };
 
             StructuredBuffer<VpInstanceClip> _VpInstanceClip;
@@ -79,7 +79,7 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
 
             void VpClipDistances(VpInstanceClip clipState, float3 positionWS, out float4 first, out float4 second)
             {
-                uint count = (uint)clipState.offsetAndCount.w;
+                uint count = (uint)clipState.planeCount;
                 first = float4(
                     VpHalfSpace(clipState.planes[0], positionWS, 0, count),
                     VpHalfSpace(clipState.planes[1], positionWS, 1, count),
@@ -133,15 +133,14 @@ Shader "Zantetsu/VP Indexed Indirect Shadow Caster"
                 float4x4 objectToWorld = _VpInstanceObjectToWorld[logicalInstance];
                 float3 positionWS = mul(objectToWorld, float4(vertex.position, 1.0)).xyz;
 
-                // As in the forward pass: every plane is tested before the separation, and the separation is added
-                // after the object-to-world transform, once.
+                // As in the forward pass: every plane is tested on the world position the transform leaves, so
+                // the caster's silhouette matches what the forward pass keeps and draws.
                 VpInstanceClip clipState = _VpInstanceClip[logicalInstance];
                 float4 clipDistance0;
                 float4 clipDistance1;
                 VpClipDistances(clipState, positionWS, clipDistance0, clipDistance1);
                 output.clipDistance0 = clipDistance0;
                 output.clipDistance1 = clipDistance1;
-                positionWS += clipState.offsetAndCount.xyz;
 
                 float3 normalWS = normalize(mul((float3x3)objectToWorld, vertex.normal));
             #if _CASTING_PUNCTUAL_LIGHT_SHADOW

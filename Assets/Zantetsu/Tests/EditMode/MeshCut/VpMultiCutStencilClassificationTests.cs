@@ -243,7 +243,7 @@ namespace Zantetsu.MeshCut.Tests
             VpCapEye eye = Eye(Vector3.zero, new Vector3(0f, 0f, 1f));
             var a = Target(1, new Vector3(-1.5f, -1f, 5f), new Vector3(0.5f, 1f, 7f), Ring(new Vector3(-1.2f, 0f, 6f), 0.25f, 7));
             var b2 = Target(2, new Vector3(-0.5f, -1f, 5f), new Vector3(1.5f, 1f, 7f), Ring(new Vector3(1.2f, 0f, 6f), 0.25f, 8));
-            VpCapProjectionVerdict verdict = VpCapProjectionConflict.Judge(a, b2, eye, eye, Vector2.zero, 1e-4f, 1e-4f);
+            VpCapProjectionVerdict verdict = VpCapProjectionConflict.Judge(a, b2, eye, eye, Vector2.zero, 1e-4f);
             Assert.That(verdict.left, Is.EqualTo(VpCapProjectionOverlap.ApartByCaps), "caps of seven and eight vertices are read whole");
         }
 
@@ -254,7 +254,7 @@ namespace Zantetsu.MeshCut.Tests
             var box = new Bounds();
             box.SetMinMax(min, max);
             var conditions = new VpCapCompatibilityTarget(
-                new[] { new VpCapConstraint(new VpCapFace(k_scope, new CutOperationId(operation)), 1f, new Vector4(0f, 0f, 1f, -6f)) }, Vector3.zero);
+                new[] { new VpCapConstraint(new VpCapFace(k_scope, new CutOperationId(operation)), 1f, new Vector4(0f, 0f, 1f, -6f)) });
             return new VpCapProjectionTarget(conditions, box, Matrix4x4.identity, new[] { cap }, true);
         }
 
