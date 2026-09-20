@@ -264,6 +264,42 @@ namespace Zantetsu.PhysicsCut
             Body.angularVelocity = AngularVelocity;
         }
 
+        /// <summary>
+        /// Puts this side where the source is now and works out the motion it inherits from there, for the moment
+        /// just before it is published. The source may have moved since the build, and ordinary motion is not
+        /// staleness (DESIGN 8): the values recorded here come from the source as it is, never from what the build
+        /// happened to see. A fixed side takes neither.
+        /// <para>
+        /// The mass, the centre of mass and the inertia do not change: they are quantities of the numerical local
+        /// frame, and moving the owner does not touch them. What changes is where the owner stands and, on a free
+        /// side, its first velocity. <see cref="ApplyToBody"/> still has to be called once the owner is in the scene.
+        /// </para>
+        /// </summary>
+        internal void Reposition(
+            PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
+        {
+            Root.transform.SetPositionAndRotation(placement.position, placement.rotation);
+            if (FixedByAnchors)
+            {
+                LinearVelocity = float3.zero;
+                AngularVelocity = float3.zero;
+                return;
+            }
+
+            float3 centerWorld = placement.ToWorld(CenterOfMass);
+            float3 velocity = PhysicsOwnerBuilder.FirstSplitVelocity(in motion, centerWorld);
+            if (separationImpulse > 0f && Mass > 0.0)
+            {
+                // The separation impulse of a direct final split (DESIGN 7.2), added once, here: each free side away
+                // from the other along the adopted plane's normal. It is a change of the first velocity, not a force
+                // that is applied again on any later step.
+                velocity += planeNormalWorld * ((positive ? 1f : -1f) * (separationImpulse / (float)Mass));
+            }
+
+            LinearVelocity = velocity;
+            AngularVelocity = motion.angularVelocity;
+        }
+
         internal void Add(MeshCollider collider)
         {
             _colliders.Add(collider);
@@ -299,9 +335,35 @@ namespace Zantetsu.PhysicsCut
 
         public bool IsDisposed { get; private set; }
 
+        /// <summary>The two owners have been handed over and are not this one's to destroy any more.</summary>
+        public bool IsDetached { get; private set; }
+
         public PhysicsOwnerSide Side(bool positive)
         {
             return positive ? Positive : Negative;
+        }
+
+        /// <summary>
+        /// Gives the two owners up to whoever published them. This candidate stops naming them, so disposing it
+        /// afterwards destroys nothing. Everything else about them — their shapes, their meshes — is that owner's
+        /// concern from here.
+        /// </summary>
+        internal void Detach()
+        {
+            IsDetached = true;
+            Positive = null;
+            Negative = null;
+        }
+
+        /// <summary>
+        /// Puts both owners where the source is now and works out the motion they inherit. See
+        /// <see cref="PhysicsOwnerSide.Reposition"/>: this is the whole pair, and it changes no mass property.
+        /// </summary>
+        internal void Reposition(
+            PhysicsOwnerPlacement placement, in PhysicsOwnerMotion motion, float3 planeNormalWorld, float separationImpulse)
+        {
+            Positive.Reposition(placement, in motion, planeNormalWorld, separationImpulse);
+            Negative.Reposition(placement, in motion, planeNormalWorld, separationImpulse);
         }
 
         /// <summary>Destroys the two owners. The meshes they used are not this call's and are left as they were.</summary>
@@ -570,7 +632,7 @@ namespace Zantetsu.PhysicsCut
         /// inertia are replaced on that same actor. Nothing here is for that path.
         /// </para>
         /// </summary>
-        private static float3 FirstSplitVelocity(in PhysicsOwnerMotion motion, float3 centerOfMassWorld)
+        internal static float3 FirstSplitVelocity(in PhysicsOwnerMotion motion, float3 centerOfMassWorld)
         {
             float3 atAnchor = motion.linearVelocity
                               + math.cross(motion.angularVelocity, motion.renderAnchor - motion.centerOfMass);
@@ -684,7 +746,7 @@ namespace Zantetsu.PhysicsCut
             }
         }
 
-        private static void DestroyObject(GameObject go)
+        internal static void DestroyObject(GameObject go)
         {
             if (go == null)
             {

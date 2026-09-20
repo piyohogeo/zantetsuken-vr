@@ -494,22 +494,13 @@ namespace Zantetsu.MeshCut
             positive = default;
             negative = default;
 
-            LogicalCutResultOutcome check = CheckActive(id, out int operationIndex, out int sourceIndex);
+            LogicalCutResultOutcome check = CheckPublishable(id, out int operationIndex, out int sourceIndex);
             if (check != LogicalCutResultOutcome.Applied)
             {
                 return check;
             }
 
             Operation operation = _operations[operationIndex];
-            if (!operation.anchorsPrepared)
-            {
-                // Never read an unprepared distribution as "no anchors": nothing is published and nothing changes.
-                return LogicalCutResultOutcome.AnchorsNotPrepared;
-            }
-
-            // Preparation: the only things that can fail — two more ids being representable, and the list having room
-            // for two more — are settled here, before the first change. If this throws, nothing has moved.
-            ReserveFragments(2);
 
             // Publication: the children take the prepared sets as they are, with nothing reclassified or copied again.
             positive = NewFragment(operation.preparedPositive);
@@ -536,6 +527,22 @@ namespace Zantetsu.MeshCut
             _fragments[sourceIndex] = source;
 
             return LogicalCutResultOutcome.Applied;
+        }
+
+        /// <summary>
+        /// The ordinary judgement of a publication, and the room its two children will need, without publishing
+        /// anything: the same checks <see cref="Publish"/> makes, made here so that a caller can find out before it
+        /// changes anything of its own. The judgement itself stays in this ledger and is not for a caller to repeat.
+        /// <para>
+        /// Applied means those reasons will not refuse the publication that follows in the same main-thread update,
+        /// nothing having happened in between. It is not a promise about anything outside this ledger, and
+        /// <see cref="Publish"/> remains the one that decides. A stale operation is reclaimed here exactly as it would
+        /// be there — once, without touching the source.
+        /// </para>
+        /// </summary>
+        public LogicalCutResultOutcome PreparePublication(CutOperationId id)
+        {
+            return CheckPublishable(id, out _, out _);
         }
 
         /// <summary>
@@ -640,6 +647,27 @@ namespace Zantetsu.MeshCut
         // The authority check every result goes through (DESIGN 8: Source生存性、SourceのActive CutOperationId、当該
         // Transactionが持つ…authorityで照合). Not active at all: refused with nothing changed. Active but the source's
         // authority moved: reclaimed as stale here, once, without touching the source.
+        // Everything a publication needs before it changes anything: the authority check every result goes through,
+        // the prepared distribution, and the room for two more fragments. Shared by the preparation and the
+        // publication so that the two cannot drift apart. If the reservation throws, nothing has moved.
+        private LogicalCutResultOutcome CheckPublishable(CutOperationId id, out int operationIndex, out int sourceIndex)
+        {
+            LogicalCutResultOutcome check = CheckActive(id, out operationIndex, out sourceIndex);
+            if (check != LogicalCutResultOutcome.Applied)
+            {
+                return check;
+            }
+
+            if (!_operations[operationIndex].anchorsPrepared)
+            {
+                // Never read an unprepared distribution as "no anchors": nothing is published and nothing changes.
+                return LogicalCutResultOutcome.AnchorsNotPrepared;
+            }
+
+            ReserveFragments(2);
+            return LogicalCutResultOutcome.Applied;
+        }
+
         private LogicalCutResultOutcome CheckActive(CutOperationId id, out int operationIndex, out int sourceIndex)
         {
             sourceIndex = -1;
