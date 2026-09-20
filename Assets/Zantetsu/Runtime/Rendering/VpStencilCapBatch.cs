@@ -392,6 +392,19 @@ namespace Zantetsu.Rendering
                 colors, colorCount, false);
         }
 
+        /// <summary>
+        /// The colour to hand the cap material so that the shader reads the colour the caller named. A material's Color
+        /// property is converted from gamma to linear when the project renders in linear space, while the cut surface
+        /// colour of DESIGN 5.3 reaches the body's shader as a global constant, unconverted. Undoing the conversion here
+        /// is what lets one named colour shade a temporary cut face and a real one alike. In gamma space nothing is
+        /// converted either way, and 0 and 1 are the same under both, so a caller naming black, white or a pure channel
+        /// sees no difference.
+        /// </summary>
+        private static Color AsShaderColour(Color colour)
+        {
+            return QualitySettings.activeColorSpace == ColorSpace.Linear ? colour.gamma : colour;
+        }
+
         private bool Can(
             VpIndirectCommand[] commands,
             int commandCount,
@@ -571,7 +584,7 @@ namespace Zantetsu.Rendering
                     if (color.HasCaps)
                     {
                         Material capMaterial = materials.Cap(c);
-                        capMaterial.SetColor(BaseColorId, color.capColour);
+                        capMaterial.SetColor(BaseColorId, AsShaderColour(color.capColour));
                         _capProperties.SetBuffer(CapVerticesId, _capVertexBuffer);
                         var capParams = new RenderParams(capMaterial)
                         {

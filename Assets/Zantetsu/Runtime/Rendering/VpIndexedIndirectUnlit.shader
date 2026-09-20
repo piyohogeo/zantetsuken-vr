@@ -51,6 +51,7 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
             #define UNITY_INDIRECT_DRAW_ARGS IndirectDrawIndexedArgs
             #include "UnityIndirect.cginc"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+            #include "VpCutSurfaceShading.hlsl"
 
             // Matches Zantetsu.Rendering.VpRenderVertex: 32 bytes.
             struct VpRenderVertex
@@ -218,9 +219,6 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
 
             half4 Fragment(Varyings input) : SV_Target
             {
-                half facing = saturate(dot(normalize(input.normalWS), normalize(float3(0.3, 0.8, -0.5))));
-                half shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(input.positionWS));
-
                 // DESIGN 5.3: the marker is the raw uv0, read before the material's UV transform and before any
                 // sampling. A cap takes the cut surface colour and neither the texture nor the material's own colour;
                 // everything else is unchanged. The chosen colour then goes through the same shading as before.
@@ -234,7 +232,9 @@ Shader "Zantetsu/VP Indexed Indirect Unlit"
                     base = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
                 }
 
-                return half4(base * (0.5 + 0.5 * facing * shadow), 1.0);
+                // The shading itself is VpShadeSurface (VpCutSurfaceShading.hlsl), which the stencil cap pass calls
+                // too, so a temporary cut face and a real one are shaded by the same code with the same light.
+                return half4(VpShadeSurface(base, input.normalWS, input.positionWS), 1.0);
             }
             ENDHLSL
         }
