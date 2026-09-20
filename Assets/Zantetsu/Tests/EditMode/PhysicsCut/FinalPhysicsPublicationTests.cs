@@ -172,7 +172,8 @@ namespace Zantetsu.PhysicsCut.Tests
         /// first cut starts from.
         /// </summary>
         private static World NewWorld(
-            float3[] anchors, PhysicsOwnerPlacement placement, Matrix4x4? geometryLocalToOwner = null)
+            float3[] anchors, PhysicsOwnerPlacement placement, Matrix4x4? geometryLocalToOwner = null,
+            int incompleteBudget = 4)
         {
             var w = new World
             {
@@ -180,7 +181,7 @@ namespace Zantetsu.PhysicsCut.Tests
                 geometry = WorkerPoolExecutor.GeometryPool(2),
                 background = WorkerPoolExecutor.BackgroundPool(2),
                 registry = new PhysicsOwnerRegistry(),
-                ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(4)),
+                ledger = new LogicalCutLedger(new LogicalCutIncompleteBudget(incompleteBudget)),
                 harness = MixedCompound(),
             };
             w.dispatcher = new SharedWorkDispatcher(8, 2, 32, w.job, w.geometry, w.background);
@@ -1690,6 +1691,161 @@ namespace Zantetsu.PhysicsCut.Tests
                     Expected(new Vector3(9f, -9f, 3f), Quaternion.AngleAxis(120f, Vector3.forward)),
                     Of(next, positive).geometryLocalToWorld,
                     "and the next collection is where it appears");
+            }
+        }
+
+        // ----- an aggregate drawn past the clip capacity ---------------------------------------------------------------
+
+        /// <summary>
+        /// Publishes one more cut of <paramref name="fragment"/> for real: the convexes are cut and cooked, the two
+        /// owners are built from where that owner is now, and the publication switches the correspondence. The
+        /// positive child comes back.
+        /// </summary>
+        private static LogicalFragmentId PublishOneMore(
+            World w, LogicalFragmentId fragment, float3 normal, float offset, out LogicalFragmentId other)
+        {
+            Assert.That(w.registry.TryGet(fragment, out PhysicsFragmentOwner owner), Is.True, "it has an owner to cut");
+            var plane = new float4(normal, -offset);
+            Assert.That(
+                w.ledger.Admit(fragment, plane, true, out CutOperationId operation),
+                Is.EqualTo(LogicalCutAdmission.Admitted), "the cut is admitted");
+            Assert.That(
+                w.ledger.PrepareAnchorDistribution(operation, w.harness.eps, out AnchorDistributionResult anchors),
+                Is.EqualTo(AnchorPreparationOutcome.Prepared), "its anchors are distributed");
+
+            LogicalFragmentId positive;
+            using (var next = new SecondCutInput(owner, normal, -offset, w.harness.eps))
+            {
+                PhysicsOwnerShape cutFrom = owner.Shape;
+                PhysicsCutRequest request = w.cook.Submit(in next.input, float4x4.identity);
+                w.RunUntil(() => request.IsOver, "the cut and cook end");
+                Assert.That(request.Outcome, Is.EqualTo(PhysicsCutOutcomeKind.Ok), "the convex cut produced sides");
+
+                var buildInput = new PhysicsOwnerBuildInput
+                {
+                    products = request.Products,
+                    placement = owner.ReadPlacement(),
+                    sourceMotion = owner.ReadMotion(float3.zero),
+                    anchors = anchors,
+                    parentMass = owner.Mass,
+                    inheritedMeshes = owner.Shape.Meshes,
+                    name = "Deep",
+                };
+                Assert.That(
+                    PhysicsOwnerBuilder.TryBuild(in buildInput, out PhysicsOwnerCandidate candidate, out PhysicsOwnerBuildOutcome built),
+                    Is.True,
+                    "the two owners were built: " + built);
+                Assert.That(
+                    Publish(w, operation, candidate, request.Products, out positive, out other, out LogicalCutResultOutcome _, float3.zero, 0f, cutFrom, fragment),
+                    Is.EqualTo(PhysicsPublicationOutcome.Published),
+                    "the publication went through");
+            }
+
+            return positive;
+        }
+
+        /// <summary>
+        /// Nine boundaries published for real on one chain. The ninth is past the clip capacity, so what is behind it
+        /// is drawn once, and the fragment that cut is aggregated at has been replaced by that very publication and
+        /// has no owner left. The display collects all the same -- this is the route that used to stop it for good --
+        /// and the one shape it draws stands where the first living branch of the aggregate stands and follows it.
+        /// </summary>
+        [Test]
+        public void AnAggregateWhoseRootWasPublishedAway_IsCollectedAndFollowsItsFirstBranch()
+        {
+            // Nothing commits any geometry here, so every one of these cuts holds its budget unit at once.
+            using (World w = NewWorld(
+                Array.Empty<float3>(), PhysicsOwnerPlacement.Identity, k_geometryLocalToOwner,
+                VpClipCandidates.Capacity + 4))
+            using (DisplayScene scene = NewDisplayScene(w))
+            {
+                var lookup = new PhysicsOwnerPlacementLookup(w.registry);
+                scene.display.Placement = lookup;
+                Assert.That(
+                    scene.display.TryShow(
+                        w.source, scene.geometry, Expected(Vector3.zero, Quaternion.identity),
+                        k_lineageToGeometryLocal, Array.Empty<VpClipBoundary>()),
+                    Is.True,
+                    "the source is shown");
+
+                // Down the positive side, one more cut than the clip capacity: the last one cannot be selected and
+                // is what the aggregate forms behind. Every plane is along the prisms' own axis, so each piece stays
+                // a prism of the same few faces however many times it is cut, and both sides always have material:
+                // the compound has a box above all of these planes and one below the first.
+                var up = new float3(0f, 1f, 0f);
+                var offsets = new[] { 0f, 0.2f, 0.4f, 0.6f, 0.7f, 0.8f, 0.85f, 0.9f, 0.95f };
+                Assert.That(
+                    offsets.Length, Is.EqualTo(VpClipCandidates.Capacity + 1), "one more than can be selected");
+                LogicalFragmentId at = w.source;
+                LogicalFragmentId lastSource = default;
+                LogicalFragmentId first = default;
+                LogicalFragmentId second = default;
+                for (int i = 0; i < offsets.Length; i++)
+                {
+                    lastSource = at;
+                    at = PublishOneMore(w, at, up, offsets[i], out LogicalFragmentId other);
+                    first = at;
+                    second = other;
+                }
+
+                // The ninth cut's source is the one the aggregate is rooted at, and the publication ended its owner.
+                Assert.That(
+                    w.ledger.TryGetFragmentState(lastSource, out LogicalFragmentState state)
+                    && state == LogicalFragmentState.Replaced,
+                    Is.True,
+                    "the aggregation root has been replaced");
+                Assert.That(
+                    w.registry.TryGet(lastSource, out PhysicsFragmentOwner _), Is.False, "and has no owner left");
+                Assert.That(
+                    lookup.TryGetGeometryLocalToWorld(lastSource, out Matrix4x4 _),
+                    Is.EqualTo(VpFragmentPlacementKind.Missing),
+                    "so nothing can say where it stands");
+
+                // The collection that used to stop the display for good.
+                scene.Collect();
+                Assert.That(scene.display.IsHalted, Is.False, "the display is still running");
+
+                VpMultiCutRenderFragment aggregate = default;
+                int aggregates = 0;
+                for (int r = 0; r < scene.display.RenderFragmentCount; r++)
+                {
+                    Assert.That(scene.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                    if (rf.aggregated)
+                    {
+                        aggregate = rf;
+                        aggregates++;
+                    }
+                }
+
+                Assert.That(aggregates, Is.EqualTo(1), "one shape is drawn for what is behind the ignored boundary");
+                Assert.That(aggregate.root, Is.EqualTo(lastSource), "rooted at the replaced fragment");
+                Assert.That(
+                    w.registry.TryGet(first, out PhysicsFragmentOwner firstOwner), Is.True,
+                    "its first living branch has an owner");
+                Assert.That(w.registry.TryGet(second, out PhysicsFragmentOwner _), Is.True, "and so has the other");
+
+                Vector3 drawnBefore = aggregate.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero);
+
+                // It follows that branch: moving its owner moves the one shape by the same rigid motion.
+                Matrix4x4 was = firstOwner.Root.transform.localToWorldMatrix;
+                Move(firstOwner, new Vector3(6f, -2f, 1f), 70f);
+                Matrix4x4 now = firstOwner.Root.transform.localToWorldMatrix;
+                scene.Collect();
+
+                VpMultiCutRenderFragment moved = default;
+                for (int r = 0; r < scene.display.RenderFragmentCount; r++)
+                {
+                    Assert.That(scene.display.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                    if (rf.aggregated)
+                    {
+                        moved = rf;
+                    }
+                }
+
+                Same(
+                    (now * was.inverse).MultiplyPoint3x4(drawnBefore),
+                    moved.geometryLocalToWorld.MultiplyPoint3x4(Vector3.zero),
+                    "the aggregate moved exactly as its first branch's owner did");
             }
         }
 

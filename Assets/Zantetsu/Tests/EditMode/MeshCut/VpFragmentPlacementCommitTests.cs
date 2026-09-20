@@ -673,5 +673,239 @@ namespace Zantetsu.MeshCut.Tests
                 Dispose(scene);
             }
         }
+        // ----- an ignored aggregate across a real commit ----------------------------------------------------------------
+
+        private static readonly Vector3[] k_aggregatePoints =
+        {
+            Vector3.zero, new Vector3(1f, 1f, 1f), new Vector3(-1f, 0.5f, -0.25f),
+        };
+
+        /// <summary>
+        /// What a commit of the first boundary of <see cref="Chain"/> folds into the geometry's own frame, worked out
+        /// from this test's input: that boundary's plane is y = 0 of the lineage frame, everything here descends from
+        /// its positive side, and the placement the registration is committed at has no rotation in it, so the share
+        /// it takes in is the separation along +y of the geometry's own frame.
+        /// </summary>
+        private static Matrix4x4 FirstBoundaryFold => Matrix4x4.Translate(new Vector3(0f, Separation, 0f));
+
+        private static LogicalFragmentId RootOf(Scene scene, LogicalFragmentId fragment)
+        {
+            for (int r = 0; r < scene.display.RenderFragmentCount; r++)
+            {
+                VpMultiCutRenderFragment rf = RenderFragmentAt(scene, r);
+                if (rf.root == fragment)
+                {
+                    return rf.root;
+                }
+            }
+
+            Assert.Fail("nothing is drawn for that fragment");
+            return default;
+        }
+
+        /// <summary>Two placements are the same when they put the same points in the same places.</summary>
+        private static void SamePlacement(Matrix4x4 expected, Matrix4x4 actual, string what)
+        {
+            foreach (Vector3 local in k_aggregatePoints)
+            {
+                Same(expected.MultiplyPoint3x4(local), actual.MultiplyPoint3x4(local), what);
+            }
+        }
+
+        /// <summary>A chain of cuts down the positive side, each published.</summary>
+        private static LogicalFragmentId Chain(
+            Scene scene, LogicalFragmentId root, int cuts, List<CutOperationId> operations, List<float4> planes)
+        {
+            LogicalFragmentId at = root;
+            for (int i = 0; i < cuts; i++)
+            {
+                var plane = new float4(0f, 1f, 0f, -0.05f * i);
+                var (cut, positive, _) = Cut(scene, at, plane);
+                operations.Add(cut);
+                planes.Add(plane);
+                at = positive;
+            }
+
+            return at;
+        }
+
+        private static VpMultiCutRenderFragment RenderFragmentAt(Scene scene, int index)
+        {
+            Assert.That(scene.display.TryGetRenderFragment(index, out VpMultiCutRenderFragment rf), Is.True);
+            return rf;
+        }
+
+        /// <summary>Every aggregate the display is drawing now, in the order it drew them.</summary>
+        private static List<VpMultiCutRenderFragment> Aggregates(Scene scene)
+        {
+            var found = new List<VpMultiCutRenderFragment>();
+            for (int r = 0; r < scene.display.RenderFragmentCount; r++)
+            {
+                VpMultiCutRenderFragment rf = RenderFragmentAt(scene, r);
+                if (rf.aggregated)
+                {
+                    found.Add(rf);
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// A commit that leaves an ignored boundary behind. Eight boundaries fill the capacity, a ninth is ignored and
+        /// its branches are drawn once, and two of those branches are cut again on opposite sides of it. Committing
+        /// the first boundary through the display's own commit advances what is selected: the one aggregate becomes
+        /// two, each rooted at its own side of the ignored cut and each standing where its own first living branch
+        /// stands, and the branch that no longer has anything ignored goes back to its own placement.
+        /// </summary>
+        [Test]
+        public void ACommitThatLeavesAnIgnoredBoundary_SplitsTheAggregateAndKeepsEachOneFollowing()
+        {
+            Scene scene = NewScene();
+            try
+            {
+                LogicalCutLedger ledger = scene.ledger;
+                LogicalFragmentId root = ledger.AddFragment();
+                Assert.That(
+                    scene.display.TryShow(
+                        root, scene.geometry, k_geometryLocalToOwner, k_lineageToGeometryLocal,
+                        System.Array.Empty<VpClipBoundary>()),
+                    Is.True);
+                scene.placements.of[root] = k_geometryLocalToOwner;
+
+                var operations = new List<CutOperationId>();
+                var planes = new List<float4>();
+                LogicalFragmentId last = Chain(scene, root, VpClipCandidates.Capacity, operations, planes);
+
+                // The ninth: past the capacity, so it is ignored and its two sides are drawn as one shape.
+                var (_, above, below) = Cut(scene, last, new float4(1f, 0f, 0f, 0f));
+
+                // Both sides of it are cut again, so both stay aggregated after one boundary is committed.
+                var (_, aboveDeep, aboveDeepOther) = Cut(scene, above, new float4(0f, 0f, 1f, 0f));
+                var (_, belowDeep, belowDeepOther) = Cut(scene, below, new float4(0f, 0f, 1f, 0.1f));
+
+                Matrix4x4 mAbove = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+                Matrix4x4 mBelow = Owner(new Vector3(-3f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+                scene.placements.of[aboveDeep] = mAbove;
+                scene.placements.of[aboveDeepOther] = mAbove;
+                scene.placements.of[belowDeep] = mBelow;
+                scene.placements.of[belowDeepOther] = mBelow;
+
+                Collect(scene);
+                List<VpMultiCutRenderFragment> before = Aggregates(scene);
+                Assert.That(before.Count, Is.EqualTo(1), "one shape is drawn for everything behind the ignored cut");
+                Assert.That(before[0].root, Is.EqualTo(last), "rooted at the source of the ignored cut");
+                SamePlacement(mAbove, before[0].geometryLocalToWorld, "standing where its first living branch does");
+
+                // The first boundary's geometry is committed through the display's own entry. The positive side
+                // borrows the geometry it already had, which is the side everything here descends from.
+                Assert.That(
+                    ledger.TryGetOperation(operations[0], out LogicalCutOperation firstCut), Is.True);
+                Assert.That(
+                    CommitBorrowingPositive(scene, root, operations[0], planes[0], firstCut.positive, firstCut.negative),
+                    Is.True,
+                    "the first boundary is committed");
+                Collect(scene);
+
+                // One boundary left the candidates, so the selected window moved on by one. The ninth boundary is
+                // selected now, and what is ignored is the tenth -- a different root on each side of the ninth.
+                List<VpMultiCutRenderFragment> after = Aggregates(scene);
+                Assert.That(after.Count, Is.EqualTo(2), "the one aggregate became two");
+                Assert.That(
+                    after.Exists(rf => rf.root.Equals(above)) && after.Exists(rf => rf.root.Equals(below)), Is.True,
+                    "one rooted at each side of the boundary that is no longer ignored");
+
+                VpMultiCutRenderFragment aboveGroup = after.Find(rf => rf.root.Equals(above));
+                VpMultiCutRenderFragment belowGroup = after.Find(rf => rf.root.Equals(below));
+                SamePlacement(
+                    mAbove * FirstBoundaryFold, aboveGroup.geometryLocalToWorld,
+                    "each stands where its own first branch does, with the committed boundary's share folded in");
+                SamePlacement(
+                    mBelow * FirstBoundaryFold, belowGroup.geometryLocalToWorld,
+                    "including the side that was not first before");
+
+                // Each follows its own first branch from here.
+                Matrix4x4 movedBelow = Owner(new Vector3(-6f, 4f, 1f), 200f) * k_geometryLocalToOwner;
+                scene.placements.of[belowDeep] = movedBelow;
+                scene.placements.of[belowDeepOther] = movedBelow;
+                Collect(scene);
+                after = Aggregates(scene);
+                SamePlacement(
+                    movedBelow * FirstBoundaryFold, after.Find(rf => rf.root.Equals(below)).geometryLocalToWorld,
+                    "the second aggregate follows its own branch");
+                SamePlacement(
+                    mAbove * FirstBoundaryFold, after.Find(rf => rf.root.Equals(above)).geometryLocalToWorld,
+                    "and the first one did not move with it");
+            }
+            finally
+            {
+                Dispose(scene);
+            }
+        }
+
+        /// <summary>
+        /// Enough boundaries are committed that nothing is ignored any more. The aggregate is gone and each living
+        /// branch is drawn at its own placement. What moves at that moment -- the shape and where its parts stand --
+        /// is the accepted change of D-187 and is not a failure here.
+        /// </summary>
+        [Test]
+        public void WhenNothingIsIgnoredAnyMore_EachBranchIsDrawnAtItsOwnPlacement()
+        {
+            Scene scene = NewScene();
+            try
+            {
+                LogicalCutLedger ledger = scene.ledger;
+                LogicalFragmentId root = ledger.AddFragment();
+                Assert.That(
+                    scene.display.TryShow(
+                        root, scene.geometry, k_geometryLocalToOwner, k_lineageToGeometryLocal,
+                        System.Array.Empty<VpClipBoundary>()),
+                    Is.True);
+                scene.placements.of[root] = k_geometryLocalToOwner;
+
+                var operations = new List<CutOperationId>();
+                var planes = new List<float4>();
+                LogicalFragmentId last = Chain(scene, root, VpClipCandidates.Capacity, operations, planes);
+                var (_, above, below) = Cut(scene, last, new float4(1f, 0f, 0f, 0f));
+
+                Matrix4x4 mAbove = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+                Matrix4x4 mBelow = Owner(new Vector3(-3f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+                scene.placements.of[above] = mAbove;
+                scene.placements.of[below] = mBelow;
+
+                Collect(scene);
+                Assert.That(Aggregates(scene).Count, Is.EqualTo(1), "one shape while the ninth boundary is ignored");
+
+                // One boundary committed is enough: nine candidates become eight.
+                Assert.That(ledger.TryGetOperation(operations[0], out LogicalCutOperation firstCut), Is.True);
+                Assert.That(
+                    CommitBorrowingPositive(scene, root, operations[0], planes[0], firstCut.positive, firstCut.negative),
+                    Is.True,
+                    "the first boundary is committed");
+                Collect(scene);
+
+                Assert.That(Aggregates(scene).Count, Is.Zero, "nothing is drawn once for several branches any more");
+                // Each side's own placement with the committed boundary's share folded in. The separation still
+                // being summed for the boundaries that are temporary is the collection's own and is not what this
+                // case is about, so it is taken as it stands.
+                foreach (Vector3 local in k_aggregatePoints)
+                {
+                    Same(
+                        (mAbove * FirstBoundaryFold).MultiplyPoint3x4(local) + Offset(scene, above),
+                        Drawn(scene, above, local), "the one side is drawn at its own placement");
+                    Same(
+                        (mBelow * FirstBoundaryFold).MultiplyPoint3x4(local) + Offset(scene, below),
+                        Drawn(scene, below, local), "and the other at its own");
+                }
+
+                Assert.That(RootOf(scene, above), Is.EqualTo(above), "drawn as its own branch, not as an aggregate");
+                Assert.That(RootOf(scene, below), Is.EqualTo(below), "and so is the other");
+            }
+            finally
+            {
+                Dispose(scene);
+            }
+        }
+
     }
 }

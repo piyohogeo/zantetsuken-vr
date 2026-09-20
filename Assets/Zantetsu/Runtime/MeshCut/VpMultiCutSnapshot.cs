@@ -1604,7 +1604,17 @@ namespace Zantetsu.MeshCut
                 // Where this one stands. A fragment that follows a placement of its own is drawn there, with what
                 // earlier commits folded into this geometry's frame carried along; one that does not is drawn at the
                 // registration's placement, which is the ordinary answer and not a fallback for a failure.
-                if (!TryPlacementOf(placement, registration, root, out Matrix4x4 geometryLocalToWorld))
+                // <para>
+                // An aggregate is asked about its **first living branch in this walk**, not about its root
+                // (DESIGN 5.2, D-187). The root of an aggregate is the source of the first Ignored boundary, and
+                // once that boundary is published the source has been replaced and stands nowhere of its own. The
+                // shape drawn is still the root's, and the root is still what groups these branches and what the
+                // caps and the selected boundaries are made from: only where that one shape is put comes from this
+                // branch. This branch is the group's first because a group's branches are contiguous in the walk and
+                // this is the one that makes the render fragment; the ones that join it later do not ask again.
+                // </para>
+                LogicalFragmentId standsWhere = aggregated ? branch.fragment : root;
+                if (!TryPlacementOf(placement, registration, standsWhere, out Matrix4x4 geometryLocalToWorld))
                 {
                     return Invalid(VpMultiCutInvalidInput.InputContract);
                 }

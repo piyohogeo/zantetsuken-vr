@@ -348,6 +348,235 @@ namespace Zantetsu.MeshCut.Tests
             Assert.That(bMinus.IsSet && aMinus.IsSet, Is.True);
         }
 
+        // ----- an aggregate drawn for an ignored boundary ---------------------------------------------------------------
+
+        /// <summary>
+        /// A chain of cuts down the positive side: the first on <paramref name="root"/>, the next on its positive
+        /// child, and so on. The planes differ so that the separations do not all lie on top of one another; what
+        /// matters here is how many boundaries a branch ends up with.
+        /// </summary>
+        private static LogicalFragmentId Chain(
+            LogicalCutLedger ledger, LogicalFragmentId root, int cuts, List<LogicalFragmentId> negatives = null)
+        {
+            LogicalFragmentId at = root;
+            for (int i = 0; i < cuts; i++)
+            {
+                var (_, positive, negative) = Cut(ledger, at, new float4(0f, 1f, 0f, -0.05f * i));
+                negatives?.Add(negative);
+                at = positive;
+            }
+
+            return at;
+        }
+
+        /// <summary>The one render fragment that is drawn for several branches at once.</summary>
+        private static VpMultiCutRenderFragment Aggregate(VpMultiCutSnapshot snapshot)
+        {
+            var found = new List<VpMultiCutRenderFragment>();
+            for (int r = 0; r < snapshot.RenderFragmentCount; r++)
+            {
+                Assert.That(snapshot.TryGetRenderFragment(r, out VpMultiCutRenderFragment rf), Is.True);
+                if (rf.aggregated)
+                {
+                    found.Add(rf);
+                }
+            }
+
+            Assert.That(found.Count, Is.EqualTo(1), "exactly one aggregate is drawn");
+            return found[0];
+        }
+
+        /// <summary>
+        /// Nine published boundaries on one branch: the ninth is past the capacity, so it is Ignored and the branches
+        /// behind it are drawn once. The aggregate stands where its first living branch stands -- its root has been
+        /// replaced by that ninth cut and stands nowhere -- and moving the branch that is not first moves nothing.
+        /// </summary>
+        [Test]
+        public void AnAggregate_StandsWhereItsFirstLivingBranchDoes()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId last = Chain(ledger, root, VpClipCandidates.Capacity);
+            var (ignored, first, second) = Cut(ledger, last, new float4(1f, 0f, 0f, 0f));
+
+            Matrix4x4 mFirst = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+            Matrix4x4 mSecond = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+            var placements = new Placements();
+            placements.of[first] = mFirst;
+            placements.of[second] = mSecond;
+
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+
+            VpMultiCutRenderFragment rf = Aggregate(snapshot);
+            Assert.That(rf.root, Is.EqualTo(last), "the aggregate is still rooted at the source of the ignored cut");
+            Assert.That(
+                ledger.TryGetFragmentState(last, out LogicalFragmentState state) && state == LogicalFragmentState.Replaced,
+                Is.True,
+                "which that cut replaced");
+            Assert.That(placements.asked.Contains(last), Is.False, "and nothing asked where the replaced root stands");
+            Same(mFirst, rf.geometryLocalToWorld, "the aggregate stands where its first living branch does");
+            Assert.That(placements.asked.Contains(first), Is.True, "which is the branch that was asked about");
+
+            // The branch that is not the first moves: nothing of the aggregate moves with it.
+            placements.of[second] = Owner(new Vector3(7f, -4f, 2f), 45f) * k_geometryLocalToOwner;
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Same(mFirst, Aggregate(snapshot).geometryLocalToWorld, "the aggregate did not move with it");
+
+            // The first branch moves and turns: the aggregate goes with it.
+            Matrix4x4 moved = Owner(new Vector3(-5f, 2f, 1f), 120f) * k_geometryLocalToOwner;
+            placements.of[first] = moved;
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Same(moved, Aggregate(snapshot).geometryLocalToWorld, "and follows the one it does stand at");
+            Assert.That(ignored.IsSet, Is.True);
+        }
+
+        /// <summary>
+        /// The aggregate is the shape before the ignored boundary cut it: at the same placement, its clip, its
+        /// separation and its caps are what that shape would be drawn with on its own, and the ignored boundary adds
+        /// none of them.
+        /// </summary>
+        [Test]
+        public void AnAggregate_IsDrawnAsTheShapeBeforeTheIgnoredBoundary()
+        {
+            Matrix4x4 stands = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+
+            // The control: the same chain, with nothing ignored, drawn at the same placement.
+            LogicalCutLedger control = NewLedger();
+            LogicalFragmentId controlRoot = control.AddFragment();
+            LogicalFragmentId controlLeaf = Chain(control, controlRoot, VpClipCandidates.Capacity);
+            var controlPlacements = new Placements();
+            controlPlacements.of[controlLeaf] = stands;
+            var controlRegistrations = new List<VpMultiCutRegistration> { Registration(controlRoot, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot controlSnapshot = NewSnapshot();
+            Assert.That(
+                controlSnapshot.TryBuild(control, controlRegistrations, Separation, controlPlacements),
+                Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            VpMultiCutRenderFragment expected = Of(controlSnapshot, controlLeaf);
+            Assert.That(expected.aggregated, Is.False, "nothing is ignored in the control");
+
+            // The same chain with one more cut, which is past the capacity.
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId last = Chain(ledger, root, VpClipCandidates.Capacity);
+            var (_, first, second) = Cut(ledger, last, new float4(1f, 0f, 0f, 0f));
+            var placements = new Placements();
+            placements.of[first] = stands;
+            placements.of[second] = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+
+            VpMultiCutRenderFragment rf = Aggregate(snapshot);
+            Same(expected.geometryLocalToWorld, rf.geometryLocalToWorld, "the same placement");
+            Assert.That(
+                rf.clip.PlaneCount, Is.EqualTo(expected.clip.PlaneCount),
+                "clipped by the selected boundaries only, and the ignored one adds no plane");
+            Assert.That(rf.clip.PlaneCount, Is.EqualTo(VpClipCandidates.Capacity), "which is the full capacity here");
+            Same(expected.offset, rf.offset, "the same separation: the ignored boundary adds none");
+            Assert.That(rf.capCount, Is.EqualTo(expected.capCount), "and the same caps: the ignored boundary makes none");
+        }
+
+        /// <summary>
+        /// The first living branch is cut again and published. The branch that is first in the walk is then its
+        /// positive child, and a publication puts both children where their source was, so what is drawn does not
+        /// move for the change of branch.
+        /// </summary>
+        [Test]
+        public void WhenTheFirstBranchIsCutAgain_ItsChildIsAskedAndNothingMoves()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            LogicalFragmentId last = Chain(ledger, root, VpClipCandidates.Capacity);
+            var (_, first, second) = Cut(ledger, last, new float4(1f, 0f, 0f, 0f));
+
+            Matrix4x4 stands = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+            var placements = new Placements();
+            placements.of[first] = stands;
+            placements.of[second] = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Matrix4x4 before = Aggregate(snapshot).geometryLocalToWorld;
+
+            // Cut again and published, with both children where their source was.
+            var (_, deeper, deeperOther) = Cut(ledger, first, new float4(0f, 0f, 1f, 0f));
+            placements.of.Remove(first);
+            placements.of[deeper] = stands;
+            placements.of[deeperOther] = stands;
+            placements.asked.Clear();
+
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            VpMultiCutRenderFragment rf = Aggregate(snapshot);
+            Assert.That(rf.root, Is.EqualTo(last), "the aggregate is rooted where it was");
+            Assert.That(placements.asked.Contains(deeper), Is.True, "the child is the branch that is asked about now");
+            Same(before, rf.geometryLocalToWorld, "and the base placement is kept across the change of branch");
+
+            // It is really following the child now: moving it moves the aggregate.
+            Matrix4x4 moved = Owner(new Vector3(1f, -3f, 0f), 15f) * k_geometryLocalToOwner;
+            placements.of[deeper] = moved;
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Same(moved, Aggregate(snapshot).geometryLocalToWorld, "the aggregate follows the child");
+        }
+
+        /// <summary>
+        /// Nothing else changes. A branch with nothing ignored is drawn where its own fragment stands, a registration
+        /// with no lookup draws everything at its own placement, and the two stops are the stops they were.
+        /// </summary>
+        [Test]
+        public void TheOrdinaryBranchesTheStaticPathAndTheStops_AreUnchanged()
+        {
+            LogicalCutLedger ledger = NewLedger();
+            LogicalFragmentId root = ledger.AddFragment();
+            var negatives = new List<LogicalFragmentId>();
+            LogicalFragmentId last = Chain(ledger, root, VpClipCandidates.Capacity, negatives);
+            var (_, first, second) = Cut(ledger, last, new float4(1f, 0f, 0f, 0f));
+
+            Matrix4x4 stands = Owner(new Vector3(3f, 0f, 0f), 90f) * k_geometryLocalToOwner;
+            Matrix4x4 sideways = Owner(new Vector3(0f, 5f, 0f), 30f) * k_geometryLocalToOwner;
+            var placements = new Placements();
+            placements.of[first] = stands;
+            placements.of[second] = Owner(new Vector3(-2f, 1f, 0f), 0f) * k_geometryLocalToOwner;
+            placements.of[negatives[0]] = sideways;
+
+            var registrations = new List<VpMultiCutRegistration> { Registration(root, k_geometryLocalToOwner) };
+            VpMultiCutSnapshot snapshot = NewSnapshot();
+            Assert.That(snapshot.TryBuild(ledger, registrations, Separation, placements), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+
+            // An ordinary branch: nothing of it is ignored, and it stands where its own fragment does.
+            VpMultiCutRenderFragment ordinary = Of(snapshot, negatives[0]);
+            Assert.That(ordinary.aggregated, Is.False, "it has nothing ignored");
+            Same(sideways, ordinary.geometryLocalToWorld, "and is drawn where its own fragment stands");
+
+            // A branch nobody placed is drawn where it was registered, as before.
+            Same(
+                k_geometryLocalToOwner, Of(snapshot, negatives[1]).geometryLocalToWorld,
+                "an arrangement that follows nothing is drawn at the registration");
+
+            // No lookup at all: everything, aggregate included, at the registration's placement.
+            VpMultiCutSnapshot without = NewSnapshot();
+            Assert.That(without.TryBuild(ledger, registrations, Separation), Is.EqualTo(VpMultiCutBuildOutcome.Built));
+            Same(k_geometryLocalToOwner, Aggregate(without).geometryLocalToWorld, "the static path is untouched");
+
+            // A living branch that follows something with nowhere given is still refused, not drawn where it was.
+            var missing = new Placements { unknown = VpFragmentPlacementKind.Missing };
+            missing.of[second] = placements.of[second];
+            VpMultiCutSnapshot refused = NewSnapshot();
+            Assert.That(
+                refused.TryBuild(ledger, registrations, Separation, missing), Is.EqualTo(VpMultiCutBuildOutcome.InvalidInput),
+                "a missing placement for the branch that is asked about still refuses");
+
+            // And a retirement inside what would be drawn once is still its own stop.
+            Assert.That(ledger.Retire(second), Is.True, "one branch of the aggregate retires");
+            VpMultiCutSnapshot retired = NewSnapshot();
+            Assert.That(
+                retired.TryBuild(ledger, registrations, Separation, placements),
+                Is.EqualTo(VpMultiCutBuildOutcome.RetiredInsideAggregate),
+                "which is the stop it was, and is not changed here");
+        }
+
         // ----- what the lookup is and is not asked ----------------------------------------------------------------------
 
         /// <summary>
