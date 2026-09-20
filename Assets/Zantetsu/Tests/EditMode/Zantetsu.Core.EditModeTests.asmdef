@@ -10,6 +10,7 @@
         "Unity.Collections",
         "Unity.Burst",
         "Zantetsu.ConvexCut",
+        "Zantetsu.PhysicsCut",
         "Unity.Mathematics",
         "Zantetsu.MeshCut",
         "Zantetsu.MeshCut.Verification",
