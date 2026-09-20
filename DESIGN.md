@@ -219,6 +219,8 @@ Mainの共有Dispatchは、既存DAGで依存が解消したWorkについて、�
 
 通常停止では新規投入を閉じ、未開始Workを一度だけ処理または取消し、実行中Workの利用終了とworker停止を確認してから資源を解放する。通常フレームの同期救済には使わず、共通Player終了の全Work／回収を待たない例外は維持する。Trace停止は21.16に従う。
 
+実装状況（2026-09-20追記。上の本文は変更しない）。切断WorkのGeometry Poolでの実行とMainでの完了回収、およびそれを使う切断DAGは実装済みである。分担・停止手順・成立範囲は4.5.6の「実装状況」による。
+
 既存Profiler／TraceとTaskIdで投入・実行・完了・採否・公開を相関させ、片側No-opと混雑見送りは既存CutNoOpCount／CutAdmissionSkippedCountで区別する。Queue・Batch・容量配分・予算・通知の内部形式は固定せず、別DAG・汎用Scheduler・互換層を追加しない。Managed allocationとGC停止は許容するが、Trace Writer等の局所的な制約は緩めない。
 
 ### 4.5 実行時表示Geometryと描画段階
@@ -347,6 +349,24 @@ Cut AのGeometry未完了中にA子のCut Bが物理・論理公開済みでも�
 A正側だけがBで再切断されていれば、A負側はGA-へ、B枝はGA+とTemporary Bへ進む。BがAbortしてその枝が退役済みならA負側だけを表示へCommitする。全子孫が退役し、表示・後続Geometry Work・他の生存読者に不要なら履歴完成だけの計算を続けずPendingを終端・回収する。未完成Operation Traceは21章の既存Incomplete扱いとする。履歴Recordは置換済み中間Geometryを強く所有しない。
 
 採否は8章のPending／Branch authorityで照合し、別Fragmentの世代更新や子孫切断だけで祖先Geometryを失効させない。共用Geometryの予期しない内部エラーは4章の共通Player終了へ送り、後続へ代替Geometryを推測適用しない。
+
+実装状況（2026-09-20追記。上の目標仕様と既存の決定本文は変更しない）。実切断からGeometry Commit・表示差替えまでの最小接続を3単位で実装し、いずれもlocal mainへ統合した。詳細はここにまとめ、関係する節からは本項を参照する。
+
+- **非同期切断Work（773bb09）。** 容量問合せと切断Kernelの実行をGeometry Poolで行う（容量問合せも入力形状を走査するためMainに残さない）。入力取得（読取リース）、出力予約、結果処理と資源解放はMainに残す。完了通知は完了を記録するだけで、storageに触れる処理は次のPumpで行い、Dispatchの内側で予約取得や公開をしない。storageのcut出力予約は同時1件のままで、後続の切断は未投入で待ち、容量枯渇にも切断失敗にも読み替えない。受付終了後もdispatcherの完了回収とPumpによる排出が必要で、それを終えるまで実行中だった切断の予約・リース・結果は戻らない。同期入口は既存呼出しのために残し、予約の形・出力の指し先・容量再試行規則・側の記述と公開は両経路で共用する。
+- **Cut DAGの骨組み（c97e43c）。** 受付済みOperationとその仕事・入力・結果の対応、依存が解消した仕事の投入、Mainでの完了回収、Physics／Logical PublicationとGeometry Commitそれぞれの成立条件の確認、失効・放棄・終了時の回収を担う薄い接続役である。論理親子とOperation状態の正本は既存台帳のままで、7.10の単独退役の口だけを最小で追加した。Physics／Logical PublicationはGeometryを待たず、公開済みの子は先行Geometry未完成でも再切断を受け付ける。後続のKernelは直前祖先のCommitted Geometryを読み、祖先のCPU公開出力を先取りしない。祖先Commit後は同じ更新内で後続をReadyにできる。後着成果物の採用は、Operationが公開済みであることだけでなく、その枝に生存する読み手があることと、切った基底がSourceの現在Geometryであることを照合する。空Geometryは正常な結果としてKernelを起こさずダミーも作らずに後続へ伝える。採用しない成果物のProduced側Index範囲は一度だけ退役させ、Geometryの内部エラーは呼出側へ一度だけ通知して4章の共通終了へ渡せるようにし、Physics失敗へは読み替えない。dispatcherの所有とフレーム駆動、Commitの実処理は呼出側に残す。
+- **実Geometry Commitと表示差替え（0df0392）。** 切断結果の転送、正負Geometryの表示登録への差替え、実在境界の記録を一つの変更として行う。転送は追加頂点が1回、正負Indexは連続した1回のSetDataで、借用側（平面が当たらなかった側）は0回である。実体化した切断の仮clip／仮Capは、各側がその境界を自分のSideで反映済みとして登録されることで外れ、後続のTemporary面は新しい基底の上で作り直される。Snapshotが登録rootから下の分離を加算し、rootより前は配置が持つ契約（5.5）に合わせ、rootが子へ降りる分の分離は各側の配置へ取り込む（確定済みAnchor配分で自由な側だけ。固定側は動かさない）。Commitは表示の収集と分けてあり、settle済みの収集はそのまま描き、Commitは次の収集から入る。差し替えられた旧登録の参照は次の採用まで保持してから解放する。描画データの容量は差替え後で判定し、旧参照の保持は参照表自身の取得可能条件で判定する。登録枠不足は転送・登録前に判定し、この拒否では成果物の所有権を移さず、後の機会に再試行する。境界記録はCommit時点の正負Geometryと各側の配置を非所有で持ち、Cap三角形が生成された切断だけに作る（借用側・空側は0件）。反映済み集合は仮clip／仮Capを外すための情報であり、境界記録とは別物として扱う。
+
+確認の範囲（単位ごとに分け、他単位の証拠を流用しない。静的Geometryを用いた確認である。Cut DAGとGeometry Commitの接続試験では、実Physics／cookの代わりに台帳の論理公開を駆動した）。
+
+- 非同期切断Work（773bb09、記録：Phase3GeometryCommitのcutwork-20260920）：最終版の関連試験105/105。実際のGeometry Poolを通ることをthread識別で確認した。終了時の確認は、仕事がexecutorへ投入済みで取消不能だが`Begin()`の実行開始前という条件であり、worker実行中の終了は確かめていない。全EditModeは未実行。
+- Cut DAG（c97e43c、記録：cutdag-20260920）：最終版の関連試験95/95。順序は完了通知の制御で決め、実時間の競争に頼らない。参考アセットを使った1/1は通知順序の修正より前の実行で、再実行していない。全EditModeは未実行。
+- 実Geometry Commit（0df0392、記録：geocommit-20260920）：最終版の関連試験76/76。その前段の84/84と非XR画像（images6）は最後の修正より前の状態の証拠であり、再撮影も全EditModeも行っていない。
+
+非XRの画像（単眼、1 sample、D3D11、通常Color）は、同じ配置でのTemporary表示と実Geometry表示を比べたものである。色は完全一致の比較で、単一切断とA→BのA Commit後はいずれも262144画素すべて一致した。A・Bとも Commit後は1画素（(85,338)）だけ色が異なり、同じ画素で生Depthが4.18e-03異なる。この1画素は原因未確定として残し、正常とも、最後のColorの品質例外（5.2の品質例外8）とも扱わない。Depthは、単一切断とA Commit後の比較では完全一致で約5.5万～7.2万画素に差があり、最大差はそれぞれ2.84e-08、3.17e-08だった。A・B両Commit後は最大差4.18e-03で、1e-5を超えたのは色も異なる上記1画素だけだった。完全一致の差分と閾値別の集計は区別し、原因は未確定とする。
+
+参考アセット（Phase 0.21のMegacity代表、asset SHA e2f27b1a…1383681）から使ったのは、登録済みcut-physics入力のownerのworldMatrixと21個のAnchorだけで、切断したGeometryは合成の箱である。実アセットのメッシュ・Convex・rigを切断した証拠ではない。
+
+未接続・未確認（この単位では扱わない）。実Physics／cookとFinal Physicsの置換、動く子の配置をPhysicsから表示へ渡す接続、Characterのskinningと骨に付いたConvexとの接続、製品全体の構成根への接続、この経路でのPlayerと性能、統合後の追加検証。これらが残ることは、過去に別の条件で確認済みの描画条件を未確認へ戻す意味ではなく、過去のXR証拠を今回のCommit経路の証拠に流用する根拠にもならない。Phase 3全体および関連する受入れ項目の完了は意味しない。
 
 Phase 5.6の追加分割で必要になる面の配分、新Index領域への振り分けコピー・転送・旧範囲退役は7.9へ置く。通常切断へ全島列挙を前倒ししない。配置・転送回数は既存計測で確認し、新しいRuntime監視、品質Gate、数値SLAを追加しない。
 
@@ -542,8 +562,8 @@ Color上限だけを理由に、カメラ準備と描画を拒否しない（D-1
     - marker付きの実Capは色の選択を見るためのものであり、実Geometry Commit接続の確認ではない。
     - 166584cへの統合後に追加の試験は行っていない。
     - 以前のXR Simulator・Quest Linkで使った検証用の赤い陰影Shaderは、今回の製品Shaderの確認済み証拠にしない。
-  - 未確認：断面色と陰影の接続（01472bb）については、4x MSAA、Single Pass Instanced、XR、Player、性能、影を落とすものがある場面が未確認である。Shader variant数とコンパイル時間の増加も測っていない。5.3の共通トゥーンの仕上げと、実Geometry Commitとの接続は残る。最後のColor（bb9cd38）については、4x MSAA、Single Pass Instanced、XR（Simulator・実機）、Player、性能が未確認である。この記録のために追加試験は行わない。共通して、XRでのDepthの直接取得、Player、性能（CPU／GPU時間、製品相当の負荷での評価。固定ケースの発行数と成功／拒否の件数は記録済み）、Quest Linkでの他の姿勢・移動中とL1・T3以外の形状、XR SimulatorでのK3と固定姿勢以外、Cap仕事方式での複数カメラの画像、表示・画像でのFacing epsilon帯、8bitの排他利用と一般構成への保証（確認した構成のAttachmentの特定とは別。Phase 1.52の記録は変更しない）。K4には独立した幾何期待値がない。以前のXR Simulator・Quest Link確認に使った赤い陰影は検証用のShaderであり、5.3の共通トゥーンによる通常表示の完成ではない。
-  - 未解決：O-034（製品の`MaxStencilColors`など。試験値8は製品値ではない）、実Geometry Commitとの接続（Phase 3）などの後続統合。
+  - 未確認：断面色と陰影の接続（01472bb）については、4x MSAA、Single Pass Instanced、XR、Player、性能、影を落とすものがある場面が未確認である。Shader variant数とコンパイル時間の増加も測っていない。5.3の共通トゥーンの仕上げは残る。実Geometry Commitとの接続は、4.5.6の「実装状況」に記した範囲で成立した（そこに挙げた未接続・未確認は残る）。最後のColor（bb9cd38）については、4x MSAA、Single Pass Instanced、XR（Simulator・実機）、Player、性能が未確認である。この記録のために追加試験は行わない。共通して、XRでのDepthの直接取得、Player、性能（CPU／GPU時間、製品相当の負荷での評価。固定ケースの発行数と成功／拒否の件数は記録済み）、Quest Linkでの他の姿勢・移動中とL1・T3以外の形状、XR SimulatorでのK3と固定姿勢以外、Cap仕事方式での複数カメラの画像、表示・画像でのFacing epsilon帯、8bitの排他利用と一般構成への保証（確認した構成のAttachmentの特定とは別。Phase 1.52の記録は変更しない）。K4には独立した幾何期待値がない。以前のXR Simulator・Quest Link確認に使った赤い陰影は検証用のShaderであり、5.3の共通トゥーンによる通常表示の完成ではない。
+  - 未解決：O-034（製品の`MaxStencilColors`など。試験値8は製品値ではない）。実Geometry Commitとの接続は4.5.6の「実装状況」の範囲で成立しており、そこに残る未接続・未確認（実Physics／cook、動く子の配置の受渡し、Character、構成根、Player・性能）が後続となる。
   - 以上はCap仕事方式の接続単位、最後のColorの実装単位、断面色と陰影の接続の区切りであり、Phase 2全体、T-066・T-067・T-089の完了を意味しない。未確認事項の扱いはD-184に従う。
 
 - Camera内部／Near Plane近傍の表示は5.2の品質例外とD-131に従う。Stable Geometry置換後はTemporary Stencil由来の部分Capを残さない。
@@ -1430,6 +1450,8 @@ Phase 0.9～0.94はPhase 1より前に実施する。Phase 1.0という呼称も
 Phase 1.50と1.52は、2026-09-18に既存証拠を各行の条件へ照合して完了とした。Stage 3経路での確認（非XR、XR Simulator、Quest Link）を根拠とし、成立条件はEditor Play Mode／Quest Link／D3D11／Single Pass Instanced／MSAA無効である。これらの確認はいずれもMSAA無効の構成で行ったものであり、その記録は変更しない。採用MSAA構成はその後D-179で4xと定め、Phase 1.51は2026-09-19に既存の固定Clip確認と4xでの確認を合わせて完了とした（Phase 1.51行）。MSAA無効での確認を4xでの確認とは扱わない。1.50・1.52の完了は、Playerビルドでの成立、性能、実Attachmentの特定と8bit排他利用へは広げない。これらは今回の低レベル確認では直接検証しておらず、一般構成への保証は含めないという限定であって、T-067とPhase 2、4章が求める要件を免除するものではない。
 
 Phase 2のうち、Cap仕事方式（D-183）の製品接続の単位、最後のColor（D-185・D-186、bb9cd38）の実装単位、5.3の断面色と現行の陰影への接続（01472bb）は、2026-09-20に区切った（5.6の「実装状況」）。Phase 2全体とT-066・T-067・T-089は完了扱いにしない。
+
+Phase 3のうち、非同期切断Work（773bb09）、Cut DAGの骨組み（c97e43c）、実Geometry Commitと表示差替え（0df0392）の3単位は、2026-09-20に区切った（4.5.6の「実装状況」）。確認は静的Geometryと合成Final Physicsによるもので、実Physics／cook、動く子の配置の受渡し、Character、製品の構成根、この経路でのPlayer・性能は未接続または未確認である。Phase 3全体とT-006・T-083・T-074のPhase 3部分は完了扱いにしない。
 
 0.9／0.92の完了記録にあるPhase 0.2入力は当時の実施証跡であり、新規利用や今後の再実行に同じ入力を要求する規範ではない。旧入力の移行だけで完了済みPhaseの測定・承認を再実施しない。
 
